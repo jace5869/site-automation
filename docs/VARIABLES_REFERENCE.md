@@ -2268,6 +2268,7 @@ File: `roles/solarwinds_snapshot/defaults/main.yml`
 | `solarwinds_db_keep_snapshots` | `12` | whole snapshots kept (one hour at one run every 5 minutes) |
 | `solarwinds_db_keep_days` | `400` | the snapshots' own rows (their counts) kept this many days; 0 = always |
 | `solarwinds_db_event_days` | `400` | events kept this many days (under 1 GB at 3,000 a day); 0 = always |
+| `solarwinds_db_link_days` | `400` | 1.118.7: daily topology kept this many days; 0 = always |
 
 ## stigman_ckl_import
 

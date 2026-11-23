@@ -20,6 +20,8 @@ def swis_snapshot_lines(r, check=False):
     c = r.get("counts") or {}
     head = ("Check: SolarWinds read, nothing written." if check else
             "Snapshot %s kept." % r.get("snap_id") if r.get("ok") else "No snapshot kept.")
+    if r.get("topology"):
+        head += " " + r["topology"]
     out = [head]
     if c:
         what = ["%s (%s down, %s warning)" % (_p(c.get("nodes"), "node"), _n(c.get("nodes_down")), _n(c.get("nodes_warning"))),
@@ -52,10 +54,13 @@ def swis_snapshot_lines(r, check=False):
         out.append("Not read:")
         out.extend("- %s: %s" % (x.get("what"), x.get("why")) for x in failed)
     pr = r.get("pruned") or {}
-    old = sum(v for k, v in pr.items() if k not in ("sw_event", "sw_snapshot"))
-    if old or pr.get("sw_event") or pr.get("sw_snapshot"):
-        out.append("Deleted: %s of older snapshots, %s, %s." % (_p(old, "row"), _p(pr.get("sw_event", 0), "old event"),
-                                                                 _p(pr.get("sw_snapshot", 0), "old snapshot row")))
+    old = sum(v for k, v in pr.items() if k not in ("sw_event", "sw_snapshot", "sw_link_day"))
+    if any(pr.values()):
+        deleted = [_p(old, "row") + " of older snapshots", _p(pr.get("sw_event", 0), "old event"),
+                   _p(pr.get("sw_snapshot", 0), "old snapshot row")]
+        if pr.get("sw_link_day"):
+            deleted.append(_p(pr["sw_link_day"], "old daily topology row"))
+        out.append("Deleted: %s." % ", ".join(deleted))
     if r.get("created"):
         out.append("The SolarWinds tables were made in %s." % r.get("where", "the report database"))
     return out

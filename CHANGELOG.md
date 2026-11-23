@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.118.7 — 2026-11-23
+
+**To set up:** nothing. The next SolarWinds snapshot run makes `sw_link_day`. With `solarwinds_db_create: false`,
+make the table by hand using the SQL in `docs/REPORT_DATABASE.md`.
+
+- **Daily network topology for outage reviews.** Each Orion's first whole snapshot with links on a UTC day keeps
+  both ends of each link, including the node and interface names as SolarWinds reported them that day.
+- `solarwinds_db_link_days` keeps the daily copies for 400 days by default. Set it to 0 to keep them indefinitely.
+  The job reports the day it copied or already kept. A by-hand database missing the table still keeps snapshots.
+- Tests: `tests/test_solarwinds_snapshot.py` covers the daily copy, empty and failed reads, named links by day,
+  retention, the by-hand database and the documented SQL. The snapshot end-to-end test checks the new table.
+
 ## 1.122.1 — 2026-11-23
 
 **To set up:** nothing - the next AD report run publishes pages with the tip

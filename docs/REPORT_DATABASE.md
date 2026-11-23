@@ -1379,6 +1379,7 @@ A run takes about as long as SolarWinds needs for its queries: about a minute fo
 | `sw_snapshot` | run: when, how long, how many queries, the counts, ok or the reason it failed |
 | `sw_node` | node: name, DNS, IP, the other IPs, status, last poll, CPU, memory, vendor, model, location, custom properties (JSON) |
 | `sw_link` | NPM topology connection: the two nodes and their interfaces |
+| `sw_link_day` | link per UTC day per Orion, with its snapshot ID and the IDs and names of both nodes and interfaces |
 | `sw_interface` | interface on a link: speed, % in and out, status, errors and discards this hour and today |
 | `sw_alert_active` | active alert: its name, severity, when it was raised, its message, its object and node |
 | `sw_event` | event: when, its kind, its node and object, its message |
@@ -1399,6 +1400,10 @@ Each run is one snapshot, written in one transaction. A report reads the newest 
 sees one whole read, never half of one.
 
 - The state tables keep the last `solarwinds_db_keep_snapshots` (12, one hour at a run every 5 minutes).
+- 1.118.7: each Orion's first whole snapshot with links on a UTC day copies them into `sw_link_day`. An outage review
+  can read the node and interface names seen that day even after an Orion rebuild reuses the IDs. Daily copies are
+  kept for `solarwinds_db_link_days` (400 days by default, 0 = always). At 2,000 links that is 2,000 rows a day.
+  Allowing about 375 bytes per row including indexes, 2,000 × 400 × 375 bytes is about 0.3 GB. Name lengths affect size.
 - The rows of `sw_snapshot` itself are kept `solarwinds_db_keep_days` (400). They are a cheap trend of the counts.
 - `sw_event` is one row per SolarWinds event, with the SolarWinds it came from (`orion`, its address's host and port).
   - The first run reads the last `solarwinds_event_hours` (24).
@@ -1453,6 +1458,8 @@ netmap job’s own tables using `report_reader` as described in [The network map
   `swis-live`). A test keeps the two dicts equal.
 - `nodes_for()`, `alerts_for()`, `apps_for()` and `events_between()` are for the other reports. A host is matched by
   its short name, its DNS name or its IP.
+- 1.118.7: `links_on(conn, day, orion="")` reads up to 50,000 daily links, ordered by Orion and sequence.
+  Give an Orion's host-and-port key to read only its links.
 - `apps_for()` gives each node's SAM applications with their components that are not up, and how many each has ("2 of
   9 down"). On an Orion without SAM it gives none, and `part_note(snapshot, "app")` says so.
 - 1.96.1: `apps_live(client, node_ids)` and `alerts_live(client, node_ids)` read the same from SolarWinds itself, for
@@ -1477,6 +1484,9 @@ events of a time window or a node.
 If the writer may not create tables, set `solarwinds_db_create: false` and make the tables once as root, in
 `site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of *Making the
 tables by hand*. It may run again.
+
+1.118.7: for existing by-hand tables, run only the `CREATE TABLE IF NOT EXISTS sw_link_day` statement below.
+Until then, each job keeps its snapshot and reports that the daily topology copy is off.
 
 Removing it: `DROP TABLE` each table above, then `DELETE FROM schema_version WHERE component = 'solarwinds';`.
 
@@ -1566,6 +1576,29 @@ CREATE TABLE IF NOT EXISTS sw_link (
   PRIMARY KEY (snap_id, seq),
   KEY sw_link_src (snap_id, src_node),
   KEY sw_link_dst (snap_id, dst_node)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_link_day (
+  day DATE NOT NULL,
+  orion VARCHAR(255) NOT NULL,
+  seq INT NOT NULL,
+  snap_id BIGINT NOT NULL,
+  src_node BIGINT NULL,
+  src_if BIGINT NULL,
+  dst_node BIGINT NULL,
+  dst_if BIGINT NULL,
+  src_name VARCHAR(512) NULL,
+  src_name_key VARCHAR(255) NULL,
+  src_if_name VARCHAR(512) NULL,
+  dst_name VARCHAR(512) NULL,
+  dst_name_key VARCHAR(255) NULL,
+  dst_if_name VARCHAR(512) NULL,
+  PRIMARY KEY (orion, day, seq),
+  KEY sw_link_day_src (orion, day, src_name_key),
+  KEY sw_link_day_dst (orion, day, dst_name_key),
+  KEY sw_link_day_date (day)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
@@ -1757,6 +1790,7 @@ Until then the snapshot is written without it and says so. The VMware alarms rep
 | `solarwinds_db_keep_snapshots` | `12` | Whole snapshots kept |
 | `solarwinds_db_keep_days` | `400` | Days the snapshot rows (the counts) are kept. `0`: always |
 | `solarwinds_db_event_days` | `400` | Days events are kept. `0`: always |
+| `solarwinds_db_link_days` | `400` | Days daily topology is kept. `0`: always |
 | `solarwinds_db_max_age` | `20` | Minutes a snapshot may be old for a report. In all.yml: every report reads it. `0`: never the snapshot |
 
 ## TLS (optional)

@@ -16,7 +16,7 @@ description:
     since the newest kept, SAM's applications and its components not up, the volumes, VIM's hosts and VMs. Each with
     only the columns this Orion has (Metadata.Property). A part this Orion lacks (no SAM, no VIM) is said, not an error.
   - Writes it in one transaction as one snapshot, then deletes the rows of the older snapshots (keep_snapshots), the
-    snapshot rows older than keep_days and the events older than event_days.
+    snapshot rows older than keep_days, the events older than event_days and the daily topology older than link_days.
   - SolarWinds not read - a snapshot row with ok 0 and the reason, and the module fails. The database not reached -
     fails. Check mode - reads SolarWinds and the database, writes nothing.
   - The SolarWinds account from SOLARWINDS_USERNAME and SOLARWINDS_PASSWORD (a "SolarWinds (read-only)" credential),
@@ -47,6 +47,7 @@ options:
   keep_snapshots: {description: Whole snapshots whose rows are kept., type: int, default: 12}
   keep_days: {description: "Snapshot rows (the counts) kept this many days (0 = always).", type: int, default: 400}
   event_days: {description: "Events kept this many days (0 = always).", type: int, default: 400}
+  link_days: {description: "1.118.7: daily topology kept this many days (0 = always).", type: int, default: 400}
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
   max_age: {description: "1.96.1: minutes the newest whole snapshot may be old (solarwinds_db_max_age) - another run holding the lock while it is older: red.", type: int, default: 20}
 author: site automation
@@ -60,6 +61,7 @@ not_read: {description: "What could not be read: [{what, why, absent}] (absent -
 seconds: {description: The read's seconds., type: float}
 queries: {description: SWQL queries sent., type: int}
 pruned: {description: Rows deleted per table., type: dict}
+topology: {description: The daily topology copy's status for this snapshot., type: str}
 created: {description: The tables were made this run., type: bool}
 version: {description: Orion's version (platform, modules)., type: dict}
 '''
@@ -91,7 +93,8 @@ def main():
                            chunk=dict(type="int", default=500), max_nodes=dict(type="int", default=20000),
                            max_rows=dict(type="int", default=50000), event_hours=dict(type="int", default=24),
                            keep_snapshots=dict(type="int", default=12), keep_days=dict(type="int", default=400),
-                           event_days=dict(type="int", default=400), job=dict(type="int", default=0), max_age=dict(type="int", default=20)),
+                           event_days=dict(type="int", default=400), link_days=dict(type="int", default=400),
+                           job=dict(type="int", default=0), max_age=dict(type="int", default=20)),
         supports_check_mode=True)
     p = module.params
     env = os.environ
@@ -202,7 +205,7 @@ def main():
                         "Concurrent jobs on the template." % newer)
             module.exit_json(**res)
         w = swdb.write(conn, snap, p["job"])
-        res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], changed=True, missing_columns=w.get("missing_columns") or [])
+        res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], topology=w.get("topology") or "", changed=True, missing_columns=w.get("missing_columns") or [])
         if res["missing_columns"]:      # 1.113.0: an older release's tables (solarwinds_db_create: false)
             module.warn("The SolarWinds tables are of an older release: %s is not there, so the snapshot was kept without it and the "
                         "VMware alarms reports use no VIM node link. Add it once: docs/REPORT_DATABASE.md (The SolarWinds snapshot, "
@@ -223,7 +226,8 @@ def main():
         module.fail_json(msg="The report database %s: this snapshot was not kept: %s" % (where, db.explain(e, p)), **res)
     if res["ok"]:
         try:                    # 1.96.1 (review P2-10): the snapshot is kept - a failed clean-up says so, never "not kept"
-            res["pruned"] = swdb.prune(conn, p["keep_snapshots"], p["keep_days"], p["event_days"])
+            res["pruned"] = swdb.prune(conn, p["keep_snapshots"], p["keep_days"], p["event_days"],
+                                       link_days=p["link_days"])
         except Exception as e:  # noqa: BLE001
             try:
                 conn.rollback()

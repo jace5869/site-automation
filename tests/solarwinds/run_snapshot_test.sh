@@ -155,7 +155,8 @@ EOPY
         && ok "  ...sw_snapshot ok, $nodes nodes, the job's ID, schema_version solarwinds 2; the reader account reads them" \
         || bad "  ...the first snapshot: $(qr "SELECT CONCAT(ok, '/', nodes, '/', job) FROM sw_snapshot")"
     local t empty=""
-    for t in sw_link sw_interface sw_alert_active sw_event sw_app sw_component sw_volume sw_vim_host sw_vim_vm; do
+    for t in sw_link sw_link_day sw_interface sw_alert_active sw_event sw_app sw_component sw_volume \
+             sw_vim_host sw_vim_vm; do
         [ "$(qr "SELECT COUNT(*) FROM $t")" -gt 0 ] || empty="$empty $t"
     done
     [ -z "$empty" ] && ok "  ...every table has rows" || bad "  ...empty:$empty"

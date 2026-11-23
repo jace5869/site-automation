@@ -45,6 +45,7 @@
     keep_snapshots: "{{ solarwinds_db_keep_snapshots | int }}"
     keep_days: "{{ solarwinds_db_keep_days | int }}"
     event_days: "{{ solarwinds_db_event_days | int }}"
+    link_days: "{{ solarwinds_db_link_days | int }}"
     max_age: "{{ solarwinds_db_max_age | default(20) | int }}"   # another run holds the lock and the snapshot is older: red
     job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
   register: _sw_snap

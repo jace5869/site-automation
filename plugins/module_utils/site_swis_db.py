@@ -8,7 +8,8 @@ calls read_swis() and write() every 10 minutes. The reports call answer() or the
 Replace by snapshot, not deltas. Each run is one snapshot: a row in sw_snapshot and its rows in the state tables, written
 in one transaction. A reader takes the newest snapshot with ok = 1, so it always sees one whole read. The state tables
 keep the last keep_snapshots snapshots. sw_snapshot's own rows (the counts) are kept keep_days. sw_event is one row per
-SolarWinds event (EventID), kept event_days (400), read incrementally.
+SolarWinds event (EventID), kept event_days (400), read incrementally. 1.118.7: sw_link_day keeps one topology per
+Orion per UTC day for link_days (400).
 
 Read only on SolarWinds' side: every query goes through site_swis.Client (one SWQL SELECT, every column named). The
 core read is site_swis.collect() itself, with every node custom property, so answer() gives back exactly the dict
@@ -71,6 +72,12 @@ CREATE = [
     "CREATE TABLE IF NOT EXISTS sw_link (snap_id BIGINT NOT NULL, seq INT NOT NULL, src_node BIGINT NULL, src_if BIGINT NULL, "
     "dst_node BIGINT NULL, dst_if BIGINT NULL, "
     "PRIMARY KEY (snap_id, seq), KEY sw_link_src (snap_id, src_node), KEY sw_link_dst (snap_id, dst_node)) " + TABLE_OPTS,
+    "CREATE TABLE IF NOT EXISTS sw_link_day (day DATE NOT NULL, orion VARCHAR(255) NOT NULL, seq INT NOT NULL, "
+    "snap_id BIGINT NOT NULL, src_node BIGINT NULL, src_if BIGINT NULL, dst_node BIGINT NULL, dst_if BIGINT NULL, "
+    "src_name VARCHAR(512) NULL, src_name_key VARCHAR(255) NULL, src_if_name VARCHAR(512) NULL, "
+    "dst_name VARCHAR(512) NULL, dst_name_key VARCHAR(255) NULL, dst_if_name VARCHAR(512) NULL, "
+    "PRIMARY KEY (orion, day, seq), KEY sw_link_day_src (orion, day, src_name_key), "
+    "KEY sw_link_day_dst (orion, day, dst_name_key), KEY sw_link_day_date (day)) " + TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS sw_interface (snap_id BIGINT NOT NULL, interface_id BIGINT NOT NULL, seq INT NOT NULL, "
     "node_id BIGINT NULL, name VARCHAR(512) NULL, caption VARCHAR(512) NULL, speed DOUBLE NULL, in_pct DOUBLE NULL, "
     "out_pct DOUBLE NULL, in_bps DOUBLE NULL, out_bps DOUBLE NULL, status INT NULL, oper_status INT NULL, admin_status INT NULL, "
@@ -112,7 +119,7 @@ ADDED = [("sw_vim_host", "vcenter", "ALTER TABLE sw_vim_host ADD COLUMN vcenter 
 SCHEMA_VERSION_TABLE = ("CREATE TABLE IF NOT EXISTS schema_version (component VARCHAR(64) NOT NULL PRIMARY KEY, version INT NOT NULL, "
                         "applied_at DATETIME NOT NULL) " + TABLE_OPTS)
 TABLES = [re.match(r"CREATE TABLE IF NOT EXISTS (\w+)", s).group(1) for s in CREATE]
-STATE = [t for t in TABLES if t not in ("sw_snapshot", "sw_event")]      # the tables a snapshot replaces
+STATE = [t for t in TABLES if t not in ("sw_snapshot", "sw_event", "sw_link_day")]   # the tables a snapshot replaces
 
 # each table's columns, in the order write() sends them (snap_id first where it has one)
 COLS = {
@@ -797,14 +804,14 @@ def missing_columns(conn):
 
 
 def schema(conn, create):
-    """(there, created): every table, made when one is missing and create is true; schema_version's row with them."""
+    """(there, created): make missing tables with create; a by-hand database may lack just sw_link_day (1.118.7)."""
     cur = conn.cursor()
     cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'sw\\_%%'")
     have = set(str(r[0]) for r in cur.fetchall())
     missing = [t for t in TABLES if t not in have]
-    if missing:
-        if not create:
-            return False, False
+    if not create and any(t != "sw_link_day" for t in missing):
+        return False, False
+    if missing and create:
         cur.execute(SCHEMA_VERSION_TABLE)
         for s in CREATE:
             cur.execute(s)
@@ -825,7 +832,7 @@ def schema(conn, create):
                 cur.execute("UPDATE schema_version SET version = %s, applied_at = UTC_TIMESTAMP() WHERE component = %s AND version < %s",
                             (SCHEMA_VERSION, COMPONENT, SCHEMA_VERSION))
     conn.commit()
-    return True, bool(missing)
+    return True, bool(missing and create)
 
 
 def lock(conn):
@@ -875,9 +882,39 @@ def _insert(cur, table, rows, skip=()):
         cur.executemany(sql, rows[i:i + 2000])
 
 
+def _has_link_day(cur):
+    cur.execute("SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'sw_link_day'")
+    return cur.fetchone() is not None
+
+
+def _copy_link_day(cur, sid, links):
+    """1.118.7: called under the snapshot writer's lock, before commit. The snapshot's UTC read_at decides the day."""
+    if not _has_link_day(cur):
+        return "no sw_link_day table: the daily topology copy is off - make it (docs/REPORT_DATABASE.md)"
+    cur.execute("SELECT DATE(s.read_at), s.orion, EXISTS (SELECT 1 FROM sw_link_day d "
+                "WHERE d.orion = s.orion AND d.day = DATE(s.read_at)) FROM sw_snapshot s WHERE s.snap_id = %s", (sid,))
+    day, orion, kept = cur.fetchone()
+    if kept:
+        return "topology: %s already kept" % day
+    if not links:
+        return "topology: no links for %s" % day
+    cur.execute("INSERT INTO sw_link_day (day, orion, seq, snap_id, src_node, src_if, dst_node, dst_if, "
+                "src_name, src_name_key, src_if_name, dst_name, dst_name_key, dst_if_name) "
+                "SELECT %s, %s, l.seq, l.snap_id, l.src_node, l.src_if, l.dst_node, l.dst_if, "
+                "src.name, src.name_key, COALESCE(NULLIF(si.name, ''), si.caption), "
+                "dst.name, dst.name_key, COALESCE(NULLIF(di.name, ''), di.caption) FROM sw_link l "
+                "LEFT JOIN sw_node src ON src.snap_id = l.snap_id AND src.node_id = l.src_node "
+                "LEFT JOIN sw_interface si ON si.snap_id = l.snap_id AND si.interface_id = l.src_if "
+                "LEFT JOIN sw_node dst ON dst.snap_id = l.snap_id AND dst.node_id = l.dst_node "
+                "LEFT JOIN sw_interface di ON di.snap_id = l.snap_id AND di.interface_id = l.dst_if "
+                "WHERE l.snap_id = %s", (day, orion, sid))
+    return "topology: copied for %s" % day
+
+
 def write(conn, snap, job=0, now=None, error=""):
-    """One snapshot in one transaction -> {snap_id, ok, counts, rows}. A read that did not reach SolarWinds is a row of
-    sw_snapshot with ok = 0 and the reason, nothing else."""
+    """One snapshot in one transaction -> {snap_id, ok, counts, rows, topology}. A failed read writes only a
+    sw_snapshot row with ok = 0 and the reason."""
     raw = snap.get("raw") or {}
     error = error or snap.get("failed") or ""
     ok = bool(raw.get("reachable")) and not error
@@ -906,13 +943,16 @@ def write(conn, snap, job=0, now=None, error=""):
                 not_read=json.dumps(snap.get("not_read") or []) if ok else None)
     keys = sorted(sets)
     cur.execute("UPDATE sw_snapshot SET %s WHERE snap_id = %%s" % ", ".join("%s = %%s" % k for k in keys), [sets[k] for k in keys] + [sid])
+    topology = _copy_link_day(cur, sid, c["links"]) if ok else ""
     conn.commit()
-    return {"snap_id": sid, "ok": ok, "counts": c, "rows": n, "missing_columns": ["%s.%s" % x for x in skip]}
+    return {"snap_id": sid, "ok": ok, "counts": c, "rows": n, "missing_columns": ["%s.%s" % x for x in skip],
+            "topology": topology}
 
 
-def prune(conn, keep_snapshots=12, keep_days=400, event_days=400, now=None):
+def prune(conn, keep_snapshots=12, keep_days=400, event_days=400, now=None, link_days=400):
     """Deletes the state rows of all but the newest keep_snapshots whole snapshots, sw_snapshot rows older than
-    keep_days and events older than event_days (0 = never). -> {table: rows deleted}."""
+    keep_days, events older than event_days and daily topology older than link_days (0 = never).
+    -> {table: rows deleted}."""
     now = now or now_utc()
     cur = conn.cursor()
     out = {}
@@ -928,6 +968,9 @@ def prune(conn, keep_snapshots=12, keep_days=400, event_days=400, now=None):
                                              (now - datetime.timedelta(days=int(keep_days)), int(newest[0] or 0) if newest else 0)) or 0)
     if event_days and int(event_days) > 0:
         out["sw_event"] = int(cur.execute("DELETE FROM sw_event WHERE event_time < %s", (now - datetime.timedelta(days=int(event_days)),)) or 0)
+    if link_days and int(link_days) > 0 and _has_link_day(cur):
+        cutoff = now.date() - datetime.timedelta(days=int(link_days))
+        out["sw_link_day"] = int(cur.execute("DELETE FROM sw_link_day WHERE day < %s", (cutoff,)) or 0)
     conn.commit()
     return out
 
@@ -1514,6 +1557,21 @@ def part_note(snap, part):
         if words and x.get("what") == words:
             return x
     return None
+
+
+def links_on(conn, day, orion=""):
+    """1.118.7: up to 50,000 links as named on the UTC day, optionally for one Orion (orion_key)."""
+    cur = conn.cursor()
+    if not _has_link_day(cur):
+        return []
+    sql = ("SELECT day, orion, seq, snap_id, src_node, src_if, dst_node, dst_if, "
+           "src_name, src_name_key, src_if_name, dst_name, dst_name_key, dst_if_name FROM sw_link_day WHERE day = %s")
+    args = [day]
+    if orion:
+        sql += " AND orion = %s"
+        args.append(orion)
+    cur.execute(sql + " ORDER BY orion, seq LIMIT 50000", args)
+    return _dicts(cur)
 
 
 def events_between(conn, start, end, node_ids=None, limit=2000, orion=None):

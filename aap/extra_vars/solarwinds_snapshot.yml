@@ -71,6 +71,9 @@
 ## events kept this many days (under 1 GB at 3,000 a day); 0 = always
 # solarwinds_db_event_days: 400
 
+## 1.118.7: daily topology kept this many days; 0 = always
+# solarwinds_db_link_days: 400
+
 # ---- netmap_report -------------------------------------------------------------------------------
 ## SolarWinds' address, e.g. orion.yoursite.mil (https:// and the SWIS port 17774 are added; an
 ## Orion older than 2023.1: https://orion.yoursite.mil:17778). The credential's SolarWinds URL, when

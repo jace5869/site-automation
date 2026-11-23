@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import ssl
 import socket
 import subprocess
@@ -480,8 +481,16 @@ class FakeCur(object):
         if sql.startswith(("START TRANSACTION", "SET TRANSACTION")):
             self.description, self.rows = [], []
             return 0
-        self.description, self.rows = self.conn.answer(sql, args)
+        answer = self.conn.answer(sql, args)
+        if isinstance(answer, sqlite3.Cursor):   # 1.118.7: exercise the writer's joins and deletes on stored rows
+            self.lastrowid, self.description, self.rows = answer.lastrowid, answer.description, answer.fetchall()
+            return answer.rowcount if self.description is None else len(self.rows)
+        self.description, self.rows = answer
         return len(self.rows)
+
+    def executemany(self, sql, rows):
+        for row in rows:
+            self.execute(sql, row)
 
     def fetchone(self):
         return self.rows[0] if self.rows else None
@@ -503,6 +512,121 @@ class FakeConn(object):
 
     def commit(self):
         self.cursor().execute("COMMIT")
+
+
+class LinkDayDB(FakeConn):
+    """The fake with stored rows for write/prune/links_on. SQLite runs the same joins against the writer's columns."""
+    def __init__(self):
+        super().__init__(self.answer_sql)
+        self.db = sqlite3.connect(":memory:")
+        for sql in [sd.SCHEMA_VERSION_TABLE] + sd.CREATE:
+            self.answer_sql(sql)
+        self.db.execute("INSERT INTO schema_version VALUES ('solarwinds', ?, '2026-11-21')", (sd.SCHEMA_VERSION,))
+        self.commit()
+
+    def answer_sql(self, sql, args=None):
+        if "FROM information_schema.columns" in sql:       # 1.113.0's column check: SQLite's own columns
+            table, column = args
+            return self.db.execute("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", (table, column))
+        if "FROM information_schema.tables" in sql:
+            names = [r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+            if " LIKE " in sql:
+                return [], [(n,) for n in names if n.startswith("sw_")]
+            return [], [(n,) for n in names if "'%s'" % n in sql]
+        if sql.startswith("CREATE TABLE"):
+            sql = sql.split(" ENGINE=")[0].replace("BIGINT NOT NULL AUTO_INCREMENT", "INTEGER")
+            sql = re.sub(r", KEY \w+ \([^)]*\)", "", sql)
+        return self.db.execute(sql.replace("%s", "?"), args or ())
+
+    def commit(self):
+        self.db.commit()
+
+    def rollback(self):
+        self.db.rollback()
+
+
+class DailyTopology(unittest.TestCase):
+    """1.118.7: the named links survive pruning of the snapshot from which they came."""
+    def setUp(self):
+        self.conn = LinkDayDB()
+        self.addCleanup(self.conn.db.close)
+
+    def write(self, at, name="Router A", links=True, failed="", host="orion.example.mil"):
+        raw = {"reachable": True, "url": host, "read_at": at,
+               "nodes": [{"id": 1, "name": name, "dns": "r1.example.mil"}, {"id": 2, "name": "Switch B"}],
+               "interfaces": [{"InterfaceID": 10, "Name": "port-a"}, {"InterfaceID": 20, "Caption": "port-b"}],
+               "connections": [[1, 10, 2, 20], [2, 20, 3, None]] if links else []}
+        return sd.write(self.conn, {"raw": raw, "failed": failed}, now=datetime.datetime(2026, 11, 25))
+
+    def test_first_whole_snapshot_with_links_per_utc_day_and_orion(self):
+        first = self.write("2026-11-22T00:59:00+01:00")
+        second = self.write("2026-11-21T23:59:30Z", "Renamed")
+        other = self.write("2026-11-21T23:59:30Z", "Other Orion", host="other.example.mil")
+        tomorrow = self.write("2026-11-22T00:00:00Z", "Renamed")
+        self.assertEqual(sf.swis_snapshot_lines(first)[0], "Snapshot 1 kept. topology: copied for 2026-11-21")
+        self.assertEqual(sf.swis_snapshot_lines(second)[0], "Snapshot 2 kept. topology: 2026-11-21 already kept")
+        sd.prune(self.conn, keep_snapshots=1, keep_days=1, now=datetime.datetime(2026, 11, 25))
+        live = self.conn.db.execute("SELECT DISTINCT snap_id FROM sw_link").fetchall()
+        self.assertEqual(live, [(tomorrow["snap_id"],)])
+        rows = sd.links_on(self.conn, "2026-11-21", "orion.example.mil:17774")
+        self.assertEqual([r["seq"] for r in rows], [0, 1])
+        self.assertEqual(rows[0], {"day": "2026-11-21", "orion": "orion.example.mil:17774",
+                                   "seq": 0, "snap_id": first["snap_id"],
+                                   "src_node": 1, "src_if": 10, "dst_node": 2, "dst_if": 20,
+                                   "src_name": "Router A", "src_name_key": "r1", "src_if_name": "port-a",
+                                   "dst_name": "Switch B", "dst_name_key": "switch b", "dst_if_name": "port-b"})
+        self.assertEqual((rows[1]["dst_node"], rows[1]["dst_name"], rows[1]["dst_if_name"]), (3, None, None))
+        all_rows = sd.links_on(self.conn, "2026-11-21")
+        self.assertEqual([r["snap_id"] for r in all_rows], [first["snap_id"]] * 2 + [other["snap_id"]] * 2)
+        self.assertIn("LIMIT 50000", self.conn.sql[-1][0])
+        self.assertEqual(sd.links_on(self.conn, "2026-11-22")[0]["src_name"], "Renamed")
+        self.assertEqual(sd.links_on(self.conn, "2026-11-23"), [])
+
+    def test_failed_and_empty_snapshots_leave_the_day_open(self):
+        at = "2026-11-21T09:00:00Z"
+        self.assertFalse(self.write(at, failed="read failed")["ok"])
+        self.assertEqual(sd.links_on(self.conn, "2026-11-21"), [])
+        self.assertEqual(self.write(at, links=False)["topology"], "topology: no links for 2026-11-21")
+        self.assertEqual(sd.links_on(self.conn, "2026-11-21"), [])
+        whole = self.write(at)
+        self.assertEqual([r["snap_id"] for r in sd.links_on(self.conn, "2026-11-21")], [whole["snap_id"]] * 2)
+
+    def test_copy_and_snapshot_roll_back_together(self):
+        self.conn.db.execute("CREATE TRIGGER reject_link BEFORE INSERT ON sw_link_day WHEN NEW.seq = 1 "
+                             "BEGIN SELECT RAISE(ABORT, 'copy interrupted'); END")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "copy interrupted"):
+            self.write("2026-11-21T09:00:00Z")
+        self.conn.rollback()    # the job's write error path
+        for table in ("sw_snapshot", "sw_link", "sw_link_day"):
+            self.assertEqual(self.conn.db.execute("SELECT COUNT(*) FROM " + table).fetchone(), (0,))
+
+    def test_daily_retention(self):
+        for day in (20, 21, 22):
+            self.write("2026-11-%dT09:00:00Z" % day)
+        now = datetime.datetime(2026, 11, 23, 12)
+        sd.prune(self.conn, now=now, link_days=0)
+        self.assertEqual(len(sd.links_on(self.conn, "2026-11-20")), 2)
+        pr = sd.prune(self.conn, now=now, link_days=2)
+        self.assertEqual(pr["sw_link_day"], 2)
+        self.assertEqual(sd.links_on(self.conn, "2026-11-20"), [])
+        self.assertEqual(len(sd.links_on(self.conn, "2026-11-21")), 2)   # the cutoff day is kept whole
+        self.assertEqual(len(sd.links_on(self.conn, "2026-11-22")), 2)
+
+    def test_by_hand_database_without_daily_table(self):
+        self.conn.db.execute("DROP TABLE sw_link_day")
+        self.assertEqual(sd.schema(self.conn, False), (True, False))
+        run = self.write("2026-11-21T09:00:00Z")
+        self.assertTrue(run["ok"])
+        self.assertEqual(self.conn.db.execute("SELECT ok, links FROM sw_snapshot").fetchall(), [(1, 2)])
+        self.assertEqual(self.conn.db.execute("SELECT COUNT(*) FROM sw_link").fetchone(), (2,))
+        run["pruned"] = sd.prune(self.conn, now=datetime.datetime(2026, 11, 23))
+        note = "no sw_link_day table: the daily topology copy is off - make it (docs/REPORT_DATABASE.md)"
+        self.assertEqual("\n".join(sf.swis_snapshot_lines(run)).count(note), 1)
+        self.assertEqual(sd.links_on(self.conn, "2026-11-21"), [])
+        self.assertEqual(sd.schema(self.conn, True), (True, True))
+        self.assertEqual(self.write("2026-11-21T10:00:00Z")["topology"], "topology: copied for 2026-11-21")
+        self.conn.db.execute("DROP TABLE sw_link")
+        self.assertEqual(sd.schema(self.conn, False), (False, False))
 
 
 class Answer(unittest.TestCase):
