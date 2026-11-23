@@ -205,21 +205,27 @@
           for cid, name, image in found.get(ENG, []):
               try:
                   pid_main = "io.quarkus.bootstrap.runner.QuarkusEntryPoint"
-                  _, vv = eng("exec", cid, "sh", "-c", "jcmd %s VM.version 2>/dev/null || jcmd 1 VM.version 2>/dev/null" % pid_main)
+                  # 1.112.3: the JVM is not always PID 1 (a wrapper script or an init starts it): the container's first
+                  # process whose program is java (or alt-java), read from /proc inside it - nothing found runs
+                  _, jp = eng("exec", cid, "sh", "-c", 'for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null) || continue; '
+                              'case "${e##*/}" in java|alt-java) echo "${p#/proc/}"; break;; esac; done')
+                  jpid = (jp.split() or ["1"])[0]
+                  jpid = jpid if jpid.isdigit() else "1"
+                  _, vv = eng("exec", cid, "sh", "-c", "jcmd %s VM.version 2>/dev/null || jcmd %s VM.version 2>/dev/null" % (pid_main, jpid))
                   src = "running"
-                  if not parse_version(vv)[1]:                   # the release file of the JDK PID 1 runs from
-                      _, vv = eng("exec", cid, "sh", "-c", 'head -c 4096 "$(dirname "$(dirname "$(readlink /proc/1/exe)")")/release"')
+                  if not parse_version(vv)[1]:                   # the release file of the JDK the JVM runs from
+                      _, vv = eng("exec", cid, "sh", "-c", 'head -c 4096 "$(dirname "$(dirname "$(readlink /proc/%s/exe)")")/release"' % jpid)
                       src = "installed"
-                  _, jc = eng("exec", cid, "sh", "-c", "jcmd %s VM.flags -all 2>/dev/null || jcmd 1 VM.flags -all 2>/dev/null" % pid_main)
+                  _, jc = eng("exec", cid, "sh", "-c", "jcmd %s VM.flags -all 2>/dev/null || jcmd %s VM.flags -all 2>/dev/null" % (pid_main, jpid))
                   off, how = flags_live(jc)
                   if off is None:
-                      _, argv = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/1/cmdline")
-                      _, envr = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/1/environ")
+                      _, argv = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/%s/cmdline" % jpid)
+                      _, envr = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/%s/environ" % jpid)
                       environ = dict(l.split("=", 1) for l in envr.splitlines() if "=" in l)
                       if os.path.basename((argv.splitlines() or [""])[0]) in ("java", "alt-java"):
                           off, how = flags_argv(argv.splitlines(), environ)
                       else:
-                          how = "flags not read (no jcmd, PID 1 is not java)"
+                          how = "flags not read (no jcmd, and no java process found in the container)"
                   _, lb = eng("inspect", "--format", "{{json .Config.Labels}}", cid)
                   try:
                       labels = json.loads(lb) or {}
