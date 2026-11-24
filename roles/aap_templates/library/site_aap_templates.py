@@ -70,7 +70,7 @@ SHOW = {"playbook": "playbook", "project": "project", "execution_environment": "
         "ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
         "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type", "inventory": "inventory",
         "ask_diff_mode_on_launch": "prompt for Show changes", "job_type": "Job type", "diff_mode": "Show changes",
-        "extra_vars": "Variables"}
+        "extra_vars": "Variables", "allow_simultaneous": "Concurrent jobs"}
 # 1.79.19: aap_templates_match's words -> the fields (credentials and labels apart); playbook and project never: they are
 # what a template is found by
 MATCH = {"inventory": ("inventory",), "prompts": ("ask_limit_on_launch", "ask_variables_on_launch", "ask_inventory_on_launch",
@@ -450,6 +450,8 @@ class Templates(object):
             fields = {"playbook": e["playbook"], "project": self.project, "ask_limit_on_launch": bool(e.get("ask_limit")),
                       "ask_variables_on_launch": bool(e.get("ask_variables")), "ask_inventory_on_launch": bool(e.get("ask_inventory")),
                       "ask_job_type_on_launch": bool(e.get("ask_job_type"))}
+            if "allow_simultaneous" in e:       # Concurrent jobs - set only where the catalog says (Windows - schedule a restart: off)
+                fields["allow_simultaneous"] = bool(e["allow_simultaneous"])
             if e.get("ask_diff_mode"):          # 1.107.0: Show changes (STIG Manager - deploy's dry run) - set only where the catalog asks
                 fields["ask_diff_mode_on_launch"] = True
             # 1.107.0 (review): its Job type - a dry-run template is Check itself (never a node's prompt), every other one Run

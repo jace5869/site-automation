@@ -123,21 +123,35 @@ def shown_raw(win):
 
 def node_window(node):
     """The node's own unmanage window as SWIS gave it, or {} when it has none."""
-    if parse(node.get("until")) is None:
+    if not str(node.get("until") or "").strip():
         return {}
     return {"from": str(node.get("from") or ""), "until": str(node.get("until") or "")}
 
 
+def ends(text, tz=None):
+    """Every moment an end could be: one with Z or an offset exactly; a naive one as UTC and in the site's zone tz, both
+    folds when the clocks go back (01:45 twice on that night)."""
+    out = [parse(text)]
+    if tz is not None and naive(text):
+        loc = parse(text, None)
+        if loc is not None:
+            wall = loc.replace(tzinfo=None)
+            out += [wall.replace(tzinfo=tz, fold=f).astimezone(U) for f in (0, 1)]
+    return [e for e in out if e is not None]
+
+
 def has_window(node, now, tz=None):
-    """The node has an unmanage window now: unmanaged, or an end not yet past (a naive end: read as UTC and as the site's
-    zone - past only when past both ways)."""
-    w = node_window(node)
+    """The node has an unmanage window now: unmanaged; or an end any reading of which is still ahead (past only when past
+    every way); or an end that cannot be read at all (a window is there - it is left)."""
     if node.get("unmanaged"):
         return True
-    if not w:
+    until = str(node.get("until") or "").strip()
+    if not until:
         return False
-    ends = [parse(w["until"])] + ([parse(w["until"], tz)] if tz is not None and naive(w["until"]) else [])
-    return any(e is not None and e > now for e in ends)
+    got = ends(until, tz)
+    if not got:
+        return True
+    return any(e > now for e in got)
 
 
 class Manager(sw.Client):
@@ -181,7 +195,7 @@ def _names(n):
     return [x for x in (_canon(n.get("name")), _canon(n.get("dns"))) if x and not hsw._ip(x)]
 
 
-def find(client, hosts):
+def find(client, hosts, deadline=None, clock=None):
     """hosts: [{host, fqdn, ip}] -> {host: {node, name, why}}: name the node is matched by (checked again before the write).
     1. Full name (the inventory name, or ansible_host, with a domain): Caption or DNS equal to it. More than one: refused.
     2. Else the short name: the nodes whose Caption or DNS is that name, or starts with it and a dot. More than one:
@@ -189,8 +203,12 @@ def find(client, hosts):
        server's domain when the server has one (a conflict otherwise); a server without a domain takes it.
     A node two servers of this job match: neither gets it. Only an IP matches: said, never unmanaged."""
     hs = hsw._hosts(hosts)
-    cand = {}
+    cand, late = {}, set()
     for h in hs:
+        if deadline is not None and (clock or _clock)() > deadline:
+            late.add(h["host"])                          # out of time: not looked up, never unmanaged
+            cand[h["host"]] = []
+            continue
         full, short, ip = h["fqdn"], h["short"], h["ip"]
         q = ("SELECT %s FROM Orion.Nodes WHERE Caption = @short OR DNS = @short OR Caption LIKE @shortdot OR DNS LIKE @shortdot"
              % FIELDS)
@@ -228,7 +246,9 @@ def find(client, hosts):
                     "%s N:%d" % (n["name"], n["node_id"]) for n in nodes.values() if hsw._ip(n["ip"]) == ip)
         if node is not None:
             picked.setdefault(node["node_id"], []).append(h["host"])
-        out[h["host"]] = {"node": node, "name": name, "why": why or ("no SolarWinds node named %s" % short)}
+        if h["host"] in late:
+            node, why = None, "SolarWinds took too long - not looked up"
+        out[h["host"]] = {"node": node, "name": name, "fqdn": full, "why": why or ("no SolarWinds node named %s" % short)}
     for nid, owners in picked.items():
         if len(owners) > 1:
             for host in owners:
@@ -257,29 +277,66 @@ def plan(node, win, now, check, tz=None, why="", earlier=None):
     return {"op": "unmanage", "level": "ok", "text": "SolarWinds: %s %s %s" % (tag, "would be unmanaged" if check else "unmanaged", shown(win, tz))}
 
 
-def run(client, items, now, check, tz=None):
-    """items: [{host, node_id, name, why, window, earlier}] (servers whose restart is scheduled) -> {host: {text, level, done,
-    times}}. Each node is read by its ID right before its own write; its name must still be the one matched, and it must
-    have no unmanage window. After the write one read-back: the window as SolarWinds shows it, and its time convention.
-    A failure is that server's warning."""
+def _clock():
+    return datetime.datetime.now(U)
+
+
+def same_node(n, name, fqdn):
+    """The node read again just before the write is still the one matched: it carries the matched name, and - when the
+    server's full name is known - no domain name of another domain (a DNS name it gained meanwhile)."""
+    names = _names(n)
+    if name and name not in names and not any(x.split(".", 1)[0] == name for x in names):
+        return "node N:%d is not named %s any more" % (n["node_id"], name)
+    doms = [x for x in names if "." in x]
+    if fqdn and doms and fqdn not in doms:
+        return "node N:%d is now named %s, not %s" % (n["node_id"], min(doms), fqdn)
+    return ""
+
+
+def run(client, items, at_utc, check, tz=None, budget=120, min_lead=60, clock=None):
+    """items: [{host, ip, fqdn, window, earlier}] - servers whose restart task is registered and verified (or, in Check,
+    would be) -> {host: {text, level, done, times}}. Bounded: past budget seconds in all, or with the restart less than
+    min_lead seconds away, a server is skipped (a warning). The nodes are found first (by name only); then each one is read
+    by its ID right before its own write - its name (and the server's domain) checked again, and it must have no unmanage
+    window. After the write one read-back: the window as SolarWinds shows it and its time convention (a failed read-back
+    does not undo the write: done, said). A failure is that server's warning."""
+    clock = clock or _clock
+    start = clock()
+    deadline = start + datetime.timedelta(seconds=int(budget))
+    at = parse(at_utc)
+    found = find(client, [{"host": it["host"], "ip": it.get("ip", ""), "fqdn": it.get("fqdn", "")} for it in items], deadline, clock)
     out = {}
     for it in items:
         res = {"text": "", "level": "info", "done": False, "times": ""}
+        f = found.get(it["host"]) or {}
+        now = clock()
+        if now > deadline:
+            res.update(level="warning", text="SolarWinds: took longer than %ds in all - not unmanaged" % int(budget))
+            out[it["host"]] = res
+            continue
+        if at is not None and (at - now).total_seconds() < int(min_lead):
+            res.update(level="warning", text="SolarWinds: the restart is less than a minute away - not unmanaged")
+            out[it["host"]] = res
+            continue
         try:
-            n = by_id(client, it["node_id"]) if it.get("node_id") else None
-            if n is not None and it.get("name") and it["name"] not in _names(n) and not any(
-                    x.split(".", 1)[0] == it["name"] for x in _names(n)):
-                raise sw.SwisError("node N:%d is not named %s any more - not unmanaged" % (n["node_id"], it["name"]), "changed")
-            p = plan(n, it["window"], now, check, tz, it.get("why", ""), it.get("earlier"))
+            n = by_id(client, f["node"]["node_id"]) if f.get("node") else None
+            if n is not None:
+                why = same_node(n, f.get("name"), f.get("fqdn"))
+                if why:
+                    raise sw.SwisError(why + " - not unmanaged", "changed")
+            p = plan(n, it["window"], now, check, tz, f.get("why", ""), it.get("earlier"))
             res.update(text=p["text"], level=p["level"])
             if not check and p["op"] == "unmanage":
                 client.invoke("Unmanage", ["N:%d" % n["node_id"], it["window"]["from"], it["window"]["until"], False])
                 res["done"] = True
-                back = by_id(client, n["node_id"]) or {}
-                how = same({"from": back.get("from"), "until": back.get("until")}, it["window"], tz)
-                res["times"] = how
-                if not how:
-                    res.update(level="warning", text=res["text"] + " - but SolarWinds shows %s after it" % shown_raw(back))
+                try:
+                    back = by_id(client, n["node_id"]) or {}
+                    how = same({"from": back.get("from"), "until": back.get("until")}, it["window"], tz)
+                    res["times"] = how
+                    if not how:
+                        res.update(level="warning", text=res["text"] + " - but SolarWinds shows %s after it" % shown_raw(back))
+                except sw.SwisError as e:
+                    res.update(level="warning", text=res["text"] + "; the read-back failed (%s)" % e)
         except sw.SwisError as e:
             res.update(level="warning", done=False, text="SolarWinds: unmanage failed (%s) - the restart stays as it is" % e
                        if getattr(e, "kind", "") != "changed" else "SolarWinds: %s" % e)

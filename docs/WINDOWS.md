@@ -660,8 +660,12 @@ What it does:
   with the name: refused, never decided by an IP. A short name whose node has another domain than the server's: refused.
   Only an IP matches (a cluster address can belong to another node): "matched by IP only - not unmanaged". The row says
   why (a warning), and the restart still goes ahead.
-- Only for servers whose task was verified. A skipped server ("only if pending", nothing pending) is not unmanaged.
-- Right before the call the node is read again by its ID: its name must still be the one matched.
+- Only for servers whose task was verified, after all restart tasks are registered: SolarWinds never costs the restart
+  its time. All SolarWinds work takes at most `win_restart_solarwinds_budget_seconds` (120); past it, or with the restart
+  less than a minute away by then, the server's node is left managed (a warning). A skipped server ("only if pending",
+  nothing pending) is not unmanaged.
+- Right before the call the node is read again by its ID: its name must still be the one matched, and - when the
+  server's full name is known - it must not carry a name of another domain. Otherwise: no write, a warning.
 - Only a node with no unmanage window at all is unmanaged: SWIS Invoke `Orion.Nodes/Unmanage` with
   `["N:<id>", <from UTC>, <until UTC>, false]`. A node that already has a window - a person's, or this job's from an
   earlier run - is left as it is: "SolarWinds: node already has an unmanage window (from-until) - left as it is" (a
@@ -670,8 +674,13 @@ What it does:
   window to expire; a cancel says "the unmanage window ... stays and ends by itself; re-manage the node by hand in
   SolarWinds if needed".
 - After the call one read-back reports the window as SolarWinds shows it, and whether SWIS returns times as UTC or as
-  local time ("SolarWinds returns times as ..."). Check on the first real run that the node's window in Orion is the
-  report's.
+  local time ("SolarWinds returns times as ..."). A failed read-back does not undo the write: "unmanaged; the read-back
+  failed". Check on the first real run that the node's window in Orion is the report's.
+- "No window" means: not unmanaged, and an end (`UnManageUntil`) that is empty or past every way it can be read - as UTC
+  and in the site's zone, both readings on the night the clocks go back. An end that cannot be read is a window: left.
+- One run at a time: the template is made with **Concurrent jobs** off, and with a "Red Hat Ansible Automation
+  Platform" credential (optional) each run also refuses to start while another run of it is going. The race left
+  needs two writers at once on one node - this job and a person (or another tool) unmanaging it in the same seconds.
 - A failed SolarWinds call is a warning on that row; the restart stays scheduled; the job ends as a warning.
 - With "only if pending" the node is unmanaged for the window even if, at the restart time, nothing is pending and the
   server does not restart.

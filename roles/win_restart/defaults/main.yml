@@ -39,5 +39,8 @@ win_restart_solarwinds: auto
 win_restart_solarwinds_before_minutes: 5
 # ... to this many minutes after it.
 win_restart_solarwinds_minutes: 10
-# Seconds to wait for SolarWinds' answer to one call.
-win_restart_solarwinds_timeout: 30
+# Seconds to wait for SolarWinds' answer to one call (no retry).
+win_restart_solarwinds_timeout: 20
+# All SolarWinds work of one run at most this many seconds (it comes after the restart tasks are registered); past it, or
+# with the restart less than a minute away, a server's node is left managed (a warning).
+win_restart_solarwinds_budget_seconds: 120

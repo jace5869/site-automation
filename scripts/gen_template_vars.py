@@ -884,7 +884,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # win_local_groups_approved: {groups: {Administrators: ['{computer}\\Administrator', 'CORP\\Domain Admins']}}
 # win_local_groups_approved_by: [{match: 'SRV-SQL*', groups: {Administrators: ['CORP\\SQL-Admins']}}]
 """),
-    "win_restart_schedule.yml": ("Windows - schedule a restart", "Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window)", "", """\
+    "win_restart_schedule.yml": ("Windows - schedule a restart", "Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window), Red Hat Ansible Automation Platform (optional: refuses a second run at once)", "", """\
 ## docs/WINDOWS.md "Schedule a restart". Limit: the servers (required). Job type: Check first = the plan.
 ## The survey asks: the time (24-hour HH:MM), only if a reboot is pending (yes/no), the reason, a change number.
 # win_restart_time: "22:30"

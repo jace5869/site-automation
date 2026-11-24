@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows - schedule a restart"
 #   playbook:    playbooks/win_restart_schedule.yml
-#   credentials: Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window)
+#   credentials: Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window), Red Hat Ansible Automation Platform (optional: refuses a second run at once)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -62,8 +62,13 @@
 ## ... to this many minutes after it.
 # win_restart_solarwinds_minutes: 10
 
-## Seconds to wait for SolarWinds' answer to one call.
-# win_restart_solarwinds_timeout: 30
+## Seconds to wait for SolarWinds' answer to one call (no retry).
+# win_restart_solarwinds_timeout: 20
+
+## All SolarWinds work of one run at most this many seconds (it comes after the restart tasks are
+## registered); past it, or with the restart less than a minute away, a server's node is left
+## managed (a warning).
+# win_restart_solarwinds_budget_seconds: 120
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

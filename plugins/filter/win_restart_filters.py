@@ -559,9 +559,9 @@ def _earlier(tasks, before=5, after=10):
     return {}
 
 
-def win_restart_swis_items(hosts, found, window, mode="schedule", check=False, before=5, after=10):
-    """hosts: [{host, result}] -> the Unmanage steps: one per server whose restart is scheduled (or, in Check, would be).
-    Nothing else ever calls SolarWinds: no Remanage, not for a skip, a reschedule or a cancel."""
+def win_restart_swis_items(hosts, mode="schedule", check=False, before=5, after=10):
+    """hosts: [{host, ip, result}] -> the servers whose restart task is registered and verified (or, in Check, would be):
+    [{host, ip, earlier}]. Nothing else ever calls SolarWinds: no Remanage, not for a skip, a reschedule or a cancel."""
     out = []
     if mode != "schedule":
         return out
@@ -569,10 +569,8 @@ def win_restart_swis_items(hosts, found, window, mode="schedule", check=False, b
         r, host = h.get("result") or {}, str(h.get("host"))
         if not r or r.get("error"):
             continue
-        f = (found or {}).get(host) or {}
         if (check and r.get("restart")) or (not check and r.get("scheduled")):
-            out.append({"host": host, "node_id": ((f.get("node") or {}).get("node_id")), "name": f.get("name", ""),
-                        "why": f.get("why", ""), "window": window,
+            out.append({"host": host, "ip": str(h.get("ip") or ""),
                         "earlier": _earlier(r.get("replaced") if not check else r.get("ours"), before, after)})
     return out
 
