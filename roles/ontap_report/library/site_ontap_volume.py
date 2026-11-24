@@ -62,9 +62,11 @@ from ansible.module_utils.six.moves.urllib.request import HTTPRedirectHandler, R
 from ansible.module_utils.site_ontap import Unreachable, error_text, explain, kind_of, ssl_context
 from ansible.module_utils import site_ontap_expand as X
 
-VOL_FIELDS = "uuid,name,svm.name,aggregates.name,state,type,style,is_svm_root,space.size,space.used,nas.path,comment"
+VOL_FIELDS = ("uuid,name,svm.name,aggregates.name,state,type,style,is_svm_root,space.size,space.used,space.available,"
+              "space.snapshot.reserve_percent,guarantee.type,nas.path,comment")
 AGGR_FIELDS = "uuid,name,space.block_storage.size,space.block_storage.used"
-LUN_FIELDS = "uuid,name,svm.name,location.volume.name,space.size,serial_number"
+# space.used: the blocks written (drops only after UNMAP); space.guarantee.requested: space-reserved (thick) or thin
+LUN_FIELDS = "uuid,name,svm.name,location.volume.name,space.size,space.used,space.guarantee.requested,serial_number"
 
 
 class Failed(Exception):
@@ -162,12 +164,21 @@ def vol_in(rec):
     return {"name": rec.get("name"), "svm": (rec.get("svm") or {}).get("name") or "", "size": gb_of(rec, "space", "size"),
             "uuid": rec.get("uuid"),
             "used": gb_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
+            "available": None if (rec.get("space") or {}).get("available") is None else gb_of(rec, "space", "available"),
+            "snap_pct": float(((rec.get("space") or {}).get("snapshot") or {}).get("reserve_percent") or 0),
+            "guarantee": (rec.get("guarantee") or {}).get("type") or "",
             "is_svm_root": rec.get("is_svm_root"), "aggregates": [a.get("name") for a in rec.get("aggregates") or []]}
 
 
 def aggr_in(rec):
     bs = (rec.get("space") or {}).get("block_storage") or {}
     return {"name": rec.get("name"), "size": int(bs.get("size") or 0), "used": None if bs.get("used") is None else int(bs["used"])}
+
+
+def lun_thick(rec):
+    """a LUN is space-reserved (thick) when ONTAP says its space guarantee is requested"""
+    g = ((rec.get("space") or {}).get("guarantee") or {}).get("requested")
+    return g is True or str(g).lower() == "true"
 
 
 def ips(c):
@@ -210,7 +221,8 @@ def list_cluster(c, opts):
             e = dict(base)
             if l_:
                 e.update(lun=l_.get("name") or "", luns=len(mine), naa=X.naa(l_.get("serial_number")), lun_size=gb_of(l_, "space", "size"),
-                         lun_uuid=l_.get("uuid") or "")
+                         lun_uuid=l_.get("uuid") or "", lun_used=gb_of(l_, "space", "used"), lun_thick=lun_thick(l_),
+                         vol_available=vi["available"], snap_pct=vi["snap_pct"], guarantee=vi["guarantee"])
             e["uuid"] = v.get("uuid") or ""
             choices.append(e)
     return name, choices, excluded
@@ -242,7 +254,8 @@ def read_one(c, key, opts, size_text):
         if lrec.get("uuid") != key.get("lun_uuid"):
             raise Failed("LUN %s is not the one the list showed (it was made again since): run NetApp - refresh volume list and pick it "
                          "again" % key["lun"])
-        lun = {"name": lrec["name"], "size": gb_of(lrec, "space", "size")}
+        lun = {"name": lrec["name"], "size": gb_of(lrec, "space", "size"), "used": gb_of(lrec, "space", "used"), "thick": lun_thick(lrec),
+               "total": sum(gb_of(x, "space", "size") for x in luns)}
     elif count and not X.excluded(v, opts["exclude"]):
         raise Failed("volume %s holds %d LUN(s): pick its LUN in the list (each LUN is its own choice), so the LUN grows with it"
                      % (key["volume"], count))
@@ -272,10 +285,24 @@ def grow(c, p, key, opts, line, wait):
                   "result": why or "unchanged since the plan"})
     if why:
         return steps
-    p["target"] = now["size"] + p["growth"]          # what the aggregate was checked for, on the size read just now
-    body = {"size": p["target"]}
+    vg = p.get("vol_growth", p["growth"])
+    p["target"] = now["size"] + vg                   # what the aggregate was checked for, on the size read just now
+    body = {"size": p["target"]} if vg > 0 else {}
     if line:
         body["comment"] = X.comment_with(vols[0].get("comment") or "", line)     # the comment as it is now, not as planned
+    if vg <= 0 and p.get("lun"):                      # a LUN's volume with room enough: only the comment (if any) changes
+        ok, res = True, "Not needed - %s" % (p.get("vol_how") or "it has room for the LUN's growth")
+        if body:
+            try:
+                bad = c.wait(c.call("PATCH", "/api/storage/volumes/" + p["volume_uuid"], body=body), wait)
+                ok, res = not bad, bad or res + "; its comment written"
+            except (Failed, Unreachable, HTTPException, ValueError) as e:
+                ok, res = False, "Failed or not known: %s - the volume's comment; nothing else was changed" % e
+        steps.append({"step": "Grow the volume", "exactly": "size %s stays%s" % (X.human(p["size"]), (", comment + \"%s\"" % line) if line else ""),
+                      "ok": ok, "result": res})
+        if not ok:
+            return steps
+        return _grow_lun(c, p, key, wait, steps)
     try:
         bad = c.wait(c.call("PATCH", "/api/storage/volumes/" + p["volume_uuid"], body=body), wait)
         got = vol_in([v for v in c.records("/api/storage/volumes", VOL_FIELDS, uuid=p["volume_uuid"]) if v.get("uuid") == p["volume_uuid"]][0])["size"]
@@ -283,10 +310,16 @@ def grow(c, p, key, opts, line, wait):
         res = bad or ("Done - read back %s" % X.human(got) if ok else "ONTAP said done, but it reads %s" % X.human(got))
     except (Failed, Unreachable, IndexError, HTTPException, ValueError) as e:
         ok, res = False, "Failed or not known: %s - read the volume in ONTAP System Manager" % (e or "the volume could not be read back")
-    steps.append({"step": "Grow the volume", "exactly": "PATCH /api/storage/volumes/%s size %s -> %s%s" % (
-        p["volume_uuid"], X.human(p["size"]), X.human(p["target"]), (", comment + \"%s\"" % line) if line else ""), "ok": ok, "result": res})
+    steps.append({"step": "Grow the volume", "exactly": "PATCH /api/storage/volumes/%s size %s -> %s%s%s" % (
+        p["volume_uuid"], X.human(p["size"]), X.human(p["target"]), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "",
+        (", comment + \"%s\"" % line) if line else ""), "ok": ok, "result": res})
     if not ok or not p.get("lun"):
         return steps
+    return _grow_lun(c, p, key, wait, steps)
+
+
+def _grow_lun(c, p, key, wait, steps):
+    """the LUN by the growth planned, read back -> steps"""
     t = p["lun"]["target"]
     try:
         cur = [x for x in c.records("/api/storage/luns", LUN_FIELDS, uuid=p["lun_uuid"]) if x.get("uuid") == p["lun_uuid"]]

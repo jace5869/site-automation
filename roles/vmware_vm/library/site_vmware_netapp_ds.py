@@ -27,7 +27,7 @@ author: site automation
 '''
 
 RETURN = r'''
-found: {description: "map: one per key, in order - {datastore, kind, vcenter, hosts} or {} when none.", type: list, returned: always}
+found: {description: "map: one per key, in order - {datastore, kind, vcenter, hosts, capacity, free (bytes, the datastore's own)} or {} when none.", type: list, returned: always}
 steps: {description: "grow: [{step, exactly, ok, result}].", type: list, returned: always}
 vcenters: {description: The vCenters read and why one could not be., type: list, returned: always}
 '''
@@ -109,8 +109,8 @@ def match(key, seen, vmfs, nfs, resolve=addresses):
         hosts = [h for h, _l in seen.get(naa, [])]
         if not ds and not hosts:
             return {}
-        return {"datastore": ds.name if ds else "", "kind": "VMFS" if ds else "LUN (no datastore)", "hosts": sorted(h.name for h in hosts),
-                "ds": ds, "serial": serial_of(naa)}
+        return dict({"datastore": ds.name if ds else "", "kind": "VMFS" if ds else "LUN (no datastore)", "hosts": sorted(h.name for h in hosts),
+                     "ds": ds, "serial": serial_of(naa)}, **space(ds))
     path = key.get("nfs_path") or ""
     hits = [(ds, rh) for ds, rh, rp in nfs if same_path(rp, path)]
     ips = set(key.get("nfs_ips") or [])
@@ -120,7 +120,19 @@ def match(key, seen, vmfs, nfs, resolve=addresses):
     if len(hits) != 1:
         return {}
     ds = hits[0][0]
-    return {"datastore": ds.name, "kind": "NFS", "hosts": sorted(getattr(m.key, "name", "") for m in ds.host or []), "ds": ds}
+    return dict({"datastore": ds.name, "kind": "NFS", "hosts": sorted(getattr(m.key, "name", "") for m in ds.host or []), "ds": ds}, **space(ds))
+
+
+def space(ds):
+    """a datastore's own capacity and free space (bytes; read only) - how full a LUN's datastore is, as VMware sees it"""
+    sm = getattr(ds, "summary", None) if ds is not None else None
+    cap, free = getattr(sm, "capacity", None), getattr(sm, "freeSpace", None)
+    if cap is None or free is None:
+        return {}
+    try:
+        return {"capacity": int(cap), "free": int(free)}
+    except (TypeError, ValueError):
+        return {}
 
 
 def grow_vmfs(found, naa, want, expand=True, where="", scan=True, change=True):

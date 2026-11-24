@@ -49,10 +49,12 @@ class Sizes(unittest.TestCase):
 
 class Plans(unittest.TestCase):
     def test_lun_volume_default(self):
+        """thin LUN: the default growth is the LUN's (10 % of 9 GB -> 1 GB at least); the volume keeps its headroom (10/9)"""
         p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/lun_ds01", "size": 9 * GB}, lun_listed=9 * GB)
         self.assertEqual(p["status"], "grow", p["why"])
-        self.assertEqual((p["growth"], p["target"], p["lun"]["target"]), (GB, 11 * GB, 10 * GB))
-        self.assertEqual(p["used_pct_after"], 80.0)
+        self.assertEqual((p["growth"], p["lun"]["target"]), (GB, 10 * GB))
+        self.assertEqual(p["target"], X._ceil_mb(10 * GB * 10 / 9.0))
+        self.assertIn("thin LUN, the volume keeps 1.11x its LUN", p["vol_how"])
         self.assertEqual(p["by"], "default")
 
     def test_default_over_the_limit_says_what_fits(self):
@@ -100,8 +102,10 @@ class Plans(unittest.TestCase):
         self.assertIn("changed since the list", p["why"])
 
     def test_lun_never_bigger_than_its_volume(self):
-        p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": int(10.5 * GB)}, lun_listed=int(10.5 * GB))
-        self.assertIn("bigger than its volume", p["why"])
+        """a thin LUN bigger than its volume (over-provisioned): the volume still grows to at least the LUN's new size"""
+        p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 20 * GB}, lun_listed=20 * GB)
+        self.assertEqual(p["status"], "grow", p["why"])
+        self.assertGreaterEqual(p["target"], p["lun"]["target"])
 
     def test_recheck(self):
         p = X.plan(vol(), AGGR, 10 * GB, {})
@@ -125,13 +129,14 @@ class Review1123(unittest.TestCase):
         self.assertEqual(p["target"] - p["size"], GB)                       # never more than the aggregate was checked for
 
     def test_a_lun_left_behind_is_not_nothing_to_do(self):
+        """a LUN volume is done when its LUN is: a volume grown by hand with the LUN left as it was is not 'nothing to do'"""
         lun = {"name": "/vol/vol_ds01/lun_ds01", "size": 9 * GB}
         p = X.plan(vol(11 * GB), AGGR, 10 * GB, {}, lun=lun, lun_listed=9 * GB)
         self.assertEqual(p["status"], "refused")
-        self.assertIn("its LUN is 9.0 GB, not 10.0 GB", p["why"])
+        self.assertIn("the volume changed since the list", p["why"])
         done = X.plan(vol(11 * GB), AGGR, 10 * GB, {}, lun=dict(lun, size=10 * GB), lun_listed=9 * GB)
         self.assertEqual(done["status"], "nothing")
-        self.assertIn("and its LUN too", done["why"])
+        self.assertIn("LUN lun_ds01 already 10.0 GB", done["why"])
 
     def test_a_lun_changed_since_the_list(self):
         p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": int(9.5 * GB)}, lun_listed=9 * GB)
@@ -158,13 +163,78 @@ class Review1123(unittest.TestCase):
         more = X.plan(vol(111 * GB), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 110 * GB}, lun_listed=9 * GB)
         self.assertEqual((more["status"], more["lun"], more["retry_ok"]), ("nothing", None, False))   # grown more by someone else: vCenter left alone
         vol_more = X.plan(vol(130 * GB), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 10 * GB}, lun_listed=9 * GB)
-        self.assertFalse(vol_more["retry_ok"])                                     # the volume grown more: no retry either
+        self.assertTrue(vol_more["retry_ok"])                                      # a LUN volume is judged by its LUN: the LUN is as planned
         self.assertIn("did not have the size of LUN", X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 9 * GB})["why"])
         self.assertIn("could not be read", X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 0}, lun_listed=9 * GB)["why"])
 
     def test_a_size_to_type_fits(self):
         self.assertEqual(X.human(1023 * MB, floor=True), "0.9 GB")
         self.assertEqual(X.human(int(1.999 * TB), floor=True), "1.99 TB")
+
+
+class LunPlans(unittest.TestCase):
+    """A LUN volume is judged and grown by its LUN: the growth is the LUN's, the volume grows only as much as the bigger LUN
+    needs - thick: its used space + the growth, thin: its headroom over its LUNs kept; the snapshot reserve on top; not at all
+    when it has the room. The aggregate's limit is checked against the volume's growth."""
+    LUN = {"name": "/vol/vol_ds01/lun0", "size": 2 * TB, "used": int(1.64 * TB), "thick": True, "total": 2 * TB}
+
+    def v(self, size, available, snap=5):
+        return vol(size, size - available, available=available, snap_pct=snap)
+
+    def test_thick_with_snapshot_reserve(self):
+        size = int(2.11 * TB)
+        avail = int(size * 0.95) - 2 * TB                          # the thick LUN is all the usable space takes
+        p = X.plan(self.v(size, avail), AGGR, size, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(p["status"], "grow", p["why"])
+        g = X.default_growth(2 * TB)                               # 10 % of the LUN: 204.8 GB
+        self.assertEqual((p["growth"], p["lun"]["target"]), (g, 2 * TB + g))
+        self.assertEqual(p["target"], X._ceil_mb((2 * TB + g) / 0.95))
+        self.assertEqual(p["vol_growth"], p["target"] - size)
+        self.assertEqual(p["vol_how"], "thick LUN + 5 % snapshot reserve")
+        self.assertIn("of the LUN's 2.00 TB", p["default_text"])
+
+    def test_thin_keeps_the_headroom(self):
+        lun = dict(self.LUN, thick=False)
+        p = X.plan(self.v(int(2.5 * TB), int(0.4 * TB), snap=0), AGGR, int(2.5 * TB), {}, lun=lun, lun_listed=2 * TB)
+        g = X.default_growth(2 * TB)
+        self.assertEqual(p["target"], X._ceil_mb(2.5 * TB * (2 * TB + g) / (2 * TB)))
+        self.assertTrue(p["vol_how"].startswith("thin LUN, the volume keeps 1.25x its LUN"), p["vol_how"])
+
+    def test_enough_room_already(self):
+        p = X.plan(self.v(3 * TB, int(0.85 * TB), snap=0), AGGR, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(p["status"], "grow", p["why"])
+        self.assertEqual((p["vol_growth"], p["target"]), (0, 3 * TB))
+        self.assertTrue(p["vol_how"].startswith("it has room for the LUN's growth already"), p["vol_how"])
+        self.assertEqual(p["aggr_pct_after"], p["aggr_pct"])       # nothing of the aggregate
+
+    def test_aggregate_limit_is_against_the_volume_growth(self):
+        size = int(2.11 * TB)
+        avail = int(size * 0.95) - 2 * TB
+        aggr = {"name": "aggr1", "size": 10 * TB, "used": int(9.7 * TB) - 100 * GB}       # 100 GB under 97 %
+        p = X.plan(self.v(size, avail), aggr, size, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("on the LUN needs the volume +", p["why"])
+        self.assertIn(" would put aggr1 at ", p["why"])
+        self.assertGreater(p["room"], 0)                                                   # the largest LUN growth that fits
+        self.assertLessEqual(X.volume_for_lun(self.v(size, avail), self.LUN, p["room"])[0] - size, X.room(10 * TB, aggr["used"], 97))
+        self.assertGreater(X.volume_for_lun(self.v(size, avail), self.LUN, p["room"] + X.MB)[0] - size, X.room(10 * TB, aggr["used"], 97))
+        ok = X.plan(self.v(size, avail), aggr, size, {}, lun=self.LUN, lun_listed=2 * TB, size_text="%dGB" % (p["room"] // GB))
+        self.assertEqual(ok["status"], "grow", ok["why"])
+        room_vol = X.plan(self.v(3 * TB, int(0.85 * TB), snap=0), aggr, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(room_vol["status"], "grow")                                      # no volume growth: the aggregate is not asked
+
+    def test_recheck_uses_the_volume_growth(self):
+        p = X.plan(self.v(3 * TB, int(0.85 * TB), snap=0), AGGR, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)
+        full = dict(AGGR, used=int(20 * TB * 0.97))
+        self.assertEqual(X.recheck(p, self.v(3 * TB, int(0.85 * TB), snap=0), full), "")    # the LUN grows inside the volume
+
+    def test_fullness(self):
+        e = {"lun": "/vol/v/l", "lun_size": 100 * GB, "lun_used": 82 * GB, "size": 110 * GB, "used": 108 * GB}
+        self.assertEqual(X.lun_fullness(e), (100 * GB, 82 * GB, "LUN"))
+        self.assertEqual(X.fullness_text(e), "LUN 82% written")
+        e2 = dict(e, ds_capacity=99 * GB, ds_free=int(19.8 * GB))
+        self.assertEqual(X.fullness_text(e2), "datastore 80% used")
+        self.assertEqual(X.fullness_text({"size": 100 * GB, "used": 50 * GB}), "volume 50% used")
 
 
 class Exclusions(unittest.TestCase):
@@ -211,11 +281,11 @@ class Naa(unittest.TestCase):
 class Choices(unittest.TestCase):
     E = {"cluster": "cluster1", "address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03", "lun": "/vol/vol_ds03/lun_a",
          "luns": 2, "size": 2 * TB, "used": int(1.58 * TB), "aggr": "aggr1", "aggr_free": int(5.76 * TB), "datastore": "DS-SITEA-03A",
-         "lun_size": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"}
+         "lun_size": 900 * GB, "lun_used": 711 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"}
 
     def test_text_and_key(self):
         t = X.choice_text(self.E)
-        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free "
+        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - LUN 900.0 GB, 21% free "
                                      "[VMware datastore DS-SITEA-03A, LUN lun_a of 2] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
         self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
                                              "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
@@ -242,6 +312,17 @@ class Choices(unittest.TestCase):
         self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["b", "c", "a"])
         self.assertIn("[VMware datastore DS-B, NFS]", got[0])                    # its datastore follows it in the sort
         self.assertEqual(XF.ontap_expand_choices([a, b, c], [], 2)["more"], 1)
+
+    def test_fullest_first_by_the_lun_or_its_datastore(self):
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        nas = dict(self.E, lun="", luns=0, datastore="", volume="vol_nas", size=100 * GB, used=85 * GB, uuid="n")
+        thick = dict(self.E, luns=1, volume="vol_thick", size=100 * GB, used=99 * GB, lun_size=90 * GB, lun_used=30 * GB, uuid="t")
+        ds = dict(thick, volume="vol_ds", uuid="d")
+        got = XF.ontap_expand_choices([thick, nas, ds], [{}, {}, {"datastore": "DS9", "capacity": 89 * GB, "free": 4 * GB}])["choices"]
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["d", "n", "t"])        # the volume's own 99 % counts for nothing
+        self.assertTrue(got[0].startswith("vol_ds (svm_vmware) - LUN 89.0 GB, 4% free [VMware datastore DS9, LUN]"), got[0])
+        self.assertTrue(got[2].startswith("vol_thick (svm_vmware) - LUN 90.0 GB, 67% free [LUN]"), got[2])
 
     def test_plain_and_nfs(self):
         e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")

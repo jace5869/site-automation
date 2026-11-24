@@ -127,8 +127,11 @@ def choice_text(e, show_cluster=False):
     # 1.123.1 (user): short - the name, its SVM, the size and how much is free; the cluster and aggregate are in the job's
     # plan and the refresh report, the key stays last (the portal hides it)
     # Codex 1.123.1: two clusters with the same SVM and volume names - the caller asks for the cluster (show_cluster)
-    return "%s (%s) - %s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
-        name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), human(e["size"]), max(0, 100 - int(round(pct(e["used"], e["size"])))),
+    # (user) a LUN volume is judged by its LUN: the size and the free space shown are the LUN's (or its datastore's, lun_fullness)
+    fsize, fused, _src = lun_fullness(e)
+    return "%s (%s) - %s%s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
+        name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), "LUN " if e.get("lun") else "", human(fsize),
+        max(0, 100 - int(round(pct(fused, fsize)))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
 
@@ -187,13 +190,15 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
     except ValueError as e:
         p["why"] = str(e)
         return p
-    p["growth"] = g
+    p["growth"] = p["vol_growth"] = g
+    p["default_text"] = "%d %% of %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(listed), o["min_gb"], o["max_gb"])
+    if lun is not None:
+        return _plan_lun(p, vol, lun, int(listed), int(lun_listed or 0), o, size_text)
     p["target"] = want = int(listed) + g
     if lun is not None and not lun_listed:
         p["why"] = "the list did not have the size of LUN %s - run NetApp - refresh volume list and pick it again" % lun["name"]
         return p
     lun_done = lun is None or int(lun["size"]) >= int(lun_listed) + g - SLACK
-    p["default_text"] = "%d %% of %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(listed), o["min_gb"], o["max_gb"])
     if size >= p["target"] - SLACK:
         if not lun_done:
             p["why"] = ("the volume is already %s, but its LUN is %s, not %s: grow the LUN %s in ONTAP System Manager, then its "
@@ -236,6 +241,120 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
     return p
 
 
+def lun_fullness(e):
+    """How full a choice is, as the person sees it -> (size, used, source). A LUN volume is always about as full as its LUN
+    takes (a space-reserved LUN all of it), so for a LUN it is the LUN: the VMware datastore's own used space when vCenter
+    was read (capacity and free space), else the LUN's blocks written in ONTAP (space.used - it drops only after UNMAP).
+    A volume without a LUN (NFS): the volume's."""
+    if e.get("lun"):
+        cap, free = e.get("ds_capacity"), e.get("ds_free")
+        if cap and free is not None and int(cap) > 0:
+            return int(cap), max(0, int(cap) - int(free)), "datastore"
+        size = int(e.get("lun_size") or 0)
+        if size:
+            return size, int(e.get("lun_used") or 0), "LUN"
+    return int(e.get("size") or 0), int(e.get("used") or 0), "volume"
+
+
+def fullness_text(e):
+    """'datastore 82% used' / 'LUN 82% written' / 'volume 82% used'"""
+    size, used, src = lun_fullness(e)
+    return "%s %d%% %s" % (src, int(round(pct(used, size))), "written" if src == "LUN" else "used")
+
+
+def _ceil_mb(n):
+    return int(math.ceil(float(n) / MB) * MB)
+
+
+def volume_for_lun(vol, lun, g):
+    """The volume size a LUN grown by g needs -> (bytes, how). Never less than the volume is now. thick (the LUN space-
+    reserved): the volume's used space now (its usable part less what is free) + g; thin: the volume keeps its headroom
+    over its LUNs (usable size / the LUNs' sizes) for the LUNs + g. Either way the volume's snapshot reserve on top (it is a
+    % of the volume's size) and never smaller than the LUN."""
+    size = int(vol["size"])
+    keep = 1.0 - float(vol.get("snap_pct") or 0) / 100.0
+    if keep <= 0.05:
+        keep = 0.05
+    afs = size * keep
+    lsize = int(lun["size"])
+    total = max(int(lun.get("total") or 0), lsize)
+    if lun.get("thick"):
+        avail = vol.get("available")
+        used_afs = (afs - int(avail)) if avail is not None else total
+        need_afs, how = max(0.0, used_afs) + g, "thick LUN"
+    else:
+        need_afs = afs * (total + g) / float(total)
+        how = "thin LUN, the volume keeps %.2fx its LUN%s" % (afs / float(total), "s" if total > lsize else "")
+    need = max(need_afs / keep, lsize + g)
+    if vol.get("snap_pct"):
+        how += " + %g %% snapshot reserve" % float(vol["snap_pct"])
+    return max(size, _ceil_mb(need)), how
+
+
+def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
+    """plan() for a volume that holds the LUN picked: the LUN is what fills and what grows (the default growth is of the LUN);
+    the volume grows only as much as the bigger LUN needs (volume_for_lun) - not at all when it has the room."""
+    size = p["size"]
+    if not lun_listed:
+        p["why"] = "the list did not have the size of LUN %s - run NetApp - refresh volume list and pick it again" % lun["name"]
+        return p
+    if not lun.get("size"):
+        p["why"] = "the size of LUN %s could not be read - nothing is changed without it" % lun["name"]
+        return p
+    try:
+        g = parse_size(size_text) if p["by"] == "size" else default_growth(lun_listed, o["pct"], o["min_gb"], o["max_gb"])
+    except ValueError as e:
+        p["why"] = str(e)
+        return p
+    lsize = int(lun["size"])
+    p.update(growth=g, vol_growth=0, target=size, thick=bool(lun.get("thick")), snap_pct=float(vol.get("snap_pct") or 0),
+             guarantee=str(vol.get("guarantee") or ""),
+             default_text="%d %% of the LUN's %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(lun_listed), o["min_gb"], o["max_gb"]),
+             fullness={"pct": pct(lun.get("used") or 0, lsize), "source": "LUN written"})
+    want = lun_listed + g
+    if lsize >= want - SLACK:
+        p.update(status="nothing", why="LUN %s already %s (the list's %s + %s) - nothing to do" % (
+            lun["name"].rsplit("/", 1)[-1], human(lsize), human(lun_listed), human(g)), growth=0)
+        # exactly this choice's size: the datastore's step may run again (a rescan or expand that failed before) - never after
+        # someone else grew it more
+        p["retry_ok"] = abs(lsize - want) <= SLACK
+        if p["retry_ok"]:
+            p["lun"] = {"name": lun["name"], "size": lsize, "target": lsize, "thick": bool(lun.get("thick"))}
+        return p
+    if abs(lsize - lun_listed) > SLACK:
+        p["why"] = ("the LUN changed since the list was made (listed %s, now %s) - run NetApp - refresh volume list and pick it again"
+                    % (human(lun_listed), human(lsize)))
+        return p
+    if abs(size - listed) > SLACK:
+        p["why"] = ("the volume changed since the list was made (listed %s, now %s) - run NetApp - refresh volume list and pick it again"
+                    % (human(listed), human(size)))
+        return p
+    vt, how = volume_for_lun(vol, lun, g)
+    vg = vt - size
+    p.update(target=vt, vol_growth=vg, vol_how=how if vg else "it has room for the LUN's growth already (%s)" % how,
+             lun={"name": lun["name"], "size": lsize, "target": lsize + g, "thick": bool(lun.get("thick")), "used": int(lun.get("used") or 0)})
+    p["aggr_pct_after"] = pct(p["aggr_used"] + vg, p["aggr_size"])
+    p["used_pct_after"] = pct(p["used"], vt)
+    if vg > p["room"]:
+        aroom = p["room"]
+        lo, hi = 0, max(1, (aroom + lsize) // MB)          # the largest LUN growth whose volume growth fits (whole MB)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if volume_for_lun(vol, lun, mid * MB)[0] - size <= aroom:
+                lo = mid
+            else:
+                hi = mid - 1
+        p["room"] = lo * MB
+        what = ("Default %s" % human(g)) if p["by"] == "default" else human(g)
+        p["why"] = ("%s on the LUN needs the volume +%s (%s), which would put %s at %.1f %%; %s" % (
+            what, human(vg), how, p["aggr"], p["aggr_pct_after"],
+            ("up to %s on the LUN fits" % human(p["room"], floor=True)) if p["room"] >= MIN_TYPED else
+            "nothing fits (it is at %.1f %% now, the limit is %g %%)" % (p["aggr_pct"], o["max_pct"])))
+        return p
+    p.update(status="grow", why="")
+    return p
+
+
 def recheck(p, vol, aggr, exclude=()):
     """Right before the change: '' when the volume and its aggregate still are as planned, else why it stops. vol: the volume
     read again ({name, svm, size, state, type, style, is_svm_root, aggregates}), aggr: its aggregate now."""
@@ -251,7 +370,8 @@ def recheck(p, vol, aggr, exclude=()):
     if abs(int(vol["size"]) - int(p["size"])) > SLACK:
         return "the volume changed between the plan and the change (%s, now %s) - nothing was changed" % (human(p["size"]), human(vol["size"]))
     left = room(int(aggr.get("size") or 0), int(aggr.get("used") or 0), p["max_pct"])
-    if p["growth"] > left:
+    vg = p.get("vol_growth", p["growth"])
+    if vg > left:
         return ("%s got fuller between the plan and the change (%.1f %% now): %s no longer fits under %g %% - nothing was changed"
-                % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(p["growth"]), p["max_pct"]))
+                % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(vg), p["max_pct"]))
     return ""

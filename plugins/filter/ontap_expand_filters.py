@@ -62,8 +62,11 @@ def ontap_expand_doc(r):
                          "ok": not inc.get("error"), "result": inc.get("error") or "%s opened" % inc.get("number")})
     hand = []
     if p.get("status") == "grow" and check:
-        steps += [{"step": "Grow the volume", "exactly": "PATCH /api/storage/volumes/{uuid} size %s -> %s" % (X.human(p["size"]), X.human(p["target"])),
-                   "ok": None, "result": NOT_RUN}]
+        vg = p.get("vol_growth", p.get("growth"))
+        steps += [{"step": "Grow the volume", "exactly": ("PATCH /api/storage/volumes/{uuid} size %s -> %s%s" % (
+                       X.human(p["size"]), X.human(p["target"]), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "")) if vg
+                   else "size %s stays: %s" % (X.human(p["size"]), p.get("vol_how") or "room enough"),
+                   "ok": None, "result": NOT_RUN if vg else "Not needed"}]
         if lun:
             steps.append({"step": "Grow the LUN", "exactly": "%s space.size %s -> %s" % (lun["name"], X.human(lun["size"]), X.human(lun["target"])),
                           "ok": None, "result": NOT_RUN})
@@ -96,23 +99,32 @@ def ontap_expand_doc(r):
     failed = [s for s in steps if s.get("ok") is False]
     target, g = p.get("target"), p.get("growth") or 0
     aggr_after = p.get("aggr_pct_after", p.get("aggr_pct"))
+    # a LUN volume is judged and grown by its LUN: the LUN's sizes first, the volume's after them
+    now_txt = ("LUN %s" % X.human(lun["size"])) if lun else X.human(p.get("size"))
+    if lun and p.get("status") in ("grow", "refused") and p.get("growth"):
+        vg = p.get("vol_growth", 0)
+        change = "LUN %s -> %s; volume %s" % (X.human(lun["size"]), X.human(lun["target"]), (
+            "%s -> %s (%s)" % (X.human(p["size"]), X.human(p["target"]), p.get("vol_how") or "") if vg else
+            "%s stays (%s)" % (X.human(p["size"]), p.get("vol_how") or "room enough")))
+    else:
+        change = "%s -> %s" % (X.human(p.get("size")), X.human(target))
     if p.get("status") == "nothing" and failed:
-        status, title = "critical", "NetApp expand: %s already %s - but FAILED at: %s" % (vol, X.human(p.get("size")), failed[0]["step"].lower())
+        status, title = "critical", "NetApp expand: %s already %s - but FAILED at: %s" % (vol, now_txt, failed[0]["step"].lower())
     elif p.get("status") == "nothing" and hand:
-        status, title = "warning", "NetApp expand: %s already %s - check the datastore in vCenter by hand" % (vol, X.human(p.get("size")))
+        status, title = "warning", "NetApp expand: %s already %s - check the datastore in vCenter by hand" % (vol, now_txt)
     elif p.get("status") == "nothing":
-        status, title = "ok", "NetApp expand: %s already %s - nothing to do" % (vol, X.human(p.get("size")))
+        status, title = "ok", "NetApp expand: %s already %s - nothing to do" % (vol, now_txt)
     elif p.get("status") == "refused":
         limit = " would put " in (p.get("why") or "")
         status = "warning" if limit else "critical"
         title = "NetApp expand: %s NOT grown - %s" % (vol, p.get("why"))
     elif check:
-        title = "NetApp expand: %s - the plan: %s -> %s (nothing changed)" % (vol, X.human(p["size"]), X.human(target))
+        title = "NetApp expand: %s - the plan: %s (nothing changed)" % (vol, change)
     elif failed:
         status, title = "critical", "NetApp expand: %s - FAILED at: %s" % (vol, failed[0]["step"].lower())
     else:
         status = "warning" if hand else "ok"
-        title = "NetApp expand: %s grown %s -> %s" % (vol, X.human(p["size"]), X.human(target))
+        title = "NetApp expand: %s grown %s" % (vol, change if lun else "%s -> %s" % (X.human(p["size"]), X.human(target)))
         title += (" - %s the datastore in vCenter by hand" % ("expand" if p.get("naa") else "refresh")) if hand else \
             (" and datastore %s %s" % (ds["datastore"], "expanded" if p.get("naa") else "refreshed") if any(
                 s["ok"] and ("datastore" in s["step"].lower()) for s in steps) and ds.get("datastore") else "")
@@ -120,7 +132,7 @@ def ontap_expand_doc(r):
                 "status": "warning" if p.get("used_pct", 0) >= 85 else "ok", "note": "%.1f %% used (%s)" % (p.get("used_pct", 0), X.human(p.get("used")))}]
     if p.get("status") in ("grow", "refused") and g:
         refused_limit = p.get("status") == "refused" and " would put " in (p.get("why") or "")
-        summary.append({"label": "Growth" if p.get("by") == "size" or not refused_limit else "Default growth", "value": "+" + X.human(g),
+        summary.append({"label": ("LUN growth" if lun else "Growth") if p.get("by") == "size" or not refused_limit else "Default growth", "value": "+" + X.human(g),
                         "status": "critical" if refused_limit else "info",
                         "note": ("the Size box (%s)" % r.get("size")) if p.get("by") == "size" else p.get("default_text", "")})
     if p.get("status") == "grow":
@@ -157,7 +169,7 @@ def ontap_expand_doc(r):
     if failed:
         sections.append({"title": "What failed", "status": "critical", "lines": ["%s: %s" % (s["step"], s["result"]) for s in failed]})
     rows, cells = [["Volume %s size" % vol, X.human(p.get("size")), X.human(target if p.get("growth") else p.get("size")),
-                    "grows only - never shrinks"],
+                    (p.get("vol_how") or "grows only - never shrinks") if lun else "grows only - never shrinks"],
                    ["Volume used", "%.1f %%" % p.get("used_pct", 0), "%.1f %%" % p.get("used_pct_after", p.get("used_pct", 0)), "%s used" % X.human(p.get("used"))],
                    ["Aggregate %s used" % p.get("aggr"), "%.1f %%" % p.get("aggr_pct", 0), "%.1f %%" % (aggr_after or 0),
                     "at most %g %% (ontap_expand_aggr_max_pct)%s" % (p.get("max_pct", 97), " - OK" if p.get("status") == "grow" else
@@ -165,7 +177,8 @@ def ontap_expand_doc(r):
     cells = [["", "", "", ""], ["", "warning" if p.get("used_pct", 0) >= 85 else "", "", ""],
              ["", "", "critical" if " would put " in (p.get("why") or "") else "", "ok" if p.get("status") == "grow" else ""]]
     if lun:
-        rows.append(["LUN %s size" % lun["name"].rsplit("/", 1)[-1], X.human(lun["size"]), X.human(lun["target"]), "grows by the same %s" % X.human(g)])
+        rows.append(["LUN %s size" % lun["name"].rsplit("/", 1)[-1], X.human(lun["size"]), X.human(lun["target"]),
+                     "grows by %s (%s)" % (X.human(g), "space-reserved, thick" if lun.get("thick") else "thin")])
         cells.append(["", "", "", ""])
     if p.get("status") in ("grow", "refused") and p.get("growth"):
         sections.append({"title": "Now and after" if p.get("status") == "grow" else "Now and with %s" % ("the default" if p.get("by") == "default" else "it"),
@@ -207,22 +220,28 @@ def ontap_expand_key(e):
 def ontap_expand_choices(choices, found=None, limit=500):
     """the list's survey choices: each with its datastore (found: one per choice, from site_vmware_netapp_ds map), at most limit"""
     found = found or []
-    # (user) the fullest first: used % of the volume, most to least (the limit keeps the fullest)
-    order = sorted(range(len(choices or [])), key=lambda i: -(float(choices[i].get("used") or 0) / float(choices[i].get("size") or 1)))
+    choices = [dict(e, datastore=(found[i] or {}).get("datastore") or "" if i < len(found) else "",
+                    ds_capacity=(found[i] or {}).get("capacity") if i < len(found) else None,
+                    ds_free=(found[i] or {}).get("free") if i < len(found) else None) for i, e in enumerate(choices or [])]
+
+    def full(e):
+        size, used, _src = X.lun_fullness(e)
+        return float(used) / float(size or 1)
+    # (user) the fullest first - a LUN volume by its LUN (or its datastore), never by the volume (X.lun_fullness); the limit
+    # keeps the fullest
+    order = sorted(range(len(choices)), key=lambda i: -full(choices[i]))
     choices = [choices[i] for i in order]
     found = [found[i] if i < len(found) else {} for i in order]
     out = []
     for i, e in enumerate(choices or []):
-        f = found[i] if i < len(found) and found[i] else {}
-        out.append(X.choice_text(dict(e, datastore=f.get("datastore") or "")))
+        out.append(X.choice_text(e))
     # Codex 1.123.1: choices a person could not tell apart (the same SVM and volume on two clusters) show their cluster
     seen = {}
     for t in out:
         seen[X.choice_shown(t)] = seen.get(X.choice_shown(t), 0) + 1
     for i, e in enumerate(choices or []):
         if seen.get(X.choice_shown(out[i]), 0) > 1:
-            f = found[i] if i < len(found) and found[i] else {}
-            out[i] = X.choice_text(dict(e, datastore=f.get("datastore") or ""), show_cluster=True)
+            out[i] = X.choice_text(e, show_cluster=True)
     return {"choices": out[:int(limit)], "more": max(0, len(out) - int(limit))}
 
 
@@ -254,11 +273,13 @@ def ontap_expand_list_doc(r):
     for i, e in enumerate(ents[:len(r.get("choices") or [])]):
         f = found[i] if i < len(found) and found[i] else {}
         name = e["volume"] + (("/" + e["lun"].rsplit("/", 1)[-1]) if e.get("lun") and int(e.get("luns") or 1) > 1 else "")
-        used = X.pct(e["used"], e["size"])
-        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), "%d %%" % round(used), e["aggr"], X.human(e["aggr_free"]),
+        fe = dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free"))
+        fsize, fused, _src = X.lun_fullness(fe)
+        used = X.pct(fused, fsize)
+        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], X.human(e["aggr_free"]),
                      ("%s %s" % (f.get("kind"), f.get("datastore"))) if f.get("datastore") else ("LUN" if e.get("lun") else "-")])
         cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if e["aggr_free"] < X.TB else "", ""])
-    sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Size", "Used", "Aggregate", "Aggr free", "Datastore"],
+    sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Volume size", "How full", "Aggregate", "Aggr free", "Datastore"],
                      "rows": rows, "cell_status": cells, "keep_case": True})
     if r.get("more"):
         sections.append({"title": "Not in the list", "status": "warning", "lines": [

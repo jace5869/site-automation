@@ -9,6 +9,8 @@
 # text without the list's key, a volume with two LUNs named without one, a bad size, a size over the volume's LUN: refused,
 # nothing changed; the volume changed between the plan and the change; ONTAP's job failing; ontap_expand_incident: create
 # (no group: refused; with one: opened, then resolved with the steps).
+# A LUN volume is judged and grown by its LUN: the list's size and free space are the LUN's (fullest first by it); the growth
+# is the LUN's; the volume grows only as much as the bigger LUN needs (thick + its snapshot reserve), not at all with room.
 # The vCenter side (rescan, VMFS expand, NFS refresh) is tests/test_ontap_expand.py's (fake pyVmomi objects): vcsim has no
 # NetApp LUN and no VMFS extent, and answers MethodNotFound to QueryVmfsDatastoreExpandOptions and RefreshDatastoreStorageInfo.
 #   bash tests/netapp/run_expand_test.sh            (ANSIBLE_PLAYBOOK=... for another ansible-core)
@@ -83,8 +85,8 @@ run "the list, a dry run (Check): says what it would write, writes nothing" ok o
     -- "NetApp volume list: 6 choices, 5 excluded" "6 choice(s) - would be updated (the question would be added)"
 check "  no survey written by the dry run" test ! -s "$work/survey.jsonl"
 run "the list: 6 choices (one per LUN), 5 excluded each with its reason, the question added single select" ok ontap_volume_list.yml -e "{$cl}" \
-    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware) - 10.0 GB, 12% free [LUN]" \
-       "vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free [LUN lun_a of 2]" "vol_ds03/lun_b" \
+    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware) - LUN 9.0 GB, 10% free [LUN]" \
+       "vol_ds03/lun_a (svm_vmware) - LUN 900.0 GB, 21% free [LUN lun_a of 2]" "vol_ds03/lun_b (svm_vmware) - LUN 900.0 GB, 67% free" \
        "SVM root volume - always" "DP volume (a SnapMirror destination) - always" "offline - always" "FlexGroup - not yet" \
        "ontap_expand_exclude: svm_backup:*" "NetApp - expand a volume, question ontap_expand_volume: 6 choice(s) - updated (the question was added)"
 check "  the question: single select, required, 6 choices with their keys" "$py" -c 'import json, sys
@@ -94,23 +96,35 @@ check "  the list only read: no PATCH" test "$(patches)" = 0
 
 # ---- a Check run, then the change ------------------------------------------------------------------------------------
 ds01="$(pick vol_ds01)"
-run "a Check run: the plan only (10.0 GB -> 11.0 GB, the LUN 9.0 -> 10.0 GB), nothing changed" ok ontap_volume_expand.yml --check \
-    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" \
-    -- "NetApp expand: vol_ds01 - the plan: 10.0 GB -> 11.0 GB (nothing changed)" "Not run - the plan only (Check)" \
-       "/vol/vol_ds01/lun_ds01 space.size 9.0 GB -> 10.0 GB"
+check "  fullest first, by the LUN: one volume's two LUNs apart - lun_a (79 % written) before vol_home, lun_b (33 %) after it" "$py" -c 'import json, sys
+q = json.loads(sys.argv[1]); c = q["choices"] if isinstance(q["choices"], list) else q["choices"].split("\n")
+i = lambda p: [k for k, x in enumerate(c) if x.startswith(p)][0]
+sys.exit(not i("vol_ds03/lun_a ") < i("vol_home ") < i("vol_ds03/lun_b "))' "$(lastq)"
+run "a Check run: the plan only (the LUN 9.0 -> 10.0 GB, the volume as much as the thick LUN and its 5 % snapshot reserve need), nothing changed" ok \
+    ontap_volume_expand.yml --check -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" \
+    -- "NetApp expand: vol_ds01 - the plan: LUN 9.0 GB -> 10.0 GB; volume 10.0 GB -> 10.5 GB (thick LUN + 5 % snapshot reserve) (nothing changed)" \
+       "Not run - the plan only (Check)" "/vol/vol_ds01/lun_ds01 space.size 9.0 GB -> 10.0 GB"
 check "  the Check run changed nothing" test "$(patches)" = 0
 run "grown: the volume and its LUN read back, the ticket in the comment, the datastore by hand (no vCenter credential), emailed" ok \
     ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$ds01\", \"ontap_expand_incident_number\": \"xinc0001234\", $mail}" \
-    -- "NetApp expand: vol_ds01 grown 10.0 GB -> 11.0 GB - expand the datastore in vCenter by hand" "Done - read back 11.0 GB" \
+    -- "NetApp expand: vol_ds01 grown LUN 9.0 GB -> 10.0 GB; volume 10.0 GB -> 10.5 GB (thick LUN + 5 % snapshot reserve) - expand the datastore in vCenter by hand" \
+       "Done - read back 10.5 GB" \
        "Done - read back 10.0 GB" "Increase Datastore Capacity, pick the device naa.600a09803830416231446d54357a5871" \
        "XINC0001234 (typed at the launch)"
-check "  ONTAP got: the volume to 11 GB with the comment kept and added to, then the LUN to 10 GB" grep -qE \
-    '^PATCH /api/storage/volumes/v-ds01 \{"size": 11811160064, "comment": "app team datastore \| XINC0001234: \+1.0 GB [0-9-]+ \(AAP job -\)"\}' "$work/c0.log"
+check "  ONTAP got: the volume to 10779 MB with the comment kept and added to, then the LUN to 10 GB" grep -qE \
+    '^PATCH /api/storage/volumes/v-ds01 \{"size": 11302600704, "comment": "app team datastore \| XINC0001234: \+1.0 GB [0-9-]+ \(AAP job -\)"\}' "$work/c0.log"
 check "  ... and the LUN" grep -qF 'PATCH /api/storage/luns/l-ds01 {"space": {"size": 10737418240}}' "$work/c0.log"
-check "  the email went out" grep -rqF "vol_ds01 grown 10.0 GB" "$work/mail"
-run "the same choice again: already 11.0 GB - nothing to do (green), nothing changed" ok ontap_volume_expand.yml \
-    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" -- "NetApp expand: vol_ds01 already 11.0 GB - nothing to do"
+check "  the email went out" grep -rqF "vol_ds01 grown LUN 9.0 GB" "$work/mail"
+run "the same choice again: the LUN already 10.0 GB - nothing to do (green), nothing changed" ok ontap_volume_expand.yml \
+    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" -- "NetApp expand: vol_ds01 already LUN 10.0 GB - nothing to do"
 check "  still the 2 changes of before" test "$(patches)" = 2
+ds03a="$(pick vol_ds03/lun_a)"
+run "a thick LUN whose volume has room: the LUN grown 900 -> 990 GB, the volume not" ok ontap_volume_expand.yml \
+    -e "{$cl, \"ontap_expand_volume\": \"$ds03a\"}" \
+    -- "NetApp expand: vol_ds03 grown LUN 900.0 GB -> 990.0 GB; volume 2.00 TB stays (it has room for the LUN's growth already (thick LUN))" \
+       "Not needed - it has room for the LUN's growth already"
+check "  ... the volume's size not changed (its comment only)" test "$(grep 'PATCH /api/storage/volumes/v-ds03' "$work/c0.log" | grep -c '"size"')" = 0
+check "  ... the LUN to 990 GB" grep -qF 'PATCH /api/storage/luns/l-a {"space": {"size": 1063004405760}}' "$work/c0.log"
 
 # ---- refusals: nothing changed ---------------------------------------------------------------------------------------
 sql="$(pick vol_sql01)"
@@ -119,7 +133,7 @@ run "the default over 97 %: refused, with the largest size that fits" fail ontap
     -- "Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits" "Launch again with a size in the Size box: 180.0GB or less"
 run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
     -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB"
-check "  3 changes now (no LUN on vol_sql01)" test "$(patches)" = 3
+check "  5 changes now (vol_ds03's comment and LUN; no LUN on vol_sql01)" test "$(patches)" = 5
 n=$(patches)
 bk="vol_bk01 (svm_backup, cluster1) - 4.00 TB [vol|$c0|svm_backup|vol_bk01||4398046511104||v-bk01]"
 run "an excluded volume named by hand: refused" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$bk\"}" \
@@ -163,7 +177,7 @@ n=$(patches)
 SN_HOST="http://127.0.0.1:$((port + 21))" SN_USERNAME=api SN_PASSWORD=goodpw \
 run "create, but nothing to do: no incident opened" ok ontap_volume_expand.yml \
     -e "{$cl, \"ontap_expand_volume\": \"$ds01\", \"ontap_expand_incident\": \"create\", \"ontap_expand_incident_group\": \"STORAGE-TEAM\"}" \
-    -- "already 11.0 GB - nothing to do"
+    -- "already LUN 10.0 GB - nothing to do"
 check "  ... only the one incident of before" test "$(grep -c '"POST"' "$work/sn.jsonl")" = 1
 
 # ---- the volume changes between the plan and the change; ONTAP's job fails ---------------------------------------------
