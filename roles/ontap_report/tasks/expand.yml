@@ -80,6 +80,26 @@
                else '') }}
     _ox_do: "{{ not _ox_plan.failed | default(false) and _ox_plan.plan.status == 'grow' and not ansible_check_mode }}"
 
+# Codex 1.128.0: one run at a time - two runs could both find room on one aggregate and both grow into it. The template is made
+# with Concurrent jobs off (aap/job_templates.yml); with a "Red Hat Ansible Automation Platform" credential the run also asks
+# AAP here, before an incident is opened or anything changed (a run still going, or one queued before this one: nothing is changed)
+- name: NetApp | another run of this template still going? (AAP, read only)
+  site_ontap_expand_busy:
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id | default(0)) | int }}"
+    job_id: "{{ awx_job_id | default(tower_job_id | default(0)) | int }}"
+  register: _ox_busy
+  check_mode: false
+  when: _ox_do | bool
+
+- name: NetApp | one run at a time
+  ansible.builtin.set_fact:
+    _ox_busy_why: >-
+      {{ ('another run of this template is still going (AAP job ' ~ (_ox_busy.busy | join(', ')) ~ ') - nothing was changed; launch it '
+          ~ 'again when it has ended') if _ox_busy.busy | default([]) | length > 0 else '' }}
+    _ox_busy_seen: "{{ {'checked': _ox_busy.checked | default(false), 'why': _ox_busy.why | default('')} }}"
+    _ox_do: "{{ _ox_busy.busy | default([]) | length == 0 }}"
+  when: _ox_do | bool
+
 - name: NetApp | open the incident (ontap_expand_incident create, no number typed)
   ansible.builtin.include_role:
     name: servicenow
@@ -138,8 +158,9 @@
     _ox_final: "{{ _ox_grow.plan if _ox_grow is defined and _ox_grow is not skipped and _ox_grow.plan is defined else _ox_plan.plan | default({}) }}"
     _ox_steps: "{{ _ox_grow.steps | default([]) if _ox_grow is defined and _ox_grow is not skipped else [] }}"
     _ox_grow_error: >-
-      {{ '' if _ox_grow is not defined or _ox_grow is skipped or _ox_grow.steps | default([])
-            or (_ox_grow.plan.status | default('')) in ['refused', 'nothing'] else (_ox_grow.msg | default('?')) }}
+      {{ _ox_busy_why if _ox_busy_why | default('') | length > 0 else
+         ('' if _ox_grow is not defined or _ox_grow is skipped or _ox_grow.steps | default([])
+            or (_ox_grow.plan.status | default('')) in ['refused', 'nothing'] else (_ox_grow.msg | default('?'))) }}
 
 - name: NetApp | rescan the hosts and expand the datastore (vCenter)
   ansible.builtin.include_role:
@@ -170,7 +191,8 @@
       {{ {'plan': _ox_final, 'error': (_ox_plan.msg | default('?')) if _ox_plan.failed | default(false) else _ox_grow_error | trim, 'choice': _ox_choice,
           'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
           'incident': _ox_incident, 'check': ansible_check_mode, 'size': _ox_size,
-          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else '',
+          'busy': _ox_busy_seen | default({})} | ontap_expand_doc }}
 
 - name: NetApp | the report as the incident will say it (resolved when every step went well)
   ansible.builtin.set_fact:
@@ -178,7 +200,8 @@
       {{ {'plan': _ox_final, 'error': (_ox_plan.msg | default('?')) if _ox_plan.failed | default(false) else _ox_grow_error | trim, 'choice': _ox_choice,
           'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
           'incident': _ox_incident | combine({'resolved': _ox_doc.status == 'ok'}), 'check': ansible_check_mode, 'size': _ox_size,
-          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else '',
+          'busy': _ox_busy_seen | default({})} | ontap_expand_doc }}
   when: _ox_incident.opened | default(false) | bool
 
 - name: NetApp | the result on the incident (resolved when every step went well)
@@ -203,7 +226,8 @@
           'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
           'incident': _ox_incident | combine({'close_error': _sn_incident_closed.error | default(''), 'resolved': _ox_doc.status == 'ok'}),
           'check': ansible_check_mode, 'size': _ox_size,
-          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else '',
+          'busy': _ox_busy_seen | default({})} | ontap_expand_doc }}
   when: _ox_incident.opened | default(false) | bool
 
 - name: "NetApp | {{ _ox_doc.title }}"

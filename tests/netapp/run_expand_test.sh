@@ -138,12 +138,16 @@ sql="$(pick vol_sql01)"
 home="$(pick vol_home)"
 run "the default over 97 %: refused, with the largest size that fits" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\"}" \
     -- "Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits" "Launch again with a size in the Size box: 180.0GB or less"
-run "that size as Check: the plan says autosize's maximum is under the new size (and is left as it is)" ok ontap_volume_expand.yml --check \
+# Codex 1.128.0: a new size over autosize's maximum would make ONTAP raise the maximum - a change to autosize: refused
+run "that size as Check: refused - it would raise autosize's maximum (2.15 TB)" fail ontap_volume_expand.yml --check \
     -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
-    -- "Autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size)."
-run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
-    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" \
-       "autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size) - its maximum reads"
+    -- "the new size 2.18 TB would raise autosize maximum 2.15 TB" "grow it by hand or raise the maximum first"
+run "that size for real: refused the same, nothing changed" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
+    -- "would raise autosize maximum 2.15 TB"
+check "  ... still 4 changes" test "$(patches)" = 4
+run "100GB typed (under the maximum): grown 2.00 TB -> 2.10 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"100GB\"}" \
+    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.10 TB" "The Size box: 100GB" \
+       "Another run of this template (AAP, read only)" "not checked - no AAP credential"
 check "  5 changes now (vol_ds03's comment and LUN; vol_sql01: its size only - autosize never changed)" test "$(patches)" = 5
 check "  ... vol_sql01's autosize not touched" test "$(grep 'PATCH /api/storage/volumes/v-sql01' "$work/c0.log" | grep -c autosize)" = 0
 n=$(patches)

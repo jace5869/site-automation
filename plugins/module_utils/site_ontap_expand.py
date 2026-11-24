@@ -405,7 +405,9 @@ def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
     p["aggr_pct_after"] = pct(p["aggr_used"] + take, p["aggr_size"])
     p["used_pct_after"] = pct(p["used"], vt)
     if not aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], take):
-        lo, hi = 0, max(1, (p["room"] + lsize) // MB)      # the largest LUN growth whose take from the aggregate fits (whole MB)
+        # the largest LUN growth whose take from the aggregate fits (whole MB) - Codex 1.128.0: searched up to the growth refused
+        # (free space in the volume lets a LUN grow far more than the aggregate's room)
+        lo, hi = 0, max(1, g // MB)
         while lo < hi:
             mid = (lo + hi + 1) // 2
             t = landing(vol, lun, volume_for_lun(vol, lun, mid * MB)[0] - size, mid * MB)
@@ -447,3 +449,21 @@ def recheck(p, vol, aggr, exclude=(), clusters=()):
         return ("%s got fuller between the plan and the change (%.1f %% now): %s no longer fits under %g %% - nothing was changed"
                 % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(take), p["max_pct"]))
     return ""
+
+
+def others_going(jobs, job_id):
+    """Codex 1.128.0: the other runs of the expand template that block this one -> their job ids. A run counts while it is
+    running, or pending/waiting with a lower id (it was launched first); one queued behind this run never stops it, and this
+    run never stops itself. jobs: AAP's job records ({id, status})."""
+    out = []
+    for j in jobs or []:
+        try:
+            jid = int(j.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        st = str(j.get("status") or "")
+        if not jid or jid == int(job_id or 0):
+            continue
+        if st == "running" or (st in ("pending", "waiting") and (not job_id or jid < int(job_id))):
+            out.append(jid)
+    return sorted(out)

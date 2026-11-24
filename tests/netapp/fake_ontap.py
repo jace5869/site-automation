@@ -70,7 +70,12 @@ class H(http.server.BaseHTTPRequestHandler):
         b = json.loads(body or "{}")
         r = recs[0]
         if "size" in b:
-            r.setdefault("space", {})["size"] = b["size"]
+            sp_ = r.setdefault("space", {})
+            if isinstance(sp_.get("available"), int) and isinstance(sp_.get("size"), int):
+                # like ONTAP: the usable part of the growth (less the snapshot reserve) becomes available
+                keep = 1.0 - float((sp_.get("snapshot") or {}).get("reserve_percent") or 0) / 100.0
+                sp_["available"] = int(sp_["available"] + (b["size"] - sp_["size"]) * keep)
+            sp_["size"] = b["size"]
         if "comment" in b:
             r["comment"] = b["comment"]
         if "space" in b:

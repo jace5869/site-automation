@@ -356,6 +356,9 @@ class FakeCluster(object):
         if "luns" in path:
             self.lun_size = body["space"]["size"]
         elif "size" in body:
+            # like ONTAP: the growth becomes available (no snapshot reserve here) - on the size as last read
+            i = min(max(0, self.reads - 1), len(self.vols) - 1)
+            self.avail = [self.avail[min(i, len(self.avail) - 1)] + body["size"] - self.vols[i]]
             self.vols = [body["size"]]
             self.reads = 0
         return {}
@@ -413,20 +416,27 @@ class Grow1124(unittest.TestCase):
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow_shrink", "maximum": 4 * TB})
         p, _v = self.V.read_one(c, key, {"pct": 10, "min_gb": 1, "max_gb": 512, "max_pct": 97, "exclude": [], "lun_mode": "same"}, "")
         self.assertEqual((p["status"], p["why"]), ("refused", self.V.GROW_SHRINK))
+        # Codex 1.128.0: a new size over autosize's maximum would make ONTAP raise it - a change to autosize: refused
+        o = {"pct": 10, "min_gb": 1, "max_gb": 512, "max_pct": 97, "exclude": [], "lun_mode": "same"}
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 3 * TB})
-        p, _v = self.V.read_one(c, key, {"pct": 10, "min_gb": 1, "max_gb": 512, "max_pct": 97, "exclude": [], "lun_mode": "same"}, "")
-        self.assertEqual(p["status"], "grow", p["why"])
-        self.assertIn("autosize maximum 3.00 TB is below the new size", p["autosize_note"])
-        doc = XF_doc({"plan": dict(p, cluster="c1"), "check": True})
-        self.assertIn("Autosize", [x["title"] for x in doc["sections"]])
+        p, _v = self.V.read_one(c, key, o, "")
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("would raise autosize maximum 3.00 TB (ONTAP raises it with the size) - grow it by hand or raise the maximum first", p["why"])
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow"})       # on, no maximum given: not known
+        p, _v = self.V.read_one(c, key, o, "")
+        self.assertEqual((p["status"], p["why"]), ("refused", "autosize is grow and ONTAP gave no autosize maximum - nothing is changed without it"))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 5 * TB})
+        self.assertEqual(self.V.read_one(c, key, o, "")[0]["status"], "grow")
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)], autosize={"mode": "grow", "maximum": 3 * TB})     # the LUN only: the volume stays
+        self.assertEqual(self.V.read_one(c, key, o, "")[0]["status"], "grow")
 
-    def test_a_maximum_under_the_new_size_is_said_and_never_changed_by_the_job(self):
+    def test_a_maximum_under_the_new_size_stops_the_change(self):
         p = self.plan(avail=int(0.1 * TB))
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 3 * TB})
         steps = self.run_(c, p)
-        self.assertIn("autosize maximum 3.00 TB is below the new size", steps[1]["result"])
-        self.assertEqual(c.autosize, {"mode": "grow", "maximum": 3 * TB})
-        self.assertEqual(self.V.autosize_note("off", 3 * TB, 4 * TB), "")
+        self.assertIn("would raise autosize maximum 3.00 TB", steps[0]["result"])
+        self.assertEqual(c.patches, [])
+        self.assertEqual(self.V.autosize_max_why({"autosize": "off", "autosize_max": 3 * TB}, 4 * TB), "")
 
     def test_no_size_from_ontap_no_write(self):
         p = self.plan(avail=int(0.1 * TB))
@@ -488,13 +498,19 @@ class Grow1124(unittest.TestCase):
         self.assertIn("nothing was changed", steps[-1]["result"])
         self.assertEqual(c.lun_size, 2 * TB)
 
-    def test_a_growth_under_a_mib_is_not_one(self):
+    def test_a_growth_of_a_mib_is_sent_and_must_read_back_bigger(self):
+        # Codex 1.128.0: any growth within the caps is sent (a LUN's parent may need 1 MiB); the read back must be bigger
         p = self.nas_plan()
-        p["max_target"] = 100 * GB + X.MB // 2
+        p["max_target"] = 100 * GB + X.MB
         c = FakeCluster([100 * GB], avail=[50 * GB])
         steps = self.run_(c, p)
-        self.assertEqual(c.patches, [])
-        self.assertIn("under the least the plan makes", steps[-1]["result"])
+        self.assertEqual([b["size"] for _p, b in c.patches if "size" in b], [100 * GB + X.MB])
+        self.assertTrue(steps[-1]["ok"], steps)
+        c = FakeCluster([100 * GB], avail=[50 * GB])
+        c.call = lambda method, path, query=None, body=None: {}                         # said done, not changed
+        steps = self.run_(c, p)
+        self.assertFalse(steps[-1]["ok"])
+        self.assertIn("outcome not known", steps[-1]["result"])
 
     def test_never_over_the_plans_own_size(self):
         p = self.nas_plan()
@@ -513,7 +529,7 @@ class Grow1124(unittest.TestCase):
     def test_the_lun_target_never_made_smaller_to_fit(self):
         p = self.plan()
         c = FakeCluster([2 * TB + 10 * GB])                                              # the parent read right before: too small
-        steps = self.V._grow_lun(c, p, {"volume": "vol_ds01"}, 1, [], "v1")
+        steps = self.V._grow_lun(c, p, {"volume": "vol_ds01", "svm": "svm1"}, 1, [], "v1")
         self.assertFalse(steps[-1]["ok"])
         self.assertIn("cannot hold the LUN's new size", steps[-1]["result"])
         self.assertEqual(c.patches, [])
@@ -637,19 +653,21 @@ class Grow1124(unittest.TestCase):
         self.run_(c, p)
         self.assertEqual([b["size"] for _p, b in c.patches if "size" in b], [planned])
 
-    def test_final_p2_the_autosize_maximum_ontap_raises_is_said_and_read_back(self):
+    def test_codex_1280_the_autosize_maximum_read_again_right_before_the_patch(self):
+        # the maximum lowered between the first read and the last one: nothing sent (ONTAP would raise it)
         p = self.plan(avail=int(0.1 * TB))
-        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 3 * TB})
-        orig = c.call
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 5 * TB})
+        orig = c.vol
 
-        def call(method, path, query=None, body=None):
-            r = orig(method, path, query, body)
-            if "size" in (body or {}):
-                c.autosize["maximum"] = int(body["size"] * 1.2)                        # what ONTAP does
+        def vol_():
+            r = orig()
+            if c.reads > 1:
+                r["autosize"] = {"mode": "grow", "maximum": 3 * TB}
             return r
-        c.call = call
+        c.vol = vol_
         steps = self.run_(c, p)
-        self.assertIn("ONTAP raises it (to about 120 % of the new size) - its maximum reads 3.72 TB now", steps[1]["result"])
+        self.assertEqual(c.patches, [])
+        self.assertIn("would raise autosize maximum 3.00 TB", steps[-1]["result"])
 
     def test_final_p2_an_unknown_outcome_in_the_reports_summary(self):
         p = dict(self.nas_plan(), outcome_unknown=True, vol_sent=True, cluster="c1")
@@ -744,6 +762,168 @@ class Grow1124(unittest.TestCase):
         self.assertEqual((st, u), ("unknown", "j9"))
         self.assertEqual(V.job_state(types_ns(call=lambda *a, **k: {"state": "success"}), {"job": {"uuid": "j9"}}, 0)[0], "done")
         self.assertEqual(V.job_state(None, {}, 0)[0], "done")                              # no job: made at once
+
+class Codex1280(unittest.TestCase):
+    """Codex's pre-release review of 1.128.0: every last read before a PATCH checks the name, SVM and exclusions (the comment
+    too); the LUN's reservation on its last read; autosize's maximum never raised; one run at a time; the caps checked
+    first; a parent that needs more now stops; the comment from the last read; a 1 MiB parent growth; the largest that fits."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.V = volume_module()
+        FakeCluster.Failed = cls.V.Failed
+
+    def lun_plan(self, avail):
+        v = vol(3 * TB, 3 * TB - avail, available=avail, snap_pct=0, guarantee="volume", name="vol_ds01", svm="svm1")
+        p = X.plan(v, AGGR, 3 * TB, {}, lun={"name": "/vol/vol_ds01/l", "size": 2 * TB, "thick": True, "total": 2 * TB}, lun_listed=2 * TB)
+        p.update(volume_uuid="v1", lun_uuid="l1")
+        return p
+
+    def nas_plan(self):
+        v = vol(100 * GB, 50 * GB, available=50 * GB, guarantee="volume", name="vol_ds01", svm="svm1")
+        p = X.plan(v, AGGR, 100 * GB, {}, size_text="10GB")
+        p.update(volume_uuid="v1", lun_uuid="")
+        return p
+
+    def grow(self, c, p, exclude=(), line=""):
+        return self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": list(exclude), "clusters": ("cluster1", "c1")}, line, 1)
+
+    def later(self, c, after, **changes):
+        """the volume's reads from the after-th on answer with these changes"""
+        orig = c.vol
+
+        def vol_():
+            r = orig()
+            if c.reads > after:
+                for k, v in changes.items():
+                    r[k] = v
+            return r
+        c.vol = vol_
+
+    def test_p1a_renamed_into_an_exclusion_on_the_last_read_is_not_grown(self):
+        p = self.nas_plan()
+        c = FakeCluster([100 * GB], avail=[50 * GB])
+        self.later(c, 1, name="backup_db")                                     # READ sees vol_ds01; the last read backup_db
+        steps = self.grow(c, p, exclude=["backup*"])
+        self.assertEqual(c.patches, [])
+        self.assertIn("the volume is now backup_db on svm1", steps[-1]["result"])
+
+    def test_p1a_excluded_now_on_the_last_read_is_not_grown(self):
+        p = self.nas_plan()
+        c = FakeCluster([100 * GB], avail=[50 * GB])
+        self.later(c, 1, type="dp")                                            # made a SnapMirror destination meanwhile
+        steps = self.grow(c, p)
+        self.assertEqual(c.patches, [])
+        self.assertIn("the volume is now excluded (DP volume", steps[-1]["result"])
+        c = FakeCluster([100 * GB], avail=[50 * GB])
+        self.later(c, 1, svm={"name": "svm_backup"})
+        steps = self.grow(c, p, exclude=["svm_backup:*"])
+        self.assertEqual(c.patches, [])
+        self.assertIn("the volume is now vol_ds01 on svm_backup", steps[-1]["result"])
+
+    def test_p1a_the_comment_only_write_is_checked_too(self):
+        p = self.lun_plan(int(0.9 * TB))                                        # room: the volume stays, only its comment
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)])
+        self.later(c, 1, type="dp")
+        steps = self.grow(c, p, line="INC1: +204.8 GB")
+        self.assertEqual(c.patches, [])
+        self.assertEqual(c.lun_size, 2 * TB)
+        self.assertIn("not sent: the volume is now excluded (DP volume", steps[-1]["result"])
+
+    def test_p1b_the_lun_made_thick_on_its_last_read_is_not_grown(self):
+        # Codex's own repro: a thin LUN on a thin volume, made space-reserved on the read right before the LUN's PATCH
+        size = 100 * GB
+        v = vol(size, 60 * GB, svm="svm1", available=40 * GB, guarantee="none")
+        p = X.plan(v, AGGR, size, {}, lun={"name": "/vol/vol_ds01/l", "size": 40 * GB, "total": 40 * GB, "thick": False}, lun_listed=40 * GB, size_text="10GB")
+        p.update(volume_uuid="v1", lun_uuid="l1")
+
+        class Toggle(FakeCluster):
+            ids = 0
+
+            def vol(self):
+                r = FakeCluster.vol(self)
+                r["guarantee"] = {"type": "none"}
+                return r
+
+            def records(self, path, fields, **q):
+                ans = FakeCluster.records(self, path, fields, **q)
+                if path.endswith("/luns"):
+                    if q.get("uuid"):
+                        self.ids += 1
+                    ans[0]["space"]["guarantee"]["requested"] = self.ids >= 4
+                return ans
+        c = Toggle([size], avail=[40 * GB], lun_size=40 * GB, aggr_used=int(20 * TB * .97) - GB)
+        steps = self.grow(c, p)
+        self.assertEqual([x for x, _b in c.patches if "luns" in x], [])
+        self.assertEqual(c.lun_size, 40 * GB)
+        self.assertIn("space reservation changed since the plan (thin, now thick)", steps[-1]["result"])
+        self.assertFalse(steps[-1]["ok"])
+
+    def test_p1d_one_run_at_a_time(self):
+        jobs = [{"id": 90, "status": "running"}, {"id": 99, "status": "pending"}, {"id": 100, "status": "running"},
+                {"id": 101, "status": "waiting"}, {"id": 102, "status": "pending"}]
+        self.assertEqual(X.others_going(jobs, 100), [90, 99])                  # never itself, never one queued behind it
+        self.assertEqual(X.others_going([{"id": 101, "status": "running"}], 100), [101])     # a later one already running
+        self.assertEqual(X.others_going([{"id": 100, "status": "running"}], 100), [])
+        self.assertEqual(X.others_going([], 100), [])
+
+    def test_p1e_the_caps_checked_first(self):
+        ok = {"max_target": 110 * GB, "max_lun_target": -1, "max_vol_growth": 10 * GB}
+        self.assertEqual(self.V.caps_why(ok), "")
+        self.assertEqual(self.V.caps_why(dict(ok, max_vol_growth=0)), "")                  # a growth cap of 0: the LUN only
+        self.assertIn("max_target", self.V.caps_why(dict(ok, max_target=0)))
+        self.assertIn("max_lun_target must be -1", self.V.caps_why(dict(ok, max_lun_target=0)))
+        self.assertIn("max_lun_target must be -1", self.V.caps_why(dict(ok, max_lun_target=-5)))
+        self.assertIn("max_vol_growth must be -1", self.V.caps_why(dict(ok, max_vol_growth=-2)))
+        self.assertIn("under the volume's size now", self.V.caps_why(dict(ok, max_target=90 * GB), {"size": 100 * GB}))
+        self.assertIn("under the LUN's size now", self.V.caps_why(dict(ok, max_lun_target=GB), {"size": 100 * GB, "lun": {"size": 2 * GB}}))
+        self.assertEqual(self.V.caps_why(dict(ok, max_lun_target=3 * GB), {"size": 100 * GB, "lun": {"size": 2 * GB}}), "")
+
+    def test_p2_a_parent_that_needs_more_now_stops_before_any_patch(self):
+        p = self.lun_plan(int(0.1 * TB))
+        c = FakeCluster([3 * TB, 3 * TB], avail=[int(0.1 * TB), int(0.02 * TB)])    # free space went between READ and the last read
+        steps = self.grow(c, p)
+        self.assertEqual(c.patches, [])
+        self.assertIn("more than the", steps[-1]["result"])
+        self.assertIn("planned", steps[-1]["result"])
+
+    def test_p2_the_comment_from_the_last_read(self):
+        p = self.nas_plan()
+        c = FakeCluster([100 * GB], avail=[50 * GB])
+        self.later(c, 1, comment="edited by the storage team")
+        self.grow(c, p, line="INC7: +10.0 GB")
+        body = [b for _p, b in c.patches if "size" in b][0]
+        self.assertTrue(body["comment"].startswith("edited by the storage team"), body)
+        self.assertIn("INC7: +10.0 GB", body["comment"])
+
+    def test_p2_a_thick_lun_needs_its_room_right_before_its_patch(self):
+        p = self.lun_plan(int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)])
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            r = orig(method, path, query, body)
+            if "size" in (body or {}):
+                c.avail = [int(0.05 * TB)]                                    # written full right after the volume grew
+            return r
+        c.call = call
+        steps = self.grow(c, p)
+        self.assertTrue(steps[1]["ok"], steps)                                 # the volume grew
+        self.assertEqual(c.lun_size, 2 * TB)                                   # the LUN left as it was
+        self.assertIn("has not the usable room for the thick LUN's new size", steps[-1]["result"])
+
+    def test_p2_the_largest_that_fits_counts_the_room_in_the_volume(self):
+        v = vol(100 * GB, 10 * GB, available=90 * GB, snap_pct=0, guarantee="volume")
+        aggr = {"name": "aggr1", "size": 1000 * GB, "used": 970 * GB - 5 * GB}             # 5 GiB under 97 %
+        p = X.plan(v, aggr, 100 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 10 * GB, "thick": True, "total": 10 * GB},
+                   lun_listed=10 * GB, size_text="100GB")
+        self.assertEqual(p["status"], "refused")
+        self.assertGreaterEqual(p["room"], 94 * GB)
+        self.assertLessEqual(p["room"], 95 * GB)
+        q = X.plan(v, aggr, 100 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 10 * GB, "thick": True, "total": 10 * GB},
+                   lun_listed=10 * GB, size_text="%dGB" % (p["room"] // GB))
+        self.assertEqual(q["status"], "grow", q["why"])                       # the size said fits
+
 
 class Exclusions(unittest.TestCase):
     def rec(self, **kw):

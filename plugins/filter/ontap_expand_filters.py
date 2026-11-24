@@ -49,7 +49,8 @@ def after_values(p, steps, check):
 
 def ontap_expand_doc(r):
     """r: {plan, error, ontap_steps, vc_steps, ds ({} or the datastore found), vmware (a vCenter credential attached),
-    vc_error, incident {number, opened, typed, error, closed}, check, size, job, cluster} -> the report doc"""
+    vc_error, incident {number, opened, typed, error, closed}, check, size, job, cluster, busy {checked, why} (the run's
+    check for another run of the template; {} when not asked)} -> the report doc"""
     p = r.get("plan") or {}
     check = bool(r.get("check"))
     inc = r.get("incident") or {}
@@ -71,6 +72,10 @@ def ontap_expand_doc(r):
                 "sections": [{"title": "Why it stopped", "status": "critical", "lines": [r["error"]]}], "footer": r.get("cluster") or ""}
     steps = [{"step": "Read the volume live (ONTAP)", "exactly": "%s: %s on %s" % (p.get("cluster"), vol, p.get("svm")), "ok": True,
               "result": "Read - %s, %.1f %% used" % (X.human(p.get("size")), p.get("used_pct", 0))}]
+    bz = r.get("busy") or {}
+    if bz:                                            # Codex 1.128.0: one run at a time - checked in AAP, or said not checked
+        steps.append({"step": "Another run of this template (AAP, read only)", "exactly": "right before the change", "ok": True,
+                      "result": "none going" if bz.get("checked") else "not checked - %s" % (bz.get("why") or "?")})
     if inc.get("opened"):
         steps.insert(0, {"step": "Open an incident (ontap_expand_incident: create)", "exactly": "assigned to %s" % inc.get("group", ""),
                          "ok": not inc.get("error"), "result": inc.get("error") or "%s opened" % inc.get("number")})
@@ -220,8 +225,6 @@ def ontap_expand_doc(r):
             how.append("The Size box: %s (ontap_expand_max_gb does not limit a size typed there; the aggregate does)." % r.get("size"))
         how.append("%s stays at or under %g %% (ontap_expand_aggr_max_pct) up to +%s." % (p.get("aggr"), p.get("max_pct", 97), X.human(p.get("room"))))
         sections.append({"title": "How the size was chosen", "lines": how})
-    if p.get("autosize_note"):
-        sections.append({"title": "Autosize", "lines": [p["autosize_note"][0].upper() + p["autosize_note"][1:] + "."]})
     if check and p.get("status") == "grow":
         sections.append({"title": "Run it for real", "lines": ["This was a Check run: nothing was changed. Launch it again without Check "
                                                                 "- it reads the volume live again first."]})

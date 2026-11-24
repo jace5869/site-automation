@@ -392,17 +392,22 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    was resized, or anything else moved against the plan - before anything is written. The LUN's new size must fit the
    volume's confirmed size.
    - **Autosize is never changed.** `grow_shrink` refuses the run (it could shrink the volume again): "autosize is
-     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `grow` or `off`: the
-     run goes ahead; a new size over autosize's maximum is said in the plan ("autosize maximum X is below the new size;
-     ONTAP raises it (to about 120 % of the new size)") and the report says the maximum read back after the change. The
-     job never sets it.
+     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `off`: the run goes
+     ahead. `grow`: the run goes ahead only when the new size is at or under autosize's maximum - over it, ONTAP would
+     raise the maximum with the size, so the run is refused in the plan and again right before the change ("the new
+     size X would raise autosize maximum Y - grow it by hand or raise the maximum first"). Autosize on and no maximum
+     given by ONTAP: refused too. The job never sets autosize.
    - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
      size, to the byte - and never over the plan's own sizes. **Right before each change (the volume's, the LUN's)
      everything the plan stood on is read again:** the volume's size and autosize, that it is still on the planned
      aggregate (its UUID too: "the volume moved to aggregate X - run again"), the guarantees, the aggregate's room for
      what lands (97 %), and the LUN's size, its volume (by UUID) and its space reservation (thin made thick since the
-     plan stops the run). Anything moved: nothing is sent. The volume's need is worked out again from those last reads:
-     a snapshot deleted meanwhile means a smaller size is sent, or none - never more than the plan.
+     plan stops the run, on the LUN's very last read too). The volume's name, SVM and `ontap_expand_exclude` (with its
+     cluster rules) are checked on that last read as well - also before a write of the comment alone. Anything moved:
+     nothing is sent. The volume's need is worked out again from those last reads: a snapshot deleted meanwhile means a
+     smaller size is sent, or none; a volume that needs more now than planned stops the run before any change. A
+     thick LUN's volume must still have the usable room for the LUN's new size right before the LUN's change. The
+     comment written is the one of the last read, with the line added.
    - **The report says what was read back** after the change, for the volume and the LUN; "not known" when a change was
      sent and nothing could be verified; "(not changed)" when nothing was sent. Each change's
      ONTAP job is followed to its end and the size read back (at least the size before + the growth). No definite
@@ -465,10 +470,14 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    - *NetApp - refresh volume list*: NetApp ONTAP (read-only is enough), Red Hat Ansible Automation Platform (its
      user needs the Admin role on the expand template), and VMware vCenter (optional, for the datastore names).
    - *NetApp - expand a volume*: NetApp ONTAP write, and optionally VMware vCenter and ServiceNow API.
-   - Leave **Concurrent jobs** off on *NetApp - expand a volume* (AAP's default): two runs at the same time on volumes of
-     one aggregate could each pass the 97 % check. AAP then runs them one after the other. Keep one expand template:
-     two templates are two queues. ONTAP takes a size, not "this much more": an autosize growth in the second between the
-     job's last read and its change is lost (the report shows the size read back).
+   - **One run at a time.** AAP - set up job templates makes *NetApp - expand a volume* with **Concurrent jobs** off: two
+     runs at the same time on volumes of one aggregate could each pass the 97 % check. AAP then runs them one after the
+     other. Keep one expand template: two templates are two queues. With a *Red Hat Ansible Automation Platform*
+     credential on the template (optional), each run also asks AAP right before the change: another run of the template
+     still running, or queued before this one, stops it with nothing changed ("another run of this template is still
+     going (AAP job N)"). Without that credential the report says "not checked" and Concurrent jobs off is the guard.
+     People in System Manager and ONTAP's own autosize are outside the job's control: it reads again right before each
+     change and reports what it read back (see *Limits*).
    - Several vCenters: the datastore is expanded in the first that has it, then the others rescan and refresh it.
 3. Put `ontap_clusters` (and `ontap_expand_exclude`) in `playbooks/group_vars/all.yml`, so both jobs read the same.
 4. **Schedule** *NetApp - refresh volume list*, e.g. every 30 minutes. Run it once now: the expand template's Volume
@@ -626,9 +635,10 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 - **Expand a volume, the size write.** ONTAP's REST API grows a volume by its absolute size (`PATCH
   /api/storage/volumes/{uuid}` with `size`). The CLI's relative `volume size -new-size +N` exists, but the job does not
   send it through the private CLI passthrough: its REST contract (path, verb, body) is not in NetApp's public docs. So
-  the job reads the size right before the change and sends nothing when it moved; between that read and ONTAP's change
-  (well under a second) someone else - or autosize `grow` - could still grow the volume, and the sent size would then be under it - the job then reads it back, reports the size it
-  finds over the plan, and never sends a smaller size afterwards. A LUN is written the same way, after the volume.
+  the job reads the size right before the change and sends nothing when it moved. Known limit (not fixed, by design):
+  between that last read and ONTAP's change (well under a second) someone else - or autosize `grow` - could still grow
+  the volume; the job's size then sets it back to the job's size, the other growth is lost, and the report shows the
+  size read back. A LUN is written the same way, after the volume.
 - Expand was tested against the fake ONTAP API only; its first Check and Run on one real volume are its verification.
 - Capacity trends was tested against the same fake ONTAP API, a fake AAP job history and a real MySQL 8.4. It was not
   run against a real cluster or a real AAP. It counts from its own points; it does not read ONTAP's own performance

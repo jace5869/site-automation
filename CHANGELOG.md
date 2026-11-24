@@ -2,9 +2,10 @@
 
 ## 1.128.0 — 2026-11-24
 
-**To set up:** run AAP - set up job templates for NetApp - expand a volume (its Size question's wording), then
-NetApp - refresh volume list once, and Site portal - deploy. The ONTAP credential of the expand job needs a role that
-may modify volumes and LUNs (as before). Nothing else changes.
+**To set up:** run AAP - set up job templates for NetApp - expand a volume (its Size question's wording, and
+Concurrent jobs off), then NetApp - refresh volume list once, and Site portal - deploy. The ONTAP credential of the
+expand job needs a role that may modify volumes and LUNs (as before). Optional: a Red Hat Ansible Automation Platform
+credential on NetApp - expand a volume, so each run checks that no other run of it is going.
 
 - **NetApp - expand a volume: a LUN volume is grown by its LUN.** The default growth is 10 % of the LUN (1-512 GB) or
   the size typed; the volume grows only as much as the bigger LUN needs (a thick LUN: its data + the growth; a thin
@@ -12,16 +13,27 @@ may modify volumes and LUNs (as before). Nothing else changes.
   The aggregate is checked against what really lands on it (the volume's space guarantee, a thick LUN's growth); the
   largest LUN growth that fits is said.
 - **Autosize is never changed.** A volume with autosize grow_shrink is refused (in the plan and right before the
-  change); grow or off go ahead, and a new size over autosize's maximum is said in the plan and the report.
+  change). With autosize grow, a new size over autosize's maximum is refused too (ONTAP would raise the maximum with
+  the size): grow it by hand or raise the maximum first. Off: goes ahead.
 - **Everything the plan stood on is read again right before each change:** the volume (size, autosize, guarantee, its
   aggregate and that aggregate's room), the LUN (its size, its space reservation, that it is still in the same volume
-  by UUID). Anything moved: nothing is sent. Every size sent is capped at the plan's own (exact bytes); the volume
-  first, then the LUN; a snapshot deleted meanwhile sends a smaller size or none, never more.
+  by UUID), and the volume's name, SVM and `ontap_expand_exclude` on that last read (the comment-only write too).
+  Anything moved: nothing is sent. Every size sent is capped at the plan's own (exact bytes); the volume first, then the
+  LUN; a snapshot deleted meanwhile sends a smaller size or none, never more; a volume that needs more now stops the
+  run before any change. The comment written is the last read's, with the line added.
+- **One run at a time:** the expand template is made with Concurrent jobs off, and with an AAP credential each run asks
+  AAP right before the change (another run going, or queued before it: nothing is changed; no credential: "not
+  checked" in the report).
 - **The report says what was read back** after each change, per volume and LUN; "not known - check System Manager"
   when a change was sent and nothing was verified, "(not changed)" when nothing was sent - never the planned size.
 - NetApp live page: the aggregates' days-until columns removed - still in the health report. An aggregate's status
   there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
   aggregates are listed by status, then fullest first; the "need a look" count follows.
+
+**Known limits:** ONTAP's REST API takes a volume's (and a LUN's) size, not "this much more". Between the job's last
+read and ONTAP's change (well under a second), a person in System Manager or ONTAP's autosize could still grow the
+volume; the job's size then sets it back to the job's size and the report shows the size read back. Not fixed, by
+design (docs/NETAPP.md, Limits).
 
 **Fixed (review of 1.127.x)**
 
