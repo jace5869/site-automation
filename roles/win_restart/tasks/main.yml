@@ -1,0 +1,30 @@
+---
+# Runs files/win_restart.ps1 on the server (ansible.builtin.script: no collection needed). _wr_action: plan (Check: read
+# only), schedule (the task registered for _wr_when.utc), list (Check of cancel: read only) or cancel. The task's own
+# script (files/win_restart_task.ps1) goes along in the settings: the job's script loads its pending-reboot check, and
+# writes it on the server for the task. The result: win_restart_result (the script's JSON, or {error}).
+- name: Restart | {{ _wr_action }}
+  ansible.builtin.script:
+    cmd: win_restart.ps1
+    # tests only (tests/test_win_restart.py runs the playbook on this machine with pwsh): never set on Windows
+    executable: "{{ _wr_script_executable | default(omit) }}"
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'action': _wr_action, 'at_utc': _wr_when.utc | default(''), 'only_if_pending': win_restart_only_if_pending | bool,
+          'count_file_renames': win_restart_count_file_renames | bool, 'task_path': win_restart_task_path,
+          'task_name': win_restart_task_name, 'dir': win_restart_dir, 'comment': _wr_comment | default(''),
+          'description': _wr_comment | default(''), 'code': win_restart_reason_code | string | trim,
+          'delay': win_restart_delay_seconds | int, 'task_script': lookup('ansible.builtin.file', 'win_restart_task.ps1')} | to_json }}
+  register: _wr_out
+  changed_when: >-
+    _wr_action in ['schedule', 'cancel'] and ((_wr_out.stdout_lines | default([]) | win_restart_parse).scheduled | default(false)
+    or (_wr_out.stdout_lines | default([]) | win_restart_parse).removed | default([]) | length > 0)
+  failed_when: false
+  check_mode: false               # plan and list only read; schedule and cancel are only asked outside Check
+
+- name: Restart | the result
+  ansible.builtin.set_fact:
+    win_restart_result: >-
+      {{ (_wr_out.stdout_lines | default([]) | win_restart_parse)
+         if _wr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | length > 0
+         else {'error': 'the script did not finish: ' ~ ((_wr_out.stderr | default(_wr_out.msg | default('no output')) | string | trim)[:300] or 'no output')} }}

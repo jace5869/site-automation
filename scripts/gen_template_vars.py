@@ -889,6 +889,20 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # win_local_groups_approved: {groups: {Administrators: ['{computer}\\Administrator', 'CORP\\Domain Admins']}}
 # win_local_groups_approved_by: [{match: 'SRV-SQL*', groups: {Administrators: ['CORP\\SQL-Admins']}}]
 """),
+    "win_restart_schedule.yml": ("Windows - schedule a restart", "Machine (Windows)", "", """\
+## docs/WINDOWS.md "Schedule a restart". Limit: the servers (required). Job type: Check first = the plan.
+## The survey asks: the time (24-hour HH:MM), only if a reboot is pending (yes/no), the reason, a change number.
+# win_restart_time: "22:30"
+# win_restart_only_if_pending: false
+# win_restart_reason: "Monthly patches"
+# win_restart_change: ""
+## The time zone of the time (default report_time_zone; empty = the job refuses; UTC is allowed)
+# win_restart_time_zone: America/New_York
+"""),
+    "win_restart_cancel.yml": ("Windows - cancel a scheduled restart", "Machine (Windows)", "", """\
+## docs/WINDOWS.md "Schedule a restart". Limit: the servers (required). Job type: Check first = what it removes.
+## Removes only our restart tasks (name starts with win_restart_task_name) and their files.
+"""),
     "java4shell.yml": ("Security - Java4Shell check (Keycloak)", "Machine", "", """\
 ## 1.91.0 (docs/JAVA4SHELL.md). Limit: the Keycloak host(s). Reads only, unless:
 ## j4s_fix: add -XX:-UseBASE64Intrinsics to the Keycloak service in the compose file (a backup beside it) - run as Check first to preview

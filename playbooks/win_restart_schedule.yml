@@ -1,0 +1,145 @@
+---
+# WINDOWS - SCHEDULE A RESTART. Restarts the Windows servers of the Limit at a chosen time: win_restart_time, 24-hour HH:MM,
+# in win_restart_time_zone (default report_time_zone). A time today that has passed means tomorrow. Each server gets a
+# one-time scheduled task (SYSTEM, \site-automation\site-automation restart) for that moment in its own time zone; it runs
+# shutdown /r /t 60 with win_restart_reason as comment (System event 1074). win_restart_only_if_pending: only a server
+# with a reboot pending (component servicing, Windows Update, ConfigMgr client, a computer rename) - checked now and again
+# at the restart time. One restart of ours per server: a new one replaces the earlier one. Never a restart right away.
+# Check = the plan only (each server's pending state and why, its last boot, "would restart at ..."). A Limit is required.
+# The report: email and website page. Cancel: playbooks/win_restart_cancel.yml. docs/WINDOWS.md "Schedule a restart".
+#
+#   ansible-playbook playbooks/win_restart_schedule.yml -l 'SRV-APP01' -e '{"win_restart_time": "22:30", "win_restart_reason": "Monthly patches"}' --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Windows - schedule a restart
+  # the exclusion as a pattern of its own (A,B,!site_excluded): appended to a comma list it would bind to the last name alone
+  hosts: "{{ target | default('all') | win_restart_hosts(hostvars['localhost']['site_exclude_not'] | default('')) }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows - schedule a restart
+  pre_tasks:
+    - name: The settings (roles/win_restart/defaults)
+      ansible.builtin.import_role:
+        name: win_restart
+        tasks_from: settings.yml
+
+    - name: The launch's answers (once, before any server is touched)
+      any_errors_fatal: true
+      run_once: true
+      block:
+        - name: The restart time as one moment, the shutdown comment
+          ansible.builtin.set_fact:
+            _wr_when: "{{ win_restart_time | win_restart_when(win_restart_time_zone, win_restart_min_lead_minutes | int) }}"
+            _wr_comment: >-
+              {{ win_restart_reason | win_restart_comment(win_restart_change | default('', true),
+                                                         awx_job_id | default(tower_job_id | default(''))) }}
+            _wr_refused: >-
+              {{ {'reason': win_restart_reason | default('', true), 'change': win_restart_change | default('', true),
+                  'code': win_restart_reason_code, 'delay': win_restart_delay_seconds,
+                  'limit': ansible_limit | default('', true), 'target': target | default(''),
+                  'excluded_in': ansible_play_hosts_all | select('in', groups['site_excluded'] | default([])) | list,
+                  'resolved': ansible_play_hosts_all, 'groups': groups,
+                  'hosts': ansible_play_hosts_all | length, 'max_hosts': win_restart_max_hosts | int} | win_restart_check }}
+
+        - name: Nothing is read or changed when the answers do not make sense
+          ansible.builtin.assert:
+            that:
+              - _wr_when.ok
+              - _wr_refused | length == 0
+            fail_msg: >-
+              Nothing was read or changed: {{ (([_wr_when.error] if _wr_when.error else []) + _wr_refused) | join('; ') }}.
+              docs/WINDOWS.md, "Schedule a restart".
+            quiet: true
+
+        - name: The restart time
+          ansible.builtin.debug:
+            msg: >-
+              Restart at {{ _wr_when.site }} ({{ _wr_when.time }} in {{ _wr_when.zone }}, {{ _wr_when.day }}){{
+              (' - ' ~ _wr_when.note) if _wr_when.note else '' }}{{ ' - only where a reboot is pending' if win_restart_only_if_pending | bool else '' }}.
+              Comment: {{ _wr_comment }}{{ ' - CHECK: nothing changes' if ansible_check_mode else '' }}.
+              The servers ({{ ansible_play_hosts_all | length }}): {{ ansible_play_hosts_all | join(', ') }}
+
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed (Not reached) - the job fails at its end
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+
+  tasks:
+    - name: The plan (Check) or the restart scheduled
+      ansible.builtin.include_role:
+        name: win_restart
+      vars:
+        _wr_action: "{{ 'plan' if ansible_check_mode else 'schedule' }}"
+      when: site_host_unreached | default('') | length == 0
+
+  post_tasks:
+    - name: Every server, as one model
+      ansible.builtin.set_fact:
+        _wr_model: >-
+          {{ _wr_hosts | win_restart_model({'mode': 'schedule', 'check': ansible_check_mode, 'comment': _wr_comment,
+                                            'only_if_pending': win_restart_only_if_pending | bool}) }}
+      vars:
+        _wr_hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
+          {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
+                                    'unreached': hostvars[h].site_host_unreached | default('')}) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: Each server
+      ansible.builtin.debug:
+        msg: "{{ _wr_model | win_restart_log(_wr_when) }}"
+      run_once: true
+
+    - name: The plan on the site portal's job page (site_approval_summary)
+      ansible.builtin.include_role:
+        name: site_approval_summary
+      vars:
+        approval_summary_title: "Restart at {{ _wr_when.site }}"
+        approval_summary_items: "{{ _wr_model | win_restart_summary_items(_wr_when) }}"
+      when: ansible_check_mode
+
+    - name: Email the report, publish it (report_email_to, report_web_dest) - once, from the AAP side
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: "{{ _wr_model | win_restart_doc(_wr_when) }}"
+      run_once: true
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+    - name: The result as job artifacts (win_restart)
+      ansible.builtin.set_stats:
+        data:
+          win_restart: >-
+            {{ {'at_utc': _wr_when.utc, 'at': _wr_when.site, 'dry_run': ansible_check_mode,
+                'only_if_pending': win_restart_only_if_pending | bool,
+                'servers': _wr_model.rows | map(attribute='host') | list,
+                'scheduled': _wr_model.rows | selectattr('status', 'in', ['scheduled', 'would restart']) | map(attribute='host') | list,
+                'skipped': _wr_model.rows | selectattr('status', 'equalto', 'skipped') | map(attribute='host') | list,
+                'failed': _wr_model.rows | selectattr('level', 'equalto', 'critical') | map(attribute='host') | list} }}
+        per_host: false
+      run_once: true
+
+    - name: The job fails when a server could not be read or scheduled
+      ansible.builtin.assert:
+        that: _wr_model.rows | selectattr('level', 'equalto', 'critical') | list | length == 0
+        fail_msg: >-
+          Not scheduled on: {{ _wr_model.rows | selectattr('level', 'equalto', 'critical')
+                                | map(attribute='host') | join(', ') }} - see the lines above.
+        quiet: true
+      run_once: true

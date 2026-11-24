@@ -95,6 +95,9 @@ LAUNCH_DOCS = {
     "VM - deploy placement change": {"ask_variables": True, "portal": True},
     "VM - deploy from ServiceNow ticket": {"ask_job_type": True},
     "NetApp - expand a volume": {"ask_job_type": True},              # docs/NETAPP.md, Expand a volume: Check = the plan only
+    # docs/WINDOWS.md, Schedule a restart: Check = the plan; the site portal launches them (its Hosts box = the Limit)
+    "Windows - schedule a restart": {"ask_job_type": True, "portal": True},
+    "Windows - cancel a scheduled restart": {"ask_job_type": True, "portal": True},
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed
 # or taken off): the answers the catalog's workflows give its steps, as each guide names the question
@@ -132,6 +135,16 @@ SURVEYS = {
         # stops before any change when it runs for real
         {"question_name": "Portal only - leave empty (the portal's Check guard)", "variable": "ontap_expand_require_check",
          "type": "text", "max": 5, "required": False}],
+    "Windows - schedule a restart": [   # docs/WINDOWS.md, Schedule a restart (the servers: the Limit)
+        {"question_name": "Restart time (24-hour HH:MM)", "variable": "win_restart_time", "type": "text", "min": 3, "max": 5, "required": True,
+         "question_description": "In the site's time zone (report_time_zone), e.g. 22:30. A time today that has passed means tomorrow."},
+        {"question_name": "Only if a reboot is pending?", "variable": "win_restart_only_if_pending", "type": "multiplechoice",
+         "choices": ["no", "yes"], "default": "no", "required": False,
+         "question_description": "yes: only servers with a reboot pending - checked now and again at the restart time."},
+        {"question_name": "Reason", "variable": "win_restart_reason", "type": "text", "max": 200, "required": True,
+         "question_description": "Goes into the shutdown comment (System event 1074) and the report."},
+        {"question_name": "Change or incident number (optional)", "variable": "win_restart_change", "type": "text", "max": 40,
+         "required": False}],
     "Windows health check": [   # docs/WINDOWS.md, Windows health check
         {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
          "choices": ["daily", "weekly", "all", "disk", "services", "performance", "time", "network", "eventlog", "security", "audit",

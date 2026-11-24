@@ -1,0 +1,4 @@
+---
+# Nothing to run: imported first by playbooks/win_restart_*.yml so the defaults (win_restart_*) are there for the checks
+# made before any server is touched.
+[]

@@ -138,6 +138,8 @@
 #   - win_troubleshoot.yml
 #   - win_trust_report.yml
 #   - win_local_groups.yml
+#   - win_restart_schedule.yml
+#   - win_restart_cancel.yml
 
 ## more job templates or workflows, by name or ID
 # aap_email_question_templates: []

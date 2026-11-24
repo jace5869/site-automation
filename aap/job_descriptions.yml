@@ -375,6 +375,16 @@ templates:
     targets: "Windows hosts of the target or the Limit over WinRM (Windows Machine credential)"
     produces: "Report email and website page; CSV, JSON, xlsx, approved-list.yml; with an approved list, Evaluate-STIG answer files and a PowerShell check"
     supports: "Run constraint=Read-only (nothing on a server changes; it judges nothing); email/website if set; Check = same read"
+  "Windows - schedule a restart":
+    does: "Schedules a one-time restart of the picked Windows servers at a 24-hour time in the site's time zone; optionally only where a reboot is pending."
+    targets: "Windows hosts of the Limit (required) over WinRM (Windows Machine credential, an administrator)"
+    produces: "A plan (Check: pending reboot and why, last boot, the restart time) or the result; report email and website page; artifact win_restart"
+    supports: "Run constraint=Changes target hosts: one scheduled task per server (replaces ours); never restarts right away; email/website if set; Check = plan"
+  "Windows - cancel a scheduled restart":
+    does: "Removes the restart tasks that Windows - schedule a restart registered on the picked servers (only ours, by name)."
+    targets: "Windows hosts of the Limit (required) over WinRM (Windows Machine credential, an administrator)"
+    produces: "What was removed (Check: what would be); report email and website page when set; artifact win_restart_cancel"
+    supports: "Run constraint=Changes target hosts: removes only our restart tasks and files; writes email/website if set; Check = list only"
   "VMware - trust store report":
     does: "Checks vCenter's trusted roots and each ESXi host's trusted CAs for a compromised or browser-dropped CA; fails when one is still held."
     targets: "vCenter via its API from the AAP side (VMware vCenter credential); no Limit"

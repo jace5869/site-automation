@@ -1,0 +1,32 @@
+---
+# Windows - schedule a restart / Windows - cancel a scheduled restart (playbooks/win_restart_schedule.yml,
+# playbooks/win_restart_cancel.yml; docs/WINDOWS.md "Schedule a restart"). The restart time, in 24-hour time (HH:MM, e.g.
+# 22:30), in win_restart_time_zone. A time today that has passed means tomorrow. The survey asks for it.
+win_restart_time: ""
+# The time zone of win_restart_time: a name as timedatectl list-timezones prints it (America/New_York), or UTC. Empty: the
+# job refuses (a restart is never planned in a time zone it guessed). Each server gets the same moment, in its own time zone.
+win_restart_time_zone: "{{ report_time_zone | default('', true) }}"
+# true (the survey's "Only if a reboot is pending": yes) = the server restarts only when a reboot is pending - when the plan
+# is made, and again at the restart time (the task checks again first and does nothing when none is pending any more).
+win_restart_only_if_pending: false
+# Why (required): the shutdown comment (System event 1074), the task's description and the report.
+win_restart_reason: ""
+# A change or incident number (optional, e.g. CHG0012345): in the comment and the report.
+win_restart_change: ""
+# Pending file rename operations (PendingFileRenameOperations) are shown, but count as "a reboot is pending" only with
+# true: some software sets them all the time, so with true "only if pending" would restart nearly every server.
+win_restart_count_file_renames: false
+# A time today closer than this (minutes) is refused - never a restart right away. A time that has passed means tomorrow.
+win_restart_min_lead_minutes: 5
+# The most servers one run may schedule (the Limit is required: an empty one is refused).
+win_restart_max_hosts: 50
+# The warning time before the restart (seconds): shutdown /r /t <this>. Logged-on users see it.
+win_restart_delay_seconds: 60
+# The shutdown reason code (shutdown /d): p:0:0 = Other (Planned). p:4:1 = Application: Maintenance (Planned).
+win_restart_reason_code: "p:0:0"
+# The scheduled task's folder in Task Scheduler.
+win_restart_task_path: "\\site-automation\\"
+# The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made.
+win_restart_task_name: "site-automation restart"
+# Where the task's script and its settings live on each server (only SYSTEM and Administrators may change it).
+win_restart_dir: 'C:\ProgramData\site-automation\restart'

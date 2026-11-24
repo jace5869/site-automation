@@ -121,6 +121,8 @@ aap_email_question_playbooks:
   - win_troubleshoot.yml
   - win_trust_report.yml
   - win_local_groups.yml
+  - win_restart_schedule.yml
+  - win_restart_cancel.yml
 aap_email_question_templates: []         # more job templates or workflows, by name or ID
 aap_email_question_exclude: []           # templates left out, by name or ID
 aap_email_question_workflows: true       # also the workflows that run them (a job in a workflow is never asked its own survey)

@@ -1,0 +1,112 @@
+---
+# WINDOWS - CANCEL A SCHEDULED RESTART. Removes our restart tasks (name starts with win_restart_task_name, any folder) from
+# the Windows servers of the Limit, and the task's files in win_restart_dir (restart.log is kept). Only ours: no other
+# scheduled task is touched. A restart already counting down (shutdown /t) is not stopped. Check = what it would remove.
+# A Limit is required. docs/WINDOWS.md "Schedule a restart".
+#
+#   ansible-playbook playbooks/win_restart_cancel.yml -l 'SRV-APP01' --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Windows - cancel a scheduled restart
+  # the exclusion as a pattern of its own (A,B,!site_excluded): appended to a comma list it would bind to the last name alone
+  hosts: "{{ target | default('all') | win_restart_hosts(hostvars['localhost']['site_exclude_not'] | default('')) }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows - cancel a scheduled restart
+  pre_tasks:
+    - name: The settings (roles/win_restart/defaults)
+      ansible.builtin.import_role:
+        name: win_restart
+        tasks_from: settings.yml
+
+    - name: Servers must be picked (once, before any server is touched)
+      ansible.builtin.assert:
+        that: _wr_refused | length == 0
+        fail_msg: "Nothing was read or changed: {{ _wr_refused | join('; ') }}. docs/WINDOWS.md, \"Schedule a restart\"."
+        quiet: true
+      vars:
+        _wr_refused: >-
+          {{ {'reason': 'cancel', 'change': '', 'code': win_restart_reason_code, 'delay': win_restart_delay_seconds,
+              'limit': ansible_limit | default('', true), 'target': target | default(''),
+              'excluded_in': ansible_play_hosts_all | select('in', groups['site_excluded'] | default([])) | list,
+              'resolved': ansible_play_hosts_all, 'groups': groups,
+              'hosts': ansible_play_hosts_all | length, 'max_hosts': win_restart_max_hosts | int} | win_restart_check }}
+      any_errors_fatal: true
+      run_once: true
+
+    - name: The servers
+      ansible.builtin.debug:
+        msg: "The servers ({{ ansible_play_hosts_all | length }}): {{ ansible_play_hosts_all | join(', ') }}"
+      run_once: true
+
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed (Not reached) - the job fails at its end
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+
+  tasks:
+    - name: Our restart tasks listed (Check) or removed
+      ansible.builtin.include_role:
+        name: win_restart
+      vars:
+        _wr_action: "{{ 'list' if ansible_check_mode else 'cancel' }}"
+      when: site_host_unreached | default('') | length == 0
+
+  post_tasks:
+    - name: Every server, as one model
+      ansible.builtin.set_fact:
+        _wr_model: >-
+          {{ _wr_hosts | win_restart_model({'mode': 'cancel', 'check': ansible_check_mode, 'task_name': win_restart_task_name}) }}
+      vars:
+        _wr_hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
+          {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
+                                    'unreached': hostvars[h].site_host_unreached | default('')}) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: Each server
+      ansible.builtin.debug:
+        msg: "{{ _wr_model | win_restart_log }}"
+      run_once: true
+
+    - name: Email the report, publish it (report_email_to, report_web_dest) - once, from the AAP side
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: "{{ _wr_model | win_restart_cancel_doc }}"
+      run_once: true
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+    - name: The result as job artifacts (win_restart_cancel)
+      ansible.builtin.set_stats:
+        data:
+          win_restart_cancel: >-
+            {{ {'dry_run': ansible_check_mode, 'servers': _wr_model.rows | map(attribute='host') | list,
+                'cancelled': _wr_model.rows | selectattr('status', 'in', ['removed', 'would remove']) | map(attribute='host') | list,
+                'failed': _wr_model.rows | selectattr('level', 'equalto', 'critical') | map(attribute='host') | list} }}
+        per_host: false
+      run_once: true
+
+    - name: The job fails when a server could not be read or its task not removed
+      ansible.builtin.assert:
+        that: _wr_model.rows | selectattr('level', 'equalto', 'critical') | list | length == 0
+        fail_msg: >-
+          Not done on: {{ _wr_model.rows | selectattr('level', 'equalto', 'critical') | map(attribute='host') | join(', ') }} - see the lines above.
+        quiet: true
+      run_once: true
