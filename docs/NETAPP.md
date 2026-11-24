@@ -345,8 +345,8 @@ the volume from a list, and may type a size and an incident number. **No approva
 ### How full a volume is
 
 A volume that holds a LUN is always about as full as its LUN takes: a space-reserved (thick) LUN takes all of its size
-from the first day, whatever is written on it. So for a LUN the list and the portal's NetApp page show and sort by the
-**LUN**, never by its volume:
+from the first day, whatever is written on it. So for a LUN the list, the job and the portal's NetApp page look at the
+**LUN**, never at its volume:
 
 | Volume | How full, in this order | Shown as |
 |---|---|---|
@@ -361,30 +361,66 @@ from the first day, whatever is written on it. So for a LUN the list and the por
   each least free first, by the fullness above; ties by name. When vCenter was not read, no row counts as a datastore:
   one list, least free first.
 - **Thick or thin.** ONTAP's `space.guarantee.requested` on the LUN: true is a space-reserved (thick) LUN, false thin.
-  The list reads it for the portal's NetApp page.
-- This is how the list **shows and sorts** a LUN. The choice's key at its end is unchanged (the volume's and the LUN's
-  sizes when listed): the expand job plans and grows exactly as before.
+  The job reads it, the volume's free space, its snapshot reserve and its space guarantee.
 
 ### What a run does
 
-1. Reads the picked volume **live**: its size, used space, aggregate and LUNs.
-2. Works out the growth:
-   - **Default:** 10 % of the volume (`ontap_expand_pct`), at least 1 GB (`ontap_expand_min_gb`), at most 512 GB (`ontap_expand_max_gb`).
+1. Reads the picked volume **live**: its size, used and free space, snapshot reserve, aggregate and LUNs.
+2. Works out the growth - of the **LUN** for a LUN volume, of the volume for an NFS one:
+   - **Default:** 10 % of the LUN (or the volume) (`ontap_expand_pct`), at least 1 GB (`ontap_expand_min_gb`), at most 512 GB (`ontap_expand_max_gb`).
    - **Or the Size box,** e.g. `150GB` or `1TB`. `ontap_expand_max_gb` does not limit a typed size; the aggregate does.
-3. Checks the aggregate. After the growth it must stay **at or under 97 % used** (`ontap_expand_aggr_max_pct`). The
-   growth counts as used, even on a thin volume. When it does not fit, nothing is changed. The report says the
-   largest size that fits: *"Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits"*.
-4. Reads the volume and the aggregate again, right before the change. If anything moved against the plan, it stops.
-5. Grows the volume, then reads it back. The incident number and the growth are added to the volume's comment
-   (what was there is kept).
-6. **A LUN in the volume** grows by the same size (`ontap_expand_lun: same`), then is read back.
-7. **The VMware datastore on it**, with a *VMware vCenter* credential on the template:
+3. **A LUN volume** grows only as much as the bigger LUN needs, never less than it is:
+   - **thick LUN:** the volume's used space now + the LUN's growth;
+   - **thin LUN:** the volume keeps its headroom over its LUNs (its usable size against the LUNs' sizes);
+   - then the volume's snapshot reserve on top (it is a % of the volume), and never smaller than the LUN;
+   - **never more than the LUN's growth and its snapshot reserve** (growth / (1 - reserve)): a thin LUN's headroom is
+     capped there; a thick LUN whose volume would need more (it is over-full already) is refused - free space in it first.
+     This is the run's own ceiling: a Check and a later Run are two jobs, so the Run's plan, made before its first write,
+     is the hard ceiling (`max_vol_growth`), and this rule bounds it whatever free space did in between.
+   - **If the volume has the room already,** it is not grown; only the LUN is.
+   - The plan says it plainly: *LUN 2.00 TB -> 2.20 TB; volume 2.10 TB -> 2.32 TB (thick LUN + 5 % snapshot reserve)*.
+4. Checks the aggregate against what really lands on it: the volume's growth on a volume with a volume guarantee; on
+   a thin volume (guarantee none) the growth of a space-reserved LUN, nothing for an NFS volume's size; the guarantee
+   not read: both. The re-check right before the change takes the guarantees as they are then. An aggregate already
+   over the limit refuses the run, even when the volume need not grow. After it the aggregate must stay **at or under 97 % used**
+   (`ontap_expand_aggr_max_pct`). The growth counts as used, even on a thin volume. When it does not fit, nothing is
+   changed. The report says the largest size that fits: *"Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB
+   fits"* (for a LUN volume: the largest LUN growth whose volume growth fits).
+5. Reads the volume, its LUNs and the aggregate again, right before the change, and works the volume's growth out again
+   from what is there (a snapshot deleted since may have made the room: then the volume is not grown). It stops if the
+   volume now needs more than the plan said (`max_vol_growth`: the Check's and the plan's growth is the ceiling), the LUN
+   was resized, or anything else moved against the plan - before anything is written. The LUN's new size must fit the
+   volume's confirmed size.
+   - **Autosize is never changed.** `grow_shrink` refuses the run (it could shrink the volume again): "autosize is
+     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `grow` or `off`: the
+     run goes ahead; a new size over autosize's maximum is said in the plan ("autosize maximum X is below the new size;
+     ONTAP raises it (to about 120 % of the new size)") and the report says the maximum read back after the change. The
+     job never sets it.
+   - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
+     size, to the byte - and never over the plan's own sizes. **Right before each change (the volume's, the LUN's)
+     everything the plan stood on is read again:** the volume's size and autosize, that it is still on the planned
+     aggregate (its UUID too: "the volume moved to aggregate X - run again"), the guarantees, the aggregate's room for
+     what lands (97 %), and the LUN's size, its volume (by UUID) and its space reservation (thin made thick since the
+     plan stops the run). Anything moved: nothing is sent. The volume's need is worked out again from those last reads:
+     a snapshot deleted meanwhile means a smaller size is sent, or none - never more than the plan.
+   - **The report says what was read back** after the change, for the volume and the LUN; "not known" when a change was
+     sent and nothing could be verified; "(not changed)" when nothing was sent. Each change's
+     ONTAP job is followed to its end and the size read back (at least the size before + the growth). No definite
+     outcome: "resize of volume X: outcome not known - check System Manager before running again", the LUN is not
+     grown, the job fails. The LUN's new size is its size + the growth (never over the plan's); a volume that cannot
+     hold it stops the run - the LUN size is never made smaller to fit.
+   - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
+     counts the spill at that size, once.
+6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the
+   volume's comment (what was there is kept).
+7. **The LUN** grows by the growth, then is read back.
+8. **The VMware datastore on it**, with a *VMware vCenter* credential on the template:
    - **VMFS:** the job finds the datastore by the LUN's NAA id (`naa.600a0980` + the LUN's serial number as hex). It
      rescans every host that sees the LUN, checks each one sees the new size, and expands the datastore over the
      LUN's free space.
    - **NFS:** the datastore whose remote path is the volume's junction path is refreshed.
    - **Without the credential,** or when vCenter cannot be read, the report gives the steps to do it by hand.
-8. Sends the report (email and website): At a glance, then each step with its result.
+9. Sends the report (email and website): At a glance, then each step with its result.
 
 **Check** (Job type Check at the launch) is the plan only: nothing is changed. The report shows each step as "Not run".
 
@@ -400,7 +436,8 @@ from the first day, whatever is written on it. So for a LUN the list and the por
 - One volume per run. The job never shrinks a volume.
 - **A volume with several LUNs:** each LUN is its own choice in the list. Picking one grows the volume and that LUN,
   then its datastore; the other LUNs are left as they are.
-- **The same choice again:** the volume is already at its new size, so there is nothing to do and the job ends green.
+- **The same choice again:** the volume (for a LUN volume: the LUN) is already at its new size, so there is nothing to
+  do and the job ends green.
   To grow it more, wait for the next list.
 - **The volume changed since the list was made:** refused. Run the list again and pick it again.
 
@@ -443,10 +480,10 @@ from the first day, whatever is written on it. So for a LUN the list and the por
 
 | Setting | Default | What it does |
 |---|---|---|
-| `ontap_expand_pct` / `_min_gb` / `_max_gb` | `10` / `1` / `512` | the default growth: this % of the volume, at least / at most this many GB |
+| `ontap_expand_pct` / `_min_gb` / `_max_gb` | `10` / `1` / `512` | the default growth: this % of the LUN (a LUN volume) or the volume, at least / at most this many GB |
 | `ontap_expand_aggr_max_pct` | `97` | the aggregate stays at or under this % used after the growth, or nothing is changed |
 | `ontap_expand_exclude` | `[]` | volumes never offered or grown: name patterns, `svm:volume` or `cluster/svm:volume` (below) |
-| `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume |
+| `ontap_expand_lun` | `same` | a LUN volume: the LUN grows by the growth, the volume as much as the LUN needs |
 | `ontap_expand_incident` / `_incident_group` | `off` / (none) | `create` = open an incident for a change, assigned to this group |
 | `ontap_expand_templates` / `ontap_expand_question` | the expand template / `ontap_expand_volume` | whose survey the list writes, and its question |
 | `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
@@ -480,8 +517,9 @@ GET only on NetApp; the page only reads the database.
 - **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume,
   VMware datastores first under their own heading, then "Other volumes and LUNs", each least free first: the VMware
   datastore (on one line; a long name ends in … with the whole name on hover), the aggregate, how full and from where,
-  free GB, growth a day - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
-  days until `ontap_expand_aggr_max_pct` (97 %).
+  free GB, growth a day - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates:
+  used %, free, size and growth a day (1.128.0: the days until `ontap_expand_aggr_max_pct` and until full are in the
+  health report only, not on this page).
 - **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
   own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP
   volume ..."). When the portal may not run the job, the button is off and says why ("needs Execute on NetApp - expand
@@ -585,6 +623,13 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 - The CLI commands it reads through REST (system health, storage failover, SnapMirror progress)
   are ONTAP `show` commands at admin level, which the `readonly` role may run.
 - It reports; it changes nothing. Fixes are done in System Manager or the ONTAP CLI.
+- **Expand a volume, the size write.** ONTAP's REST API grows a volume by its absolute size (`PATCH
+  /api/storage/volumes/{uuid}` with `size`). The CLI's relative `volume size -new-size +N` exists, but the job does not
+  send it through the private CLI passthrough: its REST contract (path, verb, body) is not in NetApp's public docs. So
+  the job reads the size right before the change and sends nothing when it moved; between that read and ONTAP's change
+  (well under a second) someone else - or autosize `grow` - could still grow the volume, and the sent size would then be under it - the job then reads it back, reports the size it
+  finds over the plan, and never sends a smaller size afterwards. A LUN is written the same way, after the volume.
+- Expand was tested against the fake ONTAP API only; its first Check and Run on one real volume are its verification.
 - Capacity trends was tested against the same fake ONTAP API, a fake AAP job history and a real MySQL 8.4. It was not
   run against a real cluster or a real AAP. It counts from its own points; it does not read ONTAP's own performance
   history.

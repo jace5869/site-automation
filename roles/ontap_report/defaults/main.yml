@@ -62,7 +62,7 @@ ontap_capacity_fail: false               # true = mark the job FAILED when a clu
 
 # ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ----
 # The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs.
-ontap_expand_pct: 10                     # the default growth: this % of the volume's size ...
+ontap_expand_pct: 10                     # the default growth: this % of the LUN's size (a LUN volume) or the volume's ...
 ontap_expand_min_gb: 1                   # ... at least this many GB ...
 ontap_expand_max_gb: 512                 # ... at most this many GB (a size typed in the launch's Size box is not held to this; the aggregate limit still is)
 ontap_expand_aggr_max_pct: 97            # the volume's aggregate must stay at or under this % used after the growth, or nothing is changed (the report says the largest size that fits)
@@ -71,7 +71,7 @@ ontap_expand_aggr_max_pct: 97            # the volume's aggregate must stay at o
 # cluster part matches the ONTAP cluster name or its ontap_clusters address. SVM and node roots, SnapMirror destinations,
 # offline volumes and FlexGroups always are.
 ontap_expand_exclude: []
-ontap_expand_lun: same                   # a LUN grows by the same size as its volume (the only way so far)
+ontap_expand_lun: same                   # a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the only way so far)
 ontap_expand_wait_seconds: 300           # how long to wait for ONTAP's job of each change
 # off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one
 # through the ServiceNow API credential when the run changes something, and resolve it with the result.

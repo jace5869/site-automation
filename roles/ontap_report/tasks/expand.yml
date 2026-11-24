@@ -121,6 +121,9 @@
     wait_seconds: "{{ ontap_expand_wait_seconds | int }}"
     expect_volume_uuid: "{{ _ox_plan.plan.volume_uuid }}"
     expect_lun_uuid: "{{ _ox_plan.plan.lun_uuid }}"
+    max_vol_growth: "{{ _ox_plan.plan.vol_growth | default(_ox_plan.plan.growth) | int }}"      # never more than the plan said
+    max_target: "{{ _ox_plan.plan.target | default(-1) | int }}"                               # nor over its sizes
+    max_lun_target: "{{ ((_ox_plan.plan.lun | default({}, true)).target | default(-1)) | int }}"
     validate_certs: "{{ ontap_validate_certs | bool }}"
     ca_path: "{{ ontap_ca_path }}"
     timeout: "{{ ontap_timeout | int }}"

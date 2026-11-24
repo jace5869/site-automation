@@ -61,7 +61,6 @@
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
     return d ? d + " d " + h + " h" : h ? h + " h" + (m ? " " + m + " min" : "") : m + " min";
   }
-  function daysCls(d, o) { return d == null ? "" : d < (o.days_crit || 7) ? "c-critical" : d < (o.days_warn || 30) ? "c-warning" : ""; }
   function notRead(errors) { return (errors || []).length ? el("p", "more-line nap-nr", "Not read: " + errors.join("; ")) : null; }
 
   // ---- the live line
@@ -233,9 +232,8 @@
       (showAll ? "." : ": the VMware datastores, and the ones over " + fmt(o.volume_warn_pct || 85) + " % or full within " + fmt(o.list_days || 90) + " days (ontap_live_list_days).") +
       (lo.roots || lo.small ? " Left out: " + [lo.roots ? lo.roots + " root volumes" : "", lo.small ? lo.small + " under " + fmt(o.min_gb) + " GB (ontap_volume_min_gb)" : ""].filter(Boolean).join(", ") + "." : "");
     const aggrRows = (m.aggrs || []).map((a) => tr(a.st, [td("", chip(a.st)), td("", [el("b", "mono", a.a), sub(a.node + " · " + a.c)]),
-      td("num", fmt(a.pct, 1)), td("num", tb(a.free)), td("num nap-wide", size(a.size)), td("num", a.g == null ? "-" : (a.g > 0 ? "+" : "") + fmt(a.g)),
-      td("num", a.d97 == null ? el("span", "muted", a.g != null && a.g <= 0 ? "not filling" : "-") : el("span", daysCls(a.d97, o), fmt(a.d97))),
-      td("num", a.full == null ? "-" : fmt(a.full))]));
+      td("num", fmt(a.pct, 1)), td("num", tb(a.free)), td("num nap-wide", size(a.size)), td("num", a.g == null ? "-" : (a.g > 0 ? "+" : "") + fmt(a.g))]));
+    // 1.128.0 (user): no days-until columns for the aggregates here - the health report keeps them
     const need = all.filter((v) => v.st !== "ok").length, needA = (m.aggrs || []).filter((a) => a.st !== "ok").length;
     const toggle = el("button", "btn sm", showAll ? "Show the ones that need a look" : "Show all " + all.length);
     toggle.type = "button"; toggle.setAttribute("data-all", "1");
@@ -250,9 +248,8 @@
       vcWhy ? el("p", "more-line nap-nr", "Datastores " + vcWhy + ".") : null,
       el("p", "more-line", "A volume that holds a LUN is judged by its LUN: the datastore's own used space when vCenter was read, else the LUN's blocks written. " +
          "Expand… opens " + ex.template + " with it picked" + (ex.job_type ? " and Job type Check" : "") + "." + (ex.on ? "" : " Off here: " + ex.why + ".")),
-      el("p", "h3", "Aggregates, soonest at " + fmt(o.aggr_max_pct || 97) + " % first"),
-      table([["Now"], ["Aggregate"], ["Used %", "num"], ["Free TB", "num"], ["Size", "num nap-wide"], ["Growth GB/day", "num"],
-             ["Days until " + fmt(o.aggr_max_pct || 97) + " %", "num"], ["Days until full", "num"]], aggrRows),
+      el("p", "h3", "Aggregates, the ones that need a look first"),
+      table([["Now"], ["Aggregate"], ["Used %", "num"], ["Free TB", "num"], ["Size", "num nap-wide"], ["Growth GB/day", "num"]], aggrRows),
       el("p", "more-line", fmt(o.aggr_max_pct || 97) + " % is ontap_expand_aggr_max_pct: past it, the expand job refuses to grow a volume on that aggregate. " +
          "Growth: the slope of the points of the last " + fmt(o.growth_days || 7) + " days (ontap_live_growth_days), once they span " + fmt(o.min_hours || 6) + " h.")
     ]);

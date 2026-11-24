@@ -9,6 +9,8 @@
 # text without the list's key, a volume with two LUNs named without one, a bad size, a size over the volume's LUN: refused,
 # nothing changed; the volume changed between the plan and the change; ONTAP's job failing; ontap_expand_incident: create
 # (no group: refused; with one: opened, then resolved with the steps).
+# A LUN volume is judged and grown by its LUN: the list's size and free space are the LUN's (sorted by it); the growth
+# is the LUN's; the volume grows only as much as the bigger LUN needs (thick + its snapshot reserve), not at all with room.
 # The vCenter side (rescan, VMFS expand, NFS refresh) is tests/test_ontap_expand.py's (fake pyVmomi objects): vcsim has no
 # NetApp LUN and no VMFS extent, and answers MethodNotFound to QueryVmfsDatastoreExpandOptions and RefreshDatastoreStorageInfo.
 #   bash tests/netapp/run_expand_test.sh            (ANSIBLE_PLAYBOOK=... for another ansible-core)
@@ -63,7 +65,7 @@ run() {
     if grep -qF -- "expand-Test9" "$work/out.txt"; then echo "FAIL - $tname: the ONTAP password is in the output"; fails=$((fails + 1)); return 1; fi
     echo "ok   - $tname"
 }
-patches() { grep -c '^PATCH' "$work/c${1:-0}.log" 2>/dev/null || true; }
+patches() { grep -cE '^(PATCH|POST)' "$work/c${1:-0}.log" 2>/dev/null || true; }
 check() {   # check NAME CONDITION...
     local tname="$1"; shift
     if "$@"; then echo "ok   - $tname"; else echo "FAIL - $tname"; fails=$((fails + 1)); fi
@@ -101,32 +103,49 @@ q = json.loads(sys.argv[1]); c = q["choices"] if isinstance(q["choices"], list) 
 i = lambda p: [k for k, x in enumerate(c) if x.startswith(p)][0]
 sys.exit(not i("vol_ds03/lun_a ") < i("vol_home ") < i("vol_ds03/lun_b "))' "$(lastq)"
 ds01="$(pick vol_ds01)"
-run "a Check run: the plan only (10.0 GB -> 11.0 GB, the LUN 9.0 -> 10.0 GB), nothing changed" ok ontap_volume_expand.yml --check \
-    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" \
-    -- "NetApp expand: vol_ds01 - the plan: 10.0 GB -> 11.0 GB (nothing changed)" "Not run - the plan only (Check)" \
-       "/vol/vol_ds01/lun_ds01 space.size 9.0 GB -> 10.0 GB"
+check "  fullest first, by the LUN: one volume's two LUNs apart - lun_a (79 % written) before vol_home, lun_b (33 %) after it" "$py" -c 'import json, sys
+q = json.loads(sys.argv[1]); c = q["choices"] if isinstance(q["choices"], list) else q["choices"].split("\n")
+i = lambda p: [k for k, x in enumerate(c) if x.startswith(p)][0]
+sys.exit(not i("vol_ds03/lun_a ") < i("vol_home ") < i("vol_ds03/lun_b "))' "$(lastq)"
+run "a Check run: the plan only (the LUN 9.0 -> 10.0 GB, the volume as much as the thick LUN and its 5 % snapshot reserve need), nothing changed" ok \
+    ontap_volume_expand.yml --check -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" \
+    -- "NetApp expand: vol_ds01 - the plan: LUN 9.0 GB -> 10.0 GB; volume 10.0 GB -> 10.5 GB (thick LUN + 5 % snapshot reserve) (nothing changed)" \
+       "Not run - the plan only (Check)" "/vol/vol_ds01/lun_ds01 space.size 9.0 GB -> 10.0 GB"
 check "  the Check run changed nothing" test "$(patches)" = 0
 run "grown: the volume and its LUN read back, the ticket in the comment, the datastore by hand (no vCenter credential), emailed" ok \
     ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$ds01\", \"ontap_expand_incident_number\": \"xinc0001234\", $mail}" \
-    -- "NetApp expand: vol_ds01 grown 10.0 GB -> 11.0 GB - expand the datastore in vCenter by hand" "Done - read back 11.0 GB" \
+    -- "NetApp expand: vol_ds01 grown LUN 9.0 GB -> 10.0 GB; volume 10.0 GB -> 10.5 GB (thick LUN + 5 % snapshot reserve) - expand the datastore in vCenter by hand" \
+       "Done - read back 10.5 GB" \
        "Done - read back 10.0 GB" "Increase Datastore Capacity, pick the device naa.600a09803830416231446d54357a5871" \
        "XINC0001234 (typed at the launch)"
-check "  ONTAP got: the volume to 11 GB with the comment kept and added to, then the LUN to 10 GB" grep -qE \
-    '^PATCH /api/storage/volumes/v-ds01 \{"size": 11811160064, "comment": "app team datastore \| XINC0001234: \+1.0 GB [0-9-]+ \(AAP job -\)"\}' "$work/c0.log"
+check "  ONTAP got: the volume to 10779 MB with the comment kept and added to, then the LUN to 10 GB" grep -qE \
+    '^PATCH /api/storage/volumes/v-ds01 \{"size": 11302600704, "comment": "app team datastore \| XINC0001234: \+1.0 GB [0-9-]+ \(AAP job -\)"\}' "$work/c0.log"
 check "  ... and the LUN" grep -qF 'PATCH /api/storage/luns/l-ds01 {"space": {"size": 10737418240}}' "$work/c0.log"
-check "  the email went out" grep -rqF "vol_ds01 grown 10.0 GB" "$work/mail"
-run "the same choice again: already 11.0 GB - nothing to do (green), nothing changed" ok ontap_volume_expand.yml \
-    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" -- "NetApp expand: vol_ds01 already 11.0 GB - nothing to do"
+check "  the email went out" grep -rqF "vol_ds01 grown LUN 9.0 GB" "$work/mail"
+run "the same choice again: the LUN already 10.0 GB - nothing to do (green), nothing changed" ok ontap_volume_expand.yml \
+    -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" -- "NetApp expand: vol_ds01 already LUN 10.0 GB - nothing to do"
 check "  still the 2 changes of before" test "$(patches)" = 2
+ds03a="$(pick vol_ds03/lun_a)"
+run "a thick LUN whose volume has room: the LUN grown 900 -> 990 GB, the volume not" ok ontap_volume_expand.yml \
+    -e "{$cl, \"ontap_expand_volume\": \"$ds03a\"}" \
+    -- "NetApp expand: vol_ds03 grown LUN 900.0 GB -> 990.0 GB; volume 2.00 TB stays (it has room for the LUN's growth already (thick LUN))" \
+       "Not needed - it has room for the LUN's growth already"
+check "  ... the volume's size not changed (its comment only)" test "$(grep 'PATCH /api/storage/volumes/v-ds03' "$work/c0.log" | grep -c '"size"')" = 0
+check "  ... the LUN to 990 GB" grep -qF 'PATCH /api/storage/luns/l-a {"space": {"size": 1063004405760}}' "$work/c0.log"
 
 # ---- refusals: nothing changed ---------------------------------------------------------------------------------------
 sql="$(pick vol_sql01)"
 home="$(pick vol_home)"
 run "the default over 97 %: refused, with the largest size that fits" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\"}" \
     -- "Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits" "Launch again with a size in the Size box: 180.0GB or less"
+run "that size as Check: the plan says autosize's maximum is under the new size (and is left as it is)" ok ontap_volume_expand.yml --check \
+    -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
+    -- "Autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size)."
 run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
-    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB"
-check "  3 changes now (no LUN on vol_sql01)" test "$(patches)" = 3
+    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" \
+       "autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size) - its maximum reads"
+check "  5 changes now (vol_ds03's comment and LUN; vol_sql01: its size only - autosize never changed)" test "$(patches)" = 5
+check "  ... vol_sql01's autosize not touched" test "$(grep 'PATCH /api/storage/volumes/v-sql01' "$work/c0.log" | grep -c autosize)" = 0
 n=$(patches)
 bk="vol_bk01 (svm_backup, cluster1) - 4.00 TB [vol|$c0|svm_backup|vol_bk01||4398046511104||v-bk01]"
 run "an excluded volume named by hand: refused" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$bk\"}" \
@@ -173,7 +192,7 @@ n=$(patches)
 SN_HOST="http://127.0.0.1:$((port + 21))" SN_USERNAME=api SN_PASSWORD=goodpw \
 run "create, but nothing to do: no incident opened" ok ontap_volume_expand.yml \
     -e "{$cl, \"ontap_expand_volume\": \"$ds01\", \"ontap_expand_incident\": \"create\", \"ontap_expand_incident_group\": \"STORAGE-TEAM\"}" \
-    -- "already 11.0 GB - nothing to do"
+    -- "already LUN 10.0 GB - nothing to do"
 check "  ... only the one incident of before" test "$(grep -c '"POST"' "$work/sn.jsonl")" = 1
 
 # ---- the volume changes between the plan and the change; ONTAP's job fails ---------------------------------------------

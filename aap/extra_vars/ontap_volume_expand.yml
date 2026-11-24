@@ -52,7 +52,7 @@
 ## ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list
 ## (playbooks/ontap_volume_list.yml), 1.123.0 ---- The person running it picks one volume from the
 ## list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs. the
-## default growth: this % of the volume's size ...
+## default growth: this % of the LUN's size (a LUN volume) or the volume's ...
 # ontap_expand_pct: 10
 
 ## ... at least this many GB ...
@@ -73,7 +73,8 @@
 ## volumes and FlexGroups always are.
 # ontap_expand_exclude: []
 
-## a LUN grows by the same size as its volume (the only way so far)
+## a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the
+## only way so far)
 # ontap_expand_lun: same
 
 ## how long to wait for ONTAP's job of each change

@@ -1480,12 +1480,12 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_capacity_db_timeout` | `10` | seconds to wait for the report database's connection |
 | `ontap_capacity_db_keep_days` | `800` | delete the database's points older than this many days (0 = never) |
 | `ontap_capacity_fail` | `false` | true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows |
-| `ontap_expand_pct` | `10` | ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ---- The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs. the default growth: this % of the volume's size ... |
+| `ontap_expand_pct` | `10` | ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ---- The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs. the default growth: this % of the LUN's size (a LUN volum… (all of it: the role file) |
 | `ontap_expand_min_gb` | `1` | ... at least this many GB ... |
 | `ontap_expand_max_gb` | `512` | ... at most this many GB (a size typed in the launch's Size box is not held to this; the aggregate limit still is) |
 | `ontap_expand_aggr_max_pct` | `97` | the volume's aggregate must stay at or under this % used after the growth, or nothing is changed (the report says the largest size that fits) |
 | `ontap_expand_exclude` | `[]` | Volumes never offered and never grown, even named by hand: name patterns, svm:volume or cluster/svm:volume, * and ?, any case, e.g. ["*_root", "vol0", "svm_backup:*", "cluster9*/*" (every volume on those clusters), "cluster9*/svm_a:*"]. The cluster part matches the ONTAP cluster name or its ontap_clusters address. SVM… (all of it: the role file) |
-| `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume (the only way so far) |
+| `ontap_expand_lun` | `same` | a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the only way so far) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 | `ontap_expand_incident` | `"off"` | off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one through the ServiceNow API credential when the run changes something, and resolve it with the result. |
 | `ontap_expand_incident_group` | (empty) | the assignment group of the incident ontap_expand_incident: create opens - must be set for create |

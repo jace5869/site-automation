@@ -854,11 +854,15 @@ class Browser(unittest.TestCase):
 
     def test_no_days_until_full_and_the_least_free_tile(self):
         js = ("r.th=[].map.call(document.querySelectorAll('.nap-vols thead th'),function(x){return x.textContent});"
+              "r.ath=[].map.call(document.querySelectorAll('#runway table:not(.nap-vols) thead th'),function(x){return x.textContent});"
               "r.k=[].map.call(document.querySelectorAll('.nap-tiles .tile .k'),function(x){return x.textContent});"
               "var d=document.querySelector('.nap-vols .nap-ds');r.ws=getComputedStyle(d).whiteSpace;r.title=d.title;r.txt=d.textContent;")
         out = run_page(page_files(self, answer_for(self), js=js), 1280)
         r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
         self.assertNotIn("Days until full", r["th"])
+        # 1.128.0 (user): the aggregates' days-until columns are off the page too (the health report keeps them)
+        self.assertFalse([x for x in r["ath"] if x.startswith("Days until")], r["ath"])
+        self.assertIn("Growth GB/day", r["ath"])
         self.assertIn("Growth GB/day", r["th"])
         self.assertIn("Least free", r["k"])
         self.assertNotIn("Soonest full", r["k"])

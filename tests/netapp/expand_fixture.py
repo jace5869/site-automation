@@ -4,10 +4,10 @@
   expand_fixture.py OUT.json USER PASSWORD [race|jobfail|noname]
 
 cluster1: aggr1 (20 TB, 71.2 % used), aggr2 (30 TB, 180 GB under 97 %). Volumes:
-  vol_ds01   svm_vmware, 10 GB, 88 % used, one thick LUN lun_ds01 (9 GB, 8.1 GB written, serial 80Ab1DmT5zXq)
-  vol_ds03   svm_vmware, 2 TB, two thick LUNs lun_a (900 GB, 711 GB written) and lun_b (900 GB, 300 GB written)
+  vol_ds01   svm_vmware, 10 GB, 5 % snapshot reserve, 0.5 GB free, one thick LUN lun_ds01 (9 GB, 8.1 GB written, serial 80Ab1DmT5zXq)
+  vol_ds03   svm_vmware, 2 TB, 248 GB free, two thick LUNs lun_a (900 GB, 711 GB written) and lun_b (900 GB, 300 GB written)
   vol_nfs02  svm_vmware, 500 GB, NFS export /vol_nfs02 (SVM address 192.0.2.21)
-  vol_sql01  svm1 on aggr2, 2 TB, 91 % used (the default 204.8 GB does not fit, 180 GB does)
+  vol_sql01  svm1 on aggr2, 2 TB, 91 % used (the default 204.8 GB does not fit, 180 GB does); autosize grow, at most 2.1 TB
   vol_home   svm1, 1.5 TB;  vol_bk01 svm_backup (excluded by the tests' ontap_expand_exclude)
   never: svm1_root (SVM root), vol_sql01_dr (DP), vol_old (offline), fg_data (FlexGroup)
 race: vol_home is 5 GB bigger from its third read on (someone grew it between the plan and the change).
@@ -22,20 +22,22 @@ mode = sys.argv[4] if len(sys.argv) > 4 else ""
 
 def vol(uuid, name, svm, aggrs, size, used, **kw):
     v = {"uuid": uuid, "name": name, "svm": {"name": svm}, "aggregates": [{"name": a} for a in aggrs], "state": "online", "type": "rw",
-         "style": "flexvol", "is_svm_root": False, "space": {"size": int(size), "used": int(used)}, "comment": ""}
+         "style": "flexvol", "is_svm_root": False, "space": {"size": int(size), "used": int(used), "available": int(kw.pop("available", size - used)),
+                                                         "snapshot": {"reserve_percent": kw.pop("snap", 0)}},
+         "guarantee": {"type": "volume"}, "comment": ""}
     v.update(kw)
     return v
 
 
 def lun(uuid, name, svm, volume, size, serial, used=0, thick=True):
-    return {"uuid": uuid, "name": name, "svm": {"name": svm}, "location": {"volume": {"name": volume}},
+    return {"uuid": uuid, "name": name, "svm": {"name": svm}, "location": {"volume": {"name": volume, "uuid": "v-" + volume[4:]}},
             "space": {"size": int(size), "used": int(used), "guarantee": {"requested": thick, "reserved": thick}}, "serial_number": serial}
 
 
-vols = [vol("v-ds01", "vol_ds01", "svm_vmware", ["aggr1"], 10 * GB, 8.8 * GB, comment="app team datastore"),
-        vol("v-ds03", "vol_ds03", "svm_vmware", ["aggr1"], 2 * TB, 1.58 * TB),
+vols = [vol("v-ds01", "vol_ds01", "svm_vmware", ["aggr1"], 10 * GB, 9 * GB, comment="app team datastore", available=0.5 * GB, snap=5),
+        vol("v-ds03", "vol_ds03", "svm_vmware", ["aggr1"], 2 * TB, 1800 * GB),
         vol("v-nfs02", "vol_nfs02", "svm_vmware", ["aggr1"], 500 * GB, 470 * GB, nas={"path": "/vol_nfs02"}),
-        vol("v-sql01", "vol_sql01", "svm1", ["aggr2"], 2 * TB, 1.82 * TB),
+        vol("v-sql01", "vol_sql01", "svm1", ["aggr2"], 2 * TB, 1.82 * TB, autosize={"mode": "grow", "maximum": int(2.1 * TB)}),
         vol("v-home", "vol_home", "svm1", ["aggr1"], 1.5 * TB, 0.96 * TB),
         vol("v-bk01", "vol_bk01", "svm_backup", ["aggr1"], 4 * TB, 3 * TB),
         vol("v-root", "svm1_root", "svm1", ["aggr1"], 1 * GB, 0.1 * GB, is_svm_root=True),
@@ -47,7 +49,7 @@ fixture = {
     "user": user, "password": pw, "writable": True,
     "paths": {
         "/api/cluster": {"fields": ["name", "uuid", "version"], "single": {"name": "cluster1", "uuid": "c-1"}},
-        "/api/storage/volumes": {"fields": ["uuid", "name", "svm", "aggregates", "state", "type", "style", "is_svm_root", "space", "nas", "comment"],
+        "/api/storage/volumes": {"fields": ["uuid", "name", "svm", "aggregates", "state", "type", "style", "is_svm_root", "space", "guarantee", "autosize", "nas", "comment"],
                                  "records": vols},
         "/api/storage/aggregates": {"fields": ["uuid", "name", "space", "node"], "records": [
             {"uuid": "a-1", "name": "aggr1", "node": {"name": "cluster1-01"}, "space": {"block_storage": {"size": 20 * TB, "used": int(14.24 * TB)}}},

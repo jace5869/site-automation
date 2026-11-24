@@ -198,13 +198,15 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
     except ValueError as e:
         p["why"] = str(e)
         return p
-    p["growth"] = g
+    p["growth"] = p["vol_growth"] = g
+    p["default_text"] = "%d %% of %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(listed), o["min_gb"], o["max_gb"])
+    if lun is not None:
+        return _plan_lun(p, vol, lun, int(listed), int(lun_listed or 0), o, size_text)
     p["target"] = want = int(listed) + g
     if lun is not None and not lun_listed:
         p["why"] = "the list did not have the size of LUN %s - run NetApp - refresh volume list and pick it again" % lun["name"]
         return p
     lun_done = lun is None or int(lun["size"]) >= int(lun_listed) + g - SLACK
-    p["default_text"] = "%d %% of %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(listed), o["min_gb"], o["max_gb"])
     if size >= p["target"] - SLACK:
         if not lun_done:
             p["why"] = ("the volume is already %s, but its LUN is %s, not %s: grow the LUN %s in ONTAP System Manager, then its "
@@ -235,9 +237,10 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
         if p["lun"]["target"] > p["target"]:
             p["why"] = "the LUN would be bigger than its volume (%s > %s)" % (human(p["lun"]["target"]), human(p["target"]))
             return p
-    p["aggr_pct_after"] = pct(p["aggr_used"] + g, p["aggr_size"])
+    take = p["landing"] = landing(vol, None, g, g)     # a thin volume (guarantee none) takes nothing for its size
+    p["aggr_pct_after"] = pct(p["aggr_used"] + take, p["aggr_size"])
     p["used_pct_after"] = pct(used, p["target"])
-    if g > p["room"]:
+    if not aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], take):
         what = ("Default %s" % human(g)) if p["by"] == "default" else human(g)
         p["why"] = ("%s would put %s at %.1f %%; %s" % (what, p["aggr"], p["aggr_pct_after"],
                     ("up to %s fits" % human(p["room"], floor=True)) if p["room"] >= MIN_TYPED else "nothing fits (it is at %.1f %% now, the limit is %g %%)"
@@ -268,6 +271,159 @@ def fullness_text(e):
     return "%s %d%% %s" % (src, int(round(pct(used, size))), "written" if src == "LUN" else "used")
 
 
+def _ceil_mb(n):
+    return int(math.ceil(float(n) / MB) * MB)
+
+
+def size_for_usable(data, snap_pct, snap_used):
+    """The smallest volume size whose usable space holds data bytes: its snapshot reserve (snap_pct % of the size) is not
+    usable, and snapshots over that reserve (the spill, snap_used - reserve) take usable space too - at the new size, where
+    the bigger reserve takes more of them (the spill counted once)."""
+    r = min(0.95, max(0.0, float(snap_pct or 0) / 100.0))
+    su = max(0.0, float(snap_used or 0))
+    spill_size = data + su                          # the size while snapshots spill: usable = size - snap_used
+    if r > 0 and su - r * spill_size > 0:           # they still spill at that size
+        return spill_size
+    if r == 0:
+        return data + su
+    return data / (1.0 - r)                          # no spill: usable = size * (1 - r)
+
+
+def usable_used(vol):
+    """the volume's data in its usable space now: what is not free there, less the snapshots' spill (snap_used - reserve)"""
+    size = int(vol["size"])
+    r = min(0.95, max(0.0, float(vol.get("snap_pct") or 0) / 100.0))
+    su = float(vol.get("snap_used") or 0)
+    spill = max(0.0, su - r * size)
+    afs = size * (1.0 - r)
+    return afs - int(vol["available"]) - spill, afs - spill
+
+
+def volume_for_lun(vol, lun, g):
+    """The volume size a LUN grown by g needs -> (bytes, how). Never less than the volume is now. thick (the LUN space-
+    reserved): the volume's data now + g; thin: the volume keeps its headroom over its LUNs (its usable space / the LUNs'
+    sizes) for the LUNs + g. Either way its snapshot reserve and the snapshots' spill on top (size_for_usable) and never
+    smaller than the LUN."""
+    size = int(vol["size"])
+    lsize = int(lun["size"])
+    total = max(int(lun.get("total") or 0), lsize)
+    if vol.get("available") is not None:
+        data, usable = usable_used(vol)
+    else:
+        r = min(0.95, max(0.0, float(vol.get("snap_pct") or 0) / 100.0))
+        data, usable = float(total), size * (1.0 - r)
+    if lun.get("thick"):
+        need_data, how = max(0.0, data) + g, "thick LUN"
+        need = size_for_usable(need_data, vol.get("snap_pct"), vol.get("snap_used"))
+    else:
+        need_data = usable * (total + g) / float(total)
+        how = "thin LUN, the volume keeps %.2fx its LUN%s" % (usable / float(total), "s" if total > lsize else "")
+        # a thin LUN's headroom never grows the volume more than the LUN's growth and its snapshot reserve (growth_limit)
+        need = min(size_for_usable(need_data, vol.get("snap_pct"), vol.get("snap_used")), growth_limit(vol, g))
+    need = max(need, lsize + g)
+    if vol.get("snap_pct"):
+        how += " + %g %% snapshot reserve" % float(vol["snap_pct"])
+    return max(size, _ceil_mb(need)), how
+
+
+def growth_limit(vol, g):
+    """the most a volume grows for a LUN grown by g: g and the snapshot reserve on it (g / (1 - reserve)) - the run's own
+    ceiling, whatever its free space did between the plan and the change"""
+    keep = 1.0 - min(0.95, max(0.0, float(vol.get("snap_pct") or 0) / 100.0))
+    return int(vol["size"]) + _ceil_mb(g / keep)
+
+
+def landing(vol, lun, vg, g):
+    """What a change takes from the aggregate: a volume with a volume guarantee reserves its new size (vg); a thin volume
+    (guarantee none) takes nothing for its size, but a space-reserved LUN grown in it reserves its growth (g); the
+    guarantee not read: both (the most it can be)."""
+    guar = str(vol.get("guarantee") or "").lower()
+    thick = bool((lun or {}).get("thick"))
+    if lun is None:
+        return vg if guar != "none" else 0
+    if guar == "volume":
+        return vg
+    if guar == "none":
+        return g if thick else 0
+    return vg + (g if thick else 0)
+
+
+def aggr_fits(aggr_size, aggr_used, max_pct, take):
+    """the aggregate stays at or under max_pct % with take bytes more - also false when it is over it already"""
+    return float(aggr_used) + float(take) <= float(aggr_size) * float(max_pct) / 100.0
+
+
+def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
+    """plan() for a volume that holds the LUN picked: the LUN is what fills and what grows (the default growth is of the LUN);
+    the volume grows only as much as the bigger LUN needs (volume_for_lun) - not at all when it has the room."""
+    size = p["size"]
+    if not lun_listed:
+        p["why"] = "the list did not have the size of LUN %s - run NetApp - refresh volume list and pick it again" % lun["name"]
+        return p
+    if not lun.get("size"):
+        p["why"] = "the size of LUN %s could not be read - nothing is changed without it" % lun["name"]
+        return p
+    try:
+        g = parse_size(size_text) if p["by"] == "size" else default_growth(lun_listed, o["pct"], o["min_gb"], o["max_gb"])
+    except ValueError as e:
+        p["why"] = str(e)
+        return p
+    lsize = int(lun["size"])
+    p.update(growth=g, vol_growth=0, target=size, thick=bool(lun.get("thick")), snap_pct=float(vol.get("snap_pct") or 0),
+             guarantee=str(vol.get("guarantee") or ""),
+             default_text="%d %% of the LUN's %s, at least %s GB, at most %s GB" % (int(o["pct"]), human(lun_listed), o["min_gb"], o["max_gb"]),
+             fullness={"pct": pct(lun.get("used") or 0, lsize), "source": "LUN written"})
+    want = lun_listed + g
+    if lsize >= want - SLACK:
+        p.update(status="nothing", why="LUN %s already %s (the list's %s + %s) - nothing to do" % (
+            lun["name"].rsplit("/", 1)[-1], human(lsize), human(lun_listed), human(g)), growth=0)
+        # exactly this choice's size: the datastore's step may run again (a rescan or expand that failed before) - never after
+        # someone else grew it more
+        p["retry_ok"] = abs(lsize - want) <= SLACK
+        if p["retry_ok"]:
+            p["lun"] = {"name": lun["name"], "size": lsize, "target": lsize, "thick": bool(lun.get("thick"))}
+        return p
+    if abs(lsize - lun_listed) > SLACK:
+        p["why"] = ("the LUN changed since the list was made (listed %s, now %s) - run NetApp - refresh volume list and pick it again"
+                    % (human(lun_listed), human(lsize)))
+        return p
+    if abs(size - listed) > SLACK:
+        p["why"] = ("the volume changed since the list was made (listed %s, now %s) - run NetApp - refresh volume list and pick it again"
+                    % (human(listed), human(size)))
+        return p
+    vt, how = volume_for_lun(vol, lun, g)
+    vg = vt - size
+    if vt > growth_limit(vol, g) + SLACK:
+        p["why"] = ("the volume would need +%s for +%s on the LUN (%s) - more than the LUN's growth and its snapshot reserve "
+                    "(+%s): free space in volume %s first (old snapshots, other data), or grow it in ONTAP System Manager"
+                    % (human(vg), human(g), how, human(growth_limit(vol, g) - size), vol["name"]))
+        return p
+    p.update(target=vt, vol_growth=vg, vol_how=how if vg else "it has room for the LUN's growth already (%s)" % how,
+             lun={"name": lun["name"], "size": lsize, "target": lsize + g, "thick": bool(lun.get("thick")), "used": int(lun.get("used") or 0)})
+    take = landing(vol, lun, vg, g)
+    p["landing"] = take
+    p["aggr_pct_after"] = pct(p["aggr_used"] + take, p["aggr_size"])
+    p["used_pct_after"] = pct(p["used"], vt)
+    if not aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], take):
+        lo, hi = 0, max(1, (p["room"] + lsize) // MB)      # the largest LUN growth whose take from the aggregate fits (whole MB)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            t = landing(vol, lun, volume_for_lun(vol, lun, mid * MB)[0] - size, mid * MB)
+            if aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], t):
+                lo = mid
+            else:
+                hi = mid - 1
+        p["room"] = lo * MB if aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], 0) else 0
+        what = ("Default %s" % human(g)) if p["by"] == "default" else human(g)
+        p["why"] = ("%s on the LUN takes %s from %s (the volume +%s, %s), which would put it at %.1f %%; %s" % (
+            what, human(take), p["aggr"], human(vg), how, p["aggr_pct_after"],
+            ("up to %s on the LUN fits" % human(p["room"], floor=True)) if p["room"] >= MIN_TYPED else
+            "nothing fits (it is at %.1f %% now, the limit is %g %%)" % (p["aggr_pct"], o["max_pct"])))
+        return p
+    p.update(status="grow", why="")
+    return p
+
+
 def recheck(p, vol, aggr, exclude=(), clusters=()):
     """Right before the change: '' when the volume and its aggregate still are as planned, else why it stops. vol: the volume
     read again ({name, svm, size, state, type, style, is_svm_root, aggregates}), aggr: its aggregate now."""
@@ -283,7 +439,11 @@ def recheck(p, vol, aggr, exclude=(), clusters=()):
     if abs(int(vol["size"]) - int(p["size"])) > SLACK:
         return "the volume changed between the plan and the change (%s, now %s) - nothing was changed" % (human(p["size"]), human(vol["size"]))
     left = room(int(aggr.get("size") or 0), int(aggr.get("used") or 0), p["max_pct"])
-    if p["growth"] > left:
+    # what lands on the aggregate from the guarantees as they are now (a thin volume may have got a volume guarantee since)
+    take = landing(vol, p.get("lun"), p.get("vol_growth", p["growth"]), p["growth"]) if vol.get("guarantee") is not None \
+        else p.get("landing", p.get("vol_growth", p["growth"]))
+    p["landing"] = take
+    if not aggr_fits(aggr.get("size"), aggr.get("used"), p["max_pct"], take):
         return ("%s got fuller between the plan and the change (%.1f %% now): %s no longer fits under %g %% - nothing was changed"
-                % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(p["growth"]), p["max_pct"]))
+                % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(take), p["max_pct"]))
     return ""

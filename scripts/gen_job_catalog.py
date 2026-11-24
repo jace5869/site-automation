@@ -129,7 +129,7 @@ SURVEYS = {
     "NetApp - expand a volume": [   # docs/NETAPP.md, Expand a volume (1.123.0): the Volume list comes from NetApp - refresh volume list
         {"question_name": "Which volume to grow?", "variable": "ontap_expand_volume", "type": "multiplechoice",
          "choices": ["(run NetApp - refresh volume list first)"], "required": True},
-        {"question_name": "Size to add (optional: empty = 10 % of the volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB",
+        {"question_name": "Size to add (optional: empty = 10 % of the LUN or NFS volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB",
          "variable": "ontap_expand_size", "type": "text", "max": 20, "required": False},
         {"question_name": "Incident number (optional: written in the volume's comment and the report)",
          "variable": "ontap_expand_incident_number", "type": "text", "max": 40, "required": False},

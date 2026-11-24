@@ -3051,7 +3051,8 @@ job_templates:
         choices:
           - (run NetApp - refresh volume list first)
         required: true
-      - question_name: 'Size to add (optional: empty = 10 % of the volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB'
+      - question_name: 'Size to add (optional: empty = 10 % of the LUN or NFS volume, at least 1 GB, at most 512 GB), e.g.
+          150GB or 1TB'
         variable: ontap_expand_size
         type: text
         max: 20
@@ -3067,8 +3068,8 @@ job_templates:
         max: 5
         required: false
     description:
-      does: Grows the NetApp volume picked in its survey (10 %, 1-512 GB, or the size typed), its LUN, and the VMware datastore
-        on it; no approval.
+      does: Grows the NetApp LUN or NFS volume picked (10 %, 1-512 GB, or typed), its volume only as needed, and the VMware
+        datastore on it; no approval.
       targets: One ONTAP volume via REST API (NetApp ONTAP credential with write); vCenter via its API (optional); ServiceNow
         (optional). No Limit.
       produces: 'A plan (Check) or result report: email and report website, each step''s result; the incident number in the
