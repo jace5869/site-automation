@@ -458,7 +458,9 @@ Content-Security-Policy and an offline network are fine.
 ## The Christmas theme (1.115.0)
 
 A festive look for the season, in 16-bit pixel art: a string of lights at the bottom of the bar that twinkle, a small tree
-after the site's name, a red-and-green stripe under the active tab, and a few snowflakes in the page's side margins. It is
+after the site's name, a red-and-green stripe under the active tab, and a few snowflakes in the page's side margins. Now and
+then Santa's sleigh - two reindeer and Rudolph in front - flies along the string of lights, and a small snowman stands after
+the report's title (not on the index, where the tree is). It is
 on the atlas, brief and ops pages and their index (the email looks on the website - standard, command, portal, glass - and
 the ticket insights pages have no decor). The Site portal follows the same setting.
 
@@ -471,20 +473,28 @@ report_theme_season: auto        # none (default) | christmas | auto (Dec 1 to J
 | Setting | Default | What it does |
 |---|---|---|
 | `report_theme_season` | `none` | `none`: off, the pages as always. `christmas`: on. `auto`: on from Dec 1 to Jan 6, by the day in `report_time_zone` |
-| `report_theme_season_style` | `16bit` | `16bit` (shaded sprites) or `8bit` (flat colours, bigger pixels) |
+| `report_theme_season_style` | `16bit` | `16bit` (shaded sprites) or `8bit` (flat colours, bigger pixels; no sleigh and no snowman) |
 | `report_theme_season_lights` | `true` | the string of lights; `false` = off for everyone, and no *Lights* switch |
 | `report_theme_season_twinkle` | `true` | the lights twinkle; `false` = steady lights for everyone, and no *Twinkle* switch |
 | `report_theme_season_snow` | `true` | the snow; `false` = off for everyone, and no *Snow* switch |
+| `report_theme_season_sleigh` | `true` | Santa's sleigh along the lights (16bit); `false` = off for everyone, and no *Sleigh* switch |
 
 - **Each viewer** gets a **Festive** button in the bar (beside Light / Auto / Dark). It opens a small panel with
-  **Festive** (all of it), **Lights**, **Twinkle** (shown while Lights is on) and **Snow**, each On or Off. It works with
+  **Festive** (all of it), **Lights**, **Twinkle** and **Sleigh** (both shown while Lights is on) and **Snow**, each On or Off. It works with
   the mouse and the keyboard (Enter opens it, Tab moves, Space switches, Esc closes). The choices are kept in that browser
-  (the same on the website and the portal). The tree has no switch: it is there while Festive is on.
-- **Less motion**: when the viewer's system asks for reduced motion, or with `report_motion: off`, the lights do not
-  twinkle and there is no snow (their switches are not offered), whatever else is set.
+  (the same on the website and the portal). The tree and the snowman have no switch: they are there while Festive is on.
+- **The sleigh** flies inside the strip of lights at the bottom of the bar - where there is never text or a button, at
+  any width - about 3 seconds after a page opens and then every 4 minutes, 18 seconds from left to right. It does not
+  fly again on the next page if it flew less than 4 minutes ago (the time is kept in that browser). It takes no click.
+  With Lights off there is no strip, so no sleigh. The **snowman** is beside the title, on its line, and waves now and then.
+- **Less motion**: when the viewer's system asks for reduced motion, or with `report_motion: off` (quoted or not - YAML's
+  `false` counts as off, on the report pages and the index alike), the lights do not
+  twinkle and there is no snow (their switches are not offered), the sleigh stands still at the bar's right end and the
+  snowman does not wave, whatever else is set.
 - **The content never changes**: At a glance, the tables, the chips and the status colours are the same as with the
   theme off. The festive red and green are only in the bar and under the active tab, as pixel blocks.
-- **Snow** falls only in the side margins of a window 1200 px wide or more - never over text, tables or tiles.
+- **Snow** falls only in the side margins of a window 1200 px wide or more - never over text, tables or tiles (under
+  1200 px it is off; in 1.115.0 the flakes still fell there, now fixed).
 - **Print, the PDF guides and the emails** never get it.
 - **When it ends**: each page carries the season's last day (Jan 6). A page written in the season stops being festive
   after that day by itself, with no new run - at midnight where the site is (`report_time_zone`), the same moment for every viewer, also on a page left open.

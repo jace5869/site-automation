@@ -1238,10 +1238,13 @@ Run **Site portal - deploy** again after you change `report_web_theme`.
 ### The Christmas theme (1.115.0)
 
 The portal's pages get the report website's Christmas theme (lights that twinkle in the bar, a tree after the title, a
-stripe under the page's tab, snow in the side margins; the **Festive** button with its Lights, Twinkle and Snow switches) -
+stripe under the page's tab, snow in the side margins, Santa's sleigh flying along the lights now and then, a snowman after
+the page's title; the **Festive** button with its Lights, Twinkle, Sleigh and Snow switches) -
 see *The Christmas theme* in docs/WEB_REPORTS.md. `portal_theme_season` is `report_theme_season` unless you set it
-(`none`, `christmas` or `auto`); the look and the parts follow `report_theme_season_style`, `_lights`, `_twinkle` and
-`_snow`. With `auto` the portal decides on each page, so it starts on Dec 1 and stops after Jan 6 without a restart.
+(`none`, `christmas` or `auto`); the look and the parts follow `report_theme_season_style`, `_lights`, `_twinkle`,
+`_snow` and `_sleigh` (`8bit` has no sleigh and no snowman). With `portal_motion: off` the sleigh stands still at the
+bar's end. Going from page to page does not launch it each time: it flies at most every 4 minutes in a browser. With
+`auto` the portal decides on each page, so it starts on Dec 1 and stops after Jan 6 without a restart.
 The theme's files are served as `static/festive.css` and `static/festive.js` (the same content security policy).
 Run **Site portal - deploy** again after you change these settings.
 

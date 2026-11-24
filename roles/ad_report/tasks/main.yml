@@ -91,7 +91,7 @@
       {{ _ad.repl | ad_repl_map(_ad_swis_read | default({}), {
            'ad_site_map': ad_site_map | default({}, true), 'low_hours': ad_repl_low_hours | float,
            'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float,
-           'motion': report_motion | default('auto') | string | lower}) }}
+           'motion': 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | lower)}) }}
   when: ad_repl_map_web | bool and _ad.repl is defined
 
 - name: AD | the replication map

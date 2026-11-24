@@ -109,6 +109,8 @@ options:
   season_lights: {description: "1.115.0 - the string of lights, the viewer's Lights switch (report_theme_season_lights).", type: bool, default: true}
   season_twinkle: {description: "1.115.0 - the lights twinkle, the viewer's Twinkle switch (report_theme_season_twinkle).", type: bool, default: true}
   season_snow: {description: "1.115.0 - snow in the side margins, the viewer's Snow switch (report_theme_season_snow).", type: bool, default: true}
+  motion: {description: "report_motion for the index board: auto, always or off (off, false, no, 0: the board's html gets motion-off, so the festive sleigh stays parked).", type: str, default: auto}
+  season_sleigh: {description: "Santa's sleigh along the lights now and then (16bit only), the viewer's Sleigh switch (report_theme_season_sleigh).", type: bool, default: true}
   lock_wait: {description: "1.79.14 - seconds to wait for the index's lock (<index.json>.lock; report_web_index_lock_wait); 0 = no lock.", type: int, default: 120}
   index_sha: {description: "1.79.14 - with windows_host: the index.json's SHA-256 as read there (the script writes it only when it is still that).", type: str, default: ''}
   index_pending: {description: "1.79.14 - with windows_host: the index.pending-*.json the read script found, [{name, text}] (put in, then deleted).", type: list, elements: dict, default: []}
@@ -1453,14 +1455,21 @@ def run_tables(rows, table):
                      (_plural(len(rows) - 5, 'older run', 'older runs'), table % ''.join(rows[5:])))
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line='', portal=''):
+def motion_of(v):
+    """report_motion as the pages use it: off | always | auto. YAML reads an unquoted off as false: that is off too."""
+    s = 'off' if v is False else str(v if v is not None else '').strip().lower()
+    return 'off' if s in ('off', 'false', 'no', '0', 'n') else ('always' if s == 'always' else 'auto')
+
+
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line='', portal='',
+               motion='auto'):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs; at the foot
     the space the hosted files take and the limits (1.79.8, files_line - never the files themselves). 1.118.0: portal
     (report_portal_link) - a "Site portal" link in its top bar."""
     index_controls = theme in WEB_LOOKS and not js
     history_tag = script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) if index_controls else ''
     if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
-        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag, portal)
+        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag, portal, motion)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -1887,7 +1896,7 @@ def _cut(text, n=110):
 
 
 def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line='', history_tag='',
-                portal=''):
+                portal='', motion='auto'):
     """1.72.0: the index page in the look made for a browser (atlas, brief, ops): At a glance (Runs ok, Not checked,
     Critical up since last run, Didn't run on time), the findings of the newest runs, Look at these first, a tab per
     area (radio buttons, no script), a card per area with each report's line (its state, what it said, the change since
@@ -2057,7 +2066,8 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
     style = (BOARD_STYLE.replace('@LIGHT@', _tokens(look, False)).replace('@DARK@', _tokens(look, True)).replace('@TABS@', ''.join(rules)))
     body = ((''.join(inputs) + '<nav class="tabs" aria-label="Areas">' + ''.join(labels) + '</nav>\n<div class="grid">\n' + '\n'.join(cards) + '\n</div>\n')
             if reports else '<div class="none">No reports yet. A report job writes its page here when it runs.</div>\n')
-    return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+    mo = motion_of(motion)
+    return ('<!DOCTYPE html>\n<html lang="en"' + (' class="motion-%s"' % mo if mo != 'auto' else '') + '>\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
             '<title>' + e(header_text) + ' - reports</title>\n' + (script_tag(index, js) if js else '') + history_tag +
             '\n<style>\n' + style + '</style>\n</head>\n<body class="board look-' + e(look) + '">\n'
@@ -2442,6 +2452,8 @@ def main():
             season_lights=dict(type='bool', default=True),
             season_twinkle=dict(type='bool', default=True),
             season_snow=dict(type='bool', default=True),
+            season_sleigh=dict(type='bool', default=True),
+            motion=dict(type='str', default='auto'),
             portal_link=dict(type='str', default=''),          # 1.118.0: report_portal_link, resolved (vars/main.yml _web_portal_link)
         ),
         supports_check_mode=True,
@@ -2493,7 +2505,7 @@ def main():
     # site is); each page carries its last day, so it stops being festive by itself after Jan 6
     today = datetime.datetime.now(tz or datetime.timezone.utc).date()
     festive = dict(until=fz.season_until(p['season'], today) if p['theme'] in WEB_LOOKS else '', style=fz.style_of(p['season_style']),
-                   parts=fz.allowed(p['season_lights'], p['season_twinkle'], p['season_snow']), used=[])
+                   parts=fz.allowed(p['season_lights'], p['season_twinkle'], p['season_snow'], p['season_sleigh']), used=[])
 
     def deck(h, rel, where):
         """The page rel with the decor (festive['until'] '': as it is); its CSS and JS linked from its place."""
@@ -2806,7 +2818,7 @@ def main():
             files_line = rf.used_line(led, max(1, p['files_total_max_mb']), max(0, p['files_keep_days'])) if led else ''
             index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
             index_page = banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz,
-                                                  base, files_line, p['portal_link']), top)
+                                                  base, files_line, p['portal_link'], p['motion']), top)
             index_page = deck(index_page, index, 'index')     # 1.115.0
             if isinstance(target, Staged) and index_js:
                 target.script_fallbacks[index] = (report_script_file(index_js), index_page.replace(script_tag(index, index_js), '', 1))

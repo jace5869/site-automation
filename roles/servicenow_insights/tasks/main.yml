@@ -51,7 +51,7 @@
   ansible.builtin.set_fact:
     _sni_opts:
       groups: "{{ _sni_groups }}"
-      motion: "{{ report_motion | default('auto') | string | trim | lower }}"      # 1.86.0: the pages' motion (site_email's report_motion)
+      motion: "{{ 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | trim | lower) }}"      # 1.86.0: the pages' motion (site_email's report_motion)
       hierarchy_source: "{{ servicenow_insights_hierarchy_source | string | trim | lower }}"
       site_roots: "{{ servicenow_insights_site_roots | servicenow_insights_name_list }}"
       split_label: "{{ servicenow_insights_split_label | default('', true) | string | trim }}"
