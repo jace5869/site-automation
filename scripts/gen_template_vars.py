@@ -738,6 +738,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
     "vm_tools_report.yml": ("VM - VMware Tools inventory", "VMware vCenter (read-only is enough)", "", ""),
     "vm_rightsizing_report.yml": ("VM - right-sizing report", "VMware vCenter (ACT model key with vm_rightsize_act)", "", ""),
     "vmware_hardware_report.yml": ("VMware - hardware inventory", "VMware vCenter (read-only is enough)", "", ""),
+    "vmware_placement_snapshot.yml": ("VMware - VM placement snapshot", "VMware vCenter (read-only is enough), Report database", "", """\
+## Schedule it every 60 minutes, Concurrent jobs off (docs/VM_OUTAGE_WATCH.md, "The VMs of a past outage")
+## The outage review reads it back for the VMs on a lost datastore or host when the outage began.
+"""),
     "vmware_version_report.yml": ("VMware - version report", "VMware vCenter", "", ""),
     "vm_deploy_placement.yml": ("VM - deploy placement change", "VMware vCenter, ServiceNow API", "", """\
 ## Use the deploy template's settings. The portal supplies these four variables at launch.
@@ -769,7 +773,8 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
     "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
     "vm_health_report.yml": ("VM - health report", "VMware vCenter", "", ""),
     "vm_log_analysis.yml": ("VM - vCenter log analysis", "VMware vCenter (read-only + Global > Diagnostics), ACT model key", "", ""),
-    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter (and ACT model key for vm_outage_act)", "", """\
+    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter (and ACT model key for vm_outage_act, Report database for a "
+                            "review's VMs and other sources)", "", """\
 ## Every 5 to 15 minutes, in a workflow: [VM - outage watch] --Always--> [ServiceNow tickets]; Concurrent jobs off
 # vm_watch_window_minutes: 15                    # the schedule's interval
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)

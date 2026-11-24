@@ -288,12 +288,21 @@ read and what the vCenter event read showed.
   A span with only a watch observation starts at that run (*down by 23:40 (the watch's run)*).
   Cluster-wide loss and overlaps count from there. An earlier recorded loss dates the span when available.
 - **Order of events** groups changes of the same kind and direction within 15 minutes of the previous change.
-  Each line gives the count, time span and names. Open **and N more** after the first ten names. Alarms join the
-  change they describe. Tickets and work notes each have their own line. **See the card** links to the matching
-  pattern above. The timeline chart follows immediately, open on the page.
-- **What it affected** gives the VM count in the heading and lists datastore and host members and the watch's
-  findings on those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only
-  from membership reads *on the lost datastore (state not read)* or *on the down host (state not read)*.
+  A change the other way in between (paths back, then lost again) starts a new line.
+  The time column gives the span to the second. Each line gives the count and names: eight, then **+N more**.
+  Open it on the page; the AAR stops at eight. A host's paths and a datastore lost together are one line:
+  *All paths down (APD) and datastore ds_shared_01 lost on 5 hosts*. Their return is one line too:
+  *Datastore ds_shared_01 back on 8 hosts*. Path redundancy and storage alarms of those hosts join that line.
+  Other alarms join the change they describe. Tickets and work notes each have their own line. **See the card** links
+  to the matching pattern above. The timeline chart follows immediately, open on the page.
+- **What it affected** gives the VM count in the heading and lists host members and the watch's findings on
+  those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only from a down
+  host's membership reads *on the down host (state not read)*. A VM with files on a lost datastore and no signal of
+  its own is never counted: a separate line says *3 VMs have files on ds_shared_01 (may have hung or failed)*.
+  For a datastore or host that came back, the VMs come from the placement history as of the outage's start, else
+  vCenter now (*The VMs of a past outage* below). With neither the line reads *VMs on ds_shared_01: not read*.
+  With no confirmed VM the heading reads *What it affected: no VM confirmed*; the tile reads
+  *no VM confirmed · 42 with files on ds_shared_01*. The AAR and the handoff carry the same lines.
 - **Down now** lists current conditions worst first. When the watch read falls after the selected window, it lists only
   current conditions for that window's roots. If the condition has no time,
   it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
@@ -311,6 +320,40 @@ same time. Set `vm_watch_review_noise: false` to include these changes in the de
 timeline entry. Summed noise, *What else saw it* and *How it judged* follow.
 The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
 The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
+Their *Timeline* (1.116.6) reads in Excel: one row per event, the columns `#`, *Time (zone, ISO)* (for example
+`2026-11-23T07:15:58+01:00`), *Level*, *Kind* (host, datastore, vm, alarm, ticket, note), *Object*, *Host*, *Datastore*,
+*VM*, *What happened* (short), *In the story* and *Noise* (yes / no), *vCenter*, *Event type*, *Event key*, *Cluster*,
+an alarm's *From* and *To* colours, and the full *Message* last. Filter *In the story* to yes for the outage's own events, or *VM* for the servers named. The workbook's
+first row is frozen, with filters, and the columns fit their text.
+
+### The VMs of a past outage
+
+A datastore or host that came back has no VM list in vCenter's own read. The review finds its VMs in this order:
+
+1. **The placement history** (report database): the VMs on that datastore or host as of the newest snapshot at or
+   before the first loss. The line says *as of 23 Nov 07:00:00 CET, the placement snapshot*.
+2. **vCenter now**, when the history has no snapshot that old (or no history): the line says *as of the review's read*.
+3. Neither: *VMs on ds_shared_01: not read*.
+
+What it affected has three tiers, each VM in its highest one only:
+
+1. **Confirmed** - the watch or HA found it: counted.
+2. **Events during the outage** - its own events (power, heartbeat, a VM alarm, lost access, HA) fall inside a root's
+   loss and touch that root: its datastore, a host that lost it, or the lost host. Each with its first event and time
+   (*sitea-vm07 (07:09:30 VM powered off)*). Usage alarms and gray are noise, never a signal. Not counted.
+3. **Had files on / ran on** - the placement above. Not counted.
+
+The tile reads *no VM confirmed · 2 with events · 39 with files on ds_shared_01*; the workbook has the sheets *VMs with
+events* and *VMs on lost objects*. The page names eight, then *+N more*; the workbook's sheet *VMs on
+lost objects* has every one with its host, power state, datastores and the snapshot's time.
+
+**What to schedule.** The template *VMware - VM placement snapshot* (`playbooks/vmware_placement_snapshot.yml`),
+every 60 minutes, Concurrent jobs off, with a **VMware vCenter** credential (read-only is enough) and the **Report
+database** credential (the writer). It keeps what changed since the last run and one whole snapshot a day, for
+`vm_placement_days` (400). The review template needs the **Report database** credential too (the reader is enough) to
+read it. [REPORT_DATABASE.md](REPORT_DATABASE.md#the-vm-placement-history-11166) has the tables.
+
+To review a past outage, launch the review with `vm_watch_review_from` and `vm_watch_review_to` set to its window.
 
 ### What else saw it
 
@@ -418,12 +461,17 @@ someone opens it, checks it and writes the rest.
 - **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
   instructions before the appendices.
 - **Overview** gives the incident date, time and impact. **Likely causes**, **What went down** and **Order of events**
-  follow. The timeline prints every name. **What it affected**, **Down now** and **Back to normal** come next.
+  follow. A pattern card is compact: its meaning, typical causes, read-only checks, and where it was seen, counted.
+  The timeline names eight objects, then *+N more*. **What it affected**, **Down now** and **Back to normal** come next.
 - **Event Response** keeps the tickets with resolution and close notes, the two measures (first signal to ticket and
   time down), and Actions for the team's account of its response.
 - **RFO & Recovery** points to *Back to normal*. Lessons Learned keeps its fields and task table.
-- **Appendix A** groups matching events within three minutes by phase and sums noise separately. By default it lists
-  all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number omitted.
+- **Appendix A** follows the body on the same page. It groups matching events within three minutes by phase:
+  Time, Level and What happened, with the names in the sentence. An APD and the datastore heartbeat loss of the same
+  hosts within a minute are one row, with that burst's path redundancy and storage alarms. Their return is one row
+  too. Eight names, then *+N more*; the workbook and the CSV have every event. Noise is one line per alarm.
+  By default it lists all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number
+  omitted.
 - **Appendix B** contains the operations handoff with Down now, the objects that went down and their durations,
   the impact and the compact pattern cards. The same handoff is available as a separate Word file.
 - **ACT's possible causes** (`vm_outage_act`, when it is on) are under the root cause as *Suggested - confirm*. So is what

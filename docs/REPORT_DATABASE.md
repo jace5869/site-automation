@@ -1415,6 +1415,82 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_watch_em
 | `vm_watch_email_db` | `true` | Keep the state here when the template has the credential |
 | `vm_watch_email_min_minutes` | `30` | At most one email per this many minutes. `0`: no limit |
 
+## The VM placement history (1.116.6)
+
+The outage review names the VMs on a lost datastore or host as they were when the outage began, also for a past
+outage. The job *VMware - VM placement snapshot* keeps that history here ([VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#the-vms-of-a-past-outage)).
+
+1. Make the template *VMware - VM placement snapshot* (`playbooks/vmware_placement_snapshot.yml`) with a **VMware
+   vCenter** credential (read-only is enough) and the **Report database** credential (the writer's). No Limit.
+   Turn **off** *Enable concurrent jobs*.
+2. Schedule it every 60 minutes.
+3. Launch it once. The first run makes the tables `vm_placement` and `vm_placement_run` and keeps a whole snapshot.
+
+| | |
+|---|---|
+| What a run writes | per vCenter (the whole vCenter, each stamped with the end of its own read), the VMs new or changed since the last run (`C`) and those gone (`G`); the first run of each day (UTC) writes every VM (`F`). One `vm_placement_run` row per run and vCenter |
+| A VM's row | its name, host and the host's ID, cluster, datastores and their IDs (JSON lists, from the VM's files) and power state, keyed by vCenter, VM ID (moref) and time. A lost host or datastore is matched by its ID; by name only when the name means one object |
+| How much | about 150 bytes a row. 2,000 VMs: 2,000 rows a day plus the changes; 400 days: about 1 million rows |
+| What a run deletes | the rows older than `vm_placement_days` (400), from the oldest whole snapshot still inside them |
+| As of a time | the newest whole snapshot at or before it, with the changes after it up to that time |
+| When the database is down | one warning in the job output. The job stays green; the next run tries again |
+| A dry run (Check) | reads vCenter, writes nothing |
+| Who reads it | the outage review (`site_vm_placement_read`, the reader's `GRANT SELECT` is enough) |
+| Removing it | `DROP TABLE vm_placement, vm_placement_run;` and `DELETE FROM schema_version WHERE component = 'vm_placement';` |
+
+**By hand.** If the writer may not create tables, set `vm_placement_db_create: false` and make the tables once as
+root, in `site_reports`. The writer then needs SELECT, INSERT and DELETE.
+
+<!-- the statements: site_vm_placement.ddl(), word for word (tests/test_vm_placement.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS vm_placement_run (
+  vcenter VARCHAR(255) NOT NULL,
+  at DATETIME NOT NULL,
+  whole TINYINT NOT NULL,
+  vms INT NOT NULL,
+  kept INT NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (vcenter, at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS vm_placement (
+  vcenter VARCHAR(255) NOT NULL,
+  at DATETIME NOT NULL,
+  vm_moid VARCHAR(64) NOT NULL,
+  kind CHAR(1) NOT NULL,
+  name VARCHAR(255) NULL,
+  host VARCHAR(255) NULL,
+  host_moid VARCHAR(64) NULL,
+  cluster VARCHAR(255) NULL,
+  datastores TEXT NULL,
+  datastore_moids TEXT NULL,
+  power VARCHAR(32) NULL,
+  PRIMARY KEY (vcenter, vm_moid, at),
+  KEY vm_placement_at (vcenter, at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_placement', 1, UTC_TIMESTAMP());
+```
+<!-- end of the VM placement statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_placement_days` | `400` | Delete older rows. `0`: never. A review of an older outage says the VMs were not read |
+| `vm_placement_db_create` | `true` | Make the tables on the first run |
+| `vm_placement_db_timeout` | `10` | Seconds to connect |
+
 ## The SolarWinds snapshot (1.96.0)
 
 The job *SolarWinds - snapshot* reads SolarWinds every 10 minutes and keeps one whole copy here. The reports then read

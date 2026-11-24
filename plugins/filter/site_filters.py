@@ -2446,7 +2446,9 @@ def report_text(report, footer="", runs=None):
                     what = row["text"] + ", ".join(row["names"]) + row["suffix"]
                     if row["card"]:
                         what += ". See the card: " + row["card"]
-                    out.append(" - ".join([row["time"]["tip"], row["word"], what]))
+                    span = str(row.get("span") or "")
+                    when = row["time"]["tip"] + (" to " + span.partition("-")[2] if "-" in span else "")
+                    out.append(" - ".join([when, row["word"], what]))
                     continue
                 what = row["text"] + (row["extra"]["clock"] + row["after"] if row["extra"] else "")
                 out.append(" - ".join(filter(None, [row["time"]["tip"], row["word"], what, row["objects"], row["duration"]])))

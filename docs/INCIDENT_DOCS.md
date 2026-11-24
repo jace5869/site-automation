@@ -206,11 +206,12 @@ from datastore or host membership has state not read. The draft and operations h
 What the AAR then has:
 
 - A line under OVERVIEW: *Filled from the outage review, AAP job 4714 ... Check each line before it is posted.*
-- **Likely causes** follows Overview. Each seen pattern has typical causes, read-only checks, escalation contacts
-  and the supporting objects and times. **What went down** and **Order of events** follow, with red lines marking
+- **Likely causes** follows Overview. Each seen pattern is compact (1.116.6): its meaning, typical causes, read-only
+  checks, then one line with escalation contacts and where it was seen, counted (the names are in Order of events). **What went down** and **Order of events** follow, with red lines marking
   both ends of the outage window. Next come **What it affected**, **Down now** and **Back to normal**.
 - **Event Response** keeps tickets, first signal to ticket, time down and Actions. Recovery points to **Back to normal**.
-- **Appendix A** starts a new page and groups events by phase and object. **Appendix B** starts another page with the
+- **Appendix A** follows the body on the same page (1.116.6) and groups events by phase: one row per event kind and
+  burst, eight names then +N more, noise one line per alarm. **Appendix B** starts a new page with the
   operations handoff. The review also attaches it alongside the AAR, workbook and CSV. The handoff's title and filename
   use `outage_ops_center`, which defaults to `NOC`. The four `outage_escalate_*` settings supply contacts.
 - **ACT's possible causes** (the review's `vm_outage_act`, and a ticket's own ACT analysis) under the root cause as

@@ -806,11 +806,13 @@ class AarFromReview(unittest.TestCase):
         self.assertNotIn("sitea-db01", str(blocks[down + 2]["items"]))
         appendix = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix A"))
         self.assertIn("496 events, including noise", blocks[appendix + 1]["text"])
-        cols = ["Time (CET)", "What", "Objects", "Level"]
+        cols = ["Time (CET)", "Level", "What happened"]          # 1.116.6: the objects in the sentence
         self.assertEqual(sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == cols), 3)
         tables = [b for b in blocks[:appendix] if b.get("columns", [])[-1:] == ["What happened"]]
         self.assertEqual([row[0] for b in tables for row in b["rows"]], [r["span"] for r in d["story"]["rows"]])
-        self.assertEqual(blocks[appendix - 1], {"type": "page_break"})
+        # 1.116.6: Appendix A follows the body on the same page (one row per burst keeps it short)
+        self.assertNotEqual(blocks[appendix - 1], {"type": "page_break"})
+        self.assertNotIn({"type": "page_break"}, blocks[:appendix])
         red_lines = [b["text"] for b in blocks if b.get("type") == "para" and b.get("color") == "B42318"]
         self.assertTrue(any(t.startswith("Outage window from ") for t in red_lines))
         self.assertIn("End of the outage window", red_lines)
@@ -822,9 +824,12 @@ class AarFromReview(unittest.TestCase):
         self.assertLessEqual(len(handoff["blocks"]), 30)
         for card in d["patterns"]:
             self.assertIn(card["title"], _doc_text(handoff))
-            for detail in (card["seen"], card["when"], card["escalate"], *card["checks"]):
+            # 1.116.6: the AAR's compact card counts where it was seen (the names are in Order of events)
+            for detail in (card["seen_short"], card["when_short"], card["escalate"], *card["checks"]):
                 self.assertIn(detail.rstrip("."), _doc_text({"blocks": blocks[:appendix]}))
-        self.assertIn(d["noise"], [b["rows"] for b in blocks[appendix:] if b.get("type") == "table"])
+        # 1.116.6: one line per noise alarm in the AAR (the page and the workbook's Noise sheet keep the table)
+        noise = next(b["items"] for b in blocks[appendix:] if b.get("type") == "bullets")
+        self.assertEqual(noise, ["%s: %d changes on %s - %s" % (r[0], r[2], r[1], r[4]) for r in d["noise"]])
 
     def test_long_handoff_paginates_as_one_page(self):
         import shutil
@@ -924,7 +929,7 @@ class AarFromReview(unittest.TestCase):
             body = z.read("word/document.xml").decode()
             self.assertIn('w:val="C00000"', body)                                      # the red lines
             self.assertIn("Appendix A", body)
-            self.assertEqual(body.count('<w:br w:type="page"/>'), 2)
+            self.assertEqual(body.count('<w:br w:type="page"/>'), 1)              # 1.116.6: before Appendix B only
 
 
 class ReviewReader(unittest.TestCase):

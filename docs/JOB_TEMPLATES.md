@@ -115,6 +115,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | VMware - certificate install - approved | `playbooks/vmware_cert_install_approved.yml` | After an approval | [VMWARE.md](VMWARE.md#the-approved-install-after-the-approval) |
 | VMware - version report | `playbooks/vmware_version_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-version-report) |
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-hardware-inventory) |
+| VMware - VM placement snapshot | `playbooks/vmware_placement_snapshot.yml` | Watch (every 60 minutes) | [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#the-vms-of-a-past-outage) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | Report | [NETWORK_CERTS.md](NETWORK_CERTS.md#templates) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | Watch | [NETWORK_CERTS.md](NETWORK_CERTS.md#the-renewal) |
 | PKI - DoD bundle check | `playbooks/pki_bundle_check.yml` | Watch | [CERT_INSTALL.md](CERT_INSTALL.md#keeping-the-ca-bundle-current) |

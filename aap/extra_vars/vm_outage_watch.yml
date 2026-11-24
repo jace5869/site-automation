@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - outage watch"
 #   playbook:    playbooks/vm_outage_watch.yml
-#   credentials: VMware vCenter (and ACT model key for vm_outage_act)
+#   credentials: VMware vCenter (and ACT model key for vm_outage_act, Report database for a review's VMs and other sources)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its

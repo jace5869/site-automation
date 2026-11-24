@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.116.6 — 2026-11-24
+
+**To set up:** for the VMs of a past outage, make the new template *VMware - VM placement snapshot*
+(`playbooks/vmware_placement_snapshot.yml`, in the setup catalog) with a **VMware vCenter** credential (read-only is
+enough) and the **Report database** credential (the writer); no Limit; Concurrent jobs off; schedule it every 60 minutes.
+Give the *VM - outage watch* template the **Report database** credential too (the reader is enough), so a review can
+read that history. Without the job or the credential, a review reads vCenter now for those VMs.
+
+- One datastore lost by all paths down (APD) on many hosts made a long AAR (the user's 10 pages came from 1.116.2).
+  On the test shape (tests/test_outage_compact.py, LibreOffice render) 1.116.4 gives 6 pages; 1.116.6 gives 4.
+- **Order of events** (page, email, AAR): a host's paths and a datastore lost together are one line, as is their return.
+  *All paths down (APD) and datastore ds_shared_01 lost on 5 hosts: esx01, ...* and
+  *Datastore ds_shared_01 back on 8 hosts: ...*. Path redundancy and storage alarms of those hosts join that line.
+  A change the other way in between starts a new line. The time column gives the span to the second.
+- A line names eight objects, then **+N more**: open it on the page. The workbook and the CSV have every event.
+  What went down, its note and Back to normal shorten long host lists the same way.
+- **Appendix A** (and the page's folded *Every event, grouped*): the APD and the datastore heartbeat loss of the same
+  hosts within a minute are one row, with that burst's path redundancy and storage alarms; their return is one row.
+  A one-day window writes the clock alone. In the AAR the rows are Time, Level and What happened, the names in the
+  sentence, and noise is one line per alarm.
+- **The AAR's layout:** Appendix A follows the body on the same page; Appendix B keeps its own page. A pattern card is
+  compact: meaning, typical causes, the read-only checks, and one line with who to escalate to and where it was
+  seen, counted (*ds_shared_01 and 14 hosts, 07:08:41 to 07:16:40*). The outage window line is one line on one day.
+- **What it affected:** an APD with no VM recorded by the watch or HA showed *0 VMs*. It now reads
+  *no VM confirmed*. A VM with files on a lost datastore and no signal of its own is named apart and never counted:
+  *3 VMs have files on ds_shared_01 (may have hung or failed)*. The watch lists a datastore's VMs only while it is
+  not accessible, so after a recovery the line reads *VMs on ds_shared_01: not read*. Same line in the tile, the
+  page, the AAR and the handoff.
+
+Review fixes (Codex, six P2s): a pair never crosses a change the other way (lost, back, lost again are three lines);
+a loss pairs only on the same hosts (a host with APD alone stays on the paths line); a VM an earlier watch saw down
+counts only when that finding falls in the datastore's outage; a storage alarm going the other way keeps its own row
+in Appendix A; path redundancy stays on its own line when the paths line has no datastore; a card counts hosts per
+vCenter and names the vCenter when a name repeats.
+
+**The VMs of a past outage.** The new job *VMware - VM placement snapshot* keeps every VM's host, cluster,
+datastores and power state in the report database (tables `vm_placement`, `vm_placement_run`): what changed since the
+last run and one whole snapshot a day, for `vm_placement_days` (400). The review takes the VMs on each lost datastore
+or host as of the newest snapshot at or before its first loss (*42 VMs had files on ds_shared_01 (as of 23 Nov 07:00:00
+CET, the placement snapshot; may have hung or failed, not proof they were down)*), else reads vCenter now (*as of the
+review's read*), else says *not read*. A host root lists the VMs that *ran on* it. A VM with its own signal stays
+confirmed and is listed once. The tile reads *no VM confirmed · 42 with files on ds_shared_01*; the workbook's sheet
+*VMs on lost objects* has every VM; the AAR and the handoff carry the line. The review's reads are read only and
+review only: the scheduled watch is unchanged.
+
+**VMs with events in the outage.** A third tier in What it affected, the tile, the AAR and the handoff: the VMs whose
+own events (power, heartbeat, a VM alarm, lost access, HA) fall inside a root's loss and touch its datastore or host,
+each with its first event and time (*2 VMs had events of their own during the outage (not proof they were down):
+sitea-vm07 (07:09:30 VM powered off), ...*). Usage alarms and gray are noise. Each VM shows in its highest tier only:
+confirmed, events, had files on / ran on. Only the confirmed are counted. The workbook adds the sheet *VMs with events*.
+The note for no confirmed VM reads *No VM confirmed down: the watch and HA recorded none.*
+
+**The CSV and the workbook's Timeline read in Excel.** The same rows, nothing dropped, in short columns: one time
+column (the report's zone, ISO), Level, Kind (host, datastore, vm, alarm, ticket, note), Object, Host, Datastore, VM,
+What happened, In the story (yes / no), Noise (yes / no), vCenter, Event type, Event key, Cluster, From, To (an
+alarm's colours), and the full Message last.
+The workbook keeps its frozen first row, filters and fitted columns. The scheduled watch's sheet is unchanged.
+
+Review fixes (Codex, second review): each vCenter's placement is stamped with the end of its own read; the history keeps
+the host's and datastores' IDs and matches a lost one by ID (by name only when the name means one object); a confirmed
+VM hides only itself from the placement list, by ID; the snapshot always reads the whole vCenter (a datacenter filter
+would mark the others' VMs gone); the workbook lists every VM the watch named on a lost datastore; the CSV keeps
+Cluster and an alarm's From and To. Proven on MySQL 8.4 and vcsim: two runs with a change, a day's roll-over, pruning,
+the review's read as of a past time (the reader account), the vCenter fallback, on ansible-core 2.16 and 2.22.
+
+Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
+each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
+
+Tests: tests/test_outage_compact.py and tests/test_vm_placement.py (new), tests/test_outage_timeline.py, tests/test_outage_one_place.py and
+tests/test_incident_docs.py.
 ## 1.126.0 — 2026-11-24
 
 **To set up:** run Site portal - deploy (the Actions sections, the Christmas theme on the portal). Optional: attach the

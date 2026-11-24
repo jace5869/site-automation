@@ -447,6 +447,14 @@ def incident_review_filled(record, draft):
             and not (k == "actions" and d.get("story", {}).get("grouped"))]
 
 
+NAMES_SHOWN = 8            # as outage_timeline_filters: a story row names 8 objects, then "+N more" (the CSV keeps all)
+
+
+def _shown(names, limit=NAMES_SHOWN):
+    names = list(names)
+    return ", ".join(names) if len(names) <= limit + 1 else ", ".join(names[:limit]) + " +%d more" % (len(names) - limit)
+
+
 def _red(label, text):
     return [{"type": "labelled", "items": [{"label": label, "text": ""}]},
             {"type": "bullets", "level": 1, "color": TO_WRITE, "items": [text]}]
@@ -466,6 +474,9 @@ def _review_impact(d, time_column):
         blocks.append({"type": "heading", "text": title})
         if key == "affected":
             blocks.append({"type": "para", "text": d["affected_note"]})
+            # 1.116.6: VMs with files on a lost datastore are named apart from the confirmed ones (older drafts: none)
+            for line in d.get("files_lines") or []:
+                blocks.append({"type": "note" if line in (d.get("files_unread") or []) else "para", "text": line})
         if key == "now":
             blocks[-1]["color"] = "C00000"
             blocks.append({"type": "note", "text": d.get("read_note", "")})
@@ -482,7 +493,7 @@ def _review_impact(d, time_column):
             if key == "recovered" and len(d["part_columns"][i]) == 3:
                 widths = [1.5, 4, 1]
             blocks.append({"type": "table", "columns": d["part_columns"][i], "rows": d[key], "widths": widths})
-        else:
+        elif not (key == "affected" and d.get("files_lines")):
             blocks.append({"type": "para", "text": "None recorded."})
         if key == "went":
             blocks.append({"type": "note", "text": d["went_note"]})
@@ -493,22 +504,33 @@ def _review_impact(d, time_column):
     return blocks
 
 
+APPENDIX_NOTE = "One row per event kind and burst, 8 names then +N more; every event is in the workbook and the CSV. "
+
+
+def _appendix_row(row):
+    """1.116.6: Time | Level | What happened, the objects in the sentence (the page keeps the What / Objects columns)."""
+    when, what, objects, level = row
+    return [when, level, what if not objects or objects in what else what + " - " + objects]
+
+
 def _review_appendix(d, cols, widths):
     blocks = [{"type": "heading", "text": "Appendix A - the events by phase"},
-              {"type": "note", "text": "The same event within 3 minutes is one row with its count. " + d["full_list"]}]
+              {"type": "note", "text": APPENDIX_NOTE + d["full_list"]}]
     groups = d["groups"][:max(0, int(d.get("appendix_max", 0))) or None]
     for phase in ("Lead-up", "Outage", "Recovery", "After"):
-        rows = [g["row"] for g in groups if g["phase"] == phase]
+        rows = [_appendix_row(g["row"]) for g in groups if g["phase"] == phase]
         if rows:
             blocks.extend([{"type": "para", "text": phase, "bold": True, "keep": True},
-                           {"type": "table", "columns": cols, "rows": rows, "widths": widths}])
+                           {"type": "table", "columns": [cols[0], "Level", "What happened"], "rows": rows,
+                            "widths": [1.45, 0.95, 4.7]}])
     if d.get("group_total", len(groups)) > len(groups):
         blocks.append({"type": "note", "text": "%d further grouped rows omitted from this appendix." %
                        (d["group_total"] - len(groups))})
     if d.get("noise"):
+        # 1.116.6: one line per alarm (the page and the workbook's Noise sheet keep the table)
         blocks.extend([{"type": "para", "text": "Noise - left out of the rows above (%d changes)" % sum(r[2] for r in d["noise"]),
                         "bold": True, "keep": True},
-                       {"type": "table", "columns": d["noise_columns"], "rows": d["noise"], "widths": [1.7, 1.3, 0.8, 1.6, 2]}])
+                       {"type": "bullets", "items": ["%s: %d changes on %s - %s" % (r[0], r[2], r[1], r[4]) for r in d["noise"]]}])
     return blocks
 
 
@@ -523,6 +545,11 @@ def _story_blocks(story, time_column):
             line = "End of the outage window"
             if active:
                 line = "Outage window from %s to %s · %s" % (window["start"]["tip"], window["end"]["tip"], window["duration"])
+                if window["start"].get("day") and window["start"]["day"] == window["end"].get("day") and \
+                        window["start"]["zone"] == window["end"]["zone"]:
+                    # 1.116.6: one line on one day (the day follows as the table's divider)
+                    line = "Outage window from %s to %s %s · %s" % (window["start"]["clock"], window["end"]["clock"],
+                                                                   window["end"]["zone"], window["duration"])
                 if window["still"]:
                     line += " · %s still down after it" % window["still"]
             blocks.append(dict(type="para", text=line, bold=True, color="B42318", keep=active))
@@ -532,9 +559,9 @@ def _story_blocks(story, time_column):
             table = None
         if story.get("grouped"):
             if table is None:
-                table = dict(type="table", columns=[time_column, "Level", "What happened"], widths=[1.1, 1, 5], rows=[])
+                table = dict(type="table", columns=[time_column, "Level", "What happened"], widths=[1.45, 0.95, 4.7], rows=[])
                 blocks.append(table)
-            sentence = row["text"] + ", ".join(row["names"]) + row["suffix"]
+            sentence = row["text"] + _shown(row["names"]) + row["suffix"]
             if row["card"]:
                 sentence += ". See the card: " + row["card"]
             table["rows"].append([row["span"] + (" " + row["time"]["zone"] if time_column == "Time" else ""),
@@ -553,17 +580,18 @@ def _story_blocks(story, time_column):
 
 
 def _pattern_blocks(cards):
+    """1.116.6: a compact card - its title and meaning on one line, the typical causes on one, the read-only checks, then
+    who to escalate to and where it was seen (counted: the names are in Order of events) on one line."""
     out = [dict(type="heading", text="Likely causes")]
     if not cards:
         out.append(dict(type="para", text="No matching pattern in this review."))
     for i, c in enumerate(cards, 1):
-        out.extend([dict(type="para", text="%d. %s" % (i, c["title"]), bold=True, keep=True),
-                    dict(type="para", text=c["means"]),
-                    dict(type="labelled", items=[dict(label="Typical causes:", text="; ".join(c["causes"]))]),
-                    dict(type="para", text="Check first (read only)", italic=True, keep=True),
+        out.extend([dict(type="labelled", items=[dict(label="%d. %s:" % (i, c["title"]), text=c["means"])]),
+                    dict(type="para", text="Typical causes: " + "; ".join(c["causes"]) + ". Check first (read only):",
+                         italic=True, keep=True),
                     dict(type="steps", items=c["checks"]),
-                    dict(type="labelled", items=[dict(label="Escalate to:", text=c["escalate"]),
-                                                 dict(label="Seen here:", text=c["seen"] + " · " + c["when"])])])
+                    dict(type="para", text="Escalate to %s · seen on %s, %s" % (c["escalate"], c.get("seen_short") or c["seen"],
+                                                                                 c.get("when_short") or c["when"]))])
     return out
 
 
@@ -589,6 +617,8 @@ def incident_noc_docx(review, opts=None):
         losses.append("%d further objects in the review" % (len(went) - 6))
     blocks.append(dict(type="para", text="What went down: " + brief("; ".join(losses) or "No infrastructure loss recorded.", 155), size=size))
     blocks.append(dict(type="para", text="What it affected: " + brief(d.get("affected_note", ""), 100), size=size))
+    for line in (d.get("files_lines") or [])[:2]:
+        blocks.append(dict(type="para", text=brief(line, 150), size=size))
     if cards:
         blocks.append(dict(type="para", text="Likely causes", bold=True, size=size))
     for i, c in enumerate(cards[:8], 1):
@@ -726,8 +756,10 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
             out.append(b)
     if "story" in d:
         out.extend(_instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86"))
-        out.append({"type": "page_break"})
+        if not v2:
+            out.append({"type": "page_break"})
     if v2:
+        # 1.116.6: Appendix A follows the body (one row per burst keeps it short); Appendix B keeps its own page
         out.extend(_review_appendix(d, ev_cols, ev_w))
     elif d.get("event_columns"):
         out += [{"type": "heading", "text": "Appendix A - events by phase and object"},
