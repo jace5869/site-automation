@@ -54,7 +54,7 @@ function Get-SiteRestartDecision {
 function Write-SiteRestartLog {
     param([string]$Dir, [string]$Text)
     $line = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz') + ' ' + $Text
-    try { Add-Content -Path (Join-Path $Dir 'restart.log') -Value $line -Encoding ASCII } catch { }
+    try { Add-Content -LiteralPath (Join-Path $Dir 'restart.log') -Value $line -Encoding ASCII } catch { }
 }
 
 if (-not $SiteRestartLibrary) {
@@ -62,7 +62,7 @@ if (-not $SiteRestartLibrary) {
     # this registration's own settings: restart-task-<id>.ps1 reads restart-<id>.json (never another registration's)
     $json = $PSCommandPath -replace 'restart-task-([^\\]+)\.ps1$', 'restart-$1.json'
     if ($json -eq $PSCommandPath) { Write-SiteRestartLog -Dir $dir -Text ('NOT RUN - not a registration script: ' + $PSCommandPath); exit 1 }
-    $cfg = Get-Content -Path $json -Raw | ConvertFrom-Json
+    $cfg = Get-Content -LiteralPath $json -Raw | ConvertFrom-Json
     # never before its time: a Run clicked in Task Scheduler (or a clock that jumped) does nothing earlier than 2 minutes before
     $atU = $null
     if ($cfg.at_utc -is [datetime]) { $atU = $cfg.at_utc.ToUniversalTime() }

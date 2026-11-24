@@ -328,8 +328,10 @@ def pwsh(code, env=None, timeout=120):
     with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False) as fh:
         fh.write(code)
     try:
+        shell_env = dict(os.environ, **(env or {}))
+        shell_env.setdefault("ProgramFiles", tempfile.gettempdir())
         return subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", fh.name], capture_output=True, text=True,
-                              timeout=timeout, env=dict(os.environ, **(env or {})))
+                              timeout=timeout, env=shell_env)
     finally:
         os.unlink(fh.name)
 
@@ -382,7 +384,7 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
         self.assertFalse(d["null"])
 
     def plan(self, tzname, at_utc):
-        cfg = {"action": "plan", "at_utc": at_utc, "only_if_pending": True, "count_file_renames": False,
+        cfg = {"action": "plan", "dir": r"$env:ProgramFiles\site-automation\restart", "at_utc": at_utc, "only_if_pending": True, "count_file_renames": False,
                "task_name": "site-automation restart", "task_script": read(TASK)}
         r = pwsh(read(PS), {"SITE_CHECK_CONFIG": json.dumps(cfg), "TZ": tzname})
         return w.win_restart_parse(r.stdout.splitlines())
@@ -461,7 +463,7 @@ class Constrained(unittest.TestCase):
         return pwsh(code, {"SITE_CHECK_CONFIG": json.dumps(cfg), "TZ": "America/New_York"})
 
     def test_plan(self):
-        cfg = {"action": "plan", "at_utc": "2026-11-25T03:30:00Z", "only_if_pending": True, "task_name": "site-automation restart",
+        cfg = {"action": "plan", "dir": r"$env:ProgramFiles\site-automation\restart", "at_utc": "2026-11-25T03:30:00Z", "only_if_pending": True, "task_name": "site-automation restart",
                "task_script": read(TASK)}
         r = w.win_restart_parse(self.clm(PS, cfg).stdout.splitlines())
         self.assertNotIn("error", r, r)
@@ -469,7 +471,7 @@ class Constrained(unittest.TestCase):
         self.assertEqual(r["why"], "no reboot pending")
 
     def test_task_xml(self):
-        cfg = {"action": "list", "task_name": "site-automation restart", "task_script": read(TASK)}
+        cfg = {"action": "list", "dir": r"$env:ProgramFiles\site-automation\restart", "task_name": "site-automation restart", "task_script": read(TASK)}
         p = self.clm(PS, cfg, "New-SiteRestartTaskXml -StartUtc '2026-11-25T03:30:00Z' -EndUtc '2026-11-25T04:00:00Z' -Command 'C:\\ps.exe' "
                               "-Arguments '-File \"C:\\x y\\restart-task.ps1\"' -Description 'CHG1: a & b <c> \"d\"'\n")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -512,10 +514,10 @@ function Register-ScheduledTask {
     if ($global:FailRegister) { throw 'Access is denied' }
     if (-not $Force -and $global:Store.ContainsKey([string]$TaskPath + [string]$TaskName)) { throw 'Cannot create a file when that file already exists' }
     $x = [xml]$Xml
-    $t = [pscustomobject]@{ TaskPath = $TaskPath; TaskName = $TaskName; Author = [string]$x.Task.RegistrationInfo.Author;
+    $t = @{ TaskPath = $TaskPath; TaskName = $TaskName; Author = [string]$x.Task.RegistrationInfo.Author;
                             Description = [string]$x.Task.RegistrationInfo.Description; State = 'Ready'; Xml = $Xml;
-                            Actions = @([pscustomobject]@{ Arguments = [string]$x.Task.Actions.Exec.Arguments });
-                            Triggers = @([pscustomobject]@{ StartBoundary = [string]$x.Task.Triggers.TimeTrigger.StartBoundary }) }
+                            Actions = @(@{ Arguments = [string]$x.Task.Actions.Exec.Arguments });
+                            Triggers = @(@{ StartBoundary = [string]$x.Task.Triggers.TimeTrigger.StartBoundary }) }
     $global:Store[[string]$TaskPath + [string]$TaskName] = $t
     $t
 }
@@ -525,95 +527,57 @@ function Get-ScheduledTaskInfo {
     $t = $global:Store[[string]$TaskPath + [string]$TaskName]
     $n = [datetime]::Parse($t.Triggers[0].StartBoundary).ToLocalTime()
     if ($global:BadNext -and $t.Xml.Contains($global:BadNext)) { $n = $n.AddDays(1) }
-    [pscustomobject]@{ NextRunTime = $n }
+    @{ NextRunTime = $n }
 }
 function Export-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath) $global:Store[[string]$TaskPath + [string]$TaskName].Xml }
-$global:Hardened = @{}
-$global:AclCalls = @()
 $global:Registrations = 0
-function Test-Mkdir {
-    if (($args -join ' ') -cne '/d /e:off /v:on /c md "!SITE_RESTART_NEW_DIR!"') { throw 'unexpected md command' }
-    $path = $env:SITE_RESTART_NEW_DIR
-    $global:AclCalls += "create $path"
-    $global:LASTEXITCODE = 0
-    if ($global:LostCreateRace) { $null = New-Item -ItemType Directory -Path $path }
-    if (Test-Path -LiteralPath $path) { $global:LASTEXITCODE = 1; return }
-    $null = New-Item -ItemType Directory -Path $path
-}
-Set-Alias "$env:SystemRoot\System32\cmd.exe" Test-Mkdir
 function Get-Acl {
     param($LiteralPath, $ErrorAction)
-    $global:AclCalls += "owner $LiteralPath"
-    if ($global:LinkOnRead -eq $LiteralPath) {
-        Rename-Item -LiteralPath $LiteralPath -NewName 'original'
-        $null = New-Item -ItemType SymbolicLink -Path $LiteralPath -Target $env:SystemRoot
-    }
-    $owner = 'S-1-5-32-544'
-    if ($global:OwnerPath -eq $LiteralPath -or ($global:BadOwner -and $LiteralPath -like '*.ps1')) { $owner = $global:OtherOwner }
-    if ($LiteralPath -in @($global:ChangeBeforeWrite, $global:ChangeBeforeRegister)) {
-        $taskFile = Get-ChildItem -LiteralPath $LiteralPath -Filter '*.ps1' | Select-Object -First 1
-        $global:ScriptWritten = $taskFile.Length -gt 0
-        if ($taskFile -and ($LiteralPath -eq $global:ChangeBeforeWrite -or $global:ScriptWritten)) { $owner = $global:OtherOwner }
-    }
-    # Only this descriptor's owner is relevant. Its DACL deliberately differs from icacls /L.
-    @{ Sddl = "O:${owner}G:BAD:(A;;FA;;;WD)" }
+    # Pass the path through to the CIM stand-in so each test can supply its descriptor.
+    @{ Sddl = $LiteralPath }
 }
-$global:OtherOwner = 'S-1-5-21-1000'
 function Invoke-CimMethod {
     param($ClassName, $MethodName, $Arguments, $Namespace, $ErrorAction)
     if ($ClassName -eq 'CCM_ClientUtilities') { return }
-    if ($ClassName -ne 'Win32_SecurityDescriptorHelper' -or $MethodName -ne 'SDDLToWin32SD' -or
-        $Arguments.SDDL -notmatch '^O:(S-[0-9-]+)D:(.+)$') { throw 'unexpected descriptor request' }
-    $owner = $Matches[1]
-    $path = $Matches[2]
-    $flags = 16
-    $control = 0
-    if (Test-Path -LiteralPath $path -PathType Container) {
-        $flags = 3
-        if ($global:Hardened[$path]) { $control = 0x1000 }
-    }
-    $aces = @(foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
-        @{ AceFlags = $flags; AceType = 0; AccessMask = 0x1f01ff; Trustee = @{ SIDString = $sid } }
+    if ($ClassName -ne 'Win32_SecurityDescriptorHelper' -or $MethodName -ne 'SDDLToWin32SD') { throw 'unexpected descriptor request' }
+    $path = $Arguments.SDDL
+    $aces = @(foreach ($sid in @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')) {
+        @{ AceFlags = 19; AceType = 0; AccessMask = 0x1f01ff; Trustee = @{ SIDString = $sid } }
     })
-    if ($global:LegacyParent -eq $path -or ($global:BadGrant -and $path -like '*.ps1')) {
-        $aces += @{ AceFlags = 11; AceType = 0; AccessMask = $global:LegacyMask; Trustee = @{ SIDString = 'S-1-5-32-545' } }
+    $aces += @{ AceFlags = 19; AceType = 0; AccessMask = 0x1200a9; Trustee = @{ SIDString = 'S-1-5-32-545' } }
+    if (Test-Path -LiteralPath $path -PathType Container) {
+        $aces += @{ AceFlags = 27; AceType = 0; AccessMask = 0x10000000; Trustee = @{ SIDString = 'S-1-3-0' } }
     }
-    @{ ReturnValue = 0; Descriptor = @{ Owner = @{ SIDString = $owner }; ControlFlags = $control; DACL = $aces } }
+    if ($path -like '*.ps1') { $global:ScriptWritten = (Get-Item -LiteralPath $path).Length -gt 0 }
+    if ($path -eq $global:BadDir -or ($path -like '*.ps1' -and $global:BadScript -and
+        (-not $global:AfterWrite -or $global:ScriptWritten))) {
+        $aces += @{ AceFlags = $global:GrantFlags; AceType = 0; AccessMask = $global:GrantMask; Trustee = @{ SIDString = $global:GrantSid } }
+    }
+    @{ ReturnValue = 0; Descriptor = @{ DACL = $aces } }
 }
-$global:LegacyMask = 2
-function Test-Icacls {
-    param($Path, $Link, $Operation)
-    $global:AclCalls += "$Operation $Path"
-    $global:LASTEXITCODE = 0
-    if ($Link -ne '/L') { throw 'missing /L' }
-    if ($Operation -eq $global:FailAcl -or ($global:FailScriptAcl -and $Operation -eq '/setowner' -and $Path -like '*.ps1')) {
-        $global:LASTEXITCODE = 5; return
-    }
-    switch ($Operation) {
-        '/save' { Set-Content -LiteralPath $args[0] -Encoding Unicode -Value @((Split-Path -Leaf $Path), ("D:" + $Path)) }
-        '/setowner' { if (($args -join ' ') -ne '*S-1-5-32-544') { throw 'incorrect owner' } }
-        '/inheritance:r' {
-            if (($args -join ' ') -ne '/grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F') { throw 'incorrect grants' }
-            $global:Hardened[$Path] = $true
-        }
-        default { throw "Unexpected icacls operation $Operation" }
-    }
-}
-Set-Alias "$env:SystemRoot\System32\icacls.exe" Test-Icacls
+$global:GrantFlags = 0
+$global:GrantMask = 2
+$global:GrantSid = 'S-1-5-32-545'
 function Step($cfg) {
     $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
     $line = (. $global:PS | Select-Object -Last 1)
     $o = ConvertFrom-Json ($line -replace '^###SITE-JSON### ', '')
-    $files = @(Get-ChildItem -Path $cfg.dir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
+    $filesDir = $cfg.dir
+    if ($cfg.dir -eq '$env:ProgramFiles\site-automation\restart') { $filesDir = Join-Path $env:ProgramFiles 'site-automation\restart' }
+    $files = @(Get-ChildItem -LiteralPath $filesDir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
     $t = $global:Store.Values | Select-Object -First 1
     $saved = ''
     if ($o.scheduled) {
-        $settingsFile = Join-Path $cfg.dir ('restart-' + $o.scheduled.id + '.json')
+        $settingsFile = Join-Path $filesDir ('restart-' + $o.scheduled.id + '.json')
         $saved = Get-Content -LiteralPath $settingsFile -Raw
     }
     $args_ = ''
     if ($null -ne $t) { $args_ = [string]$t.Actions[0].Arguments }
-    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; xml = [string]$t.Xml; author = [string]$t.Author; saved = $saved; registrations = $global:Registrations; acl = $global:AclCalls; written = [bool]$global:ScriptWritten } | ConvertTo-Json -Compress -Depth 6))
+    $legacyDir = Join-Path $env:ProgramData 'site-automation\restart'
+    $legacy = @(Get-ChildItem -LiteralPath $legacyDir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
+    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; xml = [string]$t.Xml; author = [string]$t.Author;
+                                saved = $saved; registrations = $global:Registrations; legacy = $legacy; written = [bool]$global:ScriptWritten
+                              } | ConvertTo-Json -Compress -Depth 6))
 }
 """
 
@@ -627,7 +591,9 @@ class Registration(unittest.TestCase):
     def run_steps(self, steps, constrained=False):
         tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         try:
-            d = os.path.join(tmp, "site-automation", "restart")
+            program_files = os.path.join(tmp, "Program Files")
+            d = os.path.join(program_files, "site-automation", "restart")
+            os.mkdir(program_files)
             os.makedirs(os.path.join(tmp, "root"))
             at_ = (datetime.datetime.now(U) + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:00Z")
             at2 = (datetime.datetime.now(U) + datetime.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:00Z")
@@ -646,7 +612,7 @@ class Registration(unittest.TestCase):
                 cfg.setdefault("comment", "CHG1: Patch (site-automation, AAP job 7)")
                 cfg["description"] = cfg["comment"]
                 code.append("Step (ConvertFrom-Json '%s')" % json.dumps(cfg).replace("'", "''"))
-            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root"), "ProgramData": tmp, "TZ": "America/New_York"})
+            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root"), "ProgramData": os.path.join(tmp, "ProgramData"), "ProgramFiles": program_files, "TZ": "America/New_York"})
             out = [json.loads(x[5:]) for x in r.stdout.splitlines() if x.startswith("STEP ")]
             self.assertEqual(len(out), len([x for x in steps if not isinstance(x, str)]), r.stdout + r.stderr)
             return out
@@ -684,90 +650,69 @@ class Registration(unittest.TestCase):
         import ctypes
         if not ctypes.windll.shell32.IsUserAnAdmin():
             self.skipTest("requires an elevated Windows test process")
-        with tempfile.TemporaryDirectory(prefix="restart ACL & ") as root:
-            cfg = {"action": "none", "task_name": "SRV-APP01", "task_script": read(TASK)}
-            code = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n. '%s'\n" % PS.replace("'", "''") + r"""
+        import uuid
+        root = os.path.join(os.environ["ProgramFiles"], "restart ACL " + uuid.uuid4().hex)
+        # mkdtemp requests a private DACL on recent Windows Python. Exercise normal inheritance.
+        os.mkdir(root)
+        self.addCleanup(shutil.rmtree, root)
+        cfg = {"action": "list", "dir": root, "task_name": "SRV-APP01", "task_script": read(TASK)}
+        code = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n. '%s'\n" % PS.replace("'", "''") + r"""
 $ErrorActionPreference = 'Stop'
-$parent = Join-Path $env:ProgramData 'site-automation'
-$dir = Join-Path $parent 'restart'
-Initialize-SiteRestartDir $dir
+$dir = Join-Path $env:TEST_ROOT 'restart'
+Assert-SiteRestartLocation $dir -Create
 $file = New-Item -Path (Join-Path $dir 'restart-task-1-1.ps1') -ItemType File
-$null = & icacls.exe $file.FullName /setowner '*S-1-5-32-544' /L
-if ($LASTEXITCODE -ne 0) { throw 'could not set test script owner' }
-Assert-SiteRestartAcl $file.FullName
-foreach ($path in @($parent, $dir)) {
-    Assert-SiteRestartAcl $path -Directory -NewDirectory
-}
-Invoke-SiteIcacls $parent @('/grant:r', '*S-1-5-32-545:(OI)(CI)RX')
-$before = (Get-Acl -LiteralPath $parent).Sddl
-Initialize-SiteRestartDir $dir
-if ((Get-Acl -LiteralPath $parent).Sddl -cne $before) { throw 'changed an existing read-only grant' }
-Invoke-SiteIcacls $parent @('/grant:r', '*S-1-5-32-545:(OI)(CI)(IO)M')
-$before = (Get-Acl -LiteralPath $parent).Sddl
-try { Initialize-SiteRestartDir $dir; throw 'accepted an inherit-only modify grant' }
-catch { if ($_.Exception.Message -notlike 'Unsafe existing permissions*') { throw } }
-if ((Get-Acl -LiteralPath $parent).Sddl -cne $before) { throw 'changed a refused directory' }
-$link = Join-Path $env:ProgramData 'link'
-$null = New-Item -ItemType Junction -Path $link -Target $parent
-try {
-    try { $null = Get-SiteRestartAcl $link -Directory; throw 'accepted a junction' }
-    catch { if ($_.Exception.Message -notlike 'Refusing reparse point*') { throw } }
-} finally { (Get-Item -LiteralPath $link) | Remove-Item -Force }
+Assert-SiteRestartLocation $dir @($file.FullName)
+$null = & icacls.exe $file.FullName /grant '*S-1-5-32-545:M'
+if ($LASTEXITCODE -ne 0) { throw 'could not set test grant' }
+try { Assert-SiteRestartLocation $dir @($file.FullName); throw 'accepted Users modify' }
+catch { if ($_.Exception.Message -notlike 'Unsafe permissions*') { throw } }
 'ACL verified'
 """
-            proc = pwsh(code, {"ProgramData": root, "SITE_CHECK_CONFIG": json.dumps(cfg)})
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-            self.assertIn("ACL verified", proc.stdout)
+        proc = pwsh(code, {"TEST_ROOT": root, "SITE_CHECK_CONFIG": json.dumps(cfg)})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("ACL verified", proc.stdout)
 
-    def test_harden_parent_then_restart_directory(self):
-        (a,) = self.run_steps([{"action": "schedule"}])
+    def test_fresh_default_in_constrained_language(self):
+        defaults = read(os.path.join(FILES, "..", "defaults", "main.yml"))
+        directory = re.search(r"^win_restart_dir: '([^']+)'$", defaults, re.M)[1]
+        self.assertEqual(directory, r"$env:ProgramFiles\site-automation\restart")
+        run_early = r"""
+$script = Get-ChildItem -LiteralPath '{dir}' -Filter 'restart-task-*.ps1'
+& $script.FullName
+if ((Get-Content -LiteralPath (Join-Path '{dir}' 'restart.log') -Raw) -notmatch 'NOT YET') { throw 'missing early-run log' }
+"""
+        a, b = self.run_steps([{"action": "schedule", "dir": directory}, run_early, {"action": "cancel", "dir": directory}], constrained=True)
         self.assertTrue(a["out"].get("scheduled"), a)
-        changes = [(op.split(" ", 1)[0], os.path.basename(op)) for op in a["acl"]
-                   if not op.startswith(("/save ", "owner ")) and not op.endswith((".ps1", ".json"))]
-        self.assertEqual(changes, [(op, name) for name in ("site-automation", "restart")
-                                   for op in ("create", "/setowner", "/inheritance:r")])
+        self.assertIn(os.path.join("Program Files", "site-automation", "restart", "restart-task-"), a["task"])
+        self.assertEqual((len(b["out"]["removed"]), b["task"], b["files"]), (1, "", ["restart.log"]))
 
-    def test_fresh_directory_in_constrained_language(self):
-        (a,) = self.run_steps([{"action": "cancel"}], constrained=True)
-        self.assertNotIn("error", a["out"], a)
-        self.assertTrue(any(op.startswith("/inheritance:r ") and op.endswith("restart") for op in a["acl"]))
-
-    def test_concurrent_directory_creation_is_refused(self):
-        (a,) = self.run_steps(["$global:LostCreateRace = $true", {"action": "schedule"}])
-        self.assertIn("Could not create new directory", a["out"]["error"])
-        self.assertEqual(len(a["acl"]), 1)
-        self.assertEqual((a["registrations"], a["files"]), (0, []))
-
-    def test_existing_directories_allow_read_only_access_without_repairs(self):
-        (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; "
-                               "$global:LegacyParent = Split-Path -Parent '{dir}'; $global:LegacyMask = 0x1200a9; "
-                               "$global:OwnerPath = '{dir}'; "
-                               "$global:OtherOwner = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'",
-                               {"action": "schedule"}])
-        self.assertTrue(a["out"].get("scheduled"), a)
-        self.assertTrue(all(op.startswith(("/save ", "owner ")) or op.endswith((".ps1", ".json")) for op in a["acl"]))
-
-    def test_untrusted_writers_refused_at_either_level(self):
-        for path, mask in (("Split-Path -Parent '{dir}'", "0x106"), ("'{dir}'", "0x1f01ff"), ("'{dir}'", "0x40000")):
-            with self.subTest(path=path, mask=mask):
-                (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; "
-                                       f"$global:LegacyParent = {path}; $global:LegacyMask = {mask}", {"action": "schedule"}])
-                self.assertIn("Unsafe existing permissions", a["out"]["error"])
+    def test_allowed_roots(self):
+        for folder in ("ProgramData", "Program Files extra", "Program Files/../outside", "Program Files/.. /outside", "Program Files/%TEMP%", "Program Files"):
+            with self.subTest(folder=folder):
+                (a,) = self.run_steps([{"action": "schedule", "dir": "{root}/" + folder}])
+                self.assertIn("win_restart_dir", a["out"]["error"])
                 self.assertEqual((a["registrations"], a["files"]), (0, []))
-                self.assertTrue(all(op.startswith(("/save ", "owner ")) for op in a["acl"]))
+        for result in self.run_steps([{"action": action, "dir": "{root}/ProgramData/site-automation/restart"}
+                                      for action in ("cancel", "list", "plan")]):
+            self.assertIn("win_restart_dir", result["out"]["error"])
+            self.assertEqual(result["registrations"], 0)
+        (a,) = self.run_steps([{"action": "schedule", "dir": "{root}/root/site/restart"}])
+        self.assertTrue(a["out"].get("scheduled"), a)
 
-    def test_reparse_after_owner_read_is_refused(self):
-        (a,) = self.run_steps(["$global:LinkOnRead = Split-Path -Parent '{dir}'; "
-                               "$null = New-Item -ItemType Directory -Path $global:LinkOnRead", {"action": "schedule"}])
-        self.assertIn("reparse point", a["out"]["error"])
-        self.assertEqual((a["registrations"], a["files"]), (0, []))
+    def test_untrusted_directory_grants_refused(self):
+        for sid, flags, mask in (("S-1-5-32-545", 0, "2"), ("S-1-5-32-545", 11, "0x10000000"), ("S-1-3-0", 3, "0x1f01ff")):
+            with self.subTest(sid=sid, flags=flags, mask=mask):
+                (a,) = self.run_steps([f"$global:BadDir = '{{dir}}'; $global:GrantSid = '{sid}'; "
+                                       f"$global:GrantFlags = {flags}; $global:GrantMask = {mask}", {"action": "schedule"}])
+                self.assertIn("Unsafe permissions", a["out"]["error"])
+                self.assertEqual((a["registrations"], a["files"]), (0, []))
 
-    def test_owner_rechecked_before_write_and_registration(self):
-        for flag, written in (("ChangeBeforeWrite", False), ("ChangeBeforeRegister", True)):
-            with self.subTest(flag=flag):
-                (a,) = self.run_steps([f"$global:{flag} = '{{dir}}'", {"action": "schedule"}])
-                self.assertIn("Unsafe existing owner", a["out"]["error"])
-                self.assertEqual((a["written"], a["registrations"]), (written, 0))
+    def test_script_acl_before_write_and_registration(self):
+        for after_write in (False, True):
+            with self.subTest(after_write=after_write):
+                (a,) = self.run_steps(["$global:BadScript = $true; $global:AfterWrite = $" + str(after_write), {"action": "schedule"}])
+                self.assertIn("Unsafe permissions", a["out"]["error"])
+                self.assertEqual((a["written"], a["registrations"], a["files"]), (after_write, 0, []))
 
     def test_registration_dates_in_invariant_culture(self):
         from xml.etree import ElementTree
@@ -785,18 +730,6 @@ try {
         for call in re.findall(r'''\.ToString\((['"]yyyy[^)]*)\)''', read(PS)):
             self.assertIn("[Globalization.CultureInfo]::InvariantCulture", call)
 
-    def test_hardening_failures_prevent_registration(self):
-        for flag, why in (("$global:FailAcl = '/setowner'", "/setowner"), ("$global:FailAcl = '/inheritance:r'", "/inheritance:r"),
-                          ("$global:FailAcl = '/save'", "/save"),
-                          ("$global:OwnerPath = Split-Path -Parent '{dir}'; New-Item -ItemType Directory -Path $global:OwnerPath | Out-Null",
-                           "Unsafe existing owner"),
-                          ("$global:FailScriptAcl = $true", "/setowner"),
-                          ("$global:BadOwner = $true", "Unsafe existing owner"), ("$global:BadGrant = $true", "Unsafe existing permissions")):
-            with self.subTest(flag=flag):
-                (a,) = self.run_steps([flag, {"action": "schedule"}])
-                self.assertIn(why, a["out"]["error"])
-                self.assertEqual((a["registrations"], a["files"]), (0, []))
-
     def test_reparse_point_refused_at_either_level(self):
         for link in ("(Split-Path -Parent '{dir}')", "'{dir}'"):
             with self.subTest(link=link):
@@ -804,15 +737,44 @@ try {
                                        "$null = New-Item -ItemType SymbolicLink -Path $p -Target $env:SystemRoot", {"action": "schedule"}])
                 self.assertIn("reparse point", a["out"]["error"])
                 self.assertEqual((a["registrations"], a["files"]), (0, []))
-                linked_name = "restart" if link == "'{dir}'" else "site-automation"
-                self.assertFalse(any(op.endswith(os.sep + linked_name) for op in a["acl"]))
 
-    def test_reparse_in_programdata_stops_before_managed_directories(self):
-        (a,) = self.run_steps(["$env:ProgramData = Join-Path $env:ProgramData 'linked'; "
-                               "$null = New-Item -ItemType SymbolicLink -Path $env:ProgramData -Target $env:SystemRoot",
-                               {"action": "schedule", "dir": os.path.join("{root}", "linked", "site-automation", "restart")}])
-        self.assertIn("reparse point", a["out"]["error"])
-        self.assertEqual((a["registrations"], a["acl"]), (0, []))
+    def test_legacy_registration(self):
+        legacy = r"""
+$old = Join-Path $env:ProgramData 'site-automation\restart'
+$null = New-Item -Path $old -ItemType Directory -Force
+$id = '20261124093000-1234'
+foreach ($name in @('restart.log', 'keep.txt', 'restart-task-2-2.ps1', "restart-task-$id.ps1", "restart-$id.json")) {
+    Set-Content -LiteralPath (Join-Path $old $name) -Value 'untrusted legacy content'
+}
+$global:Store['\site-automation\site-automation restart'] = @{
+    TaskName = 'site-automation restart'; TaskPath = '\site-automation\'; Author = 'site-automation'
+    Description = 'CHG1 (site-automation, AAP job 1)'; State = 'Ready'
+    Actions = @(@{Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $old "restart-task-$id.ps1") + '"'})
+    Triggers = @(@{StartBoundary = '2026-11-24T09:30:00Z'})
+}
+"""
+        for action, skip, bad_next in (("cancel", False, False), ("schedule", False, False), ("schedule", True, False), ("schedule", False, True)):
+            with self.subTest(action=action, skip=skip, bad_next=bad_next):
+                before, after = self.run_steps([legacy, {"action": "list"}, "$global:BadNext = " + ("'AAP job 7'" if bad_next else "$false"),
+                                                {"action": action, "only_if_pending": skip}])
+                self.assertEqual(before["out"]["ours"][0]["at_utc"], "2026-11-24T09:30:00Z")
+                self.assertEqual(len(before["legacy"]), 5)
+                self.assertEqual(after["legacy"], before["legacy"])
+                note = f"old files left in {before['out']['ours'][0]['dir']} - delete that folder by hand"
+                self.assertEqual(after["out"]["cleanup_note"], note)
+                model = w.win_restart_model([{"host": "srv", "result": after["out"]}], {"mode": action})
+                self.assertIn(note, w.win_restart_log(model)[0])
+                doc = w.win_restart_cancel_doc(model) if action == "cancel" else w.win_restart_doc(model, WHEN)
+                self.assertIn(note, doc["sections"][0]["rows"][0][-1])
+                if bad_next:
+                    self.assertIn("no restart of ours is scheduled", after["out"]["error"])
+                    self.assertEqual((after["task"], after["files"], after["registrations"]), ("", [], 1))
+                elif action == "cancel" or skip:
+                    self.assertEqual((len(after["out"]["removed"]), after["task"], after["files"]), (1, "", []))
+                else:
+                    self.assertEqual(len(after["out"]["replaced"]), 1)
+                    self.assertIn(os.path.join("Program Files", "site-automation", "restart"), after["task"])
+                    self.assertEqual(len(after["files"]), 2)
 
     def test_own_files_and_replace(self):
         a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False, "later": True}])
@@ -893,7 +855,7 @@ try {
         code = ". '%s'\n" % PS.replace("'", "''") + r"""
 $d = Join-Path ([IO.Path]::GetTempPath()) 'restart'
 $ok = '-NoProfile -File "' + (Join-Path $d 'restart-task-1-1.ps1') + '"'
-function T($author, $desc, $args_) { Test-SiteOurTask -Task ([pscustomobject]@{ Author = $author; Description = $desc; Actions = @([pscustomobject]@{ Arguments = $args_ }) }) -Dir $d }
+function T($author, $desc, $args_) { [bool](Get-SiteRegistration -Task ([pscustomobject]@{ Author = $author; Description = $desc; Actions = @([pscustomobject]@{ Arguments = $args_ }) }) -Dirs $d) }
 'MARKS ' + (@((T 'site-automation' 'x (site-automation, AAP job 1)' $ok), (T 'Other' 'x (site-automation)' $ok), (T 'site-automation' 'x' $ok),
   (T 'site-automation' 'x (site-automation)' '-File "/other/restart-task-1.ps1"')) -join ',')
 """
@@ -1324,7 +1286,7 @@ class Playbook(unittest.TestCase):
             return subprocess.run([binary or "ansible-playbook", "-i", inv, "-l", "srv-app0*", os.path.join(REPO, "playbooks", pb)]
                                   + (["--check"] if check else []) + ["-e", json.dumps(ev)],
                                   capture_output=True, text=True, timeout=600, cwd=REPO, env=dict(dict((k, v) for k, v in os.environ.items() if not k.startswith("SOLARWINDS")),
-                                                                     ANSIBLE_LOCAL_TEMP=tmp, TZ="Asia/Kolkata", ANSIBLE_FORKS="1", **(env or {})))
+                                                                     ANSIBLE_LOCAL_TEMP=tmp, TZ="Asia/Kolkata", ANSIBLE_FORKS="1", ProgramFiles=tmp, **(env or {})))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

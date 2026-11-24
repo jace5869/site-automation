@@ -625,17 +625,17 @@ What the job does on each server:
   Application log (source `site-automation`, event 101).
 - One restart of ours per server: a new run replaces the earlier task in one step (the report says "replaces ...").
   With "only if pending" and nothing pending, the server is skipped and an earlier restart of ours is removed.
-- Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`); the
-  earlier one's are removed only after the new task reads back right. If it does not, the earlier task is put back.
+- Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`).
+  During replacement, the job keeps the previous protected files until it verifies the new task. If verification
+  fails, the job can restore the previous task from those files.
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
-- The task's script and settings are in `win_restart_dir` (default `C:\ProgramData\site-automation\restart`).
-  The job creates each missing directory with Administrators as owner, disables inheritance, and grants full control
-  only to SYSTEM and Administrators. It checks each path segment for junctions and other reparse points. An existing
-  managed directory must belong to SYSTEM, Administrators, or TrustedInstaller. Read-only access for other accounts
-  is allowed. A grant that lets another account write, delete, or change permissions on the directory or its children
-  stops the job. The error identifies the directory for an administrator to inspect. The job leaves its ACL in place.
-  Before writing the script and before registering or restoring a task, the job rechecks the directory path and owner.
-  It also checks the script's owner and permissions before registration.
+- The task's script and settings inherit the permissions of `$env:ProgramFiles\site-automation\restart`
+  (usually `C:\Program Files\site-automation\restart`), so ordinary users cannot replace a script that runs as SYSTEM.
+  The job requires `win_restart_dir` to be a subdirectory of `$env:ProgramFiles` or `$env:SystemRoot`.
+  Choose an administrator-controlled directory tree. The job refuses reparse points and unsafe write grants.
+- Cancel and reschedule remove or replace the matching 1.127.x scheduled task and leave every file in the old
+  directory. Rescheduling writes the new script in the protected directory. The affected server's result includes
+  `old files left in C:\ProgramData\site-automation\restart - delete that folder by hand`.
 - The settings file stores the UTC restart time as `yyyy-MM-ddTHH:mm:ssZ` on Windows PowerShell and PowerShell 7.
   Rescheduling, skipping or cancelling can use that time to identify the earlier SolarWinds window in the report.
 - It never restarts a server right away. Run in Task Scheduler is switched off for the task, and the task's script does
@@ -708,7 +708,7 @@ What it does:
 
 Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our task; Run removes it. Only the
 task `win_restart_task_path` + `win_restart_task_name` is touched, and only when this job made it (its author, its
-description and its script in `win_restart_dir`). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
+description and its script path in the current or legacy directory). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
 `shutdown /a` on the server within the 60 seconds. It calls nothing in SolarWinds: an unmanage window the restart set
 stays and ends by itself.
 

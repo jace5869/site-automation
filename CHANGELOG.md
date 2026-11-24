@@ -30,6 +30,8 @@ credential on NetApp - expand a volume, so each run checks that no other run of 
   there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
   aggregates are listed by status, then fullest first; the "need a look" count follows.
 
+**Windows - to set up:** nothing to change. New restarts put their script in `C:\Program Files\site-automation\restart`. Restarts scheduled by 1.127.x are found and removed by cancel or a new schedule; afterwards delete the old folder `C:\ProgramData\site-automation\restart` by hand.
+
 **Known limits:** ONTAP's REST API takes a volume's (and a LUN's) size, not "this much more". Between the job's last
 read and ONTAP's change (well under a second), a person in System Manager or ONTAP's autosize could still grow the
 volume; the job's size then sets it back to the job's size and the report shows the size read back. Not fixed, by
@@ -49,11 +51,12 @@ design (docs/NETAPP.md, Limits).
 - SnapMirror: a lag not known no longer reads "0.0x the schedule".
 - NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
 - Windows - schedule a restart (review of 1.127.x):
-  - Windows restart scheduling secures the task directory and its dedicated parent, refuses reparse points, and verifies the script owner and permissions before registration.
+  - Windows restart scripts now inherit the protections of `Program Files\site-automation\restart`. The job checks for reparse points and unsafe write grants before writing or registering a script. The job refuses `win_restart_dir` outside a subdirectory of `$env:ProgramFiles` or `$env:SystemRoot`. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
   - A later queued AAP job can wait for the current run. Target exclusions work with colon-separated patterns. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
   - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
   - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
-  Folder checks use built-in Windows tools only (icacls, PowerShell); an existing site-automation folder that an admin or SYSTEM did not make is refused, never repaired. A Limit term (wildcard, regex or slice) that would select all is refused.
+  - A wildcard, regex or slice in the Limit that would select the whole inventory (all) is refused.
+- **Excluded servers (since 1.67.0):** a target of several servers separated by commas (A,B) plus `site_exclude_hosts` could still reach an excluded server (`A,B:!site_excluded` keeps A). The exclusion is now its own term (`A,B,!site_excluded`) in every playbook.
 
 ## 1.127.3 — 2026-11-24
 
