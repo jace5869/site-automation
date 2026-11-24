@@ -3795,8 +3795,8 @@ CHECK_GONE = ("this job can no longer be asked for Check (its Job type is fixed 
 
 
 def job_type_html(a, query):
-    """The Run dialog's Job type -> (html, may start). A template that asks it at launch: Check or Run, the template's own by
-    default, or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
+    """The Run dialog's Job type -> (html, may start). A template that asks it at launch: Check or Run, Check by default
+    (1.130.0), or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
     template that does not ask it: kept as a hidden field when Check is its fixed Job type, else refused (CHECK_GONE) - a
     Check never turns into a real run. Any other template: ('', True)."""
     jt = a.get("job_type") or {}
@@ -3807,7 +3807,9 @@ def job_type_html(a, query):
         if jt.get("default") == "check":
             return ('<input type="hidden" name="%s" value="check"><p class="sub">Job type: Check (the template\'s own).</p>' % NETAPP_JOB_TYPE), True
         return '<p class="note bad" role="alert"><b>Not started.</b> %s.</p>' % esc(CHECK_GONE[0].upper() + CHECK_GONE[1:]), False
-    pick = want if want in ("check", "run") else jt.get("default", "run")
+    # 1.130.0: a template that asks its Job type is one whose guide says Check first (the restart, its cancel, a patch, a load):
+    # the form starts on Check, and Run is picked on purpose
+    pick = want if want in ("check", "run") else "check"
     opts = (("check", "Check - the plan only, nothing is changed"), ("run", "Run - the job does its work"))
     return ('<div class="field"><label id="l-jt">Job type</label><div class="multi" role="radiogroup" aria-labelledby="l-jt">%s</div>'
             '<p class="why" id="p-jt"></p></div>'

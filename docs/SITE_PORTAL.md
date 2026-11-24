@@ -972,8 +972,8 @@ what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md),
 
 - **Expand…** opens this portal's own Run dialog for *NetApp - expand a volume* (a found template: its survey form)
   with the LUN or volume picked - the survey's current choice, key included - and **Job type Check**. The Run dialog
-  shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type; it is sent to
-  AAP with the launch and kept in the portal's log. Other templates are not changed.
+  shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type - **Check** is picked
+  at first (1.130.0), Run only on purpose; it is sent to AAP with the launch and kept in the portal's log. Other templates are not changed.
 - The button is off, with the reason, when the portal does not offer the template or the person may not run it:
   "needs Execute on NetApp - expand a volume".
 - The server reads the database at most once a minute while someone has the page open; the page asks every minute

@@ -196,6 +196,11 @@ class Live(unittest.TestCase):
         self.assertIn('<optgroup label="Hosts (3)">', page)
         self.assertNotIn("lin01", page)
         self.assertIn("Windows hosts only", page)
+        # 1.130.0: a template that asks its Job type starts on Check; Run is picked on purpose
+        self.assertIn('value="check" checked>', page)
+        self.assertNotIn('value="run" checked>', page)
+        lg = sp.action_page(self.portal.cfg, self.portal, "DOE.JANE.Q.1234567890", self.act("Windows - local group members")["name"], {})
+        self.assertNotIn('name="portal-job-type"', lg)                       # a report that does not ask it has no choice
         r = urllib.request.Request("http://%s/api/inventory?inv=%d&os=windows&group=all_app&groups=1&q=" % (self.host, INV),
                                    headers={"X-SSL-Client-Verify": "SUCCESS", "X-SSL-Client-S-DN": JDOE})
         with urllib.request.urlopen(r, timeout=20) as f:

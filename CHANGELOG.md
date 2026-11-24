@@ -21,7 +21,8 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   once). Labelled for the portal now (catalog `portal: true`): *Windows connection test*, *Windows health check*, *Windows
   troubleshoot*, *Windows - local group members*, *Windows certificate report*, *Windows - trust store report*, *Windows STIG
   drift report*; *Windows - schedule a restart* and *cancel* already were. The restart form keeps its survey (24-hour time,
-  reason, only if pending, change) and offers Check before Run.
+  reason, only if pending, change). **Job type starts on Check** for every template that prompts it (restart, cancel, patch,
+  load ...): Run is picked on purpose.
 - **Windows hosts only.** A Windows job's picker (playbook `playbooks/win_*.yml`, or a workflow named *Windows ...*) lists only
   the inventory's Windows hosts, and a group counts by its Windows hosts - by `portal_windows_hosts_from`: a group whose name
   matches `*windows*`, or `ansible_connection` (winrm, psrp) / `ansible_shell_type` (powershell, cmd) in the host's, a group's

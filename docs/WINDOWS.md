@@ -598,7 +598,8 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
 group (the **Group** drop-down shows one group's servers; **Pick the whole group** or tick single ones). It lists only the
 Windows hosts of the inventory (`portal_windows_hosts_from`, docs/SITE_PORTAL.md "Windows jobs"); a group counts by its Windows
 hosts. One pick set is **one job**, up to `win_restart_max_hosts` servers (the portal reads it from the template's Variables).
-The form keeps the survey (time, reason, only if pending, change) and offers **Check** (the plan only) before **Run**.
+The form keeps the survey (time, reason, only if pending, change). Its Job type starts on **Check** (the plan only):
+pick **Run** on purpose once the plan is right.
 
 ### Run it
 
