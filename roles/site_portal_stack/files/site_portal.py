@@ -72,6 +72,11 @@ try:
     import site_report_db  # noqa: E402  1.101.2: the report database (PyMySQL, in the all-in-one EE the portal runs in)
 except ImportError:
     site_report_db = None
+import wall_model  # noqa: E402  1.129.0: the ops-center wall's rules and model (standard library, no I/O)
+try:
+    import wall_live  # noqa: E402  1.129.0: the wall's live collector (vCenter and ONTAP, read-only by construction)
+except ImportError:                     # an older deploy's files: the wall from the report database only
+    wall_live = None
 try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
 except ImportError:                     # an older deploy's files: the named lists only
@@ -363,6 +368,27 @@ class Config(object):
         self.netapp = flag(g("PORTAL_NETAPP", "1"))
         self.netapp_old_minutes = max(15, min(10080, int(g("PORTAL_NETAPP_OLD_MINUTES", "60"))))
         self.netapp_tab = False                  # set by NetappLive when the database has a run (the bar's tab)
+        # 1.129.0: the ops-center wall (/portal/wall): its tab's name (outage_ops_center), the enclave it serves, its thresholds
+        # (PORTAL_WALL_OPTS: wall_model.DEFAULTS' keys) and the live collector's logins - the site's existing "VMware vCenter" and
+        # "NetApp ONTAP" accounts, each a podman secret (PORTAL_WALL_VCENTER_LOGIN, PORTAL_WALL_ONTAP_LOGIN: JSON)
+        self.wall = flag(g("PORTAL_WALL", "1"))
+        self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
+        self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
+        try:
+            wo = g("PORTAL_WALL_OPTS", "{}")
+            wo = json.loads(wo) if isinstance(wo, str) else wo
+        except ValueError:
+            wo = {}
+        self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
+        self.wall_auth_retry = max(300, min(86400, int(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900"))))
+        self.wall_logins = {}
+        for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
+            try:
+                lv = json.loads(g(env, "{}") or "{}")
+            except ValueError:
+                lv = {}
+            if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
+                self.wall_logins[k] = lv
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -3289,6 +3315,7 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
                                            (("approvals",), "approvals", "Approvals"))
+                  + (((("wall",), "wall", getattr(cfg, "wall_title", "Ops center")),) if getattr(cfg, "wall", False) else ())
                   + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ())
                   + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ())
                   + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ()))
@@ -5455,15 +5482,96 @@ def netapp_page(cfg, cn, statics, token=""):
                  head='<link rel="stylesheet" href="%sstatic/netapp-page.css?v=%s">' % (cfg.path, v("netapp-page.css")))
 
 
-def make_handler(cfg, portal, static_dir):
+# ---- 1.129.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js")
+
+
+def wall_sources(cfg):
+    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
+    if wall_live is None:
+        return []
+    return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
+
+
+class WallLive(object):
+    """The wall's answer: the live collector (wall_live.Collector: started here, reads every portal_wall_seconds whether or not
+    anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
+    someone looks), made into one model by wall_model.build. One answer every viewer shares, with an ETag."""
+
+    def __init__(self, cfg, log, nal=None, collector=None):
+        self.cfg, self.log, self.nal = cfg, log, nal
+        self.tracker = wall_model.Tracker()
+        self.lock = threading.Lock()
+        self.collector = collector
+        if self.collector is None and wall_live is not None:
+            src = wall_sources(cfg)
+            if src:
+                self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
+                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)))
+                self.collector.start()
+
+    def viewed(self):
+        if self.nal is not None:
+            self.nal.viewed()
+
+    def netapp(self):
+        """-> (the NetApp run's model or None, its read time (epoch) or None, why there is none)"""
+        n = self.nal
+        if n is None:
+            return None, None, ("the wall reads NetApp from the report database: the portal's deploy needs the \"Report database\" credential"
+                                if not self.cfg.report_db else "")
+        with n.lock:
+            m, stale = n.model, n.stale
+        if m is None:
+            return None, None, stale or (netapp_live.NO_LOGIN if n.db is None else "reading the report database")
+        if m.get("empty"):
+            return None, None, m["empty"]
+        at = ad_when((m.get("run") or {}).get("read_at"))
+        return m, at, ""
+
+    def model(self, now=None):
+        now = time.time() if now is None else now
+        view = self.collector.view() if self.collector is not None else None
+        nm, at, why = self.netapp()
+        with self.lock:
+            return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
+                                    title=self.cfg.wall_title, nm_why=why)
+
+    def answer(self, etag_in=""):
+        m = self.model()
+        m["zone"] = self.cfg.tz_name or "UTC"
+        m["poll"] = 30
+        m["full"] = {"storage": (self.cfg.path + "netapp") if self.cfg.netapp else ""}
+        body = json.dumps(m, separators=(",", ":"), ensure_ascii=False, default=str)
+        # the ETag leaves out "now" (it moves every second; the page works the ages out itself)
+        tag = '"%s"' % hashlib.sha256(re.sub(r'^\{"now":[0-9.]+,', "{", body).encode("utf-8")).hexdigest()[:20]
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+
+
+def wall_page(cfg, cn, statics, token=""):
+    """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
+    v = lambda n: statics.get(n, "")
+    body = ('<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s">'
+            '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
+            '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
+            '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), cfg.path, v("wall-land.js"), cfg.path, v("wall-page.js")))
+    return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
+                 head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s">' % (cfg.path, v("wall-page.css")))
+
+
+def make_handler(cfg, portal, static_dir, wall=None):
     live = NetLive(cfg, portal.log) if not cfg.netmap_why else None
     history = NetmapHistoryLive(cfg) if live else None
     adl = AdLive(cfg, portal.log, getattr(portal, "aap", None)) if cfg.ad else None      # 1.101.2: the live AD page
     nal = NetappLive(cfg, portal.log, portal) if cfg.netapp else None                    # the NetApp page
     if nal is not None:
         nal.tab_soon()
+    wall = wall if cfg.wall else None
+    if cfg.wall and wall is None:                                                         # 1.129.0: the ops-center wall (a test hands its own)
+        wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC:
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC:
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -5609,6 +5717,16 @@ def make_handler(cfg, portal, static_dir):
                 if path == "/netapp":
                     return self._send(200, netapp_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 code, body, etag = nal.answer(cn, (self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            # 1.129.0: the ops-center wall
+            if path in ("/wall", "/api/wall"):
+                if not wall:
+                    return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),
+                                      "text/html; charset=utf-8") if path == "/wall" else self._send(404, {"error": "The wall is off here (portal_wall: false)."})
+                wall.viewed()
+                if path == "/wall":
+                    return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
+                code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:
