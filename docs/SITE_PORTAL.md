@@ -871,6 +871,8 @@ The name rules (the same rules give every catalog entry its area): the first tha
 | Linux | `Linux - *`, `fapolicyd*` (in the catalog: every name no rule above names) |
 
 A template of yours that no rule names is in *Other*: give it a `portal-area:` label or a `portal_area_rules` entry.
+A template with several `portal-area:` labels (an old one left beside the new one) is in the one that is its area in the job
+catalog; when none is, in the first by name.
 
 ```yaml
 portal_area_rules:

@@ -78,5 +78,31 @@ class SetVariables(unittest.TestCase):
         self.assertEqual([k for k in sorted(FIXED) if have.get(k) != T._flat(FIXED[k])], [])
 
 
+
+class Areas(unittest.TestCase):
+    """One section per platform: the rename skip keeps Network = the Network EE only; an old catalog area's label is named, never taken off."""
+
+    def test_the_rename_skip_is_the_network_ee_only(self):
+        import site_aap_rename as R
+        for f in (T.areas_of, R.areas_of):
+            self.assertEqual(f({"area": "Network", "ee": "all"}), set())                     # Network map, SolarWinds, Cisco UCS: not skipped
+            self.assertEqual(f({"area": "Network", "ee": "network"}), {"network"})
+            self.assertEqual(f({"area": "VMware", "ee": "all"}), {"vmware"})
+            self.assertEqual(f({"area": "Tickets & incidents", "ee": "network"}), {"tickets & incidents", "network"})
+
+    def test_the_old_area_labels(self):
+        have = {"portal", "portal-area:Reports", "portal-area:Linux", "portal-area:Custom", "portal-area:disk & services", "Reports"}
+        self.assertEqual(T.stale_area_labels(have, "portal-area:", "Linux"), ["portal-area:Reports", "portal-area:disk & services"])
+        self.assertEqual(T.stale_area_labels({"portal-area:Linux"}, "portal-area:", "Linux"), [])          # its area now: never named
+        self.assertEqual(T.stale_area_labels({"portal-area:VMware"}, "portal-area:", "Horizon"), ["portal-area:VMware"])
+        self.assertEqual(T.stale_area_labels({"portal-area:Horizon"}, "portal-area:", "VMware"), [])       # not an old catalog area
+        self.assertEqual(T.stale_area_labels(have, "", "Linux"), [])
+        self.assertEqual(T.stale_area_labels(have, "portal-area:", ""), [])
+        src = open(os.path.join(REPO, "roles", "aap_templates", "library", "site_aap_templates.py")).read()
+        self.assertIn("remove it by hand", src)
+        with open(os.path.join(REPO, "roles", "aap_templates", "tasks", "main.yml")) as fh:
+            self.assertIn("r.stale | default([])", fh.read())
+
+
 if __name__ == "__main__":
     unittest.main()

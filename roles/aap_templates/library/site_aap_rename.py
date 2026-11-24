@@ -75,8 +75,10 @@ def _why(code, d):
 
 
 def areas_of(e):
-    """The areas a catalog entry is in, for aap_templates_rename_skip_areas: its own, and Network for the Network EE's."""
+    """The areas a catalog entry is in, for aap_templates_rename_skip_areas: its own, and Network for the Network EE's. Network is only
+    ever the Network EE's: the catalog's own Network area (Network map, SolarWinds, Cisco UCS on the default EE) is never skipped by it."""
     out = set([str(e.get("area") or "")])
+    out = set(x for x in out if x.casefold() != "network")
     if str(e.get("ee") or "") == "network":
         out.add("Network")
     return set(x.casefold() for x in out if x)

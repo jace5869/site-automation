@@ -865,10 +865,11 @@ class Aap(object):
                 return TemplateRead(skipped="its steps could not be read", inventory=limit_inv, transient=tr, retry=True)
             sigf["steps"] = shape
         sigf["limit_inv"] = limit_inv or 0                 # a form drawn for another inventory is not launched against this one
-        lab = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
-                    and l[len(cfg.label_area):].strip()), "")
-        area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules,
-                                         cfg.workflow_areas if typ == "workflow" else None)
+        labs = [l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
+                and l[len(cfg.label_area):].strip()]
+        wf_areas = cfg.workflow_areas if typ == "workflow" else None
+        lab = rules.area_label_pick(labs, tname, str(r.get("playbook") or ""), cfg.playbook_areas, wf_areas)
+        area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules, wf_areas)
         name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
         title = cfg.titles.get(tname.casefold()) or next(
             (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]

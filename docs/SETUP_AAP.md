@@ -682,7 +682,10 @@ and checks the ones already there. It never deletes a template.
    one of another organization, or a personal credential, is never used. The inventory is needed only to make a
    template. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
 3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
-   (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels).
+   (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels). With it, a
+   `portal-area:` label of an area the catalog used before one section per platform (Reports, Disk & services,
+   fapolicyd, Tickets ...) that is not the template's area now is listed as *stale portal-area label X on <template> -
+   remove it by hand*. The job never takes a label off (another job or a person may have put it there).
 4. Launch it with Job type **Check**. It lists each template:
    - *WOULD CREATE* - with its playbook, project, credentials, prompts and execution environment;
    - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts
@@ -864,8 +867,7 @@ How it finds them - the way the descriptions do:
 
 What is never renamed unless the map names it (a name the map gives stays: the next run does not rename it again):
 
-- **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - the catalog's
-  *Network* area (*Network config ...*, *Network map*, *SolarWinds - snapshot*, *Cisco UCS inventory* ...) and every one that
+- **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - every one that
   runs on the Network execution environment). The match leaves them out too.
 - **The templates and workflows AAP - set up portal actions makes** (*STIG recheck*, *Disk - clean up (approved)* ...):
   that job knows its own by name. Nothing is renamed onto those names either.

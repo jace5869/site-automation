@@ -762,6 +762,20 @@ def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None, 
     return "", ""
 
 
+def area_label_pick(labels, name="", playbook="", playbook_areas=None, name_areas=None):
+    """The area of several portal-area: labels (their text, sorted) a template carries: the one that is its area in the job catalog (an
+    old catalog area's label left beside the new one), else the first - '' when none."""
+    labels = [" ".join(str(x or "").split()) for x in labels or []]
+    labels = [x for x in labels if x]
+    if len(labels) > 1:
+        cat, src = area_for(name, playbook, "", playbook_areas, None, name_areas)
+        if src in ("playbook", "catalog"):
+            hit = next((x for x in labels if x.casefold() == cat.casefold()), "")
+            if hit:
+                return hit
+    return labels[0] if labels else ""
+
+
 LOGO_MAX = 1024 * 1024
 _LOGO_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 

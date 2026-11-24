@@ -132,6 +132,16 @@ else fail "all" "rc $rc; $(labels_of 'Health check') $(labels_of 'POA&M status')
 before="$(writes)"
 run -e '{"aap_templates_label_portal": "all", "aap_templates_only": ["Health check", "POA&M status"]}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] && ! has "labelled portal" && pass "... again: nothing written" || fail "labels again" "rc $rc"
+# an old catalog area's label (portal-area:Reports, before one section per platform) is named, never taken off; a label of the
+# site's own area (portal-area:Custom) is not named
+"$py" -c "import json; s=json.load(open('$work/state.json')); s['labels'] += [{'id': 900, 'name': 'portal-area:Reports', 'organization': 1}, {'id': 901, 'name': 'portal-area:Custom', 'organization': 1}]; [j for j in s['job_templates'] if j['name'] == 'Health check'][0]['labels'] += [900, 901]; json.dump(s, open('$work/state.json','w'))"
+before="$(writes)"
+run -e '{"aap_templates_label_portal": "all", "aap_templates_only": ["Health check"]}'; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "stale portal-area label portal-area:Reports on Health check - remove it by hand" \
+    && ! has "portal-area:Custom on" && [ "$(labels_of 'Health check')" = "['portal', 'portal-area:Custom', 'portal-area:Linux', 'portal-area:Reports']" ] \
+    && pass "an old catalog area label: named to remove by hand, never taken off" \
+    || fail "stale area label" "rc $rc; $(labels_of 'Health check'); $(grep -F "stale" "$work/out.txt" | head -3)"
+"$py" -c "import json; s=json.load(open('$work/state.json')); j=[j for j in s['job_templates'] if j['name'] == 'Health check'][0]; j['labels'] = [x for x in j['labels'] if x not in (900, 901)]; json.dump(s, open('$work/state.json','w'))"
 
 # ---- aap_templates_create_alias: the catalog's name made too (a workflow may name it), the site's own kept
 run -e '{"aap_templates_create_alias": true, "aap_templates_only": ["Service - restart"]}'; rc=$?

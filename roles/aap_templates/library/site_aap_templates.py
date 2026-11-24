@@ -97,9 +97,27 @@ def off(text):
     return "\n".join(out) + "\n"
 
 
+# the areas the catalog gave before one section per platform: a portal-area: label of one of these that is not the entry's area
+# now is most likely this job's own old label - but AAP - set up portal actions (portal_publish_area) or a person may have put the
+# same text there, so it is never taken off: the job names it, to remove by hand
+OLD_CATALOG_AREAS = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT", "Linux", "Windows", "VMware", "Reports")
+
+
+def stale_area_labels(have, prefix, area):
+    """The labels of a template (names) that look like this job's old portal-area: label: prefix + an old catalog area that is not
+    its area now - sorted; none without a prefix or an area."""
+    if not prefix or not area:
+        return []
+    old = set(x.casefold() for x in OLD_CATALOG_AREAS)
+    return sorted(n for n in have if n.startswith(prefix) and n[len(prefix):].strip().casefold() in old
+                  and n[len(prefix):].strip().casefold() != str(area).strip().casefold())
+
+
 def areas_of(e):
-    """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames)."""
+    """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames). Network is only
+    ever the Network EE's: the catalog's own Network area (Network map, SolarWinds, Cisco UCS on the default EE) is never skipped by it."""
     out = set([str(e.get("area") or "")])
+    out = set(x for x in out if x.casefold() != "network")
     if str(e.get("ee") or "") == "network":
         out.add("Network")
     return set(x.casefold() for x in out if x)
@@ -527,6 +545,7 @@ class Templates(object):
                                          "run this again" % (self.p["project"], ", ".join(gone)))
         # the labels: read now (their ids, each template's own) - only the writes are left for later (Codex)
         self.label_plan = {}
+        self.stale_labels = {}                   # name -> the lines naming its old portal-area: labels (never taken off)
         if (self.p["label_portal"] not in ("", "none") or to_label) and not self.problems:
             names = sorted(set(n for e in to_label for n in self.labels_for(e)))
             self.label_id = {}
@@ -542,6 +561,9 @@ class Templates(object):
                 missing = [n for n in self.labels_for(e) if n not in have]
                 if missing:
                     self.label_plan[e["name"]] = missing
+                stale = stale_area_labels(have, self.p["portal_label_area"], e.get("area"))
+                if stale:
+                    self.stale_labels[e["name"]] = ["stale portal-area label %s on %s - remove it by hand" % (n, e["name"]) for n in stale]
         return steps
 
     def step_why(self, t, e):
@@ -772,6 +794,8 @@ class Templates(object):
             for r in self.results:
                 if r["name"] in getattr(self, "left_off", {}):
                     r.setdefault("also", self.left_off[r["name"]])
+            for name, lines in sorted((getattr(self, "stale_labels", None) or {}).items()):
+                self.row_of(name).setdefault("stale", lines)
 
     def run_all(self):
         self.wrote = False

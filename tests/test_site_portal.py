@@ -4892,6 +4892,19 @@ class Areas1784(unittest.TestCase):
         self.assertEqual(set(a for a, _ in rules.AREA_RULES), set(rules.AREAS))
         self.assertEqual(sp.AREA_FIRST, rules.AREAS)
 
+    def test_4d_several_area_labels_the_catalog_area_first(self):
+        pa, wa = {"playbooks/health_check.yml": "Linux"}, {"daily health": "Linux"}
+        pick = rules.area_label_pick
+        self.assertEqual(pick(["Disk & services", "Linux"], "Health check", "playbooks/health_check.yml", pa), "Linux")    # the old label loses
+        self.assertEqual(pick(["Disk & services", "linux"], "x", "health_check.yml", pa), "linux")
+        self.assertEqual(pick(["Disk & services", "Tickets"], "x", "playbooks/health_check.yml", pa), "Disk & services")  # none is it: the first
+        self.assertEqual(pick(["Disk & services", "Linux"], "Odd", "playbooks/z.yml", pa), "Disk & services")             # no catalog area: the first
+        self.assertEqual(pick(["Disk & services", "Linux"], "Linux - x", "playbooks/z.yml", pa), "Disk & services")       # a name rule is not the catalog
+        self.assertEqual(pick(["Tickets", "Linux"], "Daily health", "", pa, wa), "Linux")                                  # a workflow by its name
+        self.assertEqual(pick(["Tickets", "Linux"], "Daily health", "", pa, None), "Tickets")
+        self.assertEqual(pick(["Only"], "Health check", "playbooks/health_check.yml", pa), "Only")                        # one label: it
+        self.assertEqual(pick([], "Health check", "playbooks/health_check.yml", pa), "")
+
     def test_4c_a_workflow_by_its_catalog_name(self):
         wa = {"daily health": "Linux", "stig drift": "STIG"}
         self.assertEqual(rules.area_for("Daily  Health", "", "", {}, [], wa), ("Linux", "catalog"))                     # any case, any spacing
@@ -4935,7 +4948,9 @@ class Areas1784(unittest.TestCase):
         def route(m, path, body):
             if path.startswith("job_templates/?role_level"):
                 return page([tpl(1, "Anything", "playbooks/cat.yml"), tpl(2, "Mine - one", "playbooks/z.yml"), tpl(3, "Linux - two", "playbooks/z.yml"),
-                             tpl(4, "Odd", "playbooks/z.yml"), tpl(5, "Tagged", "playbooks/cat.yml", "portal-area:Chosen")])
+                             tpl(4, "Odd", "playbooks/z.yml"), tpl(5, "Tagged", "playbooks/cat.yml", "portal-area:Chosen"),
+                             tpl(6, "Two labels", "playbooks/cat.yml", "portal-area:Alpha", "portal-area:Reports"),
+                             tpl(7, "Two others", "playbooks/cat.yml", "portal-area:Zed", "portal-area:Beta")])
             if path.startswith("workflow_job_templates/?role_level"):
                 return page([])
             if path.endswith("/launch/"):
@@ -4946,7 +4961,7 @@ class Areas1784(unittest.TestCase):
         out = a.discover({})
         got = dict((x["aap"]["name"], (x["area"], x["area_from"])) for x in out["actions"].values())
         self.assertEqual(got, {"Anything": ("Reports", "playbook"), "Mine - one": ("Custom", "your rule"), "Linux - two": ("Linux", "name"), "Odd": ("", ""),
-                               "Tagged": ("Chosen", "label")})
+                               "Tagged": ("Chosen", "label"), "Two labels": ("Reports", "label"), "Two others": ("Beta", "label")})
         acts = dict((x["aap"]["name"], x) for x in out["actions"].values())
         self.assertIn("Area: Chosen (from its portal-area: label)", sp.area_line(acts["Tagged"]))
         self.assertIn("Area: Reports (from its playbook's area in the job catalog)", sp.area_line(acts["Anything"]))
