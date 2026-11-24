@@ -3516,6 +3516,15 @@ def described_html(a):
     return ('<dl class="described">%s</dl>' % rows) if rows else ""
 
 
+CHOICE_KEY = re.compile(r"\s*\[[a-z]{2,10}\|[^\]]*\]\s*$")
+
+
+def choice_label(c):
+    """A survey choice as the form shows it: a key a job reads back at its end ([vol|cluster|svm|...]) left off."""
+    t = CHOICE_KEY.sub("", str(c))
+    return t or str(c)
+
+
 def area_line(a):
     """Where a card's area came from (1.78.4): label, playbook, your rule, name - for a found template; the actions file for a built-in one."""
     src = {"label": "its portal-area: label", "playbook": "its playbook's area in the job catalog", "your rule": "your rule (portal_area_rules)",
@@ -3572,8 +3581,10 @@ def action_page(cfg, portal, cn, name, query, embed=False):
         elif var["kind"] == "text" and var.get("multiline"):
             ctl = '<textarea id="f-%s" name="%s" rows="6" maxlength="%d"%s>%s</textarea>' % (esc(vn), esc(vn), var["max"], dby, esc(v))
         elif var["kind"] == "choice":
-            opts = "".join('<option value="%s"%s>%s</option>' % (esc(c), " selected" if c == v else "", esc(c)) for c in var["values"])
-            ctl = '<select id="f-%s" name="%s"%s>%s%s</select>' % (esc(vn), esc(vn), ' aria-describedby="%s"' % pid if p else "",
+            # 1.123.1: a choice that ends with a job's own key ([vol|...]: NetApp - expand a volume) shows without it; the key is still sent
+            opts = "".join('<option value="%s"%s>%s</option>' % (esc(c), " selected" if c == v else "", esc(choice_label(c))) for c in var["values"])
+            wide = any(len(choice_label(c)) > 60 for c in var["values"])
+            ctl = '<select id="f-%s" name="%s"%s%s>%s%s</select>' % (esc(vn), esc(vn), ' class="wide"' if wide else "", ' aria-describedby="%s"' % pid if p else "",
                                                                    "" if v in var["values"] else '<option value="">Pick one</option>', opts)
         elif var["kind"] == "text" and var["max"] > 200:
             ctl = '<textarea id="f-%s" name="%s" rows="8" maxlength="%d"%s>%s</textarea>' % (

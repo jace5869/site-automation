@@ -83,8 +83,8 @@ run "the list, a dry run (Check): says what it would write, writes nothing" ok o
     -- "NetApp volume list: 6 choices, 5 excluded" "6 choice(s) - would be updated (the question would be added)"
 check "  no survey written by the dry run" test ! -s "$work/survey.jsonl"
 run "the list: 6 choices (one per LUN), 5 excluded each with its reason, the question added single select" ok ontap_volume_list.yml -e "{$cl}" \
-    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware, cluster1) - 10.0 GB, 88% used, aggr1 free 5.76 TB [LUN]" \
-       "vol_ds03/lun_a (svm_vmware, cluster1) - 2.00 TB, 79% used, aggr1 free 5.76 TB [LUN lun_a of 2]" "vol_ds03/lun_b" \
+    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware) - 10.0 GB, 12% free [LUN]" \
+       "vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free [LUN lun_a of 2]" "vol_ds03/lun_b" \
        "SVM root volume - always" "DP volume (a SnapMirror destination) - always" "offline - always" "FlexGroup - not yet" \
        "ontap_expand_exclude: svm_backup:*" "NetApp - expand a volume, question ontap_expand_volume: 6 choice(s) - updated (the question was added)"
 check "  the question: single select, required, 6 choices with their keys" "$py" -c 'import json, sys

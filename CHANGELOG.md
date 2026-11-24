@@ -2,7 +2,8 @@
 
 ## 1.123.1 — 2026-11-24
 
-**To set up:** nothing.
+**To set up:** run Site portal - deploy (the wider Run dialog). The NetApp list is short after the next run of
+NetApp - refresh volume list.
 
 - AAP - set up job templates only used credentials of the templates' own organization (`aap_templates_organization`).
   A vCenter or ServiceNow credential kept in another organization stopped the job: "not found in organization".
@@ -11,7 +12,13 @@
 - A pasted settings block that lost its indentation made `aap_templates_credentials` empty, and the job crashed with
   "argument 'credentials' is of type NoneType". The job now stops at the start and says: check that its lines are
   indented under it, or write it on one line.
-- Tests: tests/test_aap_templates_cred_orgs.py.
+- NetApp - expand a volume: the volume list was hard to read. Each choice is now short: the volume, its SVM, its size
+  and how much is free, plus the LUN or NFS datastore. The site portal's Run dialog widens for a long list and hides the
+  key at the end of each choice (the job still gets it).
+- STIG - answer file generator: the trial refused to run on a host with podman network namespaces ("a mount of the host
+  can be written to in it: /run/netns/netns-..."). Those are namespace handles with no data to write, as /proc and
+  /sys are. They are no longer a reason to refuse, so those rules are tried and drafted.
+- Tests: tests/test_aap_templates_cred_orgs.py, tests/test_ontap_expand.py, tests/test_stig_answer_keys.py.
 
 ## 1.116.4 — 2026-11-24
 

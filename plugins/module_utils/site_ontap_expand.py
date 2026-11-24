@@ -123,8 +123,10 @@ def choice_text(e):
         what += (": datastore " + e["datastore"]) if e.get("datastore") else ""
     elif e.get("datastore"):
         what = "NFS: datastore " + e["datastore"]
-    return "%s (%s, %s) - %s, %d%% used, %s free %s%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
-        name, e["svm"], e["cluster"], human(e["size"]), int(round(pct(e["used"], e["size"]))), e["aggr"], human(e["aggr_free"]),
+    # 1.123.1 (user): short - the name, its SVM, the size and how much is free; the cluster and aggregate are in the job's
+    # plan and the refresh report, the key stays last (the portal hides it)
+    return "%s (%s) - %s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
+        name, e["svm"], human(e["size"]), max(0, 100 - int(round(pct(e["used"], e["size"])))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
 

@@ -326,6 +326,10 @@ details.hlp code{font-family:var(--mono);font-size:12.5px}
 .tcard.off p.offline svg{flex:none;width:14px;height:14px;margin-top:2px;opacity:.75}
 .tcard.off p.offline span{min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 dialog.dlg{width:min(640px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);padding:22px 24px}
+/* 1.123.1: a form with a long pick list (NetApp - expand a volume) - the dialog widens to fit, the list never runs past it */
+dialog.dlg:has(select.wide){width:min(920px,calc(100vw - 32px))}
+dialog.dlg select{max-width:100%}
+dialog.dlg select.wide{width:100%}
 dialog.dlg::backdrop{background:rgba(10,12,16,.55)}
 dialog.dlg h2{margin:0 0 4px;font-family:var(--display);font-size:20px}
 dialog.dlg .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}

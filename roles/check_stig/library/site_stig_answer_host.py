@@ -626,7 +626,8 @@ try {
         if ($p.Contains([string][char]0xFFFD)) { $p; continue }
         if ($fst[$k] -eq 'devpts') { $p; continue }
         # the kernel's interfaces that take a write only from root or a capability (it has neither: CapEff is looked at)
-        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc') -contains $fst[$k]) { continue }
+        # 1.123.1: nsfs - a namespace's handle (podman's /run/netns/netns-*): no data to write, joining one needs CAP_SYS_ADMIN
+        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc', 'nsfs') -contains $fst[$k]) { continue }
         if ($p -eq '/proc' -or $p -match '^/(dev|tmp|var/tmp)(/|$)') { continue }
         if ($mycg -and $p.StartsWith('/sys/fs/cgroup' + $mycg + '/')) { continue }
         # a place it cannot reach at all (not even look at), or a folder it cannot enter: nothing below can be written

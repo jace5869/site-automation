@@ -1159,6 +1159,9 @@ class EveryMount(unittest.TestCase):
             huge, mq = os.path.join(d, "huge"), os.path.join(d, "mq")
             os.makedirs(huge)
             os.makedirs(mq)
+            ns = os.path.join(d, "netns-0a1b")
+            with open(ns, "w") as f:
+                f.write("")
             fil = os.path.join(d, "hosts")
             with open(fil, "w") as f:
                 f.write("x")
@@ -1169,7 +1172,9 @@ class EveryMount(unittest.TestCase):
                      "10 1 0:10 / /tmp rw - tmpfs tmpfs rw", "11 1 8:2 / /nonexistent-site-ak rw - ext4 /dev/sdb rw",
                      "12 1 8:3 / %s rw - ext4 /dev/sdc rw" % sp.replace(" ", "\\040"), "13 1 8:4 / /boot ro - ext4 /dev/sdd rw",
                      # 1.76.1h: hugetlbfs and mqueue a user can write - named; a name not UTF-8 - named, never "cannot reach"
-                     "14 1 0:11 / %s rw - hugetlbfs hugetlbfs rw" % huge, "15 1 0:12 / %s rw - mqueue mqueue rw" % mq]
+                     "14 1 0:11 / %s rw - hugetlbfs hugetlbfs rw" % huge, "15 1 0:12 / %s rw - mqueue mqueue rw" % mq,
+                     # 1.123.1: podman's network namespace handle (/run/netns/netns-*): nsfs, never refused
+                     "18 1 0:4 net:[4026532999] %s rw - nsfs nsfs rw" % ns]
             mi = os.path.join(d, "mountinfo")
             with open(mi, "wb") as f:
                 f.write(("\n".join(lines) + "\n").encode() + b"16 1 8:5 / /srv/\xff rw - ext4 /dev/sde rw\n")

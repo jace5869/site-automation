@@ -215,7 +215,7 @@ class Choices(unittest.TestCase):
 
     def test_text_and_key(self):
         t = X.choice_text(self.E)
-        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware, cluster1) - 2.00 TB, 79% used, aggr1 free 5.76 TB "
+        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free "
                                      "[LUN lun_a of 2: datastore DS-SITEA-03A] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
         self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
                                              "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
