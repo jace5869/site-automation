@@ -288,7 +288,7 @@ def rate_all(conn, now, rid, opts=None):
         pctu = 100.0 * used / size if size else 0.0
         if pctu >= lim:
             dlim = 0.0
-        arows.append((g, dlim, dfull, why[:120], L.aggr_status(pctu, dlim, o), rid, addr, aggr))
+        arows.append((g, dlim, dfull, why[:120], L.aggr_status(pctu, o), rid, addr, aggr))
     if arows:
         cur.executemany("UPDATE ontap_live_aggr SET growth_gb_day = %s, days_limit = %s, days_full = %s, rate_why = %s, status = %s "
                         "WHERE run_id = %s AND address = %s AND aggr = %s", arows)

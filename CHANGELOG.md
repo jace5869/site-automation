@@ -19,7 +19,9 @@ may modify volumes and LUNs (as before). Nothing else changes.
   first, then the LUN; a snapshot deleted meanwhile sends a smaller size or none, never more.
 - **The report says what was read back** after each change, per volume and LUN; "not known - check System Manager"
   when a change was sent and nothing was verified, "(not changed)" when nothing was sent - never the planned size.
-- NetApp live page: the aggregates' days-until columns removed - still in the health report.
+- NetApp live page: the aggregates' days-until columns removed - still in the health report. An aggregate's status
+  there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
+  aggregates are listed by status, then fullest first; the "need a look" count follows.
 
 ## 1.127.3 — 2026-11-24
 

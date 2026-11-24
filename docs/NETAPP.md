@@ -553,7 +553,7 @@ GET only on NetApp; the page only reads the database.
 | `ontap_live_perf_top` | `10` | the busiest this many by latency and by IOPS |
 | `ontap_perf_latency_warn_ms` / `_crit_ms` | `10` / `20` | amber / red latency |
 | `ontap_live_growth_days` / `ontap_live_growth_min_hours` | `7` / `6` | the growth: the slope of the points of these days, once they span these hours (3 points at least) |
-| `ontap_live_days_warn` / `_crit` | `30` / `7` | full (or at the aggregate limit) within these days: amber / red |
+| `ontap_live_days_warn` / `_crit` | `30` / `7` | a volume or LUN full within these days: amber / red (an aggregate's status on the page is its used % only, `ontap_aggr_warn_pct` / `_crit_pct`) |
 | `ontap_live_list_days` | `90` | the runway's short view: every VMware datastore, plus the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest; every volume and LUN however small - `ontap_volume_min_gb` is the health report's) |
 | `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | delete older points / runs |
 | `ontap_live_site_pattern` | (empty) | the site filter: a regular expression, its first group the site, on the cluster's name then the SVM's; empty = `^([A-Za-z]{4}[0-9]{2})` |

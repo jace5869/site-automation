@@ -192,8 +192,9 @@ class Growth(unittest.TestCase):
         self.assertEqual(L.volume_status(50.0, 5, o), "critical")              # under 85 %, but full within 7 days
         self.assertEqual(L.volume_status(50.0, 20, o), "warning")
         self.assertEqual(L.volume_status(50.0, None, o), "ok")
-        self.assertEqual(L.aggr_status(91.0, 400, o), "critical")
-        self.assertEqual(L.aggr_status(70.0, 0.0, o), "critical")              # at the expand job's limit now
+        self.assertEqual(L.aggr_status(91.0, o), "critical")
+        self.assertEqual(L.aggr_status(86.0, o), "warning")
+        self.assertEqual(L.aggr_status(70.0, o), "ok")                         # 1.128.0: used % only, never the days until a limit
 
 
 class Payload(unittest.TestCase):
@@ -468,6 +469,19 @@ class Reader(unittest.TestCase):
         self.assertTrue(d3["offered"])
         self.assertEqual(m["aggrs"][0]["a"], "aggr2_c2n2")
         self.assertEqual(set(m["parts"]), {"snapmirror", "nodes", "disks", "ems", "clusters", "perf"})
+
+    def test_aggregates_by_used_pct_only_fullest_first(self):
+        # 1.128.0 (user): the days until a limit were always a guess - an aggregate's status is its used % only (a row
+        # an older writer marked critical for its days reads ok at 70 %), fullest first within a status
+        T = 1024 ** 4
+        rows = [("c1", "aggr_soon", "cluster1", "n1", 10 * T, 7 * T, 50.0, 3.0, 9.0, "", "critical"),
+                ("c1", "aggr_86", "cluster1", "n1", 10 * T, int(8.6 * T), 1.0, 99.0, 200.0, "", "warning"),
+                ("c1", "aggr_88", "cluster1", "n2", 10 * T, int(8.8 * T), None, None, None, "no point yet", "ok"),
+                ("c1", "aggr_95", "cluster1", "n2", 10 * T, int(9.5 * T), 0.0, None, None, "", "critical"),
+                ("c1", "aggr_40", "cluster1", "n2", 10 * T, 4 * T, 0.0, None, None, "", "ok")]
+        m = nl.model({"opts": {"aggr_warn_pct": 85, "aggr_crit_pct": 90}}, [], rows, [])
+        self.assertEqual([(a["a"], a["st"]) for a in m["aggrs"]],
+                         [("aggr_95", "critical"), ("aggr_88", "warning"), ("aggr_86", "warning"), ("aggr_soon", "ok"), ("aggr_40", "ok")])
 
     def test_no_table_no_run_no_tab(self):
         bare = Lite(tables=False)

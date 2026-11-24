@@ -141,7 +141,13 @@ def model(run, vrows, arows, prow):
         size, used = int(size or 0), int(used or 0)
         aggrs.append({"addr": addr, "a": name, "c": cl, "node": node, "size": size, "used": used, "pct": round(100.0 * used / size, 1) if size else 0.0,
                       "free": size - used, "g": _f(g), "d97": _f(dlim), "full": _f(dfull), "rate_why": rwhy or "", "st": st or "ok"})
-    aggrs.sort(key=lambda a: (RANK.get(a["st"], 4), a["d97"] if a["d97"] is not None else 1e12, -a["pct"], a["a"]))
+    # 1.128.0 (user): an aggregate's status from its used % only (ontap_aggr_warn_pct / _crit_pct; the days until a limit
+    # were always a guess) - worked out here too, so a run written by an older release reads the same; fullest first
+    o = run.get("opts") or {}
+    aw, ac = float(o.get("aggr_warn_pct", 85) or 85), float(o.get("aggr_crit_pct", 90) or 90)
+    for a in aggrs:
+        a["st"] = "critical" if a["pct"] >= ac else ("warning" if a["pct"] >= aw else "ok")
+    aggrs.sort(key=lambda a: (RANK.get(a["st"], 4), -a["pct"], a["a"]))
     parts = {}
     for name, body in prow:
         if name in PARTS:

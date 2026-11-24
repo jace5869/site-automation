@@ -100,7 +100,7 @@ ontap_perf_latency_warn_ms: 10           # a volume or LUN this slow (ms) is amb
 ontap_perf_latency_crit_ms: 20           # ... this slow is red
 ontap_live_growth_days: 7                # a volume's or aggregate's growth a day: the slope of its points of the last this-many days
 ontap_live_growth_min_hours: 6           # ... and only once its points span this many hours (3 points at least): a rate from 30 minutes is noise
-ontap_live_days_warn: 30                 # full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber
+ontap_live_days_warn: 30                 # a volume full within this many days: amber (an aggregate's status is its used % only, ontap_aggr_warn_pct / _crit_pct)
 ontap_live_days_crit: 7                  # ... within this many days: red
 ontap_live_list_days: 90                 # the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all")
 # The page's site filter (1.127.2): a regular expression whose first group is the site, tried on the cluster's name, then the

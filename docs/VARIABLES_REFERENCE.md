@@ -1508,7 +1508,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_perf_latency_crit_ms` | `20` | ... this slow is red |
 | `ontap_live_growth_days` | `7` | a volume's or aggregate's growth a day: the slope of its points of the last this-many days |
 | `ontap_live_growth_min_hours` | `6` | ... and only once its points span this many hours (3 points at least): a rate from 30 minutes is noise |
-| `ontap_live_days_warn` | `30` | full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber |
+| `ontap_live_days_warn` | `30` | a volume full within this many days: amber (an aggregate's status is its used % only, ontap_aggr_warn_pct / _crit_pct) |
 | `ontap_live_days_crit` | `7` | ... within this many days: red |
 | `ontap_live_list_days` | `90` | the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all") |
 | `ontap_live_site_pattern` | (empty) | The page's site filter (1.127.2): a regular expression whose first group is the site, tried on the cluster's name, then the SVM's; "" = a 4-letter, 2-digit prefix (^([A-Za-z]{4}[0-9]{2})). The filter shows when it finds 2 sites or more. |
@@ -2245,7 +2245,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ad_seconds` | `600` | the SolarWinds read: how often (120 at least); nothing is read while nobody has the page open |
 | `portal_ad_old_minutes` | `90` | the AD checks older than this are said to be old on the page |
 | `portal_ad_template` | (empty) | two AD templates (two forests): the ID of the one the page shows; "" = the newest run's |
-| `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume soonest full first with Expand... (NetApp - exp… (all of it: the role file) |
+| `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume, VMware datastores first, each least free first… (all of it: the role file) |
 | `portal_netapp_old_minutes` | `60` | a run older than this is said to be old on the page (the refresh runs every 15-30 min) |
 | `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
 | `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
