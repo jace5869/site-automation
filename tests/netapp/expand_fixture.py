@@ -30,7 +30,7 @@ def vol(uuid, name, svm, aggrs, size, used, **kw):
 
 
 def lun(uuid, name, svm, volume, size, serial, used=0, thick=True):
-    return {"uuid": uuid, "name": name, "svm": {"name": svm}, "location": {"volume": {"name": volume}},
+    return {"uuid": uuid, "name": name, "svm": {"name": svm}, "location": {"volume": {"name": volume, "uuid": "v-" + volume[4:]}},
             "space": {"size": int(size), "used": int(used), "guarantee": {"requested": thick, "reserved": thick}}, "serial_number": serial}
 
 

@@ -135,7 +135,10 @@ def ontap_expand_doc(r):
         summary.append({"label": ("LUN growth" if lun else "Growth") if p.get("by") == "size" or not refused_limit else "Default growth", "value": "+" + X.human(g),
                         "status": "critical" if refused_limit else "info",
                         "note": ("the Size box (%s)" % r.get("size")) if p.get("by") == "size" else p.get("default_text", "")})
-    if p.get("status") == "grow":
+    unknown = bool(p.get("outcome_unknown")) or any("outcome not known" in str(s_.get("result") or "") for s_ in steps)
+    if p.get("status") == "grow" and unknown and not check:      # a change whose outcome is not known: never the planned size
+        summary.append({"label": "Volume after", "value": "not known", "status": "warning", "note": "check System Manager"})
+    elif p.get("status") == "grow":
         summary.append({"label": "Volume after", "value": X.human(target), "status": "ok", "note": "%.1f %% used" % p.get("used_pct_after", 0)})
         summary.append({"label": "%s after" % p.get("aggr"), "value": "%.1f %%" % aggr_after, "status": "ok",
                         "note": "was %.1f %% - limit %g %%" % (p.get("aggr_pct", 0), p.get("max_pct", 97))})
@@ -149,7 +152,9 @@ def ontap_expand_doc(r):
         summary.append({"label": "Datastore", "value": ds.get("datastore") or ("By hand" if hand else "-"),
                         "status": "warning" if hand else ("info" if check else "ok"),
                         "note": "no vCenter credential" if hand and not r.get("vc_error") else (ds.get("kind") or "")})
-    if not (check and p.get("status") == "grow"):
+    if not (check and p.get("status") == "grow") and unknown:
+        summary.append({"label": "Changed", "value": "not known", "status": "warning", "note": "check System Manager"})
+    elif not (check and p.get("status") == "grow"):
         summary.append({"label": "Changed", "value": "Nothing" if p.get("status") != "grow" or not any(
             s.get("ok") and s["step"].startswith("Grow") for s in steps) else "Yes", "status": "info", "note": ""})
     if hand:

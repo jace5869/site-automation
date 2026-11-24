@@ -390,10 +390,14 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    volume's confirmed size.
    - **Autosize is never changed.** `grow_shrink` refuses the run (it could shrink the volume again): "autosize is
      grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `grow` or `off`: the
-     run goes ahead; a new size over autosize's maximum is said in the plan and the report ("autosize maximum X is
-     below the new size; ONTAP keeps the new size") and the maximum is left as it is.
+     run goes ahead; a new size over autosize's maximum is said in the plan ("autosize maximum X is below the new size;
+     ONTAP raises it (to about 120 % of the new size)") and the report says the maximum read back after the change. The
+     job never sets it.
    - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
-     size, to the byte. The size is read again right before each change; anything moved: nothing is sent. Each change's
+     size, to the byte - and never over the plan's own sizes. **Right before each change (the volume's, the LUN's)
+     everything the plan stood on is read again:** the volume's size and autosize, that it is still on the planned
+     aggregate (its UUID too: "the volume moved to aggregate X - run again"), the guarantees, the aggregate's room for
+     what lands (97 %), and the LUN's size and its volume (by UUID). Anything moved: nothing is sent. Each change's
      ONTAP job is followed to its end and the size read back (at least the size before + the growth). No definite
      outcome: "resize of volume X: outcome not known - check System Manager before running again", the LUN is not
      grown, the job fails. The LUN's new size is its size + the growth (never over the plan's); a volume that cannot

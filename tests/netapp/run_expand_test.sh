@@ -133,10 +133,10 @@ run "the default over 97 %: refused, with the largest size that fits" fail ontap
     -- "Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits" "Launch again with a size in the Size box: 180.0GB or less"
 run "that size as Check: the plan says autosize's maximum is under the new size (and is left as it is)" ok ontap_volume_expand.yml --check \
     -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
-    -- "Autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP keeps the new size (autosize is not changed)."
+    -- "Autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size)."
 run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
     -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" \
-       "autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP keeps the new size"
+       "autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP raises it (to about 120 % of the new size) - its maximum reads"
 check "  5 changes now (vol_ds03's comment and LUN; vol_sql01: its size only - autosize never changed)" test "$(patches)" = 5
 check "  ... vol_sql01's autosize not touched" test "$(grep 'PATCH /api/storage/volumes/v-sql01' "$work/c0.log" | grep -c autosize)" = 0
 n=$(patches)
