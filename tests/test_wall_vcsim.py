@@ -106,6 +106,26 @@ class Vcsim(unittest.TestCase):
                 subprocess.run(args + ["--screenshot=" + shot, page], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
         col.stop()
 
+    def test_two_vcenters_one_bad_account_one_login(self):
+        """the same vcsim under two names, one account with a wrong password: one failed login in the window, both stopped"""
+        srcs = [W.VcenterSource(h, self.user, "wrong-password", verify=False, port=self.port) for h in ("127.0.0.1", "localhost")]
+        seen = []
+        for src in srcs:
+            send = src._send
+
+            def rec(method, *a, _send=send, **k):
+                seen.append(method)
+                return _send(method, *a, **k)
+            src._send = rec
+        clock = [1000.0]
+        col = W.Collector(srcs, seconds=60, auth_retry=900, clock=lambda: clock[0])
+        for _ in range(10):
+            col.cycle()
+            col.wait(30)
+            clock[0] += 60
+        self.assertEqual(seen.count("Login"), 1)
+        self.assertEqual(set(x["state"] for x in col.view()["sources"].values()), {"auth"})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -5655,9 +5655,13 @@ class WallFeedback(object):
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["when (UTC)", "who", "area", "card", "feedback"])
+        def cell(v):
+            # a cell a spreadsheet would read as a formula (= + - @, a tab or a return first) starts with ' - text, never run
+            v = str(v or "")
+            return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
         for r in self.rows(area):
             w.writerow([datetime.datetime.fromtimestamp(int(r.get("at") or 0), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                        r.get("user", ""), r.get("area", ""), r.get("ref", ""), r.get("text", "")])
+                        cell(r.get("user", "")), cell(r.get("area", "")), cell(r.get("ref", "")), cell(r.get("text", ""))])
         return buf.getvalue()
 
 
@@ -5875,7 +5879,11 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 wall.viewed()
                 if path == "/wall":
                     return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
-                code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip(), cn)
+                try:
+                    code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip(), cn)
+                except Exception as e:  # pylint: disable=broad-except  - the page says "not reachable", never a stale green
+                    portal.log.add({"event": "wall", "answer": "not made", "why": clean(str(e), 200)})
+                    return self._send(503, {"error": "The wall's answer could not be made (the portal's log says why)."})
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:

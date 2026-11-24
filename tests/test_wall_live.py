@@ -102,6 +102,8 @@ class Vim(object):
     def __init__(self, password="pass"):
         self.password, self.methods, self.logins, self.session, self.n = password, [], 0, "", 0
         self.drop_next = False                    # the next RetrievePropertiesEx answers NotAuthenticated (the session is gone)
+        self.view_fault = ""                      # CreateContainerView answers this fault, its xsi:type as given (e.g. vim25:NoPermission)
+        self.http401 = False                      # every call answers a plain HTTP 401 (a proxy in front of vCenter)
 
 
 def vim_handler(vim):
@@ -118,6 +120,12 @@ def vim_handler(vim):
             call = ET.fromstring(body).find("{%s}Body" % SOAPNS)[0]
             m = call.tag.split("}")[-1]
             vim.methods.append(m)
+            if vim.http401:
+                self.send_response(401)
+                self.send_header("Content-Length", "12")
+                self.end_headers()
+                self.wfile.write(b"Unauthorized")
+                return
             cookie = (self.headers.get("Cookie") or "").strip()
             extra = {}
             if m == "RetrieveServiceContent":
@@ -134,6 +142,10 @@ def vim_handler(vim):
                 out = "<returnval><key>s%d</key><userName>wall-reader</userName></returnval>" % vim.n
             elif cookie != vim.session or not vim.session:
                 return self.fault("NotAuthenticated", "The session is not authenticated.")
+            elif m == "CreateContainerView" and vim.view_fault:
+                return self.send(500, '<soapenv:Fault><faultcode>ServerFaultCode</faultcode><faultstring>Permission to perform this operation was '
+                                      'denied.</faultstring><detail><NoPermissionFault xmlns="urn:vim25" xmlns:vim25="urn:vim25" xsi:type="%s">'
+                                      '</NoPermissionFault></detail></soapenv:Fault>' % vim.view_fault)
             elif m == "CreateContainerView":
                 out = '<returnval type="ContainerView">session[%s]view-1</returnval>' % vim.n
             elif m in ("RetrievePropertiesEx", "ContinueRetrievePropertiesEx"):
@@ -515,9 +527,125 @@ class CollectorTest(unittest.TestCase):
         out = W.sources_from_config({"vcenter": {"user": "u", "password": "p", "hosts": ["vc01.corp.example.mil", "VC01.corp.example.mil",
                                                                                         "vc02.corp.example.mil:8443"], "verify": False},
                                      "ontap": {"user": "u", "password": "p", "clusters": ["192.0.2.10"]}})
-        self.assertEqual([s.key for s in out], ["vcenter:vc01.corp.example.mil", "vcenter:vc02.corp.example.mil", "ontap:192.0.2.10"])
+        self.assertEqual([s.key for s in out], ["vcenter:vc01.corp.example.mil", "vcenter:vc02.corp.example.mil:8443", "ontap:192.0.2.10"])
         self.assertEqual(out[1].port, 8443)
         self.assertEqual(W.sources_from_config({"vcenter": {"user": "u", "hosts": ["vc01"]}}), [])      # no password: none
+
+
+class SharedAccount(unittest.TestCase):
+    """1.129.0 review: the site's shared accounts - one refused login backs off every source of that account; after the start
+    and after each back-off one source tries first and the others wait for its answer: exactly one bad login per window"""
+
+    def make(self, srcs, auth_retry=900):
+        logs = []
+        clock = Clock()
+        return W.Collector(srcs, seconds=60, auth_retry=auth_retry, log=logs.append, clock=clock), clock, logs
+
+    def step(self, c, clock):
+        c.cycle()
+        c.wait(10)
+        time.sleep(0.05)
+        c.wait(10)                                             # the kicked ones too
+        clock.t += 60
+
+    def test_three_vcenters_one_bad_login_per_window(self):
+        stubs = [vim_stub(self) for _ in range(3)]
+        srcs = [W.VcenterSource("127.0.0.1", "wall-reader", "old", verify=False, port=p) for _v, p in stubs]
+        c, clock, logs = self.make(srcs)
+        for _ in range(14):                                     # 14 minutes: inside the window
+            self.step(c, clock)
+        self.assertEqual(sum(v.methods.count("Login") for v, _p in stubs), 1)
+        self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"auth"})
+        self.assertEqual(len(logs), 1)
+        for _ in range(16):                                     # past 15 minutes: one more try, still one source
+            self.step(c, clock)
+        self.assertEqual(sum(v.methods.count("Login") for v, _p in stubs), 2)
+        for v, _p in stubs:
+            v.password = "old"                                  # the account fixed: the next window's probe, then the others at once
+        for _ in range(16):
+            self.step(c, clock)
+        self.assertEqual([v.logins for v, _p in stubs], [1, 1, 1])
+        self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"ok"})
+
+    def test_a_vcenter_that_does_not_answer_passes_the_probe_on(self):
+        stubs = [vim_stub(self) for _ in range(2)]
+        dead = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=closed_port(), timeout=2)
+        srcs = [dead] + [W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=p) for _v, p in stubs]
+        c, clock, _logs = self.make(srcs)
+        self.step(c, clock)                                     # the first probe: no answer (not a refusal)
+        self.assertEqual([v.logins for v, _p in stubs], [0, 0])
+        self.step(c, clock)                                     # the next source probes, then the rest at once
+        self.assertEqual([v.logins for v, _p in stubs], [1, 1])
+        self.assertEqual(c.view()["sources"][dead.key]["state"], "error")
+
+    def test_other_accounts_are_not_held(self):
+        (v1, p1), (v2, p2) = vim_stub(self), vim_stub(self)
+        bad = W.VcenterSource("127.0.0.1", "wall-reader", "old", verify=False, port=p1)
+        other = W.VcenterSource("127.0.0.1", "other-reader", "pass", verify=False, port=p2)
+        c, clock, _logs = self.make([bad, other])
+        for _ in range(3):
+            self.step(c, clock)
+        self.assertEqual((v1.methods.count("Login"), v2.logins), (1, 1))
+        self.assertEqual(c.view()["sources"][other.key]["state"], "ok")
+
+    def test_two_ontap_clusters_one_bad_request_per_window(self):
+        a, b = Ontap("right"), Ontap("right")
+        sa, pa = serve(ontap_handler(a))
+        sb, pb = serve(ontap_handler(b))
+        for x in (sa, sb):
+            self.addCleanup(x.server_close)
+            self.addCleanup(x.shutdown)
+        srcs = [W.OntapSource("127.0.0.1:%d" % p, "wall-reader", "wrong", verify=False) for p in (pa, pb)]
+        c, clock, _logs = self.make(srcs)
+        for _ in range(10):
+            self.step(c, clock)
+        self.assertEqual(len(a.paths) + len(b.paths), 1)
+
+
+class Faults(unittest.TestCase):
+    """1.129.0 review: permission faults and proxies' 401 are refusals (backed off); no session left behind"""
+
+    def test_no_permission_on_the_view_logs_out_and_is_an_auth_error(self):
+        vim, port = vim_stub(self)
+        vim.view_fault = "vim25:NoPermission"                  # a namespace prefix on the fault's type
+        s = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=port)
+        with self.assertRaises(W.AuthError):
+            s.poll()
+        self.assertEqual(vim.methods[-1], "Logout")              # the session ended, not left open
+        self.assertEqual((s.cookie, vim.session), ("", ""))
+        c = W.Collector([s], seconds=60, auth_retry=900, clock=Clock())
+        for _ in range(5):
+            c.cycle()
+            c.wait(10)
+        self.assertEqual(vim.methods.count("Login"), 2)          # the one above and one more - then backed off, no login a minute
+
+    def test_a_plain_401_is_an_auth_error(self):
+        vim, port = vim_stub(self)
+        vim.http401 = True
+        s = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=port)
+        with self.assertRaises(W.AuthError):
+            s.poll()
+
+    def test_bad_entries_are_left_out_and_said(self):
+        logs = []
+        out = W.sources_from_config({"vcenter": {"user": "u", "password": "p", "hosts": [
+            "https://vc03.corp.example.mil/sdk", "[2001:db8::1]:443", "vc04.corp.example.mil:bad", "ftp://vc05.corp.example.mil",
+            "u@vc06.corp.example.mil", "vc07.corp.example.mil:70000", "vc08.corp.example.mil:8443"]},
+            "ontap": {"user": "u", "password": "p", "clusters": ["192.0.2.10:bad", "https://192.0.2.11"]}}, log=logs.append)
+        self.assertEqual([x.key for x in out], ["vcenter:vc03.corp.example.mil", "vcenter:2001:db8::1", "vcenter:vc08.corp.example.mil:8443",
+                                               "ontap:192.0.2.11"])
+        self.assertEqual(out[0].port, 443)
+        self.assertEqual(len(logs), 5)
+        self.assertTrue(all(x["state"] == "left out" for x in logs))
+
+
+def closed_port():
+    import socket
+    sk = socket.socket()
+    sk.bind(("127.0.0.1", 0))
+    p = sk.getsockname()[1]
+    sk.close()
+    return p
 
 
 # ---- vcsim -------------------------------------------------------------------------------------------------------------

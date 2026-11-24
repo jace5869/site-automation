@@ -176,6 +176,35 @@ class Model(unittest.TestCase):
         self.assertIn("ontap:cluster9.example.mil", [a for x in m["areas"] if x["id"] == "storage" for a in x["feeds"]])
 
 
+class Review(unittest.TestCase):
+    """1.129.0 pre-release review: the model's part"""
+
+    def live_and_db(self):
+        import netapp_live as nl
+        db = demo.netapp_db(25)
+        nm = nl.Database(lambda: db, mark="?").read()
+        v = demo.view(NOW)
+        v["sources"]["ontap:cluster1.example.mil"] = {"kind": "ontap", "name": "cluster1.example.mil", "state": "ok", "why": "", "at": NOW - 20,
+                                                      "snap": {"cluster": "cluster1", "nodes": [{"name": "n1", "state": "up"}, {"name": "n2", "state": ""}],
+                                                               "aggrs": [], "volumes": [],
+                                                               "luns": [{"path": "/vol/v/l", "svm": "s1", "volume": "v", "state": "offline"},
+                                                                        {"path": "/vol/v/l", "svm": "s2", "volume": "v", "state": "offline"}],
+                                                               "snapmirror": [{"src": "a:b", "dst": "c:d", "state": "snapmirrored", "healthy": True}]}}
+        return M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+
+    def test_live_ontap_is_not_made_stale_by_the_run(self):
+        m = self.live_and_db()
+        st = [a for a in m["areas"] if a["id"] == "storage"][0]
+        self.assertNotIn("netapp-run", st["feeds"])                      # the run's age stays on the storage path card only
+        self.assertNotIn("ontap", m["feeds"])
+        self.assertEqual(m["feeds"]["netapp-run"]["fresh"], "stale")
+        self.assertEqual(m["storage"]["smRel"], 1)                      # the live count replaces the run's (never added)
+        self.assertTrue(any(c["id"] == "node:cluster1:n2" for c in m["conds"]))   # an empty state is not "up"
+        lun = sorted(c["id"] for c in m["conds"] if c["kind"] == "voloff")
+        self.assertEqual(lun, ["voloff:cluster1:s1:/vol/v/l", "voloff:cluster1:s2:/vol/v/l"])   # the SVM in the id
+        self.assertTrue(all("age" not in f for f in m["feeds"].values()))   # no per-second age in the answer (the ETag)
+
+
 # ---- the portal: the page, the answer, the Feedback ------------------------------------------------------------------------
 JDOE, JDOE_CN = demo.DN, demo.CN
 OTHER = "CN=ROE.RICHARD.A.2234567890,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US"
@@ -194,7 +223,7 @@ class FakeGroups(object):
         return True
 
 
-def serve(test, **env):
+def serve(test, view=None, **env):
     tmp = tempfile.mkdtemp()
     test.addCleanup(shutil.rmtree, tmp, True)
     import test_netapp_live as T
@@ -205,7 +234,7 @@ def serve(test, **env):
     p.aap.ready = ""
     sp.sys.stdout = open(os.devnull, "w")
     test.addCleanup(setattr, sp.sys, "stdout", sys.__stdout__)
-    wall = sp.WallLive(cfg, p.log, None, collector=demo.FakeCollector(lambda: demo.view()))
+    wall = sp.WallLive(cfg, p.log, None, collector=demo.FakeCollector(view or (lambda: demo.view())))
     srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, p, os.path.join(FILES, "static"), wall=wall))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     test.addCleanup(srv.server_close)
@@ -254,6 +283,23 @@ class Portal(unittest.TestCase):
         self.assertNotIn("password", body.lower())
         self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0] in (200, 304), True)
         self.assertIn('href="/portal/wall"', call("/")[1])
+
+    def test_etag_holds_between_seconds(self):
+        fixed = demo.view()                                   # a collector's read: the same until the next one
+        _cfg, _p, call, _b = serve(self, view=lambda: fixed)
+        _c, _body, h = call("/api/wall")
+        time.sleep(1.2)
+        self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0], 304)
+
+    def test_csv_cells_are_never_formulas(self):
+        cfg, p, call, base = serve(self, PORTAL_APPROVERS=json.dumps([JDOE_CN]))
+        for t in ("=HYPERLINK(\"http://x\")", "+1", "@SUM(A1)", "-2", "plain"):
+            self.assertEqual(post_feedback(call, base, body={"area": "vmware", "text": t, "ref": "=ref"}, portal=p)[0], 201)
+        rows = call("/wall/feedback.csv")[1].splitlines()[1:]
+        import csv
+        cells = [r[3:] for r in csv.reader(rows)]
+        self.assertEqual(sorted(c[1] for c in cells), sorted(["'=HYPERLINK(\"http://x\")", "'+1", "'@SUM(A1)", "'-2", "plain"]))
+        self.assertTrue(all(c[0] == "'=ref" for c in cells))
 
     def test_off(self):
         _cfg, _p, call, _b = serve(self, PORTAL_WALL="0")
@@ -330,6 +376,12 @@ class Role(unittest.TestCase):
         t = open(os.path.join(ROLE, "tasks", "main.yml")).read()
         for k in ("PORTAL_WALL_OPTS:", "site-portal-vcenter", "site-portal-ontap", "PORTAL_WALL_FEEDBACK_GROUPS"):
             self.assertIn(k, t)
+        # a login turned off is removed only after the service restarted without it; a changed login restarts the service
+        i_restart = t.index("- name: Units | restart the service (what it runs changed)")
+        self.assertGreater(t.index("- name: Secret | the wall's logins no longer used - removed"), i_restart)
+        self.assertIn("or _portal_wall_set is changed", t[i_restart:i_restart + 1500])
+        self.assertLess(t.index("the service stopped before a login is replaced (podman before 4.7)"),
+                        t.index("- name: Secret | the wall's logins - the old value removed first (podman before 4.7)"))
         u = open(os.path.join(ROLE, "templates", "site-portal-app.container.j2")).read()
         self.assertIn("Secret=site-portal-vcenter,type=env,target=PORTAL_WALL_VCENTER_LOGIN", u)
         self.assertIn("Secret=site-portal-ontap,type=env,target=PORTAL_WALL_ONTAP_LOGIN", u)
@@ -403,9 +455,60 @@ class Browser(unittest.TestCase):
             self.assertIn('data-ready="1"', out, st)
             self.assertNotIn('class="word ok"', out, st)                              # no green anywhere: every source is stale
             self.assertNotIn('class="lamp s-ok"', out, st)
-            self.assertIn("Not current", out, st)
+            self.assertNotRegex(out, r'class="(sdot|sc|tag) k-ok', st)                    # Map: no green dot, chip or tally
+            self.assertIn("Not current" if st != "map" else "not current", out, st)
             if st == "lights":
                 self.assertIn('aria-label="VMware: Not current"', out)
+
+    def run_page(self, url, query, budget=8000, width=1920):
+        args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=%d,1080" % width, "--virtual-time-budget=%d" % budget,
+                "--dump-dom", url + "wall?" + query]
+        return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=240).stdout
+
+    def test_a_current_down_host_is_not_hidden_by_an_old_vcenter(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            v["sources"]["vcenter:" + demo.VC2]["at"] = time.time() - 900       # vc02 15 min old, vc01 current with a host down
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1")
+        self.assertRegex(out, r'<div class="ctr crit"[^>]*data-d="ctr:hosts"')       # Critical, not "? Not current"
+        self.assertRegex(out, r'class="gauge gcrit"[^>]*data-d="c:host:')             # the hosts-up gauge too
+
+    def test_portal_not_reachable(self):
+        calls = {"n": 0}
+
+        def view():
+            calls["n"] += 1
+            if calls["n"] > 2:
+                raise RuntimeError("the portal's read is gone")
+            return demo.view(vc2_state="ok")
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=lights&pull=2", budget=25000)
+        self.assertIn('class="unreach"', out)
+        self.assertIn("Portal not reachable", out)
+        self.assertNotIn('class="lamp s-ok"', out)
+        self.assertNotIn('class="word ok"', out)
+        self.assertNotIn('class="lamp s-crit"', out)                                   # not even red: nothing is current
+
+    def test_sparkline_with_reads_every_two_minutes(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            now = time.time()
+            v["history"] = {("vcenter:" + demo.VC1, "vm", "sitb02-app07", "cpu"): [(now - 120 * i, 97.0) for i in range(30, -1, -1)]}
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view), opts={"seconds": 120})
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1")
+        m = re.search(r'<path class="ln g-warn" d="([^"]*)"', out)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1).count("M"), 1)                                     # one line, no breaks at the empty minutes
+
+    def test_feedback_on_a_host_card_keeps_its_ref(self):
+        out = self.dom("style=cockpit&freeze=1&open=" + urllib.request.quote("host:%s|sita01-esx02.corp.example.mil" % demo.VC1))
+        self.assertIn('data-fb="host:%s|sita01-esx02.corp.example.mil" data-fb-area="vmware"' % demo.VC1, out)
 
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):

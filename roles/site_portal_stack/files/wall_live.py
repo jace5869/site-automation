@@ -57,6 +57,19 @@ class NotAllowed(Exception):
     """A method or verb not on the read-only lists: refused before any network I/O."""
 
 
+class Gate(object):
+    """1.129.0 review: one shared account (the site's own, the AAP jobs' too): its logins one at a time, and none at all while
+    the last one was refused (until the collector opens the gate again after auth_retry). Each source of that account holds it."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.bad = False
+
+    def check(self):
+        if self.bad:
+            raise AuthError(AUTH_WHY + " (the same account was refused for another source; not tried)")
+
+
 class SoapFault(Exception):
     def __init__(self, kind, text):
         Exception.__init__(self, "%s: %s" % (kind or "fault", text))
@@ -127,7 +140,10 @@ class VcenterSource(object):
         self.host, self.port, self.user, self._pw = str(host), int(port or 443), str(user or ""), str(password or "")
         self.timeout = timeout
         self.ctx = _ctx(verify, cafile)
-        self.key, self.name = "vcenter:%s" % self.host, self.host
+        hp = self.host if self.port == 443 else "%s:%d" % (self.host, self.port)
+        self.key, self.name = "vcenter:%s" % hp, hp                # the port in the key: two vCenters on one host stay two
+        self.cred = ("vcenter", self.user.lower())                 # sources with one account share one Gate (the collector sets it)
+        self.gate = Gate()
         self.cookie, self.sc, self.view, self.session_key = "", None, "", ""
         self.logins = 0                                        # how many times this source logged in (a test counts them)
         self.lock = threading.Lock()
@@ -153,6 +169,8 @@ class VcenterSource(object):
                     self.cookie = v.split(";", 1)[0].strip()
         finally:
             conn.close()
+        if r.status in (401, 403) and b"Fault" not in data:
+            raise AuthError(AUTH_WHY + " (HTTP %d)" % r.status)
         try:
             root = ET.fromstring(data)
         except ET.ParseError:
@@ -163,6 +181,7 @@ class VcenterSource(object):
             kind = ""
             if det is not None and len(det):
                 kind = det[0].get(XSI_TYPE) or det[0].tag.split("}")[-1]
+            kind = kind.rsplit(":", 1)[-1]                        # vim25:NoPermission -> NoPermission
             raise SoapFault(kind.replace("Fault", "") if kind.endswith("Fault") else kind, (f.findtext("faultstring") or "").strip())
         if r.status != 200:
             raise RuntimeError("vCenter answered HTTP %s" % r.status)
@@ -179,17 +198,38 @@ class VcenterSource(object):
             rc = self._send("RetrieveServiceContent", _mor("_this", "ServiceInstance", "ServiceInstance"))
             rv = rc.find("v:returnval", NS)
             self.sc = dict((k, rv.findtext("v:" + k, "", NS).strip()) for k in ("propertyCollector", "viewManager", "sessionManager", "rootFolder"))
-        try:
-            r = self._send("Login", '%s<userName>%s</userName><password>%s</password>'
-                       % (_mor("_this", "SessionManager", self.sc["sessionManager"]), _xesc(self.user), _xesc(self._pw)))
-        except SoapFault as e:
-            self.cookie = ""
-            if e.kind in ("InvalidLogin", "NoPermission", "NotAuthenticated", "InvalidLocale") or "login" in e.text.lower():
-                raise AuthError(AUTH_WHY)
-            raise
-        self.logins += 1
+        with self.gate.lock:                                       # one login at a time for this account, none while it is bad
+            self.gate.check()
+            try:
+                r = self._send("Login", '%s<userName>%s</userName><password>%s</password>'
+                               % (_mor("_this", "SessionManager", self.sc["sessionManager"]), _xesc(self.user), _xesc(self._pw)))
+            except AuthError:
+                self.cookie, self.gate.bad = "", True
+                raise
+            except SoapFault as e:
+                self.cookie = ""
+                if e.kind in ("InvalidLogin", "NoPermission", "NotAuthenticated", "InvalidLocale") or "login" in e.text.lower():
+                    self.gate.bad = True
+                    raise AuthError(AUTH_WHY)
+                raise
+            self.logins += 1
         self.session_key = r.findtext("v:returnval/v:key", "", NS).strip()     # this session's key (vCenter's Sessions list shows it)
-        self._make_view()
+        try:
+            self._make_view()
+        except Exception as e:
+            self._drop()                                           # never a session left behind (and no new login a minute later)
+            if isinstance(e, SoapFault) and e.kind == "NoPermission":
+                raise AuthError("the account may not read the inventory (NoPermission) - check its role")
+            raise
+
+    def _drop(self):
+        """Logout (best effort) and forget the session"""
+        if self.cookie and self.sc:
+            try:
+                self._send("Logout", _mor("_this", "SessionManager", self.sc["sessionManager"]))
+            except Exception:  # pylint: disable=broad-except
+                pass
+        self.cookie, self.view = "", ""
 
     def _make_view(self):
         """the container view the PropertyCollector reads through: hosts, clusters, datastores, VMs (one per session)"""
@@ -234,6 +274,9 @@ class VcenterSource(object):
                 err = e
             else:
                 return shape(objs)
+            if err.kind == "NoPermission":                         # the account lost its rights: stop, as a refused login
+                self._drop()
+                raise AuthError("the account may not read the inventory (NoPermission) - check its role")
             if err.kind == "ManagedObjectNotFound" and not fresh:
                 try:                                           # the view is gone: made again - with the session, if it is still there
                     self._make_view()
@@ -250,12 +293,7 @@ class VcenterSource(object):
 
     def close(self):
         with self.lock:
-            if self.cookie and self.sc:
-                try:
-                    self._send("Logout", _mor("_this", "SessionManager", self.sc["sessionManager"]))
-                except Exception:  # pylint: disable=broad-except
-                    pass
-            self.cookie, self.view = "", ""
+            self._drop()
 
 
 def shape(objs):
@@ -337,10 +375,14 @@ class OntapSource(object):
         self.timeout = timeout
         self.ctx = _ctx(verify, cafile)
         self.key, self.name = "ontap:%s" % self.address, self.address
+        self.cred = ("ontap", str(user or "").lower())
+        self.gate = Gate()
         self._auth = "Basic " + base64.b64encode(("%s:%s" % (user or "", password or "")).encode("utf-8")).decode("ascii")
         self.lock = threading.Lock()
         u = urllib.parse.urlsplit("https://" + self.address if "://" not in self.address else self.address)
-        self._host, self._port = u.hostname, u.port or 443
+        self._host, self._port = u.hostname, u.port or 443        # a bad port: ValueError (sources_from_config skips the entry)
+        if not self._host:
+            raise ValueError("no host in %r" % self.address)
 
     def _get(self, path):
         return self._http("GET", path)
@@ -379,16 +421,25 @@ class OntapSource(object):
                 nxt += ("&" if "?" in nxt else "?") + "fields=" + fields
         return out
 
+    def _read(self):
+        c = self._get("/api/cluster?fields=name,version")
+        try:
+            nodes = self.records("/api/cluster/nodes", NODE_FIELDS)
+        except HttpStatus as e:
+            if e.code != 400:
+                raise
+            nodes = self.records("/api/cluster/nodes", NODE_FIELDS_OLD)
+        return c, nodes, dict((k, self.records(p, f, x)) for k, p, f, x in ONTAP_GETS)
+
     def poll(self):
-        with self.lock:
-            c = self._get("/api/cluster?fields=name,version")
+        # every ONTAP request carries the login: the polls of one account one at a time, none while it is bad
+        with self.lock, self.gate.lock:
+            self.gate.check()
             try:
-                nodes = self.records("/api/cluster/nodes", NODE_FIELDS)
-            except HttpStatus as e:
-                if e.code != 400:
-                    raise
-                nodes = self.records("/api/cluster/nodes", NODE_FIELDS_OLD)
-            got = dict((k, self.records(p, f, x)) for k, p, f, x in ONTAP_GETS)
+                c, nodes, got = self._read()
+            except AuthError:
+                self.gate.bad = True
+                raise
         tk = lambda n: _g(n, "ha.takeover_check.takeover_possible")     # noqa: E731
         return {
             "cluster": c.get("name") or self.address, "version": _g(c, "version.full", "") or "",
@@ -429,6 +480,17 @@ class Collector(object):
                                 "skipped": 0, "snap": None, "fail_since": None}) for s in self.sources)
         self.hist = {}
         self.running = {}
+        self.started = {}
+        # 1.129.0 review: the sources of one account (kind, user) share one bucket: a refused login backs them ALL off; after the
+        # start and after each back-off one source tries first (the probe) and the others wait for its answer
+        self.buckets = {}
+        for s in self.sources:
+            cred = getattr(s, "cred", None) or (s.kind, s.key)
+            b = self.buckets.setdefault(cred, {"gate": getattr(s, "gate", None) or Gate(), "next_try": None, "verified": False, "keys": [],
+                                               "since": None, "errored": set()})
+            b["keys"].append(s.key)
+            s.gate = b["gate"]
+            s._bucket = cred
         self.stop_ev = threading.Event()
         self.thread = None
 
@@ -460,12 +522,25 @@ class Collector(object):
             with self.lock:
                 t = self.running.get(s.key)
                 st = self.st[s.key]
+                b = self.buckets[s._bucket]
                 if t is not None and t.is_alive():
                     st["skipped"] += 1                         # the last poll still reads: never two at once
                     continue
-                if st["next_try"] is not None and now < st["next_try"]:
-                    continue                                   # a refused login waits auth_retry
+                if b["next_try"] is not None:
+                    if now < b["next_try"]:
+                        continue                               # the account was refused: every source of it waits auth_retry
+                    b["next_try"], b["verified"] = None, False
+                    b["gate"].bad = False                      # the window is over: one source may try again
+                if not b["verified"]:
+                    if any(self.running.get(k) is not None and self.running[k].is_alive() for k in b["keys"]):
+                        continue                               # another source of this account is trying the login first
+                    if len(b["errored"]) >= len(b["keys"]):
+                        b["errored"] = set()
+                    if s.key in b["errored"]:
+                        continue                               # it did not answer at all last time: another one tries first
+                    b["probe_at"] = now
                 st["tried"] = now
+                self.started[s.key] = now
                 t = threading.Thread(target=self._run, args=(s, now), name="wall-" + s.key, daemon=True)
                 self.running[s.key] = t
             t.start()
@@ -479,17 +554,26 @@ class Collector(object):
     def _run(self, s, now):
         try:
             snap = s.poll()
-        except AuthError:
+        except AuthError as e:
             with self.lock:
-                st = self.st[s.key]
-                first = st["state"] != "auth"
-                st.update(state="auth", why=AUTH_WHY, next_try=now + self.auth_retry, fail_since=st["fail_since"] or now)
+                b = self.buckets[s._bucket]
+                first = b["since"] is None
+                b.update(next_try=now + self.auth_retry, verified=False, since=b["since"] or now)
+                b["gate"].bad = True
+                why = str(e) or AUTH_WHY
+                for k in b["keys"]:                            # every source of this account: stopped, said so
+                    st = self.st[k]
+                    st.update(state="auth", why=why if k == s.key else AUTH_WHY + " (the same account)", next_try=b["next_try"],
+                              fail_since=st["fail_since"] or now)
             if first:
                 self.log({"event": "wall", "source": s.key, "state": "login refused",
-                          "why": "%s; not tried again for %d s" % (AUTH_WHY, self.auth_retry)})
+                          "why": "%s; this account's %d source(s) not tried again for %d s" % (why, len(b["keys"]), self.auth_retry)})
             return
         except Exception as e:  # pylint: disable=broad-except
             with self.lock:
+                b = self.buckets[s._bucket]
+                if not b["verified"]:
+                    b["errored"].add(s.key)                    # not a refusal: the next cycle another source of the account tries
                 st = self.st[s.key]
                 first = st["state"] != "error"
                 st.update(state="error", why=short(e), next_try=None, fail_since=st["fail_since"] or now)
@@ -498,6 +582,9 @@ class Collector(object):
             return
         done = self.clock()
         with self.lock:
+            b = self.buckets[s._bucket]
+            kick = not b["verified"]
+            b.update(verified=True, since=None, errored=set())
             st = self.st[s.key]
             was = st["state"]
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
@@ -505,6 +592,27 @@ class Collector(object):
                 self._keep(s.key, snap, done)
         if was in ("auth", "error"):
             self.log({"event": "wall", "source": s.key, "state": "read again"})
+        if kick and len(b["keys"]) > 1 and not self.stop_ev.is_set():
+            self._kick(b)                                      # the account answered: its other sources now, not a cycle later
+
+    def _kick(self, b):
+        """the sources of an account that waited for its probe: started now (each once)"""
+        start = []
+        with self.lock:
+            for s in self.sources:
+                if s.key not in b["keys"]:
+                    continue
+                t = self.running.get(s.key)
+                if (t is not None and t.is_alive()) or (self.started.get(s.key) or 0) >= b.get("probe_at", 0):
+                    continue
+                now = self.clock()
+                self.st[s.key]["tried"] = now
+                self.started[s.key] = now
+                t = threading.Thread(target=self._run, args=(s, now), name="wall-" + s.key, daemon=True)
+                self.running[s.key] = t
+                start.append(t)
+        for t in start:
+            t.start()
 
     def _keep(self, key, snap, t):
         """the quick stats of this poll into the history; samples older than keep_seconds dropped"""
@@ -540,19 +648,47 @@ def _hosts(v):
     return out
 
 
-def sources_from_config(cfg, timeout=30, cafile=None):
+def _endpoint(text, default_port=443):
+    """'vc01.example.mil', 'vc01:8443', 'https://vc01.example.mil/sdk', '[2001:db8::1]:443' -> (host, port); ValueError when not one"""
+    t = str(text or "").strip()
+    u = urllib.parse.urlsplit(t if "://" in t else "//" + t)
+    if u.scheme not in ("", "https") or not u.hostname or u.username or u.password:
+        raise ValueError("not a host or https address: %r" % t)
+    port = u.port or default_port                              # a bad port: ValueError from urlsplit
+    if not 0 < port < 65536:
+        raise ValueError("bad port in %r" % t)
+    host = u.hostname
+    return ("[%s]" % host if ":" in host else host), port
+
+
+def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     """the secrets' JSON ({"vcenter": {user, password, hosts, verify}, "ontap": {user, password, clusters, verify}}) -> the
-    sources; a vCenter "name:port" keeps its port; one without a user or a password is left out"""
+    sources. An entry that is no host (or no https address) is said in the log and left out - never a stop of the portal;
+    a source without a user or a password is left out"""
+    log = log or (lambda d: None)
     cfg = cfg if isinstance(cfg, dict) else {}
     out = []
     vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
     if vc.get("user") and vc.get("password"):
+        seen = set()
         for h in _hosts(vc.get("hosts")):
-            m = re.match(r"^\[?([^\]]+?)\]?(?::(\d+))?$", h)
-            out.append(VcenterSource(m.group(1), vc["user"], vc["password"], verify=vc.get("verify", True) is not False, cafile=cafile,
-                                     timeout=timeout, port=int(m.group(2) or 443)))
+            try:
+                host, port = _endpoint(h)
+                src = VcenterSource(host.strip("[]"), vc["user"], vc["password"], verify=vc.get("verify", True) is not False, cafile=cafile,
+                                    timeout=timeout, port=port)
+            except (ValueError, TypeError) as e:
+                log({"event": "wall", "source": "vcenter", "state": "left out", "why": short(e)})
+                continue
+            if src.key.lower() not in seen:
+                seen.add(src.key.lower())
+                out.append(src)
     on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
     if on.get("user") and on.get("password"):
         for c in _hosts(on.get("clusters")):
-            out.append(OntapSource(c, on["user"], on["password"], verify=on.get("verify", True) is not False, cafile=cafile, timeout=timeout))
+            try:
+                host, port = _endpoint(c)
+                out.append(OntapSource(host if port == 443 else "%s:%d" % (host, port), on["user"], on["password"],
+                                       verify=on.get("verify", True) is not False, cafile=cafile, timeout=timeout))
+            except (ValueError, TypeError) as e:
+                log({"event": "wall", "source": "ontap", "state": "left out", "why": short(e)})
     return out

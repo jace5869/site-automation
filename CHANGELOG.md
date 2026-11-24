@@ -31,6 +31,13 @@ the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); th
   accounts are shared with the AAP jobs: a lockout would stop them too); one log line per episode; no overlapping
   reads. The logins are podman secrets on the portal server (`site-portal-vcenter`, `site-portal-ontap`), as the LDAP
   bind account.
+- **A shared account never locks out:** all the vCenters (or ONTAP clusters) of one account share one back-off - the
+  first refusal stops them all, one source tries first after the start and after each window, the others wait: one
+  failed login per window however many share the account. NoPermission and a proxy's 401 / 403 count as refusals; the
+  session is logged out. A `vmware_vcenters` / `ontap_clusters` entry that is no host is left out and logged, never a stop.
+- **The page never stays green on old data:** it redraws when a source goes LATE / STALE, says "Portal not reachable"
+  (everything grey) after two failed reads, keeps a condition from a current source Critical while another source is
+  stale, never shows a stale site as a green dot on the Map; an inaccessible datastore is Critical whatever its fill.
 - **Freshness:** every source shows *as of*; LATE after 3 min, STALE after 10 min; stale is never green (a hollow grey
   ?, "Not current", the last values grey). Storage from the NetApp run is as old as that run, and says so.
 - **What the wall watches** lists each wall condition with the thresholds in force. No "days until full" on the wall.

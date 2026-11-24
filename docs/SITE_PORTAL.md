@@ -1035,7 +1035,21 @@ condition needs the full window again).
   credential", and is tried again no sooner than `portal_wall_auth_retry_minutes` (15). One log line per episode, not
   one a minute. Other faults (timeout, refused connection) are tried again the next cycle, one log line when they start
   and one when they end.
+- **One account, one back-off:** every source that uses the same account (all the vCenters of `vmware_vcenters`, all the
+  clusters of `ontap_clusters`) shares it. The first refusal stops **all** of them; after the start and after each
+  back-off **one** source tries the login first and the others wait for its answer (a source that does not answer at all
+  passes the turn to the next). So a wrong or expired password costs exactly one failed login per back-off window,
+  however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or a plain HTTP 401 / 403 from a
+  proxy in front of it, counts as a refusal too; the session is logged out, never left open.
+- An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
+  the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
 - **No overlap:** a source still being read when the next cycle comes is skipped for that cycle.
+- **The page keeps itself honest:** it redraws the moment any source goes LATE or STALE (it never waits for the next
+  answer), and when the portal itself does not answer two reads in a row it says **Portal not reachable** on top and
+  shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
+  down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
+- With live ONTAP, the NetApp run in the report database is used only for the storage path card; its age is shown there
+  and never makes the live storage look stale.
 
 **Set it up:** attach the site's existing **VMware vCenter** credential (the one the VMware jobs use) and, for live
 storage, the **NetApp ONTAP** credential to *Site portal - deploy* (both optional on that template), keep the
@@ -1071,6 +1085,7 @@ a cluster, host or datastore is `portal_wall_site_pattern`'s first group (defaul
   characters). **Feedback on this card** at the foot of a detail card fills in which card it is about.
 - Kept on the portal server (its data volume, `wall-feedback.jsonl`, mode 0600) with the person's card name and the
   time; the newest 5000 are kept. No email. (The portal's report database login is read-only, so it is not there.)
+  In the CSV a cell that a spreadsheet would read as a formula (starting with = + - @) starts with a `'`.
 - The list: `<portal>/wall/feedback` (e.g. `https://stigman.example.mil/portal/wall/feedback`), newest first, a filter
   by area, **Download CSV**. Its readers see a **Feedback list** link in the wall's header.
 - Who: `portal_wall_feedback` (true) turns it on or off. `portal_wall_feedback_groups` - AD groups that see and may use

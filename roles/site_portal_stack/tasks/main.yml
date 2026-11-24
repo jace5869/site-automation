@@ -746,14 +746,29 @@
   check_mode: false                       # only reads the label
   no_log: true
 
-- name: Secret | the wall's logins - the old value removed first (podman before 4.7), or the source turned off
+# podman before 4.7 has no --replace: a changed login is removed and made again - a secret the running service uses cannot be
+# removed, so the service is stopped first (the restart below starts it with the new login). A source turned off: its secret is
+# removed only after the unit no longer names it (the end of this file)
+- name: Secret | the wall's logins - the service stopped before a login is replaced (podman before 4.7)
+  ansible.builtin.systemd_service:
+    name: site-portal-app.service
+    state: stopped
+    scope: "{{ portal_scope }}"
+  when: >-
+    _portal_podman.stdout is version('4.7', '<')
+    and (_portal_wall_state.results | selectattr('rc', 'equalto', 0) | selectattr('item.enabled')
+         | rejectattr('stdout', 'in', _portal_wall_logins | map(attribute='value') | map('hash', 'sha256') | list) | list | length > 0)
+  failed_when: false                      # not there yet (a first deploy): nothing to stop
+  no_log: true
+
+- name: Secret | the wall's logins - the old value removed first (podman before 4.7)
   ansible.builtin.command:
     argv: [podman, secret, rm, "{{ item.item.name }}"]
   loop: "{{ _portal_wall_state.results }}"
   loop_control: {label: "{{ item.item.name }}"}
   when: >-
-    item.rc == 0 and (not item.item.enabled | bool or
-    ((item.stdout | trim) != (item.item.value | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
+    item.rc == 0 and item.item.enabled | bool and (item.stdout | trim) != (item.item.value | hash('sha256'))
+    and _portal_podman.stdout is version('4.7', '<')
   changed_when: true
   no_log: true
 
@@ -1199,7 +1214,20 @@
          or _portal_swis_set is changed or _portal_swis_gone is changed
          or _portal_rdb_set is changed or _portal_rdb_gone is changed
          or _portal_ldap_set is changed or _portal_ldap_gone is changed
+         or _portal_wall_set is changed
          or _portal_trust_gone is changed)
+
+# 1.129.0: a wall login no longer wanted (portal_wall_vcenter / _ontap off): removed now that the unit no longer names it and the
+# service was restarted without it
+- name: Secret | the wall's logins no longer used - removed
+  ansible.builtin.command:
+    argv: [podman, secret, rm, "{{ item.item.name }}"]
+  loop: "{{ _portal_wall_state.results }}"
+  loop_control: {label: "{{ item.item.name }}"}
+  when: item.rc == 0 and not item.item.enabled | bool
+  changed_when: true
+  failed_when: false                      # still named by a unit that did not restart: removed by the next deploy
+  no_log: true
 
 - name: Units | restart its nginx (its server or certificates changed)
   ansible.builtin.systemd_service:

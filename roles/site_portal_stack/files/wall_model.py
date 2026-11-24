@@ -364,16 +364,17 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     if vm.get("datastores"):
         part["ds"] = [dict(d) for d in vm["datastores"]]
     elif nm:
+        dbk = "netapp-run" if "netapp-run" in feeds else "ontap"
         seen = {}
         for v in nm.get("volumes") or []:
             if v.get("ds") and v["ds"] not in seen and v.get("src") == "datastore used":
-                seen[v["ds"]] = {"n": v["ds"], "v": v.get("pct"), "free": v.get("free"), "size": v.get("size"), "feed": "ontap", "type": v.get("kind") or "",
+                seen[v["ds"]] = {"n": v["ds"], "v": v.get("pct"), "free": v.get("free"), "size": v.get("size"), "feed": dbk, "type": v.get("kind") or "",
                                  "site": v.get("site") or ""}
         part["ds"] = sorted(seen.values(), key=lambda d: -(d["v"] or 0))
         for d in part["ds"]:
             if d["v"] is not None and d["v"] >= o["ds_warn"]:
                 conds.append({"id": "ds::%s" % d["n"], "kind": "dsfull" if d["v"] >= o["ds_crit"] else "dswarn", "t": "%s %s %% full" % (d["n"], _n(round(d["v"]))),
-                              "obj": "%s free · warning %s, critical %s" % (gb(d["free"]), _n(o["ds_warn"]), _n(o["ds_crit"])), "feed": "ontap", "ds": d["n"],
+                              "obj": "%s free · warning %s, critical %s" % (gb(d["free"]), _n(o["ds_warn"]), _n(o["ds_crit"])), "feed": dbk, "ds": d["n"],
                               "v": d["v"], "site": d["site"]})
     part["dsTotal"] = len(part["ds"])
     return part, conds, feeds
@@ -387,7 +388,17 @@ def ontap_live(view, o, rx, part, conds, feeds):
         return False
     live_cl = set()
     if any(x.get("snap") for x in srcs):
-        part["nodes"] = [0, 0]                  # the live reads count the nodes (the NetApp run's count would double them)
+        part["nodes"] = [0, 0]                  # the live reads count the nodes and the relationships (the run's count would double them)
+        part["smRel"] = 0
+    if "ontap" in feeds:
+        # the NetApp run stays for the storage path card only: its age never makes the live storage look stale
+        feeds["netapp-run"] = dict(feeds.pop("ontap"), name="NetApp - refresh volume list (report database, the storage paths)")
+        for c in conds:
+            if c.get("feed") == "ontap":
+                c["feed"] = "netapp-run"
+        for a in part["aggr"]:
+            if a.get("feed") == "ontap":
+                a["feed"] = "netapp-run"
     for src in sorted(srcs, key=lambda x: str(x.get("name"))):
         fk, snap, state = src["key"], src.get("snap") or {}, src.get("state") or "never"
         cl = str(snap.get("cluster") or src.get("name") or "")
@@ -416,7 +427,7 @@ def ontap_live(view, o, rx, part, conds, feeds):
             part["aggr"].append(r)
         nodes = snap.get("nodes") or []
         for n in nodes:
-            if str(n.get("state") or "") not in ("up", ""):
+            if str(n.get("state") or "") != "up":
                 conds.append({"id": "node:%s:%s" % (cl, n.get("name")), "kind": "node", "t": "Storage node %s %s" % (n.get("name"), n.get("state")),
                               "obj": "cluster %s · takeover %s" % (cl, {True: "possible", False: "not possible"}.get(n.get("takeover"), "?")), "feed": fk,
                               "cluster": cl, "site": site_of(rx, cl)})
@@ -430,7 +441,7 @@ def ontap_live(view, o, rx, part, conds, feeds):
         for x in snap.get("luns") or []:
             if str(x.get("state") or "online") != "online":
                 off += 1
-                conds.append({"id": "voloff:%s:%s" % (cl, x.get("path")), "kind": "voloff", "t": "LUN %s %s" % (x.get("path"), x.get("state")),
+                conds.append({"id": "voloff:%s:%s:%s" % (cl, x.get("svm"), x.get("path")), "kind": "voloff", "t": "LUN %s %s" % (x.get("path"), x.get("state")),
                               "obj": "SVM %s · volume %s" % (x.get("svm"), x.get("volume")), "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
         part["volOffline"] = (part["volOffline"] or 0) + off
         sm = snap.get("snapmirror") or []
@@ -470,9 +481,9 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     feeds = dict(f1)
     feeds.update(f2)
     for f in feeds.values():
-        f["age"] = None if not f.get("asof") else max(0, int(now - float(f["asof"])))
-        f["fresh"] = fstate(f["age"], o)
-    area_feeds = {"vmware": sorted(f1), "storage": sorted(f2) + sorted(f1)}
+        # the state at this answer (the page works the age out itself every second - no age here: the ETag stays until a change)
+        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o)
+    area_feeds = {"vmware": sorted(f1), "storage": sorted(k for k in f2 if k != "netapp-run") + sorted(f1)}
     areas = []
     for a in AREAS:
         x = dict(a)

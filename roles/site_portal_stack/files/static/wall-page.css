@@ -785,3 +785,7 @@ a.hbtn{text-decoration:none}
 .dsc .fbsend,.dsc .fbon{border:1px solid var(--accent);background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:7px 14px;font:600 13px/1 var(--sans);cursor:pointer}
 .dsc .fbmsg{margin:0;color:var(--muted);min-height:1.2em}
 body.kiosk .dsc .kxh{display:none}
+/* the portal itself not answering: said on top, every value grey */
+.unreach{display:flex;align-items:center;gap:10px;margin:10px clamp(14px,1.6vw,28px) 0;padding:10px 14px;border:2px dashed var(--l-stale);border-radius:10px;background:var(--unknown-bg);color:var(--ink);font:14px/1.4 var(--sans)}
+.unreach .lamp{--sz:1.6rem}
+.unreach .lamp::after{display:none}
