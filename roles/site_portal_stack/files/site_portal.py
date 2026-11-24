@@ -2334,6 +2334,14 @@ class Portal(object):
             if var.get("kind") != "choice" or not isinstance(got, str) or not got or got not in (var.get("values") or []):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Expand: the choice is not in the survey now"})
                 return 400, {"error": "Not started: " + EXPAND_GONE + ".", "problems": {expand: "is not in the job's list now"}}
+            # Neon 1.127.x P1: an Expand launch always says its Job type - Check only when the template can run as Check (it
+            # asks the Job type, or Check is its own), Run only when it asks it (picked in the dialog). No Job type, or a
+            # template fixed to Run: refused - the template's own type would change the volume for real.
+            info = a.get("job_type") or {}
+            if not ((job_type == "check" and (info.get("ask") or info.get("default") == "check")) or (job_type == "run" and info.get("ask"))):
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name,
+                              "why": "Expand: Job type %s, the template's %s" % (job_type or "not given", "asked" if info.get("ask") else "fixed to " + str(info.get("default") or "run"))})
+                return 409, {"error": "Not started: " + CHECK_GONE + "."}
         values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
@@ -5419,7 +5427,9 @@ class NetappLive(object):
                 key = "t" if k == "ems" else "last"
                 body["rows"] = [dict(r, shown=shown(self.cfg, r.get(key)) if r.get(key) else "") for r in body.get("rows") or []]
             parts[k] = body
+        # Neon 1.127.x P1: the site filter's list goes to the page too (without it the bar never showed, ?site= was ignored)
         return {"run": run, "volumes": vols, "aggrs": m.get("aggrs") or [], "parts": parts, "left_out": m.get("left_out") or {},
+                "sites": m.get("sites") or [],
                 "expand": {"on": ex["on"] and not ex["fixed_run"], "why": ex["why"] or ex["fixed_run"], "template": ex["template"], "job_type": ex["job_type"]}}
 
     def answer(self, cn, etag_in=""):

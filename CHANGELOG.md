@@ -23,6 +23,20 @@ may modify volumes and LUNs (as before). Nothing else changes.
   there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
   aggregates are listed by status, then fullest first; the "need a look" count follows.
 
+**Fixed (review of 1.127.x)**
+
+- NetApp page: the site filter never showed (the page's answer left the sites out), and `?site=` did nothing.
+- NetApp page: Expand… on a template fixed to Run could still start a real run (the dialog turned Launch back on, and
+  a launch without a Job type was taken). The portal now refuses an Expand launch unless it says Check (the template
+  can run as Check) or Run (the template asks the Job type); the dialog keeps the portal's own "off".
+- SnapMirror: a schedule read without its interval or cron counted as "every minute" (healthy relationships showed as
+  lagging); now not known.
+- Disks: a rebuild on partitioned (ADP) disks shows as a warning, not ok.
+- Performance: each LUN shows its own datastore (two LUNs of one volume on two datastores); the cluster names stay when
+  `ontap_live_health` is off.
+- SnapMirror: a lag not known no longer reads "0.0x the schedule".
+- NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
+
 ## 1.127.3 — 2026-11-24
 
 **To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**

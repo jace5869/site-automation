@@ -151,7 +151,9 @@
         if (sel) {
           sel.closest(".field").append(note);
           const go = f.querySelector("#go");
-          const blank = () => { if (go) go.disabled = !sel.value; };        // never a launch without the volume: AAP would use its default
+          // Neon 1.127.x P1: the server's own "off" (no Check any more, not allowed, busy) is kept - only the volume adds to it
+          const locked = !!(go && go.disabled);
+          const blank = () => { if (go) go.disabled = locked || !sel.value; };        // never a launch without the volume: AAP would use its default
           if (!sel.value) note.textContent = "This volume is not in the job's current list: pick it again from the list (the refresh rewrites it).";
           sel.addEventListener("change", blank);
           blank();
@@ -263,7 +265,7 @@
     const rows = sm.rows.map((s) => tr(s.st === "ok" ? "" : s.st, [td("", chip(s.st, s.word)),
       td("", [el("span", "mono brk path", brk(s.src, ":")), el("span", "mono brk path", ["→ ", brk(s.dst, ":")]), sub("read on " + s.dc)]),
       td("", [String(s.state || "").replace(/[_-]/g, " "), s.why ? sub(s.why) : null]),
-      td("num", [dur(s.lag), s.per ? sub(fmt(s.lag / s.per, 1) + "x the schedule") : null]), td("", s.sched || "-"), td("nw", s.shown || "-")]));
+      td("num", [dur(s.lag), s.lag != null && s.per ? sub(fmt(s.lag / s.per, 1) + "x the schedule") : null]), td("", s.sched || "-"), td("nw", s.shown || "-")]));
     const shown = sm.rows.length, n = sm.counts.all;
     return sec("snapmirror", "SnapMirror", sm.counts.broken + " broken, " + sm.counts.lagging + " lagging of " + n, [
       table([["Now"], ["Source → destination"], ["State"], ["Lag", "num"], ["Schedule"], ["Last transfer"]], rows),

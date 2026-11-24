@@ -59,9 +59,9 @@ def period_seconds(s):
         return None
     if s.get("interval"):
         return OF.duration_seconds(s["interval"])
-    cron = s.get("cron") or {}
-    if not isinstance(cron, dict):
-        return None
+    cron = s.get("cron")
+    if not isinstance(cron, dict) or not cron:
+        return None                 # Neon 1.127.x P2: no interval and no cron read (an older ONTAP's fallback fields) - not known, never "every minute"
     mins, hours = cron.get("minutes") or [], cron.get("hours") or []
     days, wdays, months = cron.get("days") or [], cron.get("weekdays") or [], cron.get("months") or []
     if months:
@@ -163,7 +163,10 @@ def _disks(up, o):
             if p["broken"]:
                 why.append("%s broken" % ", ".join(p["broken"][:3]))
             if p["shared"]:
-                st = "critical" if p["failed"] else "ok"
+                # Neon 1.127.x P2: a rebuild on partitioned disks is said too (only the spare count is not judged)
+                st = "critical" if p["failed"] else ("warning" if p["rebuild"] else "ok")
+                if p["rebuild"]:
+                    why.append("rebuilding")
                 why.append("partitioned disks (ADP): spare partitions not counted")
             elif p["failed"] or (p["spares"] == 0 and mn > 0):
                 st = "critical"
@@ -254,7 +257,7 @@ def _perf(up, o, ds_of):
             n += 1
             vol = OF.g(r, "location.volume.name", "") or ""
             lun_vols.add(((r.get("svm") or {}).get("name"), vol))
-            rows.append(_perf_row(c, r, m, vol, str(r.get("name") or "").rsplit("/", 1)[-1], ds_of))
+            rows.append(_perf_row(c, r, m, vol, str(r.get("name") or "").rsplit("/", 1)[-1], ds_of, str(r.get("name") or "")))
             dur = dur or str(m.get("duration") or "")
         for r in _recs(c, "perf_volumes"):
             m = r.get("metric") or {}
@@ -276,12 +279,15 @@ def _perf(up, o, ds_of):
     return {"rows": out, "counts": {"all": n, "sample": dur}, "errors": errs}
 
 
-def _perf_row(c, r, m, vol, lun, ds_of):
+def _perf_row(c, r, m, vol, lun, ds_of, lun_path=""):
     lat = OF.g(m, "latency.total")
     iops = OF.g(m, "iops.total")
     thr = OF.g(m, "throughput.total")
     svm = (r.get("svm") or {}).get("name") or ""
-    return {"cluster": c["_name"], "svm": svm, "vol": vol, "lun": lun, "ds": ds_of.get((c["address"].lower(), svm, vol), ""),
+    # Neon 1.127.x P2: a LUN's own datastore (two LUNs of one volume can be two datastores); a volume row: its volume's
+    a = c["address"].lower()
+    ds = ds_of.get((a, svm, vol, lun_path), "") if lun_path else ds_of.get((a, svm, vol, ""), "")
+    return {"cluster": c["_name"], "svm": svm, "vol": vol, "lun": lun, "ds": ds,
             "lat": round(float(lat) / 1000.0, 2) if lat is not None else None, "iops": int(float(iops)) if iops is not None else None,
             "mbs": round(float(thr) / 1048576.0, 1) if thr is not None else None, "at": _iso(OF.parse_time(m.get("timestamp")))}
 
@@ -303,7 +309,7 @@ def ontap_live_payload(r):
         t = texts.get(k, "")
         ds = f.get("datastore") or ""
         if ds:
-            ds_of.setdefault((k[0], k[1], k[2]), ds)
+            ds_of.setdefault((k[0], k[1], k[2], k[3]), ds)          # by the LUN's path ('' for an NFS volume)
         # a LUN volume is judged by its LUN (its datastore's used space, else the LUN's blocks written) - X.lun_fullness
         fsize, fused, src = X.lun_fullness(dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free")))
         vols.append({"address": e.get("address") or "", "cluster": e.get("cluster") or "", "svm": e.get("svm") or "", "volume": e.get("volume") or "",
@@ -327,9 +333,11 @@ def ontap_live_payload(r):
     col = r.get("collected") or {}
     if r.get("health") or r.get("perf"):
         cs = []
+        # Neon 1.127.x P2: the cluster's name from the list too (ontap_live_health off: /api/cluster is not read)
+        names = dict((str(x.get("address") or "").lower(), x.get("name")) for x in clusters if x.get("name") and x.get("name") != x.get("address"))
         for c in col.get("clusters") or []:
             c = dict(c)
-            c["_name"] = OF.g((_recs(c, "cluster") or [{}])[0], "name") or c.get("address")
+            c["_name"] = OF.g((_recs(c, "cluster") or [{}])[0], "name") or names.get(str(c.get("address") or "").lower()) or c.get("address")
             cs.append(c)
         up = [c for c in cs if c.get("reachable", True) and not c.get("error")]
         down = ["%s: %s" % (c.get("address"), c.get("error") or "not reached") for c in cs if c not in up]
