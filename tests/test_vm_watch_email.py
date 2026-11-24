@@ -13,10 +13,20 @@ import tempfile
 import threading
 import unittest
 
+import yaml
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 import vmware_watch_filters as w  # noqa: E402
+import vmware_watch_email_filters as wf  # noqa: E402
+sys.path.insert(0, os.path.join(REPO, "roles", "vmware_vm", "library"))
+sys.path.insert(0, os.path.join(REPO, "plugins", "module_utils"))
+import site_report_db  # noqa: E402
+import ansible.module_utils  # noqa: E402
+sys.modules.setdefault("ansible.module_utils.site_report_db", site_report_db)
+ansible.module_utils.site_report_db = site_report_db
+import site_vm_watch_email_db as edb  # noqa: E402
 
 T0 = 1795413600.0                                     # 2026-11-23 06:00 UTC
 H = 3600.0
@@ -185,6 +195,211 @@ class Decision1125(unittest.TestCase):
         self.assertTrue(decide([cond("esx01")], d2["state"], T0 + 900, review=True, scheduled=False)["review"])   # by hand: always
 
 
+def floor(conds, state=None, now=T0, db=None, **o):
+    """1.118.8: the decision with the email limit (vm_watch_email_floor); read_at = the run's start, here = now."""
+    opts = {"now": now, "on_change": True, "every_hours": 4, "report_on": ["critical"], "why": "", "time_zone": "",
+            "min_minutes": 30, "read_at": "", "db": db or {}}
+    opts.update(o)
+    return wf.vm_watch_email_floor(conds, runs(state) if state is not None else [], opts)
+
+
+class Floor1188(unittest.TestCase):
+    """1.118.8: at most one email per vm_watch_email_min_minutes."""
+
+    def test_a_change_inside_the_window_is_held(self):
+        st = floor([cond("esx01")])["state"]
+        self.assertEqual(st["read_ts"], T0)
+        d = floor([cond("esx01"), cond("esx02")], st, T0 + 600, time_zone="Europe/Berlin")
+        self.assertEqual((d["send"], d["held"], d["kind"]), (False, True, "change"))
+        self.assertEqual(d["why"], "last one at 07:00, next possible at 07:30 (vm_watch_email_min_minutes: 30)")
+        self.assertTrue(d["report"])                                                   # the web page and tickets: every run
+        self.assertEqual(d["state"]["ids"], st["ids"])                                 # the last email's, kept
+        self.assertEqual([h["line"] for h in d["state"]["held"]], ["New: host:esx02 (critical)"])
+        self.assertEqual(d["carry"], d["state"])
+        # critical-new too: no exception
+        d2 = floor([cond("esx01"), cond("esx02"), cond("ds-07", kind="datastore", otype="datastore")], d["state"], T0 + 1200)
+        self.assertFalse(d2["send"])
+        self.assertEqual([h["line"] for h in d2["state"]["held"]],
+                         ["New: host:esx02 (critical)", "New: datastore:ds-07 (critical)"])
+
+    def test_the_first_run_after_the_window_sends_one_combined_email(self):
+        st = floor([cond("esx01")])["state"]
+        d = floor([cond("esx01"), cond("esx02"), cond("esx03")], st, T0 + 600)
+        d = floor([cond("esx01"), cond("esx03")], d["state"], T0 + 1200)              # esx02 came and went
+        self.assertFalse(d["send"])
+        d = floor([cond("esx01"), cond("esx03")], d["state"], T0 + 1800)
+        self.assertEqual((d["send"], d["kind"]), (True, "change"))
+        self.assertEqual(d["changed"], ["New: host:esx03 (critical)", "Earlier (06:10): New: host:esx02 (critical)"])
+        self.assertEqual((d["state"]["held"], d["state"]["sent_ts"], d["state"]["read_ts"]), ([], T0 + 1800, T0 + 1800))
+        # the next change: held again for 30 minutes from this email
+        self.assertFalse(floor([cond("esx01")], d["state"], T0 + 2400)["send"])
+
+    def test_held_changes_that_settled_still_go_after_the_window(self):
+        st = floor([cond("esx01")])["state"]
+        d = floor([cond("esx01"), cond("app01", kind="event:VmFailoverFailed")], st, T0 + 600)
+        self.assertFalse(d["send"])
+        d = floor([cond("esx01")], d["state"], T0 + 1500)                              # the event aged out of the window
+        self.assertFalse(d["send"])
+        d = floor([cond("esx01")], d["state"], T0 + 1800)
+        self.assertEqual((d["send"], d["kind"]), (True, "change"))
+        self.assertEqual(d["changed"], ["Earlier (06:10): New: event:VmFailoverFailed:app01 (critical)"])
+        self.assertFalse(floor([cond("esx01")], d["state"], T0 + 2700)["send"])        # sent once
+
+    def test_recovered_waits_for_the_window(self):
+        st = floor([cond("esx01")])["state"]
+        d = floor([], st, T0 + 900)
+        self.assertEqual((d["send"], d["kind"], d["report"], d["held"]), (False, "recovered", True, True))
+        self.assertEqual(d["state"]["ids"], st["ids"])
+        self.assertTrue(d["why"].startswith("last one at 06:00, next possible at 06:30"))
+        d = floor([], d["state"], T0 + 1800)
+        self.assertEqual((d["send"], d["kind"]), (True, "recovered"))
+        self.assertEqual(d["changed"], ["Cleared: host:esx01 (was critical)"])
+        # back again before the window ended: no Recovered, nothing changed since the last email
+        d = floor([], st, T0 + 900)
+        d = floor([cond("esx01")], d["state"], T0 + 1800)
+        self.assertEqual((d["send"], d["state"]["held"]), (False, []))
+
+    def test_the_run_start_counts_a_late_email_is_no_longer_window(self):
+        st = floor([cond("esx01")], read_at="2026-11-23T06:00:05Z", now=T0 + 360)["state"]   # confirm checks: sent 6 min in
+        d = floor([cond("esx01"), cond("esx02")], st, T0 + 1800 + 10, read_at="2026-11-23T06:29:20Z")
+        self.assertTrue(d["send"])                                                     # 29:15 after: within the grace
+
+    def test_reminder_and_first_and_zero(self):
+        self.assertTrue(floor([cond("esx01")])["send"])                               # no email before: the first goes
+        st = floor([cond("esx01")])["state"]
+        self.assertEqual(floor([cond("esx01")], st, T0 + 4 * H)["kind"], "reminder")
+        self.assertTrue(floor([cond("esx01"), cond("esx02")], st, T0 + 60, min_minutes=0)["send"])   # 0 = no limit
+
+    def test_every_report_mode_is_limited_too(self):
+        d = floor([cond("esx01")], None, T0, on_change=False)
+        self.assertTrue(d["send"])
+        d2 = floor([cond("esx01")], d["state"], T0 + 900, on_change=False)
+        self.assertEqual((d2["send"], d2["state"]), (False, d["state"]))
+        q = floor([], d["state"], T0 + 1200, on_change=False)
+        self.assertEqual((q["send"], q["state"]), (False, d["state"]))             # a clean run keeps the last email
+        self.assertTrue(floor([cond("esx01")], d["state"], T0 + 1800, on_change=False)["send"])
+
+    def test_manual_review_still_emails(self):
+        st = floor([cond("esx01")])["state"]
+        d = floor([cond("esx01")], st, T0 + 300, review=True)
+        self.assertEqual((d["send"], d["kind"]), (True, "review"))
+        self.assertEqual(d["state"]["read_ts"], T0 + 300)
+        d = floor([], None, T0 + 300, review=True, why="no AAP connection")       # and with no state at all
+        self.assertTrue(d["send"])
+
+    def test_the_report_database_state_when_aap_cannot_be_read(self):
+        st = floor([cond("esx01")])["state"]
+        db = {"ok": True, "state": st, "error": ""}
+        d = floor([cond("esx01"), cond("esx02")], None, T0 + 600, db=db, why="no AAP connection")
+        self.assertEqual((d["send"], d["held"], d["source"]), (False, True, "db"))
+        self.assertEqual(d["lines"], [])                                               # no "every report" line
+        d = floor([cond("esx01"), cond("esx02")], None, T0 + 1800, db=dict(db, state=d["state"]), why="no AAP connection")
+        self.assertEqual((d["send"], d["changed"]), (True, ["New: host:esx02 (critical)"]))
+        d = floor([cond("esx01")], None, T0, db={"ok": True, "state": None}, why="no AAP connection")   # no row yet
+        self.assertEqual((d["send"], d["kind"]), (True, "first"))
+
+    def test_no_state_at_all_only_critical_in_the_first_15_minutes_of_each_slot(self):
+        why = "no AAP connection"
+        d = floor([cond("esx01")], None, T0 + 300, why=why, db_why="no Report database credential")
+        self.assertEqual((d["send"], d["kind"], d["source"]), (True, "unknown", "none"))
+        self.assertEqual(d["lines"], ["No AAP credential or report database: the 30-minute email limit cannot work - attach the "
+                                      "Red Hat Ansible Automation Platform credential to VM - outage watch (AAP: no AAP "
+                                      "connection; report database: no Report database credential)."])
+        d = floor([cond("esx01")], None, T0 + 1200, why=why)
+        self.assertEqual((d["send"], d["state"]), (False, None))
+        self.assertEqual(d["why"], "the last email is not known, next possible at 06:30 (vm_watch_email_min_minutes: 30)")
+        d = floor([cond("esx09", "warning")], None, T0 + 300, why=why, report_on=["critical", "warning"])
+        self.assertFalse(d["send"])                                                    # a warning alone: no email
+        self.assertEqual(len(floor([], None, T0, why=why)["lines"]), 1)                 # a clean run says it too
+        # a 10-minute schedule: at most two of three runs a slot email; a 15-minute one: one
+        for step, most in ((600, 2), (900, 1)):
+            sent = [floor([cond("esx01")], None, T0 + t, why=why)["send"] for t in range(0, 1800, step)]
+            self.assertEqual(sum(sent), most)
+        self.assertTrue(floor([cond("esx01")], None, T0 + 60, why=why, min_minutes=0)["send"])   # 0 = as before 1.118.8
+
+
+class FakeCursor(object):
+    def __init__(self, conn):
+        self.conn, self.one = conn, None
+
+    def execute(self, sql, args=None):
+        self.conn.sql.append(sql)
+        if sql.startswith("SELECT table_name"):
+            name = args[0] if args else "schema_version"
+            self.one = (name,) if name in self.conn.tables else None
+        elif sql.startswith("CREATE TABLE IF NOT EXISTS vm_watch_email_state"):
+            self.conn.tables.add("vm_watch_email_state")
+        elif sql.startswith("CREATE TABLE IF NOT EXISTS schema_version"):
+            self.conn.tables.add("schema_version")
+        elif sql.startswith("SELECT version"):
+            self.one = None
+        elif sql.startswith("SELECT state"):
+            row = self.conn.rows.get(args[0])
+            self.one = (row[2],) if row else None
+        elif sql.startswith("INSERT INTO vm_watch_email_state"):
+            self.conn.rows[args[0]] = args
+        return 0
+
+    def fetchone(self):
+        return self.one
+
+
+class FakeConn(object):
+    def __init__(self, tables=()):
+        self.tables, self.rows, self.sql = set(tables), {}, []
+
+    def cursor(self):
+        return FakeCursor(self)
+
+    def commit(self):
+        pass
+
+
+class Database1188(unittest.TestCase):
+    """1.118.8: the email state in the report database (site_vm_watch_email_db), for when AAP cannot be read."""
+
+    def test_made_on_the_first_run_then_written_and_read_back(self):
+        conn = FakeConn()
+        self.assertEqual(edb.schema(conn, True), (True, True))
+        self.assertIn("vm_watch_email_state", conn.tables)
+        self.assertIsNone(edb.read(conn, 71))                                          # no row yet: the first email goes
+        st = floor([cond("esx01")])["state"]
+        edb.write(conn, 71, 2001, st)
+        self.assertEqual(edb.read(conn, 71), json.loads(json.dumps(st)))
+        self.assertIsNone(edb.read(conn, 72))                                          # one row per template
+        self.assertEqual(edb.schema(conn, True), (True, False))
+        dry = FakeConn()
+        self.assertEqual(edb.schema(dry, False), (False, False))                      # create false (a dry run): not made
+        self.assertEqual(dry.tables, set())
+        self.assertFalse(any(x.startswith("CREATE") for x in dry.sql))
+
+    def test_the_read_makes_no_table_in_a_dry_run(self):
+        with open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "watch_email.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        read = next(t for t in tasks if (t.get("site_vm_watch_email_db") or {}).get("mode") == "read")
+        self.assertEqual(read["site_vm_watch_email_db"]["create"], "{{ not ansible_check_mode }}")
+        write = next(t for t in tasks if (t.get("site_vm_watch_email_db") or {}).get("mode") == "write")
+        self.assertIn("not ansible_check_mode", write["when"])
+
+    def test_a_row_that_is_not_a_state_is_none(self):
+        conn = FakeConn(["vm_watch_email_state"])
+        conn.rows[71] = (71, 1, "not json")
+        self.assertIsNone(edb.read(conn, 71))
+
+    def test_the_statement_in_the_doc_is_the_modules(self):
+        with open(os.path.join(REPO, "docs", "REPORT_DATABASE.md")) as fh:
+            doc = fh.read()
+        for part in edb.ddl().split("\n\n"):
+            self.assertIn(part, doc, "docs/REPORT_DATABASE.md: the statement differs from site_vm_watch_email_db.ddl()")
+
+    def test_the_settings_are_in_the_defaults_and_the_docs(self):
+        for path in ("roles/vmware_vm/defaults/main.yml", "docs/VARIABLES_REFERENCE.md", "docs/VM_OUTAGE_WATCH.md"):
+            with open(os.path.join(REPO, path)) as fh:
+                text = fh.read()
+            for name in ("vm_watch_email_min_minutes", "vm_watch_email_db"):
+                self.assertIn(name, text, "%s: %s" % (path, name))
+
+
 def playbook():
     ap = os.environ.get("ANSIBLE_PLAYBOOK")
     if ap:
@@ -230,7 +445,7 @@ class Playbook1125(unittest.TestCase):
                   ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",
                   ANSIBLE_DEPRECATION_WARNINGS="False", ANSIBLE_STDOUT_CALLBACK="default",
                   CONTROLLER_HOST="http://127.0.0.1:%d" % self.srv.server_port, CONTROLLER_USERNAME="admin",
-                  CONTROLLER_PASSWORD="goodpw")
+                  CONTROLLER_PASSWORD="goodpw", REPORT_DB_HOST="")
         ev.update(env or {})
         extra = {"ansible_python_interpreter": sys.executable, "awx_job_id": job, "awx_job_template_id": 71,
                  "_vm_w_cond": conds, "_vm_w": {"vcenters": [{"name": "vc01.example.mil", "ok": True, "error": ""}]}, "_vm_now": now}
@@ -261,9 +476,31 @@ class Playbook1125(unittest.TestCase):
         self.assertEqual((d4["send"], d4["kind"]), (False, "quiet"), out)
 
     def test_no_aap_credential_emails_and_says_why(self):
-        d, out = self.run_watch(2101, [cond("esx01")], T0, env={"CONTROLLER_HOST": "", "CONTROLLER_USERNAME": "", "CONTROLLER_PASSWORD": ""})
-        self.assertEqual((d["send"], d["kind"]), (True, "unknown"))
-        self.assertIn("Email on every report this run: the last email could not be read from AAP - no AAP connection", out)
+        # 1.118.8: no AAP and no report database - a critical is emailed in the first 15 minutes of each 30-minute slot only
+        env = {"CONTROLLER_HOST": "", "CONTROLLER_USERNAME": "", "CONTROLLER_PASSWORD": "", "REPORT_DB_HOST": ""}
+        d, out = self.run_watch(2101, [cond("esx01")], T0, env=env)
+        self.assertEqual((d["send"], d["kind"], d["source"]), (True, "unknown", "none"))
+        self.assertIn("No AAP credential or report database: the 30-minute email limit cannot work - attach the Red Hat "
+                      "Ansible Automation Platform credential to VM - outage watch (AAP: no AAP connection", out)
+        self.assertIn("report database: no Report database credential)", out)
+        d, out = self.run_watch(2102, [cond("esx01")], T0 + 1200, env=env)
+        self.assertFalse(d["send"])
+
+    def test_a_change_inside_30_minutes_is_held(self):
+        # 1.118.8, through the task file: the state of run 1 in AAP; run 2, ten minutes later with a new condition, is held
+        c1 = [cond("esx07")]
+        d1, _ = self.run_watch(2201, c1, T0)
+        self.assertTrue(d1["send"])
+        job = {"id": 2201, "job_template": 71, "status": "failed", "finished": "2026-11-23T06:01:00Z",
+               "artifacts": {"vm_watch_email_state": d1["state"]}}
+        self.mock.JOBS_71.append(job)
+        try:
+            d2, out = self.run_watch(2202, c1 + [cond("esx08")], T0 + 600)
+            self.assertEqual((d2["send"], d2["held"], d2["source"]), (False, True, "aap"), out)
+            self.assertEqual(d2["why"], "last one at 06:00, next possible at 06:30 (vm_watch_email_min_minutes: 30)")
+            self.assertEqual(d2["state"]["ids"], d1["state"]["ids"])
+        finally:
+            self.mock.JOBS_71.remove(job)
 
 
 if __name__ == "__main__":

@@ -2738,6 +2738,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition of these severities; a clean run is one line in the job output. |
 | `vm_watch_email_on_change` | `true` | 1.112.5, the email only when something changes: a run emails when the conditions of vm_watch_report_on changed since the last email - a new one, a worse severity, one cleared (a lost datastore's or a down host's VMs count as that datastore or host, as the tickets do) -, again every vm_watch_email_every_hours while the… (all of it: the role file) |
 | `vm_watch_email_every_hours` | `4` | a reminder while the conditions last, this many hours after the last email; 0 = never |
+| `vm_watch_email_min_minutes` | `30` | at most one email per this many minutes (a review by hand is not held); 0 = no limit (as before 1.118.8) |
+| `vm_watch_email_db` | `true` | keep the email state in the report database too, when the template has a "Report database" credential |
 | `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
 | `vm_watch_review` | `false` | The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from it to the ticket, and how long a host was down. Read-only. true (a launch choice) = make the review now, also when nothing is down; the watch runs first,… (all of it: the role file) |
 | `vm_watch_review_hours` | `6` | the review looks back this many hours (0.25 to 744) |

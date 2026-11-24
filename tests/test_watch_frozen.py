@@ -27,6 +27,12 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
     "tests/fixtures/vcenters_read_1184.yml": "db6a64f3b95abd15dd769a951d6a5b3f814d818e6ed71ebb1fe148511617069c",
     "tests/fixtures/watch_email_1184.yml": "59c67935b401b3c85285e364a7f5293b9366b27c0be1f2d4d5f0d1296baec242",
 }
+# 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
+# its own, with tests/test_vm_watch_email.py.
+FROZEN_1188 = {
+    "plugins/filter/vmware_watch_email_filters.py": "b61cb2d5a24482b9e3a67826f61df8da895875a81d86aa28e9cbcbeabd39e065",
+    "roles/vmware_vm/tasks/watch_email.yml": "fa143af9dde766af01204beaa1658fb1468451fd2f16ee6386b8af16972ed3de",
+}
 # The tasks of 1.118.4's watch.yml that differ at 1.116.0, each with why a scheduled run (vm_watch_review false) does exactly
 # what it did. Any other difference fails.
 ALLOWED = {
@@ -103,6 +109,11 @@ class Frozen(unittest.TestCase):
             with open(os.path.join(ROOT, path), "rb") as fh:
                 self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, "%s changed: the watch is frozen at 1.118.4" % path)
 
+    def test_1_email_files_are_1_118_8(self):
+        for path, want in FROZEN_1188.items():
+            with open(os.path.join(ROOT, path), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, "%s changed: the watch's email is pinned at 1.118.8" % path)
+
     def test_2_watch_yml_differs_only_where_allowed(self):
         with open(os.path.join(ROOT, "tests", "fixtures", "watch_1184.yml")) as fh:
             old = _flat(yaml.safe_load(fh), [])
@@ -159,11 +170,14 @@ class Frozen(unittest.TestCase):
     def test_raw_review_ids_through_throttle_and_artifacts(self):
         import outage_timeline_filters as ot
         from vmware_watch_filters import FilterModule
+        from vmware_watch_email_filters import FilterModule as EmailFilters
 
         tasks = _tasks("roles/vmware_vm/tasks/watch.yml")
         mail = _tasks("roles/vmware_vm/tasks/watch_email.yml")
         env, ctx = _render_context(True)
         env.filters.update(FilterModule().filters(), outage_redact=ot.outage_redact)
+        env.filters.update(EmailFilters().filters())
+        ctx["_vm_w_mail_db"] = {}                                       # 1.118.8: the database read, skipped (AAP answered)
         vc, host = "vc.example.mil", "esx-token-01"
         cid = "vm-watch:host:" + host
         state = dict(ids={cid + "@" + vc: "critical"}, review_ts=1000, sent_ts=1000)
@@ -358,6 +372,24 @@ INCLUDED = {
         "VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)": "no_log from vm_watch_review",
         "VMware | the watch's email": "the lines are masked only on a review"}),
 }
+# 1.118.8 (user-requested: "can't get 50 emails"): the watch's email gets a limit, at most one per
+# vm_watch_email_min_minutes, and keeps its state in the report database when AAP cannot be read. These tasks of
+# watch_email.yml are new or change on a scheduled run on purpose; tests/test_vm_watch_email.py covers them. What the watch
+# finds (site_vmware_watch.py, vmware_watch_filters.py, watch.yml) stays 1.118.4's.
+CHANGED_1188 = {
+    "roles/vmware_vm/tasks/watch_email.yml": {
+        "added": {
+            "VMware | the report database for the watch's email state (vm_watch_email_db)": "the database host, or '' when off",
+            "VMware | the watch's last email, from the report database (AAP not readable)": "read only when AAP could not be read",
+            "VMware | the watch's email state in the report database (vm_watch_email_db)": "the state also kept in the database",
+        },
+        "changed": {
+            "VMware | the watch's last email, from AAP (vm_watch_email_state)": "also read for the limit (vm_watch_email_min_minutes)",
+            "VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)":
+                "vm_watch_email_floor around 1.112.5's vm_watch_email_decision: the limit and the database state",
+        },
+    },
+}
 
 
 def _leaves(d, path=()):
@@ -394,8 +426,11 @@ class Included1164(unittest.TestCase):
                 old = dict((t.get("name"), t) for t in _flat(yaml.safe_load(fh), []))
             with open(os.path.join(ROOT, path)) as fh:
                 new = dict((t.get("name"), t) for t in _flat(yaml.safe_load(fh), []))
-            self.assertEqual(sorted(new), sorted(old), "%s: a task added, removed or renamed" % path)
+            c1188 = CHANGED_1188.get(path, {})
+            self.assertEqual(sorted(set(new) - set(c1188.get("added", {}))), sorted(old), "%s: a task added, removed or renamed" % path)
             for name, task in new.items():
+                if name in c1188.get("added", {}) or name in c1188.get("changed", {}):
+                    continue
                 was = dict(_leaves(old[name]))
                 now = dict(_leaves(task))
                 differ = sorted(k for k in set(was) | set(now) if was.get(k) != now.get(k))
