@@ -17,9 +17,15 @@ tr.r-warning>td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 .sub2{display:block;color:var(--muted);font-size:12.5px;margin-top:2px;overflow-wrap:anywhere;font-weight:400}
 .nap-narrow{display:none}
 td.wrap{white-space:normal}
-td.act{width:170px;min-width:150px}
+td.nap-act{width:150px;min-width:140px;white-space:nowrap}
+td.nap-act .notoff{white-space:normal}
 td .btn.sm{font-size:12.5px;padding:4px 10px;white-space:nowrap}
-td .btn.sm[disabled]{opacity:.55;cursor:not-allowed}
+/* Expand...: filled in the accent the Actions cards' Run uses (its ink passes AA on it in every look, light and dark); compact */
+td .btn.nap-x{padding:4px 12px;line-height:1.4;font-weight:650}
+td .btn.pri.nap-x{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+td .btn.pri.nap-x:hover{filter:brightness(.9);text-decoration:none}
+td .btn.nap-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 4px var(--card)}
+td .btn.nap-x[disabled]{background:var(--card-strong);color:var(--muted);border:1px dashed var(--edge);cursor:not-allowed}
 .notoff{font-size:12px;color:var(--muted);display:block;max-width:26ch;overflow-wrap:normal;word-break:normal;line-height:1.35;white-space:normal;margin-top:3px}
 th.num{white-space:normal}
 td b.mono{white-space:nowrap}

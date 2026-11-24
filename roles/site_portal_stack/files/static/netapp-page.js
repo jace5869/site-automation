@@ -120,18 +120,18 @@
   // ---- Expand...
   function expandCell(v) {
     if (v.x && v.x.length) {
-      const b = el("a", "btn sm", "Expand…");
+      const b = el("a", "btn sm pri nap-x", "Expand…");
       b.href = v.x[0].href;
       b.setAttribute("data-expand", v.k);
       b.title = "NetApp - expand a volume, with " + v.name + " picked" + (last.model.expand.job_type ? " and Job type Check" : "");
-      return td("act", b);
+      return td("nap-act", b);
     }
     if (v.dis) {
-      const b = el("button", "btn sm", "Expand…");
+      const b = el("button", "btn sm nap-x", "Expand…");
       b.type = "button"; b.disabled = true; b.title = v.off;
-      return td("act", [b, el("span", "notoff", v.off)]);
+      return td("nap-act", [b, el("span", "notoff", v.off)]);
     }
-    return td("act", el("span", "notoff", v.off || ""));
+    return td("nap-act", el("span", "notoff", v.off || ""));
   }
   async function openExpand(a, v) {
     const dlg = document.getElementById("dlg");
