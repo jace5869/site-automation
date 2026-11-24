@@ -45,6 +45,13 @@ confirmed and is listed once. The tile reads *no VM confirmed · 42 with files o
 *VMs on lost objects* has every VM; the AAR and the handoff carry the line. The review's reads are read only and
 review only: the scheduled watch is unchanged.
 
+**VMs with events in the outage.** A third tier in What it affected, the tile, the AAR and the handoff: the VMs whose
+own events (power, heartbeat, a VM alarm, lost access, HA) fall inside a root's loss and touch its datastore or host,
+each with its first event and time (*2 VMs had events of their own during the outage (not proof they were down):
+sitea-vm07 (07:09:30 VM powered off), ...*). Usage alarms and gray are noise. Each VM shows in its highest tier only:
+confirmed, events, had files on / ran on. Only the confirmed are counted. The workbook adds the sheet *VMs with events*.
+The note for no confirmed VM reads *No VM confirmed down: the watch and HA recorded none.*
+
 Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
 each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
 

@@ -272,6 +272,39 @@ class PastReview(unittest.TestCase):
                                                      "they were down): app01 (esx, on)" % c.host.split(".")[0]])
 
 
+class EventTier(unittest.TestCase):
+    """1.116.6: tier 2 - VMs with events of their own inside a root's loss that touch it; one tier per VM, never counted."""
+
+    def test_three_tiers_without_double_listing(self):
+        events, tickets, opts = tc.shared_ds_outage()
+        base = dict(events[0], alarm="", entity="", entity_type="", args={})
+        events += [dict(base, key=90001, time="2026-11-23T06:16:10Z", type="AlarmStatusChangedEvent", host=tc.HOSTS[9], vm="sitea-vm03",
+                        alarm="Virtual machine heartbeat", entity="sitea-vm03", entity_type="vm", to="red", **{"from": "green"}),
+                   dict(base, key=90002, time="2026-11-23T06:09:30Z", type="VmPoweredOffEvent", host=tc.HOSTS[1], vm="sitea-vm07"),
+                   dict(base, key=90003, time="2026-11-23T08:30:00Z", type="VmPoweredOffEvent", host=tc.HOSTS[1], vm="sitea-vm08"),
+                   dict(base, key=90004, time="2026-11-23T06:09:00Z", type="VmDasBeingResetEvent", host=tc.HOSTS[0],
+                        vm="sitea-vm05", datastore=tc.DS)]
+        placements = vp.lookup(history_for_fixture(), ot.outage_review_objects(events, opts))
+        r = ot.outage_timeline(events, tickets, dict(opts, placements=placements))
+        d = r["draft"]
+        self.assertEqual(r["numbers"]["affected_vms"], 1)                       # sitea-vm05: HA reset it (confirmed)
+        self.assertEqual(d["files_lines"][0], "2 VMs had events of their own during the outage (not proof they were down): "
+                                              "sitea-vm07 (07:09:30 VM powered off), sitea-vm03 (07:16:10 Alarm red: Virtual machine heartbeat)")
+        self.assertTrue(d["files_lines"][1].startswith("39 VMs had files on ds_shared_01"))   # 42 less the three above
+        for vm_name in ("sitea-vm03 (", "sitea-vm05 (", "sitea-vm07 ("):
+            self.assertNotIn(vm_name, d["files_lines"][1])
+        self.assertNotIn("sitea-vm08", d["files_lines"][0])                     # after the outage: not a signal
+        tile = next(b for b in r["boxes"] if b["label"] == "VMs affected")["note"]
+        self.assertEqual(tile, "1 VM confirmed · 2 with events · 39 with files on ds_shared_01")
+        sheet = next(x for x in r["sheets"] if x["name"] == "VMs with events")
+        self.assertEqual([row[:2] for row in sheet["rows"]], [["sitea-vm07", "VM powered off"],
+                                                               ["sitea-vm03", "Alarm red: Virtual machine heartbeat"]])
+
+    def test_usage_alarms_are_never_a_signal(self):
+        r = tc.review()                                     # 307 usage-alarm changes on VMs of the lost hosts, in the window
+        self.assertFalse([line for line in r["draft"]["files_lines"] if "events of their own" in line])
+
+
 class Catalog(unittest.TestCase):
     def test_the_job_is_in_the_setup_catalog(self):
         import yaml

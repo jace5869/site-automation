@@ -1430,6 +1430,31 @@ def _vm_key(e):
     return (e["vcenter"], name) if name else None
 
 
+def _vms_with_events(raw, incident, alarms):
+    """1.116.6: tier 2 of What it affected - the VMs whose own events (power, heartbeat, a VM alarm, lost access, HA) fall
+    inside a root's loss and touch that root: its datastore, a host that lost it, or the lost host. Usage alarms and gray
+    are noise, never a signal. {(vcenter, vm): (first event, root)} - never counted as down."""
+    out = {}
+    roots = [(obj, intervals) for obj, intervals in incident["history"].items() if obj[1] in ("datastore", "host") and intervals]
+    for e in raw:
+        if e.get("ticket") or not e.get("vcenter"):
+            continue
+        key = _vm_key(e)
+        if not key or key in out or key in incident["affected"]:
+            continue
+        if e["kind"].startswith("alarm:") and (_usage_alarm(e["kind"][6:], alarms) or
+                                               any(str(e.get(k)).lower() in ("gray", "grey") for k in ("from", "to"))):
+            continue
+        for obj, intervals in roots:
+            if obj[0] != e["vcenter"] or not any(a <= e["t"] and (not b or e["t"] <= b) for a, b in intervals):
+                continue
+            hosts = incident["paths"].get(obj, set()) | ({obj[2]} if obj[1] == "host" else set())
+            if (obj[1] == "datastore" and e.get("datastore") == obj[2]) or (e.get("host") and e["host"] in hosts):
+                out[key] = (e, obj)
+                break
+    return out
+
+
 def _root_history(events, opts):
     roots = {_finding_object(c): c for c in opts["roots"]}
     current = {_finding_object(c): c for c in opts["triggers"]
@@ -2003,7 +2028,7 @@ def _review_parts(incident, opts, begin, end, stamp):
         note += " vCenter events not read."
     count_line = "%s: %d restarted by HA, %d reset by HA." % (_count(vm_count, "VM"), len(outcomes["restart"]), len(outcomes["reset"]))
     if not vm_count and stores:
-        count_line = "No VM confirmed down: the watch, vCenter's events and HA recorded none."
+        count_line = "No VM confirmed down: the watch and HA recorded none."
     # 1.116.6: the VMs with files on a lost datastore (or that ran on a lost host), apart from the confirmed ones: from the
     # placement history as of the outage's start (VMware - VM placement snapshot), else the review's own vCenter read,
     # else the watch's members, else "not read". Never counted as down.
@@ -2015,6 +2040,16 @@ def _review_parts(incident, opts, begin, end, stamp):
             if pl.get("kind") == "host":            # the review labels a host by its short name
                 placed.setdefault((pl.get("vcenter", ""), "host", _short(pl.get("name"))), pl)
     confirmed_vms = {key for key in affected}
+    tier2 = incident.get("vm_event_tier") or {}
+    events_lines, events_rows = [], []
+    if tier2:
+        shown = _shown(["%s (%s %s)" % (vm, stamp(e["t"]).split()[2], e["label"]) for (vc, vm), (e, _) in
+                        sorted(tier2.items(), key=lambda kv: (kv[1][0]["t"], kv[0][1]))])
+        events_lines.append("%s had events of their own during the outage (not proof they were down): %s" % (
+            _count(len(tier2), "VM"), shown))
+        events_rows = [[display(vc, vm), e["label"], stamp(e["t"]), display(obj[0], obj[2])]
+                       for (vc, vm), (e, obj) in sorted(tier2.items(), key=lambda kv: (kv[1][0]["t"], kv[0][1]))]
+    confirmed_vms |= set(tier2)
 
     def power(v):
         return {"poweredOn": "on", "poweredOff": "off", "suspended": "suspended"}.get(v.get("power"), v.get("power") or "power not read")
@@ -2085,8 +2120,9 @@ def _review_parts(incident, opts, begin, end, stamp):
     end_recovery = max(back_times + [t for t, _ in recovered], default=None) if not open_observation else None
     return dict(observed_starts=observed_starts, observed_start=observed_start, open_observation=open_observation,
                 title=title if meta or affected else "", basename=kind + " " + subject, head_name=kind + ", " + scope,
-                went=went, went_note=note, affected=aff_rows, affected_note=count_line, files_lines=files_lines, files_unread=files_unread, files_rows=files_rows,
-                files_tile=files_tile, now=down, at_risk=[],
+                went=went, went_note=note, affected=aff_rows, affected_note=count_line, files_lines=events_lines + files_lines, files_unread=files_unread,
+                files_rows=files_rows, files_tile=(["%d with events" % len(tier2)] if tier2 else []) + files_tile,
+                events_rows=events_rows, now=down, at_risk=[],
                 recovered=[row for _, row in recovered], issues=issues, affected_keys=affected, host_count=host_count,
                 first_watch=first_watch, first_signal=first_watch[0] if first_watch else first["t"] if first else None,
                 last_signal=last_signal, still_keys=still_keys,
@@ -2847,6 +2883,7 @@ def outage_timeline(events, tickets=None, opts=None):
         if chain or incident["current"]:
             alarm_events = story_events
         stamp_review = lambda t: loc(t).strftime("%d %b %H:%M:%S %Z")
+        incident["vm_event_tier"] = _vms_with_events(raw, incident, alarms)
         parts = _review_parts(incident, o, begin, end, stamp_review)  # the window with its look-back
         general = parts["title"]
         vm_count, host_count = len(parts["affected_keys"]), parts["host_count"]
@@ -3429,6 +3466,8 @@ def outage_timeline(events, tickets=None, opts=None):
         summary_rows.extend([[labels[3], row[0], row[1], "", row[2]] for row in parts["recovered"]])
         sheets = [sheet, dict(name="Outage summary", columns=["Part", "Object", "What", "When", "Down for / Now"], rows=summary_rows),
                   dict(name="Noise", columns=NOISE_COLUMNS, rows=noise_rows)]
+        if parts["events_rows"]:         # 1.116.6: tier 2 - each VM with events of its own during the outage, its first one
+            sheets.append(dict(name="VMs with events", columns=["VM", "First event", "When", "Lost object"], rows=parts["events_rows"]))
         if parts["files_rows"]:          # 1.116.6: every VM on a lost datastore or host (the page and the AAR name 8)
             sheets.append(dict(name="VMs on lost objects", columns=PLACEMENT_COLUMNS, rows=parts["files_rows"]))
         down_note = read_line

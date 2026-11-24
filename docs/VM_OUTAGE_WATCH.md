@@ -294,8 +294,16 @@ A datastore or host that came back has no VM list in vCenter's own read. The rev
 2. **vCenter now**, when the history has no snapshot that old (or no history): the line says *as of the review's read*.
 3. Neither: *VMs on ds_shared_01: not read*.
 
-A VM with a signal of its own (the watch, HA) stays confirmed and is counted. The others are named as *had files on* a
-datastore or *ran on* a host, never counted as down. The page names eight, then *+N more*; the workbook's sheet *VMs on
+What it affected has three tiers, each VM in its highest one only:
+
+1. **Confirmed** - the watch or HA found it: counted.
+2. **Events during the outage** - its own events (power, heartbeat, a VM alarm, lost access, HA) fall inside a root's
+   loss and touch that root: its datastore, a host that lost it, or the lost host. Each with its first event and time
+   (*sitea-vm07 (07:09:30 VM powered off)*). Usage alarms and gray are noise, never a signal. Not counted.
+3. **Had files on / ran on** - the placement above. Not counted.
+
+The tile reads *no VM confirmed · 2 with events · 39 with files on ds_shared_01*; the workbook has the sheets *VMs with
+events* and *VMs on lost objects*. The page names eight, then *+N more*; the workbook's sheet *VMs on
 lost objects* has every one with its host, power state, datastores and the snapshot's time.
 
 **What to schedule.** The template *VMware - VM placement snapshot* (`playbooks/vmware_placement_snapshot.yml`),
