@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.123.1 — 2026-11-24
+
+**To set up:** nothing.
+
+- AAP - set up job templates only used credentials of the templates' own organization (`aap_templates_organization`).
+  A vCenter or ServiceNow credential kept in another organization stopped the job: "not found in organization".
+  Now it is found in any organization, as the portal's setup job always did. The templates' own organization is looked
+  in first. A personal credential is never used. A name in two other organizations is said, never guessed.
+- A pasted settings block that lost its indentation made `aap_templates_credentials` empty, and the job crashed with
+  "argument 'credentials' is of type NoneType". The job now stops at the start and says: check that its lines are
+  indented under it, or write it on one line.
+- Tests: tests/test_aap_templates_cred_orgs.py.
+
 ## 1.116.4 — 2026-11-24
 
 **To set up:** nothing.

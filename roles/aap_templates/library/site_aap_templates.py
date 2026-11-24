@@ -198,6 +198,28 @@ class Templates(object):
             return None
         return rows[0]
 
+    def cred(self, name, what):
+        """A credential by its exact name: the one in the templates' organization, else the only one of another organization.
+        Never a personal credential (no organization); a name in two other organizations is said, never guessed."""
+        if self.org_id is None:
+            return self.one("credentials", name, what)
+        rows = [r for r in self.all("credentials/?name=%s" % _q(name)) if r.get("name") == name]
+        own = [r for r in rows if r.get("organization") == self.org_id]
+        other = [r for r in rows if r.get("organization") not in (None, self.org_id)]
+        pick = own or other
+        if len(pick) != 1:
+            orgs = sorted(set(str(((r.get("summary_fields") or {}).get("organization") or {}).get("name") or r.get("organization"))
+                              for r in pick))
+            self.problems.append("%s %r: %s" % (what, name, "not found in any organization this job's AAP user can see"
+                                                if not pick else "in %d organizations (%s) - name it once, or rename one in AAP"
+                                                % (len(orgs), ", ".join(orgs)) if not own else "%d match - rename one in AAP" % len(pick)))
+            return None
+        # Codex 1.123.1: seen is not usable - without Use, AAP refuses the attach after an overwrite took the old one off
+        if (((pick[0].get("summary_fields") or {}).get("user_capabilities") or {}).get("use")) is False:
+            self.problems.append("%s %r: this job's AAP user has no Use on it (give it Use on that credential)" % (what, name))
+            return None
+        return pick[0]
+
     def in_org(self, org):
         return (" in organization %r" % self.p["organization"]) if org and self.org_id is not None else ""
 
@@ -277,11 +299,13 @@ class Templates(object):
                 if e:
                     self.ees[kind] = (int(e["id"]), str(name))
         self.creds = {}                       # kind -> [(id, name, type, type name)]
+        # 1.123.1: a credential may be of another organization (AAP lets a template use it when the setup credential's user
+        # has Use on it, as the portal's setup job always did): the templates' own organization first, then one other
         for kind, names in sorted((p["credentials"] or {}).items()):
             names = [names] if isinstance(names, str) else list(names or [])
             got = []
             for n in names:
-                c = self.one("credentials", str(n), "credential %s (aap_templates_credentials)" % kind)
+                c = self.cred(str(n), "credential %s (aap_templates_credentials)" % kind)
                 if c:
                     tn = str(((c.get("summary_fields") or {}).get("credential_type") or {}).get("name") or c.get("credential_type"))
                     got.append((int(c["id"]), str(n), c.get("credential_type"), tn))

@@ -8,6 +8,19 @@
     _setup_ca_path: "{{ aap_templates_ca_path }}"
   when: not aap_templates_describe_only | bool
 
+# 1.123.1: a pasted block whose lines lost their indentation leaves these empty (None) - said plainly, not a module crash
+- name: Job templates | the settings are lists and maps
+  ansible.builtin.assert:
+    that:
+      - aap_templates_credentials is mapping
+      - aap_templates_only is not none
+    fail_msg: >-
+      {{ 'aap_templates_credentials is empty or not a map: check that its lines are indented under it, or write it on one line
+      ({machine: "...", vmware: "..."}).' if aap_templates_credentials is not mapping else
+      'aap_templates_only is empty: indent its "- " lines under it, or write ["...", "..."] on one line.' }}
+    quiet: true
+  when: not aap_templates_describe_only | bool
+
 - name: Job templates | the catalog
   ansible.builtin.set_fact:
     _at_doc: >-

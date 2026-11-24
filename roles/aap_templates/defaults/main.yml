@@ -18,6 +18,7 @@ aap_templates_inventory_organization: ""     # the inventory's organization when
 aap_templates_ee: {}
 # your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon,
 # act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several.
+# 1.123.1: a credential of another organization is found too (the templates' own is looked in first).
 #   {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"}
 aap_templates_credentials: {}
 # only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog

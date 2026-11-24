@@ -189,7 +189,7 @@ run -e '{"aap_templates_project": "Lab project"}'; rc=$?
 setst "s['credentials'].append({'id': 70, 'name': 'Personal key', 'organization': None, 'credential_type': 1, 'summary_fields': {'credential_type': {'id': 1, 'name': 'Machine'}}})"
 before="$(writes)"
 run -e '{"aap_templates_credentials": {"machine": "Personal key"}, "aap_templates_only": ["Troubleshoot"]}'; rc=$?
-[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "credential machine (aap_templates_credentials) 'Personal key': not found in organization 'Default'" \
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "credential machine (aap_templates_credentials) 'Personal key': not found in any organization" \
     && pass "a personal credential (no organization): not used, nothing written" || fail "personal credential" "rc $rc; $(grep -E "fatal|not found" "$work/out.txt" | head -3)"
 "$py" - "$repo/aap/job_templates.yml" "$work/catalog.yml" <<'PYEND2'
 import sys, yaml
