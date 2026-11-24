@@ -2,7 +2,11 @@
 
 ## 1.116.6 — 2026-11-24
 
-**To set up:** nothing.
+**To set up:** for the VMs of a past outage, make the new template *VMware - VM placement snapshot*
+(`playbooks/vmware_placement_snapshot.yml`, in the setup catalog) with a **VMware vCenter** credential (read-only is
+enough) and the **Report database** credential (the writer); no Limit; Concurrent jobs off; schedule it every 60 minutes.
+Give the outage review template the **Report database** credential too (the reader is enough). Without them the review
+reads vCenter now for those VMs, as before nothing else changes.
 
 - One datastore lost by all paths down (APD) on many hosts made a long AAR (the user's 10 pages came from 1.116.2).
   On the test shape (tests/test_outage_compact.py, LibreOffice render) 1.116.4 gives 6 pages; 1.116.6 gives 4.
@@ -31,10 +35,20 @@ counts only when that finding falls in the datastore's outage; a storage alarm g
 in Appendix A; path redundancy stays on its own line when the paths line has no datastore; a card counts hosts per
 vCenter and names the vCenter when a name repeats.
 
+**The VMs of a past outage.** The new job *VMware - VM placement snapshot* keeps every VM's host, cluster,
+datastores and power state in the report database (tables `vm_placement`, `vm_placement_run`): what changed since the
+last run and one whole snapshot a day, for `vm_placement_days` (400). The review takes the VMs on each lost datastore
+or host as of the newest snapshot at or before its first loss (*42 VMs had files on ds_shared_01 (as of 23 Nov 07:00:00
+CET, the placement snapshot; may have hung or failed, not proof they were down)*), else reads vCenter now (*as of the
+review's read*), else says *not read*. A host root lists the VMs that *ran on* it. A VM with its own signal stays
+confirmed and is listed once. The tile reads *no VM confirmed · 42 with files on ds_shared_01*; the workbook's sheet
+*VMs on lost objects* has every VM; the AAR and the handoff carry the line. The review's reads are read only and
+review only: the scheduled watch is unchanged.
+
 Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
 each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
 
-Tests: tests/test_outage_compact.py (new), tests/test_outage_timeline.py, tests/test_outage_one_place.py and
+Tests: tests/test_outage_compact.py and tests/test_vm_placement.py (new), tests/test_outage_timeline.py, tests/test_outage_one_place.py and
 tests/test_incident_docs.py.
 
 ## 1.116.4 — 2026-11-24

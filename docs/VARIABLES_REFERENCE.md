@@ -2916,6 +2916,9 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_poll_dry_run` | `false` | true = only list what it would pick up: no note, no workflow (Check does the same) |
 | `vm_deploy_poll_claim_fields` | `{}` | Fields set on the ticket together with the "Picked up" note, e.g. {state: "2"} (In Progress) - so the ticket leaves the states picked up as well ({} = only the note). |
 | `vm_deploy_poll_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
+| `vm_placement_days` | `400` | ---- VMware - VM placement snapshot (1.116.6; schedule every 60 minutes; docs/VM_OUTAGE_WATCH.md) ---- delete placement rows older than this many days (0 = never); a review of an older outage says "not read" |
+| `vm_placement_db_create` | `true` | make the tables vm_placement and vm_placement_run on the first run; false = an admin makes them (docs/REPORT_DATABASE.md) |
+| `vm_placement_db_timeout` | `10` | seconds to wait for the report database's connection |
 
 ## win_act
 

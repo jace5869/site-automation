@@ -1666,6 +1666,23 @@ job_templates:
       produces: Report email with an Excel workbook (vm_hardware_xlsx), the report website page, job artifacts
       supports: Run constraint=Reads only (no hosts); writes the report email and the report website (report_web_dest) when
         set
+  - name: VMware - VM placement snapshot
+    playbook: playbooks/vmware_placement_snapshot.yml
+    credentials: [vmware, report_db]
+    optional_credentials: []
+    ask_limit: false
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/vmware_placement_snapshot.yml
+    area: VMware
+    description:
+      does: 'Every 60 minutes: keeps every VM''s host, cluster, datastores and power state in the report database, for the
+        outage review''s VMs.'
+      targets: vCenter (VMware vCenter credential, read-only is enough); the report database (Report database credential);
+        no Limit.
+      produces: What changed since the last run and one whole snapshot a day, kept vm_placement_days; artifacts vm_placement.
+      supports: Run constraint=Reads only (no hosts); vCenter is only read; writes the report database; Concurrent jobs off
   - name: Network device certificate report
     playbook: playbooks/net_cert_report.yml
     credentials: []

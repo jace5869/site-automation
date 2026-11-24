@@ -1,0 +1,17 @@
+---
+# VMWARE - VM PLACEMENT SNAPSHOT (1.116.6), every 60 minutes. Reads every VM's host, cluster, datastores and power state
+# from vCenter (read-only) and keeps them in the report database: what changed since the last run, and one whole
+# snapshot a day, for vm_placement_days (400). The outage review (VMware - VM outage watch with vm_watch_review) reads it
+# back for the VMs on a lost datastore or host when the outage began - also for a past window. Attach a "VMware vCenter"
+# (read-only is enough) and a "Report database" (the writer) credential; no Limit; Concurrent jobs off.
+# docs/VM_OUTAGE_WATCH.md ("The VMs of a past outage"), docs/REPORT_DATABASE.md ("The VM placement history")
+#   ansible-playbook playbooks/vmware_placement_snapshot.yml
+- name: VMware VM placement snapshot
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware VM placement snapshot
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: placement.yml

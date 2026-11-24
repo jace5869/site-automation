@@ -738,6 +738,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
     "vm_tools_report.yml": ("VM - VMware Tools inventory", "VMware vCenter (read-only is enough)", "", ""),
     "vm_rightsizing_report.yml": ("VM - right-sizing report", "VMware vCenter (ACT model key with vm_rightsize_act)", "", ""),
     "vmware_hardware_report.yml": ("VMware - hardware inventory", "VMware vCenter (read-only is enough)", "", ""),
+    "vmware_placement_snapshot.yml": ("VMware - VM placement snapshot", "VMware vCenter (read-only is enough), Report database", "", """\
+## Schedule it every 60 minutes, Concurrent jobs off (docs/VM_OUTAGE_WATCH.md, "The VMs of a past outage")
+## The outage review reads it back for the VMs on a lost datastore or host when the outage began.
+"""),
     "vmware_version_report.yml": ("VMware - version report", "VMware vCenter", "", ""),
     "vm_deploy_placement.yml": ("VM - deploy placement change", "VMware vCenter, ServiceNow API", "", """\
 ## Use the deploy template's settings. The portal supplies these four variables at launch.

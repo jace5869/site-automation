@@ -991,6 +991,13 @@ It reads SolarWinds Orion's SWIS API, not your hosts: a read-only Orion account,
 credential, one template. Follow [NETWORK_MAP.md](NETWORK_MAP.md). The same credential on the site portal's
 deploy turns on its live Network map page.
 
+### VMware - VM placement snapshot
+
+It reads every VM's host, cluster, datastores and power state every 60 minutes and keeps what changed in the report
+database, so an outage review can name the VMs on a lost datastore or host, also for a past outage. Two credentials:
+"VMware vCenter" (read-only is enough) and "Report database" (the writer). No Limit. Turn **off** *Enable concurrent
+jobs*. Follow [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#the-vms-of-a-past-outage).
+
 ### SolarWinds - snapshot
 
 It reads SolarWinds every 10 minutes and keeps it in the report database, for the reports to read. Two credentials:

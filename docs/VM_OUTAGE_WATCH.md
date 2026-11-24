@@ -263,9 +263,10 @@ read and what the vCenter event read showed.
   those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only from a down
   host's membership reads *on the down host (state not read)*. A VM with files on a lost datastore and no signal of
   its own is never counted: a separate line says *3 VMs have files on ds_shared_01 (may have hung or failed)*.
-  The watch lists a datastore's VMs only while the datastore is not accessible. After a recovery the line reads
-  *VMs on ds_shared_01: not read*. With no confirmed VM the heading reads *What it affected: no VM confirmed*.
-  The tile and the AAR carry the same line.
+  For a datastore or host that came back, the VMs come from the placement history as of the outage's start, else
+  vCenter now (*The VMs of a past outage* below). With neither the line reads *VMs on ds_shared_01: not read*.
+  With no confirmed VM the heading reads *What it affected: no VM confirmed*; the tile reads
+  *no VM confirmed · 42 with files on ds_shared_01*. The AAR and the handoff carry the same lines.
 - **Down now** lists current conditions worst first. When the watch read falls after the selected window, it lists only
   current conditions for that window's roots. If the condition has no time,
   it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
@@ -283,6 +284,27 @@ same time. Set `vm_watch_review_noise: false` to include these changes in the de
 timeline entry. Summed noise, *What else saw it* and *How it judged* follow.
 The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
 The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
+
+### The VMs of a past outage
+
+A datastore or host that came back has no VM list in vCenter's own read. The review finds its VMs in this order:
+
+1. **The placement history** (report database): the VMs on that datastore or host as of the newest snapshot at or
+   before the first loss. The line says *as of 23 Nov 07:00:00 CET, the placement snapshot*.
+2. **vCenter now**, when the history has no snapshot that old (or no history): the line says *as of the review's read*.
+3. Neither: *VMs on ds_shared_01: not read*.
+
+A VM with a signal of its own (the watch, HA) stays confirmed and is counted. The others are named as *had files on* a
+datastore or *ran on* a host, never counted as down. The page names eight, then *+N more*; the workbook's sheet *VMs on
+lost objects* has every one with its host, power state, datastores and the snapshot's time.
+
+**What to schedule.** The template *VMware - VM placement snapshot* (`playbooks/vmware_placement_snapshot.yml`),
+every 60 minutes, Concurrent jobs off, with a **VMware vCenter** credential (read-only is enough) and the **Report
+database** credential (the writer). It keeps what changed since the last run and one whole snapshot a day, for
+`vm_placement_days` (400). The review template needs the **Report database** credential too (the reader is enough) to
+read it. [REPORT_DATABASE.md](REPORT_DATABASE.md#the-vm-placement-history-11166) has the tables.
+
+To review a past outage, launch the review with `vm_watch_review_from` and `vm_watch_review_to` set to its window.
 
 ### What else saw it
 

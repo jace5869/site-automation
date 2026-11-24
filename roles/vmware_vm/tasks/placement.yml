@@ -1,0 +1,48 @@
+---
+# VMWARE - VM PLACEMENT SNAPSHOT (1.116.6, playbooks/vmware_placement_snapshot.yml). One module reads every VM's host,
+# cluster, datastores and power state from each vCenter (read-only) and keeps them in the report database: what changed
+# since the last run, and one whole snapshot a day (site_vm_placement_snapshot over plugins/module_utils/site_vm_placement.py).
+# The read never passes through Ansible's variables. A database that cannot be written is one warning, never a failure;
+# a dry run (Check) reads vCenter and writes nothing.
+- name: VM placement | the report database's credential is attached
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
+    fail_msg: >-
+      No report database: attach a "Report database" credential (the writer, report_writer) to this job template
+      (aap/credential_types/report_database.yml, docs/REPORT_DATABASE.md). Nothing was read.
+    quiet: true
+
+- name: VM placement | read every VM's placement (vCenter, read only) and keep what changed
+  site_vm_placement_snapshot:
+    host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    connect_timeout: "{{ vm_placement_db_timeout | int }}"
+    create: "{{ vm_placement_db_create | bool }}"
+    keep_days: "{{ vm_placement_days | int }}"
+    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    datacenter: "{{ vmware_datacenter | default('', true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_place
+
+- name: VM placement | what it kept
+  ansible.builtin.debug:
+    msg: >-
+      {{ (['Check: read only, nothing written.'] if ansible_check_mode else [])
+         + ['%s: %d VMs, %s, %d rows kept' % (r.vcenter, r.vms | int, 'whole snapshot' if r.whole else 'changes only', r.kept | int)
+            for r in _vm_place.runs]
+         + (['Older rows deleted: %d' % (_vm_place.pruned | int)] if _vm_place.pruned | int else [])
+         + (['Not kept: ' ~ _vm_place.error] if _vm_place.error else []) }}
+
+- name: VM placement | the counts (job artifact vm_placement)
+  ansible.builtin.set_stats:
+    data:
+      vm_placement: "{{ {'read_at': _vm_place.read_at, 'ok': _vm_place.ok, 'runs': _vm_place.runs} }}"
+    per_host: false
+    aggregate: false
+  when: not ansible_check_mode

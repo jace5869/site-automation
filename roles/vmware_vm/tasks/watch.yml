@@ -167,6 +167,55 @@
           ansible.builtin.set_fact:
             _vm_w_review_ev: {events: [], capped: [], vcenters: [], events_not_read: true}
 
+    # 1.116.6: the VMs on each lost datastore or host when the outage began - the report database's placement history
+    # (VMware - VM placement snapshot), else vCenter now (read only). Review only; the scheduled watch reads neither.
+    - name: VMware | the review's lost datastores and hosts, with when each loss began
+      when: _vm_w_review | bool
+      ansible.builtin.set_fact:
+        _vm_w_lost_objects: >-
+          {{ _vm_w_review_ev.events | default([]) | outage_review_objects(_vm_w_review_opts | combine(
+               {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'triggers': _vm_w_cond | default([]), 'review': true})) }}
+      no_log: true
+
+    - name: VMware | the VMs on them when the outage began (report database, read only)
+      when: _vm_w_review | bool and _vm_w_lost_objects | length > 0 and lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
+      site_vm_placement_read:
+        host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+        port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+        database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+        user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+        ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+        items: "{{ _vm_w_lost_objects }}"
+      register: _vm_w_place_db
+      no_log: true
+      check_mode: false                  # read only
+
+    - name: VMware | the VMs on the others now (vCenter, read only)
+      when: _vm_w_review | bool and _vm_w_lost_objects | outage_placement_missing(_vm_w_place_db.placements | default([])) | length > 0
+      block:
+        - name: VMware | read the VMs on the lost datastores and hosts that have no placement snapshot
+          site_vmware_object_vms:
+            items: "{{ _vm_w_lost_objects | outage_placement_missing(_vm_w_place_db.placements | default([])) }}"
+            vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+            validate_certs: "{{ vmware_validate_certs | bool }}"
+          register: _vm_w_place_live
+          no_log: true
+          check_mode: false              # read only
+      rescue:
+        - name: VMware | the VMs on the lost objects were not read (the review says so)
+          ansible.builtin.set_fact:
+            _vm_w_place_live: {}
+
+    - name: VMware | the review's VMs on the lost datastores and hosts
+      when: _vm_w_review | bool
+      ansible.builtin.set_fact:
+        _vm_w_review_opts: >-
+          {{ _vm_w_review_opts | combine({'placements': _vm_w_place_db.placements | default([])
+                                         | outage_placements(_vm_w_place_live | default({}))}) }}
+      no_log: true
+
     - name: VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)
       site_outage_tickets:
         review: "{{ true if _vm_w_review | bool else omit }}"

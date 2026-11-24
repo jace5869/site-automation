@@ -1759,6 +1759,7 @@ PART_COLUMNS = (["Object", "What", "Down for", "Now"],
                 ["Ran on", "Datastore", "VMs", "What happened", "Now"],
                 ["Severity", "Object", "What", "Since", "Down for"], ["What", "How", "Down for"])
 NOISE_COLUMNS = ["Alarm", "VMs", "Changes", "When", "Verdict"]
+PLACEMENT_COLUMNS = ["Lost object", "Kind", "VM", "Host", "Power", "Datastores", "As of (UTC)", "Source"]
 
 
 def _review_parts(incident, opts, begin, end, stamp):
@@ -2003,10 +2004,47 @@ def _review_parts(incident, opts, begin, end, stamp):
     count_line = "%s: %d restarted by HA, %d reset by HA." % (_count(vm_count, "VM"), len(outcomes["restart"]), len(outcomes["reset"]))
     if not vm_count and stores:
         count_line = "No VM confirmed down: the watch, vCenter's events and HA recorded none."
-    # 1.116.6: the VMs with files on a lost datastore, apart from the confirmed ones (or that they were not read)
-    files_lines, files_unread = [], []
+    # 1.116.6: the VMs with files on a lost datastore (or that ran on a lost host), apart from the confirmed ones: from the
+    # placement history as of the outage's start (VMware - VM placement snapshot), else the review's own vCenter read,
+    # else the watch's members, else "not read". Never counted as down.
+    files_lines, files_unread, files_rows, files_tile = [], [], [], []
+    placed = {}
+    for pl in opts.get("placements") or []:
+        if isinstance(pl, dict) and pl.get("as_of"):
+            placed.setdefault((pl.get("vcenter", ""), pl.get("kind"), pl.get("name")), pl)
+            if pl.get("kind") == "host":            # the review labels a host by its short name
+                placed.setdefault((pl.get("vcenter", ""), "host", _short(pl.get("name"))), pl)
+    confirmed_vms = {key for key in affected}
+
+    def power(v):
+        return {"poweredOn": "on", "poweredOff": "off", "suspended": "suspended"}.get(v.get("power"), v.get("power") or "power not read")
+
+    for obj in stores + hosts:
+        vc, typ, name = obj
+        pl = placed.get((vc, typ, name)) or placed.get((vc, typ, re.sub(r" \[[^\]]+\]$", "", name)))
+        if not pl:
+            continue
+        listed = [v for v in pl.get("vms") or [] if (vc, v.get("name")) not in confirmed_vms]
+        when = ("as of the review's read, %s" if pl.get("source") == "review" else "as of %s, the placement snapshot") % stamp(_time(pl["as_of"]))
+        shown = _shown(["%s (%s, %s)" % (v["name"], _short(v.get("host")) or "host not read", power(v)) for v in listed])
+        if typ == "datastore":
+            verb = "had" if pl.get("source") != "review" else "has" if len(listed) == 1 else "have"
+            line = ("%s %s files on %s (%s; may have hung or failed, not proof they were down): %s" % (
+                _count(len(listed), "VM"), verb, display(vc, name), when, shown) if listed else
+                "No other VM had files on %s (%s)." % (display(vc, name), when))
+            files_tile.append("%d with files on %s" % (len(listed), name))
+        else:
+            line = ("%s ran on %s (%s; not proof they were down): %s" % (_count(len(listed), "VM"), display(vc, name), when, shown)
+                    if listed else "No other VM ran on %s (%s)." % (display(vc, name), when))
+            files_tile.append("%d on %s" % (len(listed), name))
+        files_lines.append(line)
+        files_rows.extend([display(vc, name), typ, v["name"], v.get("host", ""), power(v), ", ".join(v.get("datastores") or []),
+                           pl["as_of"], "review read" if pl.get("source") == "review" else "placement snapshot"] for v in listed)
     for obj in stores:
         vc, _, name = obj
+        if (vc, "datastore", name) in placed or \
+                (vc, "datastore", re.sub(r" \[[^\]]+\]$", "", name)) in placed:
+            continue
         names = sorted(incident["files_on"].get(obj, ()))
         if names:
             files_lines.append("%s %s files on %s (may have hung or failed): %s" % (
@@ -2047,7 +2085,8 @@ def _review_parts(incident, opts, begin, end, stamp):
     end_recovery = max(back_times + [t for t, _ in recovered], default=None) if not open_observation else None
     return dict(observed_starts=observed_starts, observed_start=observed_start, open_observation=open_observation,
                 title=title if meta or affected else "", basename=kind + " " + subject, head_name=kind + ", " + scope,
-                went=went, went_note=note, affected=aff_rows, affected_note=count_line, files_lines=files_lines, files_unread=files_unread, now=down, at_risk=[],
+                went=went, went_note=note, affected=aff_rows, affected_note=count_line, files_lines=files_lines, files_unread=files_unread, files_rows=files_rows,
+                files_tile=files_tile, now=down, at_risk=[],
                 recovered=[row for _, row in recovered], issues=issues, affected_keys=affected, host_count=host_count,
                 first_watch=first_watch, first_signal=first_watch[0] if first_watch else first["t"] if first else None,
                 last_signal=last_signal, still_keys=still_keys,
@@ -3390,13 +3429,16 @@ def outage_timeline(events, tickets=None, opts=None):
         summary_rows.extend([[labels[3], row[0], row[1], "", row[2]] for row in parts["recovered"]])
         sheets = [sheet, dict(name="Outage summary", columns=["Part", "Object", "What", "When", "Down for / Now"], rows=summary_rows),
                   dict(name="Noise", columns=NOISE_COLUMNS, rows=noise_rows)]
+        if parts["files_rows"]:          # 1.116.6: every VM on a lost datastore or host (the page and the AAR name 8)
+            sheets.append(dict(name="VMs on lost objects", columns=PLACEMENT_COLUMNS, rows=parts["files_rows"]))
         down_note = read_line
         if parts["now"]:
             _, obj, _, when, _ = parts["now"][0]
             down_note = obj + (" · " if when == "time not recorded" else " " if when.startswith("down by ") else " since ") + when
         boxes = [box("Went down", parts["infra_count"], "critical" if parts["went"] else "info", ", ".join(r[0] for r in parts["went"])),
                  box("VMs affected", vm_count, "warning" if vm_count else "info" if parts["files_lines"] else "ok",  # never counted
-                     " ".join([parts["affected_note"]] + parts["files_lines"][:1])),
+                     " · ".join([("%s confirmed" % _count(vm_count, "VM")) if vm_count else "no VM confirmed"] + parts["files_tile"])
+                     if parts["files_tile"] else " ".join([parts["affected_note"]] + parts["files_lines"][:1])),
                  box("Down now", parts["now_count"], now_severity, down_note),
                  box("Recovered", len(parts["recovered"]), "ok", "Objects with recorded recovery"),
                  boxes[-1], box("Noise", len(noise), "info", "Changes on %s, summed up by scope" % _count(
@@ -3589,8 +3631,53 @@ def outage_review_aar(doc, info=None, web=False):
     return _unsafe(out)
 
 
+def outage_review_objects(events, opts=None):
+    """1.116.6: the review's lost datastores and hosts, each with when its loss began - what roles/vmware_vm/tasks/watch.yml
+    asks the placement history (site_vm_placement_read) and vCenter (site_vmware_object_vms) about, before the time line:
+    [{vcenter, kind, name, moid, at}]. at: the first loss event of that object in the window, else the watch's first
+    observation of it, else the window's start."""
+    o = dict(opts or {})
+    begin, end = _time(o.get("begin")), _time(o.get("end"))
+    if begin is None or end is None or end <= begin:
+        return []
+    o["triggers"] = _review_triggers(o)
+    all_vc = _vcenter_events(events, o.get("datastores"))
+    read = _time(o.get("read_at")) or end
+    roots = _review_roots(o, all_vc, begin, end, begin <= read <= end)[0]
+    out = []
+    for c in roots:
+        kind, vc, name = c.get("object_type"), c.get("vcenter", ""), c.get("object", "")
+        if kind not in ("datastore", "host") or not name:
+            continue
+        losses = [e["t"] for e in all_vc if begin <= e["t"] <= end and e["vcenter"] == vc and _event_loss(e) == kind
+                  and (e["datastore"] == name if kind == "datastore" else name in (e["host"], e["host_full"]) or e["host"] == _short(name))]
+        times = losses or [t for t in (_time(x) for x in c.get("observations") or []) if t] or \
+            [t for t in [_time(c.get("since"))] if t]
+        at = min(times) if times else begin
+        out.append(dict(vcenter=vc, kind=kind, name=name, moid=c.get("moid") or "", at=at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))
+    return _unsafe(out)
+
+
+def outage_placement_missing(items, placements=None):
+    """The items the placement history had no snapshot for (as_of empty, or not answered): the review reads vCenter for them."""
+    found = {(p.get("vcenter"), p.get("kind"), p.get("name")) for p in placements or [] if isinstance(p, dict) and p.get("as_of")}
+    return [i for i in items or [] if (i.get("vcenter"), i.get("kind"), i.get("name")) not in found]
+
+
+def outage_placements(placements=None, live=None):
+    """The history's placements where it had a snapshot, else the review's vCenter read (live: site_vmware_object_vms)."""
+    out = [p for p in placements or [] if isinstance(p, dict) and p.get("as_of")]
+    have = {(p.get("vcenter"), p.get("kind"), p.get("name")) for p in out}
+    for p in (live or {}).get("placements") or [] if isinstance(live, dict) else []:
+        if isinstance(p, dict) and p.get("as_of") and (p.get("vcenter"), p.get("kind"), p.get("name")) not in have:
+            out.append(p)
+    return out
+
+
 class FilterModule(object):
     def filters(self):
         return {"outage_timeline": outage_timeline, "outage_timeline_doc": outage_timeline_doc, "outage_window": outage_window,
                 "outage_review_aar": outage_review_aar, "outage_review_context": outage_review_context,
-                "outage_events_csv": outage_events_csv, "outage_redact": outage_redact}
+                "outage_events_csv": outage_events_csv, "outage_redact": outage_redact,
+                "outage_review_objects": outage_review_objects, "outage_placement_missing": outage_placement_missing,
+                "outage_placements": outage_placements}
