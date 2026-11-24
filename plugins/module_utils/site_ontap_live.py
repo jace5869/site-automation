@@ -11,6 +11,7 @@ import json
 
 GB = 1024.0 ** 3
 DAY = 86400.0
+MIN_GB_DAY = 0.01           # under 10 MB a day is not filling (the days until full would read in millions)
 
 
 def row_key(*parts):
@@ -29,7 +30,12 @@ def rate(n, t0, t1, sx, sy, sxx, sxy, min_points=3, min_hours=6.0):
     den = n * float(sxx) - float(sx) ** 2
     if den <= 0:
         return None, "the points are all at one time"
-    return (n * float(sxy) - float(sx) * float(sy)) / den, ""
+    slope = (n * float(sxy) - float(sx) * float(sy)) / den
+    # the sums cancel: points that do not move leave a rounding residue (1e-9 GB a day and the like), not a growth -
+    # it is 0 when under a millionth of the mean used a day
+    if abs(slope) < 1e-6 * max(1.0, abs(float(sy) / n)):
+        slope = 0.0
+    return slope, ""
 
 
 def _num(v):
@@ -38,8 +44,8 @@ def _num(v):
 
 
 def days_until(free_b, gb_day):
-    """Days until free_b bytes are used at gb_day GB a day; None when not filling (or no rate); 0 when there now."""
-    if gb_day is None or gb_day <= 0:
+    """Days until free_b bytes are used at gb_day GB a day; None when not filling (under MIN_GB_DAY, or no rate); 0 when there now."""
+    if gb_day is None or gb_day < MIN_GB_DAY:
         return None
     return max(0.0, float(free_b) / GB / gb_day)
 

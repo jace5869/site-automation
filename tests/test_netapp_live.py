@@ -145,6 +145,18 @@ class Growth(unittest.TestCase):
         self.assertIn("(3 so far, 0.5 h)", why)
         self.assertIsNotNone(L.rate(*self.sums([(now - 7 * 3600, 1.0), (now - 3600, 2.0), (now, 3.0)], now))[0])
 
+    def test_points_that_do_not_move_are_not_filling(self):
+        # MySQL's sums of three equal points leave a residue (the page read "+0.0" and 168,943,631,805,359 days)
+        now = 1_800_000_000
+        n, t0, t1, sx, sy, sxx, sxy = self.sums([(now - 86400, 1843.2), (now - 43200, 1843.2), (now, 1843.2)], now)
+        g, why = L.rate(n, t0, t1, sx, sy, sxx, sxy + 1e-10 * sy)
+        self.assertEqual((g, why), (0.0, ""))
+        self.assertIsNone(L.days_until(205 * GB, g))
+        self.assertIsNone(L.days_until(5.8 * 1024 * GB, 1e-9))                  # a rounding residue that got through: not filling
+        self.assertIsNone(L.days_until(100 * GB, 0.005))                         # under 10 MB a day
+        g, _why = L.rate(*self.sums([(now - 86400, 1843.2), (now - 43200, 1843.25), (now, 1843.3)], now))
+        self.assertAlmostEqual(g, 0.1, places=6)                                # a small real growth stays
+
     def test_days_until(self):
         self.assertAlmostEqual(L.days_until(100 * GB, 10.0), 10.0)
         self.assertIsNone(L.days_until(100 * GB, -1.0))
