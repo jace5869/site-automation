@@ -881,9 +881,12 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## 1.122.0 (docs/WINDOWS.md "Local group members"). Read only. Limit: your Windows servers.
 ## The local groups read (a well-known one by its SID, so any language of Windows; others by name or SID)
 # win_local_groups: ["Administrators", "Remote Desktop Users", "Remote Management Users", "Backup Operators", "Server Operators", "Print Operators", "Account Operators"]
-## "Unusual members": on fewer than this share of the servers: off (default), auto (80), or a percent
+## Additional alerts: on fewer than this share of the servers: off (default), auto (80), or a percent
 # win_local_groups_usual: "off"
-## The workbook (Approved list, By member, By server, Not read); the CSV and JSON of every member are always attached
+## Percentage of answering servers, inclusive: minimum for the baseline and maximum for Unusual members
+# win_local_groups_baseline_pct: 90
+# win_local_groups_rare_pct: 10
+## The workbook (Approved list, By member, By server, Not read, Suggested baseline); the CSV and JSON of every member are always attached
 # report_email_xlsx: true
 ## The approved members (from approved-list.yml or the page): the job then attaches an Evaluate-STIG answer file per
 ## STIG and check-local-admins.ps1 - it judges nothing itself

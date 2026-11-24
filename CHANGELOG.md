@@ -15,6 +15,7 @@ portal_publish_templates: ["Windows connection test", "Windows health check", "W
 ```
 
 Each template needs Limit **Prompt on launch** and its inventory set (the Windows inventory). The cards appear within a minute.
+(3) Optional, on *Windows - local group members*: `win_local_groups_baseline_pct` (90) and `win_local_groups_rare_pct` (10).
 
 - **Windows jobs pick many servers in the site portal, like the Linux ones.** The Hosts box of a Windows job takes several
   servers, a whole inventory group, or some servers of a group; one pick set is one job (the Limit is the hosts, counted
@@ -33,6 +34,11 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   shows its hosts, with **Pick the whole group (n)** or single hosts to tick. The list has two parts, *Groups (n)* and
   *Hosts (n)*; **Select all shown (n)** says how many. The server sends 200 rows at a time (thousands of hosts are never sent
   whole). Without scripts the plain multi-select has the same two parts.
+- **Windows - local group members: prevalence and a suggested baseline.** Each member is ranked by how many of the servers
+  that answered have it (*in 56 of 60 servers, 93 %*; servers that did not answer are counted apart), and the servers with
+  rare members (under `win_local_groups_rare_pct`, 10 %) are listed. Members at or over `win_local_groups_baseline_pct` (90 %)
+  form a suggested baseline: JSON and a pasteable snippet for the Administrators membership check, on the email and the
+  website, and a *Suggested baseline* sheet in the workbook.
 - Not in this release: the Windows jobs that change servers (patch, certificate install and restore, CSRs, ACT install) stay in
   their workflows with an approval, not labelled for the portal.
 

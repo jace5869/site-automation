@@ -536,14 +536,21 @@ What it reads:
 
 What the report shows:
 
-- **Unusual members**: an enabled local account (not the built-in one) in Administrators (a warning). With
-  `win_local_groups_usual` (`auto` = 80%, or a percent; default `off`), members on few of the servers too.
+- **At a glance** gives the baseline size and names the servers that did not answer. It flags enabled local
+  Administrators accounts other than the built-in account. `win_local_groups_usual` adds alerts based on the
+  servers that have each group (`auto` = 80%, or a percent, default `off`).
+- **Most common members** ranks each group's members by the number of answering servers where they appeared.
+  **Unusual members** lists the servers for members at or below `win_local_groups_rare_pct` (default 10%).
+- Members at or above `win_local_groups_baseline_pct` (default 90%) form the suggested baseline. Both cutoffs use
+  the exact share before display rounding. The email and website include `suggested-baseline.json` for every qualifying
+  group and `suggested-baseline.txt` with one-line and block YAML for the Administrators membership check. Review the
+  suggestions before pasting either form into AAP as `win_local_groups_approved`.
 - **By server**, **By member** (who is in which group where), **Not read** (the server and why).
 - The page has a Group button row and a Member search; they choose the rows of By server and By member.
 - The inventory: every member of every group on every server, one row each, nothing left out. Columns: server, group,
   member, type, source, SID, enabled, servers with this member. As `local-groups.csv` and `local-groups.json` (attached,
   and beside the page on the report website), the workbook's By server sheet, and the job artifact `win_local_groups`.
-- The workbook (`report_email_xlsx: true`): Approved list, By member, By server (each with a Group column), Not read.
+- The workbook (`report_email_xlsx: true`): Approved list, By member, By server (each with a Group column), Not read, Suggested baseline.
 
 The job judges nothing. To check the servers against an approved list:
 

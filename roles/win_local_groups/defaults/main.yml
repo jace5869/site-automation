@@ -4,9 +4,13 @@
 # Windows); any other by its name. A SID (S-1-5-32-...) works too.
 win_local_groups: ["Administrators", "Remote Desktop Users", "Remote Management Users", "Backup Operators",
                    "Server Operators", "Print Operators", "Account Operators"]
-# "Unusual members": a member in the group on fewer than this share of the servers that have it. off (the default:
-# nothing is called unusual), auto = 80 (percent), or a number (e.g. 60). Fewer than 3 servers read: none is unusual.
+# Additional alerts (win_local_groups_usual): a member in the group on fewer than this share of the servers that have it. off (the default:
+# no additional alerts), auto = 80 (percent), or a number (e.g. 60). Fewer than 3 servers read: none is unusual.
 win_local_groups_usual: "off"
+# Minimum percent of all answering servers for a member to enter its group's suggested baseline (inclusive).
+win_local_groups_baseline_pct: 90
+# Maximum percent of all answering servers for a member to appear under Unusual members (inclusive).
+win_local_groups_rare_pct: 10
 # The approved members of Administrators (built from the job's approved-list.yml or the page's Export selected). The job
 # judges nothing with it: it writes the checks to run on the servers - an Evaluate-STIG answer file per STIG
 # (answer-file-<STIG>.xml) and check-local-admins.ps1. A name (any case) or a SID (S-1-...); {computer} is each server's

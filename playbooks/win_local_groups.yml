@@ -1,10 +1,9 @@
 ---
 # WINDOWS - LOCAL GROUP MEMBERS (1.122.0). Who is in the privileged local groups of each Windows server (Administrators,
 # Remote Desktop Users, Remote Management Users, Backup Operators - win_local_groups), found by their well-known SID so a
-# German or French Windows counts too. READ ONLY: nothing on a server changes, also in Check mode. The report: Unusual
-# members (an enabled local account in Administrators; a member on few of the servers - win_local_groups_usual), By
-# server, By member (who is in which group where), Not read; the page filters by group and member; the workbook
-# (report_email_xlsx) has every row with a Group column. docs/WINDOWS.md "Local group members".
+# German or French Windows counts too. Read only. The report ranks members of each group across the servers that
+# answered and identifies rare members. The email, website and optional workbook carry the suggested baseline.
+# docs/WINDOWS.md "Local group members".
 #
 #   ansible-playbook playbooks/win_local_groups.yml -l 'SRV-APP*'
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
@@ -35,7 +34,8 @@
     - name: Every server's groups, as one model
       ansible.builtin.set_fact:
         _wlg_model: >-
-          {{ _wlg_hosts | win_local_groups_model(win_local_groups_usual | default('off')) }}
+          {{ _wlg_hosts | win_local_groups_model(win_local_groups_usual | default('off'),
+                                                  win_local_groups_baseline_pct | default(none), win_local_groups_rare_pct | default(none)) }}
       vars:
         # every host that got past the OS check: read, not reached, or failed before its read
         _wlg_hosts: >-
@@ -65,7 +65,7 @@
           {%- for u in _wlg_model.unread -%}
           {%-   set _ = out.append('NOT READ ' ~ u.host ~ ': ' ~ u.why) -%}
           {%- endfor -%}
-          {{ out or ['Nothing unusual: ' ~ (_wlg_model.read | length) ~ ' server(s) read.'] }}
+          {{ out or ['No enabled local administrator or win_local_groups_usual alert: ' ~ (_wlg_model.read | length) ~ ' server(s) read.'] }}
       run_once: true
 
     # 1.122.0: the complete inventory - every member of every group read on every server, one row each, nothing left out -
@@ -87,6 +87,9 @@
       loop:
         - {name: local-groups.csv, content: "{{ _wlg_model | win_local_groups_csv }}"}
         - {name: local-groups.json, content: "{{ _wlg_model | win_local_groups_json }}"}
+        - name: suggested-baseline.json
+          content: "{{ _wlg_model | win_local_groups_baseline(now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')) | to_nice_json }}"
+        - {name: suggested-baseline.txt, content: "{{ _wlg_model | win_local_groups_baseline_snippet }}"}
         # the list to build the approved list from (every member, each with # in front: the person decides)
         - {name: approved-list.yml, content: "{{ _wlg_model | win_local_groups_approved_yaml(now(utc=true).strftime('%Y-%m-%d')) }}"}
       loop_control:
@@ -136,11 +139,11 @@
              | combine({'footer': _wlg_note, 'facets': _wlg_model | win_local_groups_facets}) }}
         _report_xlsx: "{{ (_wlg_model | win_local_groups_sheets) if report_email_xlsx | default(false) | bool else [] }}"
         # 1.122.2: the files this job promises on the website - local-groups.json, approved-list.yml, check-local-admins.ps1
-        _report_web_files_more: ['.json', '.yml', '.ps1']
+        _report_web_files_more: ['.json', '.yml', '.ps1', '.txt']
         # the inventory (CSV, JSON), the list to build the approved list from, and the checks made from it (when set)
         _report_attachments: >-
           {%- set out = [] -%}
-          {%- for n in ['local-groups.csv', 'local-groups.json', 'approved-list.yml']
+          {%- for n in ['local-groups.csv', 'local-groups.json', 'approved-list.yml', 'suggested-baseline.json', 'suggested-baseline.txt']
                        + (_wlg_check_files.results | default([]) | map(attribute='item') | map(attribute='name') | list) -%}
           {%-   set _ = out.append({'path': _wlg_dir.path ~ '/' ~ n, 'filename': n}) -%}
           {%- endfor -%}

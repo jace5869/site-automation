@@ -195,7 +195,7 @@ class Report(unittest.TestCase):
         self.assertEqual(labels, ["Servers read", "In Administrators", "Local accounts in Administrators", "Unusual members", "Servers not read"])
         self.assertEqual(r["summary"][0]["value"], "5 of 7")
         titles = [s["title"] for s in r["sections"]]
-        self.assertEqual(titles[0], "Unusual members")
+        self.assertEqual(titles[0], "At a glance")
         for t in ("By server", "By member", "Not read"):
             self.assertIn(t, titles)
         top = r["sections"][0]
@@ -231,7 +231,7 @@ class Report(unittest.TestCase):
     def test_sheets(self):
         m = w.win_local_groups_model(fleet(), "auto")
         sh = dict((s["name"], s) for s in w.win_local_groups_sheets(m))
-        self.assertEqual(list(sh), ["Approved list", "By member", "By server", "Not read"])
+        self.assertEqual(list(sh), ["Approved list", "By member", "By server", "Not read", "Suggested baseline"])
         self.assertEqual(sh["By server"]["columns"][:8], ["Server", "Group", "Member", "Type", "Source", "SID", "Enabled", "Servers with this member"])
         self.assertEqual(sh["By member"]["columns"][1], "Group")
         self.assertEqual(len(sh["Not read"]["rows"]), 2)
