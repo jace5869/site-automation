@@ -63,9 +63,6 @@ def ontap_expand_doc(r):
     hand = []
     if p.get("status") == "grow" and check:
         vg = p.get("vol_growth", p.get("growth"))
-        if vg and p.get("autosize") in ("grow", "grow_shrink"):
-            steps.append({"step": "Pause autosize (%s)" % p["autosize"], "exactly": "autosize grow paused during the change, put back after it",
-                          "ok": None, "result": NOT_RUN})
         steps += [{"step": "Grow the volume", "exactly": ("PATCH /api/storage/volumes/{uuid} size %s -> %s%s" % (
                        X.human(p["size"]), X.human(p["target"]), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "")) if vg
                    else "size %s stays: %s" % (X.human(p["size"]), p.get("vol_how") or "room enough"),
@@ -202,6 +199,8 @@ def ontap_expand_doc(r):
             how.append("The Size box: %s (ontap_expand_max_gb does not limit a size typed there; the aggregate does)." % r.get("size"))
         how.append("%s stays at or under %g %% (ontap_expand_aggr_max_pct) up to +%s." % (p.get("aggr"), p.get("max_pct", 97), X.human(p.get("room"))))
         sections.append({"title": "How the size was chosen", "lines": how})
+    if p.get("autosize_note"):
+        sections.append({"title": "Autosize", "lines": [p["autosize_note"][0].upper() + p["autosize_note"][1:] + "."]})
     if check and p.get("status") == "grow":
         sections.append({"title": "Run it for real", "lines": ["This was a Check run: nothing was changed. Launch it again without Check "
                                                                 "- it reads the volume live again first."]})
@@ -270,10 +269,6 @@ def ontap_expand_list_doc(r):
     probs = ["%s: %s" % (c.get("address"), c.get("error")) for c in cl if c.get("error")] + ["Survey NOT updated: %s" % x for x in bad_survey]
     if r.get("vc_error"):
         probs.append("vCenter: %s - the datastore names are left out of the list" % r["vc_error"])
-    for z in r.get("paused") or []:
-        probs.append("%s: volume %s (%s) - autosize OFF since %s: expand job %s paused it (was %s) and did not put it back - the next expand of "
-                     "it puts it back after ontap_expand_stale_minutes, or set it back in ONTAP System Manager" % (
-                         z.get("cluster"), z.get("volume"), z.get("svm"), z.get("at"), z.get("job"), z.get("mode")))
     if probs:
         sections.append({"title": "Problems", "status": "critical" if bad_survey or not read else "warning", "lines": probs})
     rows, cells = [], []

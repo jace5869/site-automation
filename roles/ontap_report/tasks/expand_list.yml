@@ -62,7 +62,7 @@
   ansible.builtin.set_fact:
     _ol_doc: >-
       {{ {'clusters': _ol_list.clusters, 'choices': _ol_choices.choices, 'entries': _ol_list.choices, 'found': _ol_found,
-          'excluded': _ol_list.excluded, 'surveys': _vm_survey_set.results | default([]), 'paused': _ol_list.paused | default([]),
+          'excluded': _ol_list.excluded, 'surveys': _vm_survey_set.results | default([]),
           'problems': (_vm_survey_set.problems | default([])) + ([] if _vm_survey_set is defined and _vm_survey_set is not skipped
                        else ['not written: a cluster could not be read, so the survey keeps its last list']),
           'vmware': lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0, 'vc_error': _ol_vc_error, 'more': _ol_choices.more, 'check': ansible_check_mode,

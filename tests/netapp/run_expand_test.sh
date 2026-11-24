@@ -65,7 +65,7 @@ run() {
     if grep -qF -- "expand-Test9" "$work/out.txt"; then echo "FAIL - $tname: the ONTAP password is in the output"; fails=$((fails + 1)); return 1; fi
     echo "ok   - $tname"
 }
-patches() { grep -c '^PATCH' "$work/c${1:-0}.log" 2>/dev/null || true; }
+patches() { grep -cE '^(PATCH|POST)' "$work/c${1:-0}.log" 2>/dev/null || true; }
 check() {   # check NAME CONDITION...
     local tname="$1"; shift
     if "$@"; then echo "ok   - $tname"; else echo "FAIL - $tname"; fails=$((fails + 1)); fi
@@ -131,15 +131,14 @@ sql="$(pick vol_sql01)"
 home="$(pick vol_home)"
 run "the default over 97 %: refused, with the largest size that fits" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\"}" \
     -- "Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits" "Launch again with a size in the Size box: 180.0GB or less"
-run "that size as Check: the plan says autosize grow is paused during the change" ok ontap_volume_expand.yml --check \
-    -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" -- "autosize grow paused during the change, put back after it"
+run "that size as Check: the plan says autosize's maximum is under the new size (and is left as it is)" ok ontap_volume_expand.yml --check \
+    -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
+    -- "Autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP keeps the new size (autosize is not changed)."
 run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
-    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" "Done - autosize off for the change" \
-       "Done - autosize grow again, its maximum raised 2.10 TB -> 2.18 TB (under the volume's size now)"
-check "  7 changes now (vol_ds03's comment and LUN; vol_sql01: autosize off, its size, autosize back with a new maximum)" test "$(patches)" = 7
-check "  ... autosize off before the size, back after it" "$py" -c 'import sys
-p = [l for l in open(sys.argv[1]) if l.startswith("PATCH /api/storage/volumes/v-sql01")]
-sys.exit(not (len(p) == 3 and "\"off\"" in p[0] and "\"size\"" in p[1] and "\"grow\"" in p[2] and "maximum" in p[2]))' "$work/c0.log"
+    -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" \
+       "autosize maximum 2.10 TB is below the new size 2.18 TB; ONTAP keeps the new size"
+check "  5 changes now (vol_ds03's comment and LUN; vol_sql01: its size only - autosize never changed)" test "$(patches)" = 5
+check "  ... vol_sql01's autosize not touched" test "$(grep 'PATCH /api/storage/volumes/v-sql01' "$work/c0.log" | grep -c autosize)" = 0
 n=$(patches)
 bk="vol_bk01 (svm_backup, cluster1) - 4.00 TB [vol|$c0|svm_backup|vol_bk01||4398046511104||v-bk01]"
 run "an excluded volume named by hand: refused" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$bk\"}" \

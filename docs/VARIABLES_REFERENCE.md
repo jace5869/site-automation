@@ -1487,7 +1487,6 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_expand_exclude` | `[]` | Volumes never offered and never grown, even named by hand: name patterns or svm:volume, * and ?, e.g. ["*_root", "vol0", "svm_backup:*"]. SVM and node roots, SnapMirror destinations, offline volumes and FlexGroups always are. |
 | `ontap_expand_lun` | `same` | a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the only way so far) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
-| `ontap_expand_stale_minutes` | `60` | an earlier expand's autosize pause note (in the volume's comment) older than this is put back by the next expand of that volume; newer: that run stops (another may be running) |
 | `ontap_expand_incident` | `"off"` | off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one through the ServiceNow API credential when the run changes something, and resolve it with the result. |
 | `ontap_expand_incident_group` | (empty) | the assignment group of the incident ontap_expand_incident: create opens - must be set for create |
 | `ontap_expand_templates` | `["NetApp - expand a volume"]` | the templates (names or IDs; or {template, kind}) whose survey the volume list writes |

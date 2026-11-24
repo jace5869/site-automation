@@ -388,17 +388,16 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    volume now needs more than the plan said (`max_vol_growth`: the Check's and the plan's growth is the ceiling), the LUN
    was resized, or anything else moved against the plan - before anything is written. The LUN's new size must fit the
    volume's confirmed size.
-   - **Autosize:** a volume whose autosize is `grow` or `grow_shrink` has it paused (off) for the change: the size is
-     read once more and sent only when bigger (a size under the volume's own is never sent), then autosize is put back
-     as it was - its maximum raised to the new size when it was under it, said in the report. It is put back also when
-     the change fails (its maximum raised only to a size read back). If the pause's answer is lost, autosize is read
-     again: off - put back, nothing else changed; not readable - the report says "autosize may be OFF - check volume X".
-     If autosize cannot be put back, the LUN is not grown (said). The new size is never more than the planned growth on
-     the size read after the pause (grow_shrink may have shrunk it). The Check plan shows "autosize grow paused during
-     the change".
+   - **Autosize is never changed.** `grow_shrink` refuses the run (it could shrink the volume again): "autosize is
+     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `grow` or `off`: the
+     run goes ahead; a new size over autosize's maximum is said in the plan and the report ("autosize maximum X is
+     below the new size; ONTAP keeps the new size") and the maximum is left as it is.
    - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
-     size, to the byte. Anything else: nothing is sent, and the report says why. Each change's ONTAP job is followed to
-     its end; one still queued when the job gives up is said ("autosize may still turn OFF on volume X later").
+     size, to the byte. The size is read again right before each change; anything moved: nothing is sent. Each change's
+     ONTAP job is followed to its end and the size read back (at least the size before + the growth). No definite
+     outcome: "resize of volume X: outcome not known - check System Manager before running again", the LUN is not
+     grown, the job fails. The LUN's new size is its size + the growth (never over the plan's); a volume that cannot
+     hold it stops the run - the LUN size is never made smaller to fit.
    - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
      counts the spill at that size, once.
 6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the
@@ -478,7 +477,6 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
 | `ontap_expand_templates` / `ontap_expand_question` | the expand template / `ontap_expand_volume` | whose survey the list writes, and its question |
 | `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
-| `ontap_expand_stale_minutes` | `60` | an earlier expand's autosize pause note older than this is put back by the next expand; newer: that run stops |
 
 ## The live page
 
@@ -594,14 +592,8 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
   /api/storage/volumes/{uuid}` with `size`). The CLI's relative `volume size -new-size +N` exists, but the job does not
   send it through the private CLI passthrough: its REST contract (path, verb, body) is not in NetApp's public docs. So
   the job reads the size right before the change and sends nothing when it moved; between that read and ONTAP's change
-  (well under a second) someone else could still grow the volume - the job then reads it back, reports the size it
-  finds over the plan, and never sends a smaller size afterwards. A LUN is written the same way, inside the volume's
-  autosize pause.
-- **The autosize pause note.** While autosize is paused the volume's comment carries `[site-automation: autosize paused
-  <time> was <mode> max <bytes> job <id>]`. A job stopped mid-way (killed, timed out) leaves it: *NetApp - refresh volume
-  list* reports it in Problems (and on the portal's NetApp page), and the next expand of that volume puts autosize back
-  when the note is older than `ontap_expand_stale_minutes` (60), or stops when it is newer. Whether another expand is
-  still running is judged by that age alone.
+  (well under a second) someone else - or autosize `grow` - could still grow the volume, and the sent size would then be under it - the job then reads it back, reports the size it
+  finds over the plan, and never sends a smaller size afterwards. A LUN is written the same way, after the volume.
 - Expand was tested against the fake ONTAP API only; its first Check and Run on one real volume are its verification.
 - Capacity trends was tested against the same fake ONTAP API, a fake AAP job history and a real MySQL 8.4. It was not
   run against a real cluster or a real AAP. It counts from its own points; it does not read ONTAP's own performance

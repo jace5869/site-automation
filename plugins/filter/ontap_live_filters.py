@@ -323,8 +323,6 @@ def ontap_live_payload(r):
               "size": int(a.get("size") or 0), "used": int(a.get("used") or 0)} for a in lst.get("aggregates") or []]
     clusters = [{"address": c.get("address"), "name": c.get("name"), "error": c.get("error") or ""} for c in lst.get("clusters") or []]
     not_read = ["%s: %s" % (c["address"], c["error"]) for c in clusters if c["error"]]
-    not_read += ["volume %s (%s, %s): autosize OFF since %s - expand job %s paused it (was %s) and did not put it back" % (
-        z.get("volume"), z.get("svm"), z.get("cluster"), z.get("at"), z.get("job"), z.get("mode")) for z in lst.get("paused") or []]
     parts = {}
     col = r.get("collected") or {}
     if r.get("health") or r.get("perf"):

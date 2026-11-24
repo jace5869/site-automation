@@ -416,25 +416,6 @@ def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
     return p
 
 
-MARK = re.compile(r"\s*(?:\|\s*)?\[site-automation: autosize paused (\S+) was (grow|grow_shrink) max (\d+) job (\S+?)\]")
-
-
-def marker(at, mode, maximum, job):
-    """the note an expand leaves in the volume's comment while autosize is paused (it goes with the pause, in one change)"""
-    return "[site-automation: autosize paused %s was %s max %d job %s]" % (at, mode, int(maximum or 0), job or "-")
-
-
-def find_marker(comment):
-    """an expand's pause note in a comment -> {at, mode, max, job} or None (read loosely: anything around it is kept)"""
-    m = MARK.search(str(comment or ""))
-    return {"at": m.group(1), "mode": m.group(2), "max": int(m.group(3)), "job": m.group(4)} if m else None
-
-
-def strip_marker(comment):
-    """the comment without an expand's pause note"""
-    return MARK.sub("", str(comment or "")).strip()
-
-
 def recheck(p, vol, aggr, exclude=()):
     """Right before the change: '' when the volume and its aggregate still are as planned, else why it stops. vol: the volume
     read again ({name, svm, size, state, type, style, is_svm_root, aggregates}), aggr: its aggregate now."""

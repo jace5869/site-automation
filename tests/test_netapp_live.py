@@ -184,16 +184,6 @@ class Payload(unittest.TestCase):
         self.assertTrue(cut)
         self.assertEqual(p["parts"], {})                          # health and perf off: no parts
 
-    def test_an_autosize_pause_left_behind_is_said(self):
-        lst, found = fx.listed()
-        lst["paused"] = [{"cluster": "cluster1", "svm": "svm_a", "volume": "vol_ds04", "at": "2026-11-24T10:00Z", "mode": "grow", "max": 1, "job": "77"}]
-        p = lf.ontap_live_payload({"list": lst, "choices": [], "found": found, "opts": fx.OPTS})
-        self.assertIn("volume vol_ds04 (svm_a, cluster1): autosize OFF since 2026-11-24T10:00Z - expand job 77 paused it (was grow)",
-                      p["not_read"][0])
-        doc = ef.ontap_expand_list_doc({"clusters": lst["clusters"], "choices": [], "entries": [], "paused": lst["paused"]})
-        probs = [x for x in doc["sections"] if x["title"] == "Problems"][0]["lines"]
-        self.assertIn("autosize OFF since 2026-11-24T10:00Z: expand job 77 paused it", probs[0])
-
     def test_excluded_volumes_keep_their_reason_and_sizes(self):
         p, _t = payload()
         dp = [v for v in p["volumes"] if v["volume"] == "vol_ds02_dst"][0]

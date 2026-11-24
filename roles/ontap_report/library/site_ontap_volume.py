@@ -36,8 +36,6 @@ options:
   max_vol_growth: {description: "grow: the volume's growth the plan said (bytes) - never more (-1 = no limit).", type: int, default: -1}
   max_target: {description: "grow: the volume's size the plan said (bytes) - never over it (-1 = no limit).", type: int, default: -1}
   max_lun_target: {description: "grow: the LUN's size the plan said (bytes) - never over it (-1 = no limit).", type: int, default: -1}
-  stale_minutes: {description: "grow: an earlier expand's pause note older than this is put back first; newer stops the run.", type: int, default: 60}
-  job: {description: "grow: this job's ID, in the pause note.", type: str, default: '-'}
   validate_certs: {description: Check the clusters' certificates., type: bool, default: true}
   ca_path: {description: A CA file to check them with., type: str, default: ''}
   timeout: {description: Seconds for one request., type: int, default: 30}
@@ -50,7 +48,6 @@ clusters: {description: "list: each cluster read - {address, name, reachable, er
 choices: {description: "list: the volumes that may be grown (site_ontap_expand.choice_text's fields + choice, naa, nfs_path, nfs_ips).", type: list, returned: always}
 excluded: {description: "list: [{volume, svm, cluster, why, address, size, used, aggr, aggr_free, uuid, root}].", type: list, returned: always}
 aggregates: {description: "list: every aggregate read - [{cluster, address, name, node, size, used}].", type: list, returned: always}
-paused: {description: "list: volumes whose autosize an expand paused and did not put back - [{cluster, svm, volume, at, mode, max, job}].", type: list, returned: always}
 plan: {description: "plan, grow: site_ontap_expand.plan's answer + volume_uuid, lun_uuid, naa, nfs_path, nfs_ips, cluster.", type: dict, returned: always}
 steps: {description: "grow: [{step, exactly, ok, result}] in order.", type: list, returned: always}
 '''
@@ -216,8 +213,6 @@ def list_cluster(c, opts):
         luns.setdefault(((l_.get("svm") or {}).get("name"), ((l_.get("location") or {}).get("volume") or {}).get("name")), []).append(l_)
     addr = ips(c)
     choices, excluded = [], []
-    paused = [dict(X.find_marker(v.get("comment")), cluster=name, svm=(v.get("svm") or {}).get("name") or "", volume=v.get("name") or "")
-              for v in vols if X.find_marker(v.get("comment"))]          # an expand's autosize pause never put back
     for v in sorted(vols, key=lambda r: ((r.get("svm") or {}).get("name") or "", r.get("name") or "")):
         why = X.excluded(v, opts["exclude"])
         svm = (v.get("svm") or {}).get("name") or ""
@@ -243,7 +238,7 @@ def list_cluster(c, opts):
             choices.append(e)
     ag_out = [{"cluster": name, "address": c.address, "name": r.get("name") or "", "node": (r.get("node") or {}).get("name") or "",
                "size": aggr_in(r)["size"], "used": aggr_in(r)["used"]} for r in arecs]
-    return name, choices, excluded, ag_out, paused
+    return name, choices, excluded, ag_out
 
 
 def read_one(c, key, opts, size_text):
@@ -282,6 +277,10 @@ def read_one(c, key, opts, size_text):
     p.update(volume_uuid=v.get("uuid"), lun_uuid=(lrec or {}).get("uuid") or "", naa=X.naa((lrec or {}).get("serial_number")),
              nfs_path=nfs_path, nfs_ips=ips(c).get(key["svm"], []) if nfs_path and not lrec else [], luns=count,
              comment=v.get("comment") or "", aggregate_uuid=(ag[0].get("uuid") if ag else ""), autosize=vi["autosize"])
+    if p.get("status") == "grow" and vi["autosize"] == "grow_shrink":      # it could shrink the volume again: never grown here
+        p.update(status="refused", why=GROW_SHRINK)
+    elif p.get("status") == "grow":
+        p["autosize_note"] = autosize_note(vi["autosize"], vi["autosize_max"], p["target"]) if p.get("vol_growth", p.get("growth")) else ""
     return p, v
 
 
@@ -333,27 +332,29 @@ def may_write(current, new, cap):
     return isinstance(current, int) and current > 0 and isinstance(new, int) and isinstance(cap, int) and current <= new <= cap
 
 
-def grow(c, p, key, opts, line, wait):
-    """The change, as a small state machine - each state a step in the report; it stops at the first that fails, and a
-    size is sent only when may_write() holds (a size read just now, above 0, and current <= new <= the planned size,
-    exact bytes). The volume's size is an absolute PATCH: ONTAP's REST API has no relative grow (/api/storage/volumes
-    takes size; the CLI's relative "volume size -new-size +N" through the private CLI passthrough is not used - its
-    contract could not be confirmed in NetApp's docs), so the size is read once more right before the PATCH and nothing
-    is sent when it moved; the window between that read and ONTAP's change remains (docs/NETAPP.md, Limits).
+GROW_SHRINK = "autosize is grow_shrink on this volume: set it to grow or off in System Manager first, then run again"
 
-    READ     the volume and its aggregate read again; the plan re-checked; an earlier expand's pause note in the comment:
-             older than stale_minutes - its autosize put back first; newer - stop (another expand may be running). A LUN
-             volume: its LUNs read again, the growth worked out again, never over the plan's, the run's ceiling, the
-             LUN's growth with its reserve; TARGET = min(size + growth, the plan's absolute size).
-    PAUSE    (autosize grow or grow_shrink, and anything to write) autosize off with a note in the comment (one change),
-             ONTAP's job polled to its end; failed or not known: read again, put back or said.
-    REREAD   the size read again (above 0); NEW = what is needed (a LUN volume) or the size + growth, never over TARGET.
-    WRITE    the size read once more - moved since REREAD: not sent; else sent, its job polled, read back: at least the
-             size before + the growth, at most TARGET.
-    LUN      (all went well) the parent read again; the LUN's new size: its size + growth, never over the plan's LUN
-             size nor the parent's - may_write.
-    RESTORE  (after PAUSE, always) autosize as it was (its maximum raised only to a size read back), the note taken out
-             and the change's line written; a resize whose job is still running: autosize left paused, said."""
+
+def autosize_note(mode, maximum, target):
+    """'' or the line the plan and the report say: a new size over autosize's maximum is kept by ONTAP (never changed here)"""
+    if mode in ("grow", "grow_shrink") and maximum and target > maximum:
+        return "autosize maximum %s is below the new size %s; ONTAP keeps the new size (autosize is not changed)" % (X.human(maximum), X.human(target))
+    return ""
+
+
+def grow(c, p, key, opts, line, wait):
+    """The change, as a small state machine - each state a step in the report; it stops at the first that fails. Autosize is
+    never changed: grow_shrink refuses the run (it could shrink the volume again), grow and off go ahead. A size is sent
+    only when may_write() holds (a size read just now, above 0, current <= new <= the planned size, exact bytes).
+
+    READ     the volume and its aggregate read again; the plan re-checked; grow_shrink: stop. A LUN volume: its LUNs read
+             again, the growth worked out again, never over the plan's, the run's ceiling, nor the LUN's growth with its
+             reserve. TARGET = min(size + growth, the plan's absolute size).
+    VOLUME   (growth > 0) the size read once more right before the PATCH - moved: nothing sent; else sent, its job polled to
+             its end, read back: landed = at least the size before + the growth - 1 MiB and at most TARGET + 1 MiB. No
+             definite outcome: "outcome not known", the LUN is not grown, the run fails.
+    LUN      (the volume went well) the LUN's new size = min(its size + growth, the plan's LUN size); the parent read right
+             before must hold it (never a smaller LUN size to fit); the LUN read once more right before the PATCH."""
     steps = []
     vid = p["volume_uuid"]
     vname = "%s (%s)" % (key["volume"], key["svm"])
@@ -372,37 +373,17 @@ def grow(c, p, key, opts, line, wait):
     if now["name"] != key["volume"] or now["svm"] != key["svm"]:
         step.update(ok=False, result="the volume is now %s on %s - nothing was changed" % (now["name"], now["svm"]))
         return steps
-    mk = X.find_marker(now.get("comment"))
-    if mk:                                            # an earlier expand paused autosize and did not put it back
-        age = _minutes_since(mk["at"])
-        if age is None or age < opts.get("stale_minutes", 60):
-            step.update(ok=False, result="another expand may be running on this volume (job %s paused its autosize at %s) - nothing was "
-                                         "changed; try again later, or check volume %s in ONTAP System Manager" % (mk["job"], mk["at"], vname))
-            return steps
-        body = {"autosize": {"mode": mk["mode"], "maximum": mk["max"]}, "comment": X.strip_marker(now.get("comment"))}
-        try:
-            st, why, _u = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body=body), wait)
-        except (Failed, Unreachable, HTTPException, ValueError) as e:
-            st, why = "failed", "Failed or not known: %s" % e
-        steps.append({"step": "Restore autosize left paused", "exactly": "job %s, %s: autosize off -> %s" % (mk["job"], mk["at"], mk["mode"]),
-                      "ok": st == "done", "result": "Done - put back as it was" if st == "done" else why + " - nothing else was changed"})
-        if st != "done":
-            return steps
-        now, size0 = read_vol(c, vid)
-        if now is None or size0 is None:
-            steps.append({"step": "Read the volume again", "exactly": "after putting autosize back", "ok": False,
-                          "result": "the volume could not be read - nothing else was changed"})
-            return steps
+    if now.get("autosize") == "grow_shrink":
+        step.update(ok=False, result=GROW_SHRINK + " - nothing was changed")
+        return steps
     why = X.recheck(p, dict(now, size=size0), aggr_in(ag[0]) if ag else {"name": an, "size": 0, "used": None}, opts["exclude"])
     if why:
         step.update(ok=False, result=why)
         return steps
     now = dict(now, size=size0)
-    base_comment = X.strip_marker(now.get("comment"))
     cap = int(p.get("vol_growth", p["growth"]))
     if p.get("vol_growth_cap", -1) >= 0:
         cap = min(cap, int(p["vol_growth_cap"]))
-    lnow = None
     if p.get("lun"):
         cap = min(cap, X.growth_limit(now, p["growth"]) - size0)
         lnow, lwhy = _luns_now(c, p, key)
@@ -427,151 +408,51 @@ def grow(c, p, key, opts, line, wait):
         target = min(target, int(p["max_target"]))
     vg = max(0, target - size0)
     p["target"] = target
-    # ---- PAUSE
-    mode, maxi = now.get("autosize") or "", int(now.get("autosize_max") or 0)
-    writes = vg > 0 or bool(p.get("lun"))
-    paused, resize_unknown, got, ok = False, "", None, True
-
-    def mode_now():
-        rec, _s = read_vol(c, vid)
-        return rec["autosize"] if rec else None
-
-    if mode in ("grow", "grow_shrink") and writes:
-        note = X.marker(time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime()), mode, maxi, opts.get("job") or "-")
-        pstep = {"step": "Pause autosize (%s)" % mode, "exactly": "autosize.mode %s -> off, a note in the comment" % mode, "ok": False, "result": ""}
-        steps.append(pstep)
-        try:
-            st, why, juuid = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body={
-                "autosize": {"mode": "off"}, "comment": X.comment_with(base_comment, note)}), wait)
-        except (Failed, Unreachable, HTTPException, ValueError) as e:
-            st, why, juuid = "unknown", "Failed or not known: %s" % e, ""
-        if st == "done":
-            paused = True
-            pstep.update(ok=True, result="Done - autosize off for the change (the note in the comment says so until it is back)")
-        else:
-            m = mode_now()
-            if m == "off":
-                pstep["result"] = why + " - it went off all the same; nothing else is changed, autosize is put back"
-                steps.append(_restore(c, vid, vname, mode, maxi, None, base_comment, wait, mode_now))
-            elif st == "failed" and m == mode:
-                pstep["result"] = why + " - autosize is as it was; nothing was changed"
-            else:
-                pstep["result"] = ("%s - autosize may still turn OFF on volume %s later%s: check it in ONTAP System Manager (it was %s); "
-                                   "the size is not changed" % (why, vname, (" (ONTAP job %s)" % juuid) if juuid else "", mode))
+    note = autosize_note(now.get("autosize"), int(now.get("autosize_max") or 0), target) if vg else ""
+    comment = X.comment_with(now.get("comment") or "", line) if line else None
+    # ---- VOLUME
+    if vg <= 0:
+        ok, res = comment_only(c, p, comment, wait, "Not needed - %s" % (p.get("vol_how") or "it has room for the LUN's growth"))
+        steps.append({"step": "Grow the volume", "exactly": "size %s stays%s" % (X.human(size0), (", comment + \"%s\"" % line) if line else ""),
+                      "ok": ok, "result": res})
+        got = size0
+    else:
+        if vg <= X.SLACK:                             # the plan's least growth is 1 GB: a growth of 1 MiB or less is not one
+            steps.append({"step": "Grow the volume", "exactly": "size %s" % X.human(size0), "ok": False,
+                          "result": "not sent: a growth of %s is under the least the plan makes" % X.human(vg)})
             return steps
-    comment = X.comment_with(base_comment, line) if line else None
-    try:
-        if vg > 0:
-            ok = False
-            # ---- REREAD
-            rec2, size2 = read_vol(c, vid)
-            new = None
-            if size2 is None:
-                steps.append({"step": "Grow the volume", "exactly": "read again before the change", "ok": False,
-                              "result": "ONTAP gave no size for the volume now - its size is not sent"})
-            else:
-                limit = min(target, size2 + vg)
-                new = limit
-                if p.get("lun"):
-                    vt2, _how = X.volume_for_lun(dict(rec2, size=size2), lnow, p["growth"])
-                    new = vt2
-                    if vt2 > size2 and vt2 > limit:
-                        steps.append({"step": "Grow the volume", "exactly": "worked out again after the pause", "ok": False,
-                                      "result": "the volume would need %s now (free space went, e.g. a shrink), more than the planned %s - "
-                                                "its size is not sent; launch it again" % (X.human(vt2), X.human(limit))})
-                        new = None
-                if new is not None and new <= size2:
-                    p["vol_how"] = "it is %s already - its size is not sent" % X.human(size2)
-                    p["target"] = got = size2
-                    ok = True
-                    if not paused:
-                        ok, res = comment_only(c, p, comment, wait, "Not needed - " + p["vol_how"])
-                    else:
-                        res = "Not needed - " + p["vol_how"]
-                    steps.append({"step": "Grow the volume", "exactly": "size %s stays" % X.human(size2), "ok": ok, "result": res})
-                elif new is not None:
-                    # ---- WRITE: the size read once more right before: moved since REREAD - not sent
-                    _r, size3 = read_vol(c, vid)
-                    if size3 != size2 or not may_write(size3, new, limit):
-                        steps.append({"step": "Grow the volume", "exactly": "size %s -> %s" % (X.human(size2), X.human(new)), "ok": False,
-                                      "result": ("not sent: the volume changed right before the change (%s, now %s)" % (
-                                          X.human(size2), X.human(size3) if size3 else "not read")) if size3 != size2 else
-                                      "not sent: the new size must be between the size now and the planned %s" % X.human(limit)})
-                    else:
-                        p["target"] = new
-                        body = {"size": new}
-                        if comment is not None and not paused:
-                            body["comment"] = comment
-                        try:
-                            st, why, juuid = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body=body), wait)
-                        except Failed as e:                # ONTAP answered: refused
-                            st, why, juuid = "failed", "Refused: %s" % e, ""
-                        except (Unreachable, HTTPException, ValueError) as e:      # no answer: it may have landed
-                            st, why, juuid = "unknown", "Not known: %s" % e, ""
-                        _r, got = read_vol(c, vid)
-                        landed = got is not None and size3 + (new - size3) - X.SLACK <= got <= target + X.SLACK
-                        if st == "unknown" and not landed:
-                            resize_unknown = "resize job %s still running" % (juuid or "?")
-                        ok = st != "failed" and landed
-                        if ok:
-                            res = "Done - read back %s" % X.human(got)
-                        elif got is not None and got > target + X.SLACK:
-                            res = "%s - it reads %s, over the planned %s (grown by someone else at the same time?)" % (
-                                why or "Done", X.human(got), X.human(target))
-                        else:
-                            res = "%s - it reads %s" % (why or "ONTAP said done", X.human(got) if got is not None else "nothing (read it in ONTAP System Manager)")
-                        steps.append({"step": "Grow the volume", "exactly": "PATCH /api/storage/volumes/%s size %s -> %s%s%s" % (
-                            vid, X.human(size3), X.human(new), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "",
-                            (", comment + \"%s\"" % line) if line else ""), "ok": ok, "result": res})
-        else:
-            got = size0
-            if not paused:
-                ok, res = comment_only(c, p, comment, wait, "Not needed - %s" % (p.get("vol_how") or "it has room for the LUN's growth"))
-            else:
-                res = "Not needed - %s" % (p.get("vol_how") or "it has room for the LUN's growth")
-            steps.append({"step": "Grow the volume", "exactly": "size %s stays%s" % (X.human(size0), (", comment + \"%s\"" % line) if line else ""),
-                          "ok": ok, "result": res})
-        # ---- LUN (autosize still paused: the parent cannot shrink under it)
-        if ok and p.get("lun") and all(x["ok"] for x in steps):
-            _grow_lun(c, p, key, wait, steps, vid)
-    finally:
-        # ---- RESTORE
-        if paused:
-            if resize_unknown:
-                steps.append({"step": "Restore autosize", "exactly": "autosize.mode off -> %s" % mode, "ok": False,
-                              "result": "%s - autosize left paused (the note in the comment says so); check volume %s in ONTAP System "
-                                        "Manager, then set autosize back to %s" % (resize_unknown, vname, mode)})
-            else:
-                steps.append(_restore(c, vid, vname, mode, maxi, got, comment if comment is not None else base_comment, wait, mode_now))
-    return steps
-
-
-def _minutes_since(at):
-    """'2026-11-24T14:15Z' -> minutes since then (None when not a time)"""
-    import calendar
-    try:
-        t = calendar.timegm(time.strptime(str(at), "%Y-%m-%dT%H:%MZ"))
-    except ValueError:
-        return None
-    return (time.time() - t) / 60.0
-
-
-def _restore(c, vid, vname, mode, maxi, confirmed, comment, wait, mode_now):
-    """autosize put back as it was - its maximum raised only to a size read back (confirmed) - and the pause note taken
-    out of the comment (the comment as read before the pause, with the change's line) -> the step"""
-    new_max = max(maxi, int(confirmed)) if confirmed else maxi
-    body = {"autosize": {"mode": mode, "maximum": new_max} if new_max != maxi else {"mode": mode}, "comment": comment or ""}
-    try:
-        st, why, _u = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body=body), wait)
-    except (Failed, Unreachable, HTTPException, ValueError) as e:
-        st, why = "failed", "Failed or not known: %s" % e
-    if st == "done" or mode_now() == mode:
-        return {"step": "Restore autosize", "exactly": "autosize.mode off -> %s, the note out of the comment" % mode, "ok": True,
-                "result": "Done - autosize %s again%s" % (mode, (", its maximum raised %s -> %s (under the volume's size now)"
-                                                                 % (X.human(maxi), X.human(new_max))) if new_max != maxi else "")}
-    return {"step": "Restore autosize", "exactly": "autosize.mode off -> %s" % mode, "ok": False,
-            "result": "%s - autosize may be OFF: check volume %s in ONTAP System Manager (it was %s); the note stays in its comment"
-                      % (why, vname, mode)}
+        rec3, size3 = read_vol(c, vid)                # right before the PATCH: anything moved - nothing is sent
+        if size3 != size0 or rec3 is None or rec3.get("autosize") != now.get("autosize") or not may_write(size3, target, target):
+            steps.append({"step": "Grow the volume", "exactly": "size %s -> %s" % (X.human(size0), X.human(target)), "ok": False,
+                          "result": ("not sent: the volume changed right before the change (size %s, now %s; autosize %s, now %s) - launch it again"
+                                     % (X.human(size0), X.human(size3) if size3 else "not read", now.get("autosize") or "?",
+                                        (rec3 or {}).get("autosize") or "not read"))})
+            return steps
+        body = {"size": target}
+        if comment is not None:
+            body["comment"] = comment
+        try:
+            st, why, juuid = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body=body), wait)
+        except Failed as e:                           # ONTAP answered: refused
+            st, why, juuid = "failed", "Refused: %s" % e, ""
+        except (Unreachable, HTTPException, ValueError) as e:      # no answer: it may have landed
+            st, why, juuid = "unknown", "No answer: %s" % e, ""
+        _r, got = read_vol(c, vid)
+        landed = got is not None and size3 + vg - X.SLACK <= got <= target + X.SLACK
+        if st == "done" and landed:
+            ok, res = True, "Done - read back %s" % X.human(got) + ("; " + note if note else "")
+        elif st == "failed" and got is not None and got <= size3 + X.SLACK:
+            ok, res = False, "%s - it reads %s; nothing was changed" % (why, X.human(got))
+        else:                                         # no definite outcome: never guessed
+            ok, res = False, ("resize of volume %s: outcome not known (%s; it reads %s) - check it in ONTAP System Manager before "
+                              "running again" % (vname, why or "ONTAP said done", X.human(got) if got is not None else "nothing"))
+        steps.append({"step": "Grow the volume", "exactly": "PATCH /api/storage/volumes/%s size %s -> %s%s%s" % (
+            vid, X.human(size3), X.human(target), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "",
+            (", comment + \"%s\"" % line) if line else ""), "ok": ok, "result": res})
+    # ---- LUN
+    if not ok or not p.get("lun"):
+        return steps
+    return _grow_lun(c, p, key, wait, steps, vid)
 
 
 def _luns_now(c, p, key):
@@ -602,41 +483,57 @@ def comment_only(c, p, comment, wait, res):
 
 
 def _grow_lun(c, p, key, wait, steps, vid):
-    """the LUN: the parent and the LUN read again right before; its new size = its size + the growth, never over the plan's
-    LUN size nor the parent's (may_write, exact) -> steps"""
+    """the LUN: its new size = min(its size + the growth, the plan's LUN size) - the parent read just before must hold it
+    (never a smaller LUN size to fit), the LUN read once more right before the PATCH, may_write (exact) -> steps"""
     lt = int(p["lun"]["target"])
     if p.get("max_lun_target", -1) > 0:
         lt = min(lt, int(p["max_lun_target"]))
     t = None
-    try:
-        _v, parent = read_vol(c, vid)
+
+    def lun_size():
         cur = [x for x in c.records("/api/storage/luns", LUN_FIELDS, uuid=p["lun_uuid"]) if x.get("uuid") == p["lun_uuid"]]
         raw = ((cur[0].get("space") or {}).get("size")) if cur else None
-        size = int(raw) if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else None
         where = ((cur[0].get("location") or {}).get("volume") or {}).get("name") if cur else ""
-        if cur and where != key["volume"]:
+        return (int(raw) if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else None), where, bool(cur)
+    try:
+        size, where, found = lun_size()
+        if found and where != key["volume"]:
             ok, res = False, "Stopped - the LUN moved to volume %s - grow it in ONTAP System Manager" % where
         elif size is None or abs(size - p["lun"]["size"]) > X.SLACK:
             ok, res = False, ("Stopped - the LUN is %s now, not %s as planned - grow it in ONTAP System Manager"
                               % (X.human(size) if size else "gone or not read", X.human(p["lun"]["size"])))
-        elif parent is None:
-            ok, res = False, "Stopped - the volume could not be read right before - the LUN is left as it was"
         else:
-            t = min(size + p["growth"], lt, parent)
-            if t <= size:
-                ok, res = False, ("Stopped - the LUN's new size would be %s, not over its %s (the plan's %s, the volume's %s)"
-                                  % (X.human(t), X.human(size), X.human(lt), X.human(parent)))
-            elif not may_write(size, t, min(lt, parent)):
-                ok, res = False, "Stopped - not sent: the LUN's new size must be between its size and %s" % X.human(min(lt, parent))
+            t = min(size + p["growth"], lt)           # the intended size first
+            _v, parent = read_vol(c, vid)
+            if parent is None or t > parent:
+                ok, res = False, ("Stopped - the volume (%s) cannot hold the LUN's new size %s - the LUN is left as it was"
+                                  % (X.human(parent) if parent else "not read", X.human(t)))
+            elif t <= size or not may_write(size, t, lt):
+                ok, res = False, "Stopped - not sent: the LUN's new size %s must be over its %s and at most %s" % (X.human(t), X.human(size), X.human(lt))
             else:
-                p["lun"]["target"] = t
-                st, bad, _u = job_state(c, c.call("PATCH", "/api/storage/luns/" + p["lun_uuid"], body={"space": {"size": t}}), wait)
-                got = gb_of([x for x in c.records("/api/storage/luns", LUN_FIELDS, uuid=p["lun_uuid"]) if x.get("uuid") == p["lun_uuid"]][0], "space", "size")
-                ok = st == "done" and got >= t - X.SLACK
-                res = ("Done - read back %s" % X.human(got)) if ok else "%s - it reads %s" % (bad or "ONTAP said done", X.human(got))
+                size2, _w, _f = lun_size()            # right before the PATCH: moved - nothing is sent
+                if size2 != size:
+                    ok, res = False, "Stopped - not sent: the LUN changed right before the change (%s, now %s)" % (
+                        X.human(size), X.human(size2) if size2 else "not read")
+                else:
+                    p["lun"]["target"] = t
+                    try:
+                        st, bad, _u = job_state(c, c.call("PATCH", "/api/storage/luns/" + p["lun_uuid"], body={"space": {"size": t}}), wait)
+                    except Failed as e:
+                        st, bad = "failed", "Refused: %s" % e
+                    except (Unreachable, HTTPException, ValueError) as e:
+                        st, bad = "unknown", "No answer: %s" % e
+                    got, _w, _f = lun_size()
+                    landed = got is not None and t - X.SLACK <= got <= t + X.SLACK
+                    if st == "done" and landed:
+                        ok, res = True, "Done - read back %s" % X.human(got)
+                    elif st == "failed" and got is not None and got <= size + X.SLACK:
+                        ok, res = False, "%s - it reads %s" % (bad, X.human(got))
+                    else:
+                        ok, res = False, ("resize of LUN %s: outcome not known (%s; it reads %s) - check it in ONTAP System Manager "
+                                          "before running again" % (p["lun"]["name"], bad or "ONTAP said done", X.human(got) if got else "nothing"))
     except (Failed, Unreachable, IndexError, HTTPException, ValueError) as e:
-        ok, res = False, ("Failed or not known: %s - read the LUN in ONTAP System Manager and grow it if it is not"
-                          % (e or "the LUN could not be read back"))
+        ok, res = False, "Failed or not known: %s - read the LUN in ONTAP System Manager" % (e or "the LUN could not be read")
     steps.append({"step": "Grow the LUN", "exactly": "%s space.size %s -> %s" % (p["lun"]["name"], X.human(p["lun"]["size"]), X.human(t or p["lun"]["size"])),
                   "ok": ok, "result": res})
     return steps
@@ -652,8 +549,7 @@ def main():
                            lun_mode=dict(type="str", default="same", choices=["same"]), wait_seconds=dict(type="int", default=300),
                            expect_volume_uuid=dict(type="str", default=""), expect_lun_uuid=dict(type="str", default=""),
                            max_vol_growth=dict(type="int", default=-1), max_target=dict(type="int", default=-1),
-                           max_lun_target=dict(type="int", default=-1), stale_minutes=dict(type="int", default=60),
-                           job=dict(type="str", default="-"),
+                           max_lun_target=dict(type="int", default=-1),
                            validate_certs=dict(type="bool", default=True), ca_path=dict(type="str", default=""),
                            timeout=dict(type="int", default=30), tls_legacy=dict(type="bool", default=False)),
         supports_check_mode=True)
@@ -668,12 +564,11 @@ def main():
     ctx = ssl_context(p["validate_certs"], p["ca_path"], p["tls_legacy"])
 
     if p["action"] == "list":
-        out, choices, excluded, aggregates, paused = [], [], [], [], []
+        out, choices, excluded, aggregates = [], [], [], []
         for a in clusters:
             c = Client(a, user, password, ctx, p["timeout"])
             try:
-                name, ch, ex, ag, pz = list_cluster(c, opts)
-                paused += pz
+                name, ch, ex, ag = list_cluster(c, opts)
                 out.append({"address": a, "name": name, "reachable": True, "error": ""})
                 choices += ch
                 excluded += ex
@@ -684,7 +579,7 @@ def main():
                 out.append({"address": a, "name": a, "reachable": True, "error": str(e)})
         for e in choices:
             e["choice"] = X.choice_text(e)
-        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded, aggregates=aggregates, paused=paused)
+        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded, aggregates=aggregates)
 
     key = X.parse_choice(p["choice"])
     if not key:
@@ -707,8 +602,7 @@ def main():
             if plan.get("vol_growth", plan.get("growth", 0)) > p["max_vol_growth"] + X.SLACK:
                 m.fail_json(msg="%s needs more now than its plan said (+%s, planned +%s): free space went since - nothing was changed; launch it again"
                             % (key["volume"], X.human(plan.get("vol_growth", plan.get("growth", 0))), X.human(p["max_vol_growth"])), plan=plan)
-        steps = grow(c, plan, key, dict(opts, stale_minutes=p["stale_minutes"], job=str(p["job"] or "-")[:20]),
-                     p["comment_line"], p["wait_seconds"])
+        steps = grow(c, plan, key, opts, p["comment_line"], p["wait_seconds"])
     except Unreachable as e:
         m.fail_json(msg=explain(str(e), e.kind, key["address"], p["timeout"]))
     except Failed as e:
