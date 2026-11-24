@@ -590,7 +590,10 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
    name; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
    will act on. The Limit accepts group slices such as `windows[0:4]` (both ends included) and `windows[0]`,
    group wildcards such as `win_app*`, and regex terms such as `~^SRV-APP[0-9]+$`. Host ranges must run
-   forwards and can expand to at most 1,000 values per range. Targets can use commas or colons between terms.
+   forwards and can expand to at most 1,000 values per range. A wildcard, regex or slice that selects the inventory
+   group `all` or `ungrouped` stops the job. Negative slice bounds count from the end of the ordered, deduplicated
+   group members in the job’s validation. The Ansible inventory parser must also support the slice in a command-line
+   Limit. Use commas between terms that contain regexes or IPv6 addresses. In a comma list, colons are literal.
    Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
@@ -626,10 +629,13 @@ What the job does on each server:
   earlier one's are removed only after the new task reads back right. If it does not, the earlier task is put back.
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
 - The task's script and settings are in `win_restart_dir` (default `C:\ProgramData\site-automation\restart`).
-  The job secures the dedicated `site-automation` parent and the restart folder, granting full control only to SYSTEM
-  and Administrators, with Administrators as owner and inheritance disabled. A junction or symlink in the directory
-  path stops the operation. An existing directory that another account could replace must be provisioned securely
-  by an administrator. Registration checks the script's owner and permissions, including when restoring an earlier task.
+  The job creates each missing directory with Administrators as owner, disables inheritance, and grants full control
+  only to SYSTEM and Administrators. It checks each path segment for junctions and other reparse points. An existing
+  managed directory must belong to SYSTEM, Administrators, or TrustedInstaller. Read-only access for other accounts
+  is allowed. A grant that lets another account write, delete, or change permissions on the directory or its children
+  stops the job. The error identifies the directory for an administrator to inspect. The job leaves its ACL in place.
+  Before writing the script and before registering or restoring a task, the job rechecks the directory path and owner.
+  It also checks the script's owner and permissions before registration.
 - The settings file stores the UTC restart time as `yyyy-MM-ddTHH:mm:ssZ` on Windows PowerShell and PowerShell 7.
   Rescheduling, skipping or cancelling can use that time to identify the earlier SolarWinds window in the report.
 - It never restarts a server right away. Run in Task Scheduler is switched off for the task, and the task's script does

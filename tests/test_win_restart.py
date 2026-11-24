@@ -133,7 +133,7 @@ class Checks(unittest.TestCase):
         self.assertIn("change number", self.ok(change="CHG 1; rm")[0])
         self.assertIn("reason_code", self.ok(code="0:0")[0])
         self.assertIn("delay", self.ok(delay=9999)[0])
-        for lim, tgt in (("", ""), ("  ", None), ("all", ""), ("*", ""), ("!srv-app01", ""), ("", "all"), (",", " ")):
+        for lim, tgt in (("", ""), ("  ", None), ("all", ""), ("!srv-app01", ""), ("", "all"), (",", " ")):
             self.assertIn("no servers picked", self.ok(limit=lim, target=tgt)[0], (lim, tgt))
         self.assertEqual(self.ok(limit="", target="srv-app01"), [])
         self.assertEqual(self.ok(limit="all", target="srv-app01"), [])
@@ -165,6 +165,43 @@ class Checks(unittest.TestCase):
                                ("win_a*", hosts[:2]), ("~^win_app$", hosts[:2]), (r"~APP0[1-3]$", hosts[:3])):
             with self.subTest(term=term):
                 self.assertEqual(w.win_restart_unnamed(hosts, [term], groups), [h for h in hosts if h not in expected])
+
+    def test_reserved_group_terms_are_refused(self):
+        groups = {"all": ["app01"], "ungrouped": ["app01"], "apps": ["app01"]}
+        for term, group in (("*", "all"), ("a*", "all"), ("[a]ll", "all"), ("~^al", "all"), ("all[0:2]", "all"),
+                            ("ungrouped", "ungrouped"), ("ung*", "ungrouped"), ("~grouped$", "ungrouped"),
+                            ("ungrouped[-1]", "ungrouped"), ("all[:4]", "all"), ("all[0-4]", "all")):
+            with self.subTest(term=term):
+                message = "reserved inventory group %r" % group
+                with self.assertRaisesRegex(ValueError, message):
+                    w.win_restart_unnamed(["app01"], [term], groups)
+                self.assertIn(message, self.ok(limit="app01," + term, resolved=["app01"], groups=groups)[0])
+                self.assertIn(message, self.ok(limit="app01", target=term)[0])
+
+    def test_negative_bounds_and_ordered_group_union(self):
+        groups = {"win_a": ["h2", "h1"], "win_b": ["h2", "h3", "h4"]}
+        hosts = ["h1", "h2", "h3", "h4"]
+        for term, unnamed in (("win_*[0:2]", ["h4"]), ("win_*[0:-1]", []), ("win_*[-3:-1]", ["h2"]),
+                              ("win_*[-3:-2]", ["h2", "h4"]), ("win_*[-2:]", ["h1", "h2"])):
+            with self.subTest(term=term):
+                self.assertEqual(w.win_restart_unnamed(hosts, [term], groups), unnamed)
+        with self.assertRaisesRegex(ValueError, "reversed group slice"):
+            w.win_restart_unnamed(hosts, ["win_*[2:-4]"], groups)
+
+    def test_regex_ipv6_and_separator_precedence(self):
+        regex = "~^(?:SRV-APP|SRV-WEB)[0-9]+$"
+        ip = "2001:db8::1"
+        for pattern, expected in (("db," + regex, ["db", regex]), (regex, [regex]), (ip, [ip]),
+                                  (ip + ",db", [ip, "db"]), ("web:" + ip, ["web", ip]),
+                                  (ip + ":web", [ip, "web"]),
+                                  ("db:" + regex, ["db", regex]), ("a:b,c", ["a:b", "c"]),
+                                  ("~^[a,b]:x$,db", ["~^[a,b]:x$", "db"]),
+                                  ("~^[],]$,db", ["~^[],]$", "db"])):
+            with self.subTest(pattern=pattern):
+                self.assertEqual(w.win_restart_selector(pattern), expected)
+                self.assertEqual(w.win_restart_hosts(pattern, ":!old"), ",".join(expected + ["!old"]))
+        self.assertEqual(w.win_restart_hosts("web", "!::1"), "web,!::1")
+        self.assertEqual(self.ok(limit=ip + "," + regex, resolved=[ip, "SRV-APP01"]), [])
 
     def test_invalid_limit_refused(self):
         for term, why in (("web[z:a]", "reversed"), ("web[3:1]", "reversed"), ("web[0:999999999]", "exceeds"),
@@ -407,8 +444,6 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
             t = fh.read()
         self.assertIn("<StartWhenAvailable>false</StartWhenAvailable>", t)                             # off at the time: no restart later
         self.assertIn("<EndBoundary>$EndUtc</EndBoundary>", t)
-        self.assertIn("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", t)   # the script SYSTEM runs: admins only
-        self.assertIn("/setowner '*S-1-5-32-544'", t)
         self.assertIn("<UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel>", t)
         self.assertNotIn("Restart-Computer", t)
         self.assertNotIn("shutdown", re.sub(r"#.*", "", t).lower())        # never a shutdown from the job itself
@@ -496,47 +531,75 @@ function Export-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath) $g
 $global:Hardened = @{}
 $global:AclCalls = @()
 $global:Registrations = 0
-function whoami.exe { $global:LASTEXITCODE = 0; '"admin","S-1-5-21-1000"' }
-function Get-Acl { param($LiteralPath) @{ Sddl = $LiteralPath } }
-function ConvertFrom-SddlString {
-    param($Sddl)
-    $dir = Test-Path -LiteralPath $Sddl -PathType Container
+function Test-Mkdir {
+    if (($args -join ' ') -cne '/d /e:off /v:on /c md "!SITE_RESTART_NEW_DIR!"') { throw 'unexpected md command' }
+    $path = $env:SITE_RESTART_NEW_DIR
+    $global:AclCalls += "create $path"
+    $global:LASTEXITCODE = 0
+    if ($global:LostCreateRace) { $null = New-Item -ItemType Directory -Path $path }
+    if (Test-Path -LiteralPath $path) { $global:LASTEXITCODE = 1; return }
+    $null = New-Item -ItemType Directory -Path $path
+}
+Set-Alias "$env:SystemRoot\System32\cmd.exe" Test-Mkdir
+function Get-Acl {
+    param($LiteralPath, $ErrorAction)
+    $global:AclCalls += "owner $LiteralPath"
+    if ($global:LinkOnRead -eq $LiteralPath) {
+        Rename-Item -LiteralPath $LiteralPath -NewName 'original'
+        $null = New-Item -ItemType SymbolicLink -Path $LiteralPath -Target $env:SystemRoot
+    }
     $owner = 'S-1-5-32-544'
+    if ($global:OwnerPath -eq $LiteralPath -or ($global:BadOwner -and $LiteralPath -like '*.ps1')) { $owner = $global:OtherOwner }
+    if ($LiteralPath -in @($global:ChangeBeforeWrite, $global:ChangeBeforeRegister)) {
+        $taskFile = Get-ChildItem -LiteralPath $LiteralPath -Filter '*.ps1' | Select-Object -First 1
+        $global:ScriptWritten = $taskFile.Length -gt 0
+        if ($taskFile -and ($LiteralPath -eq $global:ChangeBeforeWrite -or $global:ScriptWritten)) { $owner = $global:OtherOwner }
+    }
+    # Only this descriptor's owner is relevant. Its DACL deliberately differs from icacls /L.
+    @{ Sddl = "O:${owner}G:BAD:(A;;FA;;;WD)" }
+}
+$global:OtherOwner = 'S-1-5-21-1000'
+function Invoke-CimMethod {
+    param($ClassName, $MethodName, $Arguments, $Namespace, $ErrorAction)
+    if ($ClassName -eq 'CCM_ClientUtilities') { return }
+    if ($ClassName -ne 'Win32_SecurityDescriptorHelper' -or $MethodName -ne 'SDDLToWin32SD' -or
+        $Arguments.SDDL -notmatch '^O:(S-[0-9-]+)D:(.+)$') { throw 'unexpected descriptor request' }
+    $owner = $Matches[1]
+    $path = $Matches[2]
     $flags = 16
     $control = 0
-    if ($dir) {
+    if (Test-Path -LiteralPath $path -PathType Container) {
         $flags = 3
-        if ($global:Hardened[$Sddl]) { $control = 0x1000 }
-        elseif ($global:UnsafeDirOwner) { $owner = 'S-1-5-21-2000' }
+        if ($global:Hardened[$path]) { $control = 0x1000 }
     }
     $aces = @(foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
-        @{ AceFlags = $flags; AceType = 'AccessAllowed'; AccessMask = 0x1f01ff; SecurityIdentifier = @{ Value = $sid } }
+        @{ AceFlags = $flags; AceType = 0; AccessMask = 0x1f01ff; Trustee = @{ SIDString = $sid } }
     })
-    if ($global:LegacyParent -eq $Sddl -and -not $control) {
-        $aces += @{ AceFlags = 2; AceType = 'AccessAllowed'; AccessMask = 0x106; SecurityIdentifier = @{ Value = 'S-1-5-32-545' } }
+    if ($global:LegacyParent -eq $path -or ($global:BadGrant -and $path -like '*.ps1')) {
+        $aces += @{ AceFlags = 11; AceType = 0; AccessMask = $global:LegacyMask; Trustee = @{ SIDString = 'S-1-5-32-545' } }
     }
-    if (-not $dir -and $Sddl -like '*.ps1') {
-        if ($global:BadOwner) { $owner = 'S-1-5-21-2000' }
-        if ($global:BadGrant) { $aces += @{ AceType = 'AccessAllowed'; AccessMask = 2; SecurityIdentifier = @{ Value = 'S-1-1-0' } } }
-    }
-    @{ RawDescriptor = @{ Owner = @{ Value = $owner }; ControlFlags = $control; DiscretionaryAcl = $aces } }
+    @{ ReturnValue = 0; Descriptor = @{ Owner = @{ SIDString = $owner }; ControlFlags = $control; DACL = $aces } }
 }
-function icacls.exe {
-    param($Path, $Operation, $Value, $Link)
+$global:LegacyMask = 2
+function Test-Icacls {
+    param($Path, $Link, $Operation)
     $global:AclCalls += "$Operation $Path"
     $global:LASTEXITCODE = 0
-    if ($Operation -eq $global:FailAcl -or ($global:FailScriptAcl -and $Path -like '*.ps1') -or $Link -ne '/L') { $global:LASTEXITCODE = 5; return }
-    if ($Operation -eq '/restore') {
-        $leaf, $dacl = Get-Content -LiteralPath $Value -Encoding Unicode
-        if ($dacl -ne 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)') { throw 'unexpected policy' }
-        $global:Hardened[(Join-Path $Path $leaf)] = $true
+    if ($Link -ne '/L') { throw 'missing /L' }
+    if ($Operation -eq $global:FailAcl -or ($global:FailScriptAcl -and $Operation -eq '/setowner' -and $Path -like '*.ps1')) {
+        $global:LASTEXITCODE = 5; return
+    }
+    switch ($Operation) {
+        '/save' { Set-Content -LiteralPath $args[0] -Encoding Unicode -Value @((Split-Path -Leaf $Path), ("D:" + $Path)) }
+        '/setowner' { if (($args -join ' ') -ne '*S-1-5-32-544') { throw 'incorrect owner' } }
+        '/inheritance:r' {
+            if (($args -join ' ') -ne '/grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F') { throw 'incorrect grants' }
+            $global:Hardened[$Path] = $true
+        }
+        default { throw "Unexpected icacls operation $Operation" }
     }
 }
-function Move-Item {
-    param($LiteralPath, $Destination, $ErrorAction)
-    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -ErrorAction Stop
-    $global:Hardened[(Join-Path $Destination (Split-Path -Leaf $LiteralPath))] = $global:Hardened[$LiteralPath]
-}
+Set-Alias "$env:SystemRoot\System32\icacls.exe" Test-Icacls
 function Step($cfg) {
     $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
     $line = (. $global:PS | Select-Object -Last 1)
@@ -550,7 +613,7 @@ function Step($cfg) {
     }
     $args_ = ''
     if ($null -ne $t) { $args_ = [string]$t.Actions[0].Arguments }
-    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; author = [string]$t.Author; saved = $saved; registrations = $global:Registrations; acl = $global:AclCalls } | ConvertTo-Json -Compress -Depth 6))
+    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; xml = [string]$t.Xml; author = [string]$t.Author; saved = $saved; registrations = $global:Registrations; acl = $global:AclCalls; written = [bool]$global:ScriptWritten } | ConvertTo-Json -Compress -Depth 6))
 }
 """
 
@@ -561,7 +624,7 @@ class Registration(unittest.TestCase):
     product's task of our name never touched; each registration its own files, the earlier ones kept until the new task reads
     back right; a failed read-back or registration rolled back, and said."""
 
-    def run_steps(self, steps):
+    def run_steps(self, steps, constrained=False):
         tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         try:
             d = os.path.join(tmp, "site-automation", "restart")
@@ -571,16 +634,19 @@ class Registration(unittest.TestCase):
             base = {"task_path": "\\site-automation\\", "task_name": "site-automation restart", "dir": d, "code": "p:0:0", "delay": 60,
                     "task_script": read(TASK), "count_file_renames": False}
             code = ["$global:PS = '%s'" % PS.replace("'", "''"), STORE]
+            if constrained:
+                code.insert(0, "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'")
             for st in steps:
                 if isinstance(st, str):
                     code.append(st.replace("{dir}", d))
                     continue
                 cfg = dict(base, **st)
+                cfg["dir"] = cfg["dir"].replace("{root}", tmp)
                 cfg["at_utc"] = at2 if cfg.pop("later", False) else at_
                 cfg.setdefault("comment", "CHG1: Patch (site-automation, AAP job 7)")
                 cfg["description"] = cfg["comment"]
                 code.append("Step (ConvertFrom-Json '%s')" % json.dumps(cfg).replace("'", "''"))
-            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root"), "ProgramData": tmp, "TEMP": os.path.join(tmp, "root"), "TZ": "America/New_York"})
+            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root"), "ProgramData": tmp, "TZ": "America/New_York"})
             out = [json.loads(x[5:]) for x in r.stdout.splitlines() if x.startswith("STEP ")]
             self.assertEqual(len(out), len([x for x in steps if not isinstance(x, str)]), r.stdout + r.stderr)
             return out
@@ -614,11 +680,11 @@ class Registration(unittest.TestCase):
                 self.assertEqual((b["task"], b["files"]), ("", []))
 
     @unittest.skipUnless(os.name == "nt", "requires Windows NTFS ACLs")
-    def test_native_directory_and_script_acl(self):
+    def test_windows_directory_and_script_acl(self):
         import ctypes
         if not ctypes.windll.shell32.IsUserAnAdmin():
             self.skipTest("requires an elevated Windows test process")
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(prefix="restart ACL & ") as root:
             cfg = {"action": "none", "task_name": "SRV-APP01", "task_script": read(TASK)}
             code = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n. '%s'\n" % PS.replace("'", "''") + r"""
 $ErrorActionPreference = 'Stop'
@@ -628,10 +694,25 @@ Initialize-SiteRestartDir $dir
 $file = New-Item -Path (Join-Path $dir 'restart-task-1-1.ps1') -ItemType File
 $null = & icacls.exe $file.FullName /setowner '*S-1-5-32-544' /L
 if ($LASTEXITCODE -ne 0) { throw 'could not set test script owner' }
-Assert-SiteRestartFileAcl $file.FullName
+Assert-SiteRestartAcl $file.FullName
 foreach ($path in @($parent, $dir)) {
-    if (-not (Test-SitePrivateAcl (Get-SiteRestartAcl $path) -Directory)) { throw "unexpected ACL on $path" }
+    Assert-SiteRestartAcl $path -Directory -NewDirectory
 }
+Invoke-SiteIcacls $parent @('/grant:r', '*S-1-5-32-545:(OI)(CI)RX')
+$before = (Get-Acl -LiteralPath $parent).Sddl
+Initialize-SiteRestartDir $dir
+if ((Get-Acl -LiteralPath $parent).Sddl -cne $before) { throw 'changed an existing read-only grant' }
+Invoke-SiteIcacls $parent @('/grant:r', '*S-1-5-32-545:(OI)(CI)(IO)M')
+$before = (Get-Acl -LiteralPath $parent).Sddl
+try { Initialize-SiteRestartDir $dir; throw 'accepted an inherit-only modify grant' }
+catch { if ($_.Exception.Message -notlike 'Unsafe existing permissions*') { throw } }
+if ((Get-Acl -LiteralPath $parent).Sddl -cne $before) { throw 'changed a refused directory' }
+$link = Join-Path $env:ProgramData 'link'
+$null = New-Item -ItemType Junction -Path $link -Target $parent
+try {
+    try { $null = Get-SiteRestartAcl $link -Directory; throw 'accepted a junction' }
+    catch { if ($_.Exception.Message -notlike 'Refusing reparse point*') { throw } }
+} finally { (Get-Item -LiteralPath $link) | Remove-Item -Force }
 'ACL verified'
 """
             proc = pwsh(code, {"ProgramData": root, "SITE_CHECK_CONFIG": json.dumps(cfg)})
@@ -641,23 +722,76 @@ foreach ($path in @($parent, $dir)) {
     def test_harden_parent_then_restart_directory(self):
         (a,) = self.run_steps([{"action": "schedule"}])
         self.assertTrue(a["out"].get("scheduled"), a)
-        self.assertEqual([op.split()[0] for op in a["acl"]], ["/setowner", "/restore", "/setowner", "/restore", "/setowner"])
-        self.assertTrue(a["acl"][0].endswith("site-automation"))
-        self.assertTrue(a["acl"][2].endswith("restart"))
+        changes = [(op.split(" ", 1)[0], os.path.basename(op)) for op in a["acl"]
+                   if not op.startswith(("/save ", "owner ")) and not op.endswith((".ps1", ".json"))]
+        self.assertEqual(changes, [(op, name) for name in ("site-automation", "restart")
+                                   for op in ("create", "/setowner", "/inheritance:r")])
 
-    def test_existing_parent_with_legacy_protected_child(self):
-        (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; $global:Hardened['{dir}'] = $true; "
-                               "$global:LegacyParent = Split-Path -Parent '{dir}'", {"action": "schedule"}])
+    def test_fresh_directory_in_constrained_language(self):
+        (a,) = self.run_steps([{"action": "cancel"}], constrained=True)
+        self.assertNotIn("error", a["out"], a)
+        self.assertTrue(any(op.startswith("/inheritance:r ") and op.endswith("restart") for op in a["acl"]))
+
+    def test_concurrent_directory_creation_is_refused(self):
+        (a,) = self.run_steps(["$global:LostCreateRace = $true", {"action": "schedule"}])
+        self.assertIn("Could not create new directory", a["out"]["error"])
+        self.assertEqual(len(a["acl"]), 1)
+        self.assertEqual((a["registrations"], a["files"]), (0, []))
+
+    def test_existing_directories_allow_read_only_access_without_repairs(self):
+        (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; "
+                               "$global:LegacyParent = Split-Path -Parent '{dir}'; $global:LegacyMask = 0x1200a9; "
+                               "$global:OwnerPath = '{dir}'; "
+                               "$global:OtherOwner = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'",
+                               {"action": "schedule"}])
         self.assertTrue(a["out"].get("scheduled"), a)
-        self.assertTrue(a["acl"][0].endswith("site-automation"))
-        self.assertEqual(len(a["acl"]), 3)
+        self.assertTrue(all(op.startswith(("/save ", "owner ")) or op.endswith((".ps1", ".json")) for op in a["acl"]))
+
+    def test_untrusted_writers_refused_at_either_level(self):
+        for path, mask in (("Split-Path -Parent '{dir}'", "0x106"), ("'{dir}'", "0x1f01ff"), ("'{dir}'", "0x40000")):
+            with self.subTest(path=path, mask=mask):
+                (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; "
+                                       f"$global:LegacyParent = {path}; $global:LegacyMask = {mask}", {"action": "schedule"}])
+                self.assertIn("Unsafe existing permissions", a["out"]["error"])
+                self.assertEqual((a["registrations"], a["files"]), (0, []))
+                self.assertTrue(all(op.startswith(("/save ", "owner ")) for op in a["acl"]))
+
+    def test_reparse_after_owner_read_is_refused(self):
+        (a,) = self.run_steps(["$global:LinkOnRead = Split-Path -Parent '{dir}'; "
+                               "$null = New-Item -ItemType Directory -Path $global:LinkOnRead", {"action": "schedule"}])
+        self.assertIn("reparse point", a["out"]["error"])
+        self.assertEqual((a["registrations"], a["files"]), (0, []))
+
+    def test_owner_rechecked_before_write_and_registration(self):
+        for flag, written in (("ChangeBeforeWrite", False), ("ChangeBeforeRegister", True)):
+            with self.subTest(flag=flag):
+                (a,) = self.run_steps([f"$global:{flag} = '{{dir}}'", {"action": "schedule"}])
+                self.assertIn("Unsafe existing owner", a["out"]["error"])
+                self.assertEqual((a["written"], a["registrations"]), (written, 0))
+
+    def test_registration_dates_in_invariant_culture(self):
+        from xml.etree import ElementTree
+        (a,) = self.run_steps(["$c = [cultureinfo]::new('fi-FI'); $c.DateTimeFormat.TimeSeparator = '.'; "
+                               "[cultureinfo]::CurrentCulture = $c", {"action": "schedule"}])
+        self.assertTrue(a["out"].get("scheduled"), a)
+        xml = ElementTree.fromstring(a["xml"])
+        start = xml.findtext(".//{*}StartBoundary")
+        end = xml.findtext(".//{*}EndBoundary")
+        self.assertEqual(start, json.loads(a["saved"])["at_utc"])
+        self.assertEqual(rs.parse(end) - rs.parse(start), datetime.timedelta(minutes=30))
+        for field in ("now_local", "at_local"):
+            self.assertRegex(a["out"][field], r"\d{2}:\d{2}")
+        self.assertRegex(a["out"]["scheduled"]["next_run"], r"\d{2}:\d{2}")
+        for call in re.findall(r'''\.ToString\((['"]yyyy[^)]*)\)''', read(PS)):
+            self.assertIn("[Globalization.CultureInfo]::InvariantCulture", call)
 
     def test_hardening_failures_prevent_registration(self):
-        for flag, why in (("$global:FailAcl = '/setowner'", "/setowner"), ("$global:FailAcl = '/restore'", "/restore"),
-                          ("New-Item -ItemType Directory -Path (Split-Path -Parent '{dir}') | Out-Null; $global:UnsafeDirOwner = $true",
+        for flag, why in (("$global:FailAcl = '/setowner'", "/setowner"), ("$global:FailAcl = '/inheritance:r'", "/inheritance:r"),
+                          ("$global:FailAcl = '/save'", "/save"),
+                          ("$global:OwnerPath = Split-Path -Parent '{dir}'; New-Item -ItemType Directory -Path $global:OwnerPath | Out-Null",
                            "Unsafe existing owner"),
                           ("$global:FailScriptAcl = $true", "/setowner"),
-                          ("$global:BadOwner = $true", "Unexpected owner or ACL"), ("$global:BadGrant = $true", "Unexpected owner or ACL")):
+                          ("$global:BadOwner = $true", "Unsafe existing owner"), ("$global:BadGrant = $true", "Unsafe existing permissions")):
             with self.subTest(flag=flag):
                 (a,) = self.run_steps([flag, {"action": "schedule"}])
                 self.assertIn(why, a["out"]["error"])
@@ -670,6 +804,15 @@ foreach ($path in @($parent, $dir)) {
                                        "$null = New-Item -ItemType SymbolicLink -Path $p -Target $env:SystemRoot", {"action": "schedule"}])
                 self.assertIn("reparse point", a["out"]["error"])
                 self.assertEqual((a["registrations"], a["files"]), (0, []))
+                linked_name = "restart" if link == "'{dir}'" else "site-automation"
+                self.assertFalse(any(op.endswith(os.sep + linked_name) for op in a["acl"]))
+
+    def test_reparse_in_programdata_stops_before_managed_directories(self):
+        (a,) = self.run_steps(["$env:ProgramData = Join-Path $env:ProgramData 'linked'; "
+                               "$null = New-Item -ItemType SymbolicLink -Path $env:ProgramData -Target $env:SystemRoot",
+                               {"action": "schedule", "dir": os.path.join("{root}", "linked", "site-automation", "restart")}])
+        self.assertIn("reparse point", a["out"]["error"])
+        self.assertEqual((a["registrations"], a["acl"]), (0, []))
 
     def test_own_files_and_replace(self):
         a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False, "later": True}])
