@@ -189,7 +189,7 @@
   // ---------------------------------------------------------------- freshness marks
   function freshTxt(asof) {
     if (asof == null) return {st: "stale", t: "never read"};
-    var a = ageS(asof), st = fstate(a);
+    var a = ageS(asof), st = UNREACH ? "stale" : fstate(a);
     return {st: st, t: "as of " + hms(asof) + " (" + ago(a) + ")"};
   }
   function freshK(fk, cls) {          // the cockpit's mono line: [STALE] as of 14:20:35 (11 min ago)
