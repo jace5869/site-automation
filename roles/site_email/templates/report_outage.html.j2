@@ -1,3 +1,6 @@
+{#- On the website (the atlas, brief and ops looks: hover_look) a dot carries its events (data-evs: [time, level, what happened,
+    object] each), and site-report.js opens them as a list on a click, Enter or Space; an email's chart stays a picture with its tips -#}
+{%- set dot_list = hover_look is defined -%}
 <div class="review-chart">
 <input type="radio" name="tlv" id="tlv-out" class="ibk-r" checked><input type="radio" name="tlv" id="tlv-all" class="ibk-r">
 <div class="tl-ctl"><b>Show:</b><label for="tlv-out">Outage only</label><label for="tlv-all">Everything</label>
@@ -26,7 +29,7 @@
 {% if lane.key == 'noise' %}
 <rect class="nb{{ ' rel' if m.rel else '' }}" x="{{ m.x }}%" width="{{ m.width }}%" height="{{ m.height }}" y="{{ y + 40 - m.height }}" tabindex="0" role="img" data-tip="{{ m.tip | e }}" aria-label="{{ m.tip | e }}"/>
 {% else %}
-<g class="mk lv-{{ m.level }}{{ ' rel' if m.rel else '' }}{{ ' many' if m.count > 1 else '' }}" tabindex="0" role="img" data-tip="{{ m.tip | e }}" aria-label="{{ m.tip | e }}">
+<g class="mk lv-{{ m.level }}{{ ' rel' if m.rel else '' }}{{ ' many' if m.count > 1 else '' }}" tabindex="0" role="img" data-tip="{{ m.tip | e }}"{% if dot_list and m.evs | default([]) %} data-evs="{{ m.evs | tojson | forceescape }}"{% endif %} aria-label="{{ m.tip | e }}">
 {% if m.rel %}<circle class="ring" cx="{{ m.x }}%" cy="{{ y + 15 }}" r="{{ 11 if m.count > 1 else 9 }}"/>{% endif %}
 <circle cx="{{ m.x }}%" cy="{{ y + 15 }}" r="{{ 7 if m.count > 1 else 5 }}"/>
 {% if m.count > 1 %}<text class="mc" x="{{ m.x }}%" dx="{{ -10 if m.x > 98 else 8 }}" y="{{ y + 8 }}">{{ m.count }}</text>{% endif %}
@@ -34,4 +37,4 @@
 </g>{% endif %}
 {% endfor %}</g>{% endfor %}
 </svg></div></div>{% endfor %}
-<p class="tl-note">Point at or tab to a mark for its full date, time and zone.</p></div>
+<p class="tl-note">Point at or tab to a mark for its full date, time and zone.{% if dot_list %} Click a mark, or press Enter on it, for the list of its events.{% endif %}</p></div>

@@ -286,4 +286,28 @@ table.bd tr.r-low td:first-child{box-shadow:inset 2px 0 0 var(--rwlow-bar)}
 .ot-name b{font-family:var(--display);font-size:16px;letter-spacing:-.01em}
 .ot-axis span,.ot-axis em{font-size:11.5px;letter-spacing:.02em}
 {%- endif %}
+{#- the outage review's chart: a dot's list of events (site-report.js dlOpen), by the dot or at the window's right side (.mkp-side); its
+    list scrolls inside it. The level is a word in its status colour, never the colour alone -#}
+.js .mk[data-evs]{cursor:pointer}
+.mk[aria-expanded=true] circle:not(.ring){stroke:var(--ink);stroke-width:2.5}
+.mkp{position:fixed;z-index:70;left:8px;top:8px;display:flex;flex-direction:column;max-width:calc(100vw - 16px);max-height:60vh;
+  background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:12px;box-shadow:0 14px 34px -12px rgba(0,0,0,.45);font-size:13px;overflow:hidden}
+.mkp-h{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:10px 12px 8px 14px;border-bottom:1px solid var(--line);flex:none}
+.mkp-h h4{margin:0;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;min-width:0}
+.mkp-x{margin-left:auto;font:inherit;font-size:13px;font-weight:650;border:1px solid var(--edge);background:transparent;color:var(--ink);border-radius:999px;padding:3px 11px;cursor:pointer}
+.mkp-x:hover{background:var(--line)}
+.mkp-x:focus-visible,.mkp-ev:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.mkp-sub{flex-basis:100%;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.mkp-ev{list-style:none;margin:0;padding:4px 0;overflow:auto;min-height:0;flex:1 1 auto;overscroll-behavior:contain}
+.mkp-ev li{display:grid;grid-template-columns:62px 84px minmax(0,1fr);gap:2px 8px;align-items:baseline;padding:6px 14px;border-top:1px solid var(--line)}
+.mkp-ev li:first-child{border-top:0}
+.mkp-t{font-variant-numeric:tabular-nums;color:var(--muted)}
+.mkp-lv{font-weight:700;font-size:12.5px;white-space:nowrap}
+.mkp-lv:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:1px}
+.mkp-lv.lv-critical{color:var(--critical)}.mkp-lv.lv-warning{color:var(--warning)}.mkp-lv.lv-low{color:var(--low,var(--warning))}
+.mkp-lv.lv-info{color:var(--info)}.mkp-lv.lv-ok{color:var(--ok)}
+.mkp-w{overflow-wrap:anywhere;line-height:1.35}
+.mkp-w small{display:block;color:var(--muted);font-size:12px;font-family:var(--mono,ui-monospace,monospace);overflow-wrap:anywhere}
+@media (max-width:520px){.mkp-ev li{grid-template-columns:62px minmax(0,1fr)}.mkp-w{grid-column:1/-1}}
+@media print{.mkp{display:none !important}}
 @media print{.tt,.hint{display:none !important}}
