@@ -87,6 +87,8 @@
   site_ontap_expand_busy:
     template_id: "{{ awx_job_template_id | default(tower_job_template_id | default(0)) | int }}"
     job_id: "{{ awx_job_id | default(tower_job_id | default(0)) | int }}"
+    workflow_job_id: "{{ awx_workflow_job_id | default(tower_workflow_job_id | default(0)) | int }}"
+    templates: "{{ ontap_expand_templates | default([], true) }}"        # every expand template: two templates are two queues
   register: _ox_busy
   check_mode: false
   when: _ox_do | bool

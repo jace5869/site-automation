@@ -8,6 +8,10 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import fnmatch
+try:
+    from urllib.parse import quote
+except ImportError:          # Python 2 (never on AAP's EEs)
+    from urllib import quote
 import math
 import re
 
@@ -449,6 +453,43 @@ def recheck(p, vol, aggr, exclude=(), clusters=()):
         return ("%s got fuller between the plan and the change (%.1f %% now): %s no longer fits under %g %% - nothing was changed"
                 % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(take), p["max_pct"]))
     return ""
+
+
+def expand_busy(call, templates, template_id, job_id, workflow_job_id=0):
+    """Codex 1.128.0: the runs of EVERY expand template (ontap_expand_templates: names, IDs or {template, kind}; a workflow
+    that wraps the expand) and this run's own template that block this run -> (job ids, why not checked or ''). Two
+    templates are two AAP queues: their runs could spend one aggregate's room together. call(path) -> (HTTP status, JSON);
+    read only. The workflow job this run is a node of never counts (it runs while this run does)."""
+    wanted = []
+    for t in ([templates] if isinstance(templates, (str, int)) else list(templates or [])):
+        d = t if isinstance(t, dict) else {"template": t}
+        name = str(d.get("template") if d.get("template") is not None else "").strip()
+        if name:
+            wanted.append((name, "workflow" if str(d.get("kind") or "").lower() == "workflow" else "job"))
+    if template_id:
+        wanted.append((str(int(template_id)), "job"))
+    seen, jobs = set(), []
+    for name, kind in wanted:
+        coll = "workflow_job_templates" if kind == "workflow" else "job_templates"
+        if name.isdigit():
+            tid = int(name)
+        else:
+            code, data = call("%s/?name=%s" % (coll, quote(name)))
+            if code != 200:
+                return [], "AAP could not be asked for %s (HTTP %s)" % (name, code)
+            hits = (data or {}).get("results") or []
+            if not hits:
+                continue                                   # not made in AAP (yet): nothing of it can run
+            tid = int(hits[0].get("id") or 0)
+        if (coll, tid) in seen:
+            continue
+        seen.add((coll, tid))
+        code, data = call("%s/%d/%s/?status__in=pending,waiting,running&order_by=id&page_size=50"
+                          % (coll, tid, "workflow_jobs" if kind == "workflow" else "jobs"))
+        if code != 200:
+            return [], "AAP could not be asked for the runs of %s (HTTP %s)" % (name, code)
+        jobs += [j for j in (data or {}).get("results") or [] if int(j.get("id") or 0) != int(workflow_job_id or 0)]
+    return others_going(jobs, job_id), ""
 
 
 def others_going(jobs, job_id):

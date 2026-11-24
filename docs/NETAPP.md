@@ -392,11 +392,11 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    was resized, or anything else moved against the plan - before anything is written. The LUN's new size must fit the
    volume's confirmed size.
    - **Autosize is never changed.** `grow_shrink` refuses the run (it could shrink the volume again): "autosize is
-     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `off`: the run goes
-     ahead. `grow`: the run goes ahead only when the new size is at or under autosize's maximum - over it, ONTAP would
-     raise the maximum with the size, so the run is refused in the plan and again right before the change ("the new
-     size X would raise autosize maximum Y - grow it by hand or raise the maximum first"). Autosize on and no maximum
-     given by ONTAP: refused too. The job never sets autosize.
+     grow_shrink on this volume: set it to grow or off in System Manager first, then run again". `grow` or `off`: the
+     run goes ahead only when the new size is at or under the autosize maximum ONTAP reports (whatever the mode) - over
+     it, ONTAP would reset the maximum with the size, so the run is refused in the plan and again right before the
+     change ("the new size X would raise autosize maximum Y - grow it by hand or raise the maximum first"). Autosize on
+     and no maximum given by ONTAP: refused too. The job never sets autosize.
    - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
      size, to the byte - and never over the plan's own sizes. **Right before each change (the volume's, the LUN's)
      everything the plan stood on is read again:** the volume's size and autosize, that it is still on the planned
@@ -406,7 +406,8 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
      cluster rules) are checked on that last read as well - also before a write of the comment alone. Anything moved:
      nothing is sent. The volume's need is worked out again from those last reads: a snapshot deleted meanwhile means a
      smaller size is sent, or none; a volume that needs more now than planned stops the run before any change. A
-     thick LUN's volume must still have the usable room for the LUN's new size right before the LUN's change. The
+     thick LUN's volume must still have the full usable room for the LUN's new size right before the LUN's change (to the
+     byte). The
      comment written is the one of the last read, with the line added.
    - **The report says what was read back** after the change, for the volume and the LUN; "not known" when a change was
      sent and nothing could be verified; "(not changed)" when nothing was sent. Each change's
@@ -472,10 +473,11 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    - *NetApp - expand a volume*: NetApp ONTAP write, and optionally VMware vCenter and ServiceNow API.
    - **One run at a time.** AAP - set up job templates makes *NetApp - expand a volume* with **Concurrent jobs** off: two
      runs at the same time on volumes of one aggregate could each pass the 97 % check. AAP then runs them one after the
-     other. Keep one expand template: two templates are two queues. With a *Red Hat Ansible Automation Platform*
-     credential on the template (optional), each run also asks AAP right before the change: another run of the template
-     still running, or queued before this one, stops it with nothing changed ("another run of this template is still
-     going (AAP job N)"). Without that credential the report says "not checked" and Concurrent jobs off is the guard.
+     other. With a *Red Hat Ansible Automation Platform* credential on the template (optional), each run also asks AAP
+     right before the change about every template in `ontap_expand_templates` (two templates are two queues; a
+     workflow there: its workflow jobs) and its own: another run still running, or queued before this one, stops it
+     with nothing changed ("another run of this template is still going (AAP job N)"). The workflow this run is a step
+     of never counts. Without that credential the report says "not checked" and Concurrent jobs off is the guard.
      People in System Manager and ONTAP's own autosize are outside the job's control: it reads again right before each
      change and reports what it read back (see *Limits*).
    - Several vCenters: the datastore is expanded in the first that has it, then the others rescan and refresh it.

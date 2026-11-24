@@ -87,7 +87,8 @@
 ## volumes and FlexGroups always are.
 # ontap_expand_exclude: []
 
-## the templates (names or IDs; or {template, kind}) whose survey the volume list writes
+## the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand
+## asks AAP about the runs of each (one at a time)
 # ontap_expand_templates: ["NetApp - expand a volume"]
 
 ## the variable of the survey question the volume list writes (added, single select, when the survey

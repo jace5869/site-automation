@@ -13,8 +13,8 @@ credential on NetApp - expand a volume, so each run checks that no other run of 
   The aggregate is checked against what really lands on it (the volume's space guarantee, a thick LUN's growth); the
   largest LUN growth that fits is said.
 - **Autosize is never changed.** A volume with autosize grow_shrink is refused (in the plan and right before the
-  change). With autosize grow, a new size over autosize's maximum is refused too (ONTAP would raise the maximum with
-  the size): grow it by hand or raise the maximum first. Off: goes ahead.
+  change). A new size over the autosize maximum ONTAP reports is refused too, whatever the mode (ONTAP would reset the
+  maximum with the size): grow it by hand or raise the maximum first.
 - **Everything the plan stood on is read again right before each change:** the volume (size, autosize, guarantee, its
   aggregate and that aggregate's room), the LUN (its size, its space reservation, that it is still in the same volume
   by UUID), and the volume's name, SVM and `ontap_expand_exclude` on that last read (the comment-only write too).
@@ -22,8 +22,8 @@ credential on NetApp - expand a volume, so each run checks that no other run of 
   LUN; a snapshot deleted meanwhile sends a smaller size or none, never more; a volume that needs more now stops the
   run before any change. The comment written is the last read's, with the line added.
 - **One run at a time:** the expand template is made with Concurrent jobs off, and with an AAP credential each run asks
-  AAP right before the change (another run going, or queued before it: nothing is changed; no credential: "not
-  checked" in the report).
+  AAP right before the change about every template in `ontap_expand_templates` (and a workflow there) and its own
+  (another run going, or queued before it: nothing is changed; no credential: "not checked" in the report).
 - **The report says what was read back** after each change, per volume and LUN; "not known - check System Manager"
   when a change was sent and nothing was verified, "(not changed)" when nothing was sent - never the planned size.
 - NetApp live page: the aggregates' days-until columns removed - still in the health report. An aggregate's status

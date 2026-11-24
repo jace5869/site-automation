@@ -398,14 +398,14 @@ def revalidate(c, p, key, vid, vol_take, lun_take, opts=None, target=None):
 
 
 def autosize_max_why(rec, target):
-    """'' or why the volume may not grow to target (Codex 1.128.0): with autosize on, ONTAP raises autosize's maximum when the
-    new size is over it - a change to autosize, which this job never makes. Autosize on and no maximum given: not known,
-    refused too. rec: vol_in's record (autosize, autosize_max)."""
+    """'' or why the volume may not grow to target (Codex 1.128.0): ONTAP resets autosize's maximum when the new size is over
+    it - a change to autosize, which this job never makes. A reported maximum counts whatever the mode (off too); autosize
+    on and no maximum given: not known, refused too. rec: vol_in's record (autosize, autosize_max)."""
     mode = str(rec.get("autosize") or "").lower()
-    if mode in ("", "off"):
-        return ""
     maximum = int(rec.get("autosize_max") or 0)
     if maximum <= 0:
+        if mode in ("", "off"):
+            return ""
         return "autosize is %s and ONTAP gave no autosize maximum - nothing is changed without it" % mode
     if target > maximum:
         return ("the new size %s would raise autosize maximum %s (ONTAP raises it with the size) - grow it by hand or raise the "
@@ -659,7 +659,7 @@ def _grow_lun(c, p, key, wait, steps, vid, opts=None):
                     rwhy = lwhy
                 else:
                     need, _how = X.volume_for_lun(dict(_v, size=parent), lnow, t - size)
-                    if need > parent + X.SLACK:
+                    if need > parent:                # exact: the full usable room (Codex 1.128.0), no tolerance
                         room = "the volume (%s) has not the usable room for the thick LUN's new size %s now (it needs %s)" % (
                             X.human(parent), X.human(t), X.human(need))
             if rwhy:

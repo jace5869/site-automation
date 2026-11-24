@@ -436,7 +436,7 @@ class Grow1124(unittest.TestCase):
         steps = self.run_(c, p)
         self.assertIn("would raise autosize maximum 3.00 TB", steps[0]["result"])
         self.assertEqual(c.patches, [])
-        self.assertEqual(self.V.autosize_max_why({"autosize": "off", "autosize_max": 3 * TB}, 4 * TB), "")
+        self.assertEqual(self.V.autosize_max_why({"autosize": "off", "autosize_max": 0}, 4 * TB), "")            # off, none reported
 
     def test_no_size_from_ontap_no_write(self):
         p = self.plan(avail=int(0.1 * TB))
@@ -866,6 +866,62 @@ class Codex1280(unittest.TestCase):
         self.assertEqual(X.others_going([{"id": 101, "status": "running"}], 100), [101])     # a later one already running
         self.assertEqual(X.others_going([{"id": 100, "status": "running"}], 100), [])
         self.assertEqual(X.others_going([], 100), [])
+
+    def test_verify_autosize_off_with_a_reported_maximum_is_refused_too(self):
+        # Codex verify: ONTAP resets a reported maximum when the size crosses it, whatever the mode
+        self.assertIn("would raise autosize maximum", self.V.autosize_max_why({"autosize": "off", "autosize_max": 105 * GB}, 110 * GB))
+        self.assertEqual(self.V.autosize_max_why({"autosize": "off", "autosize_max": 0}, 110 * GB), "")       # none reported: goes
+        self.assertEqual(self.V.autosize_max_why({"autosize": "off", "autosize_max": 120 * GB}, 110 * GB), "")
+        p = self.nas_plan()
+        c = FakeCluster([100 * GB], avail=[50 * GB], autosize={"mode": "off", "maximum": 105 * GB})
+        steps = self.grow(c, p)
+        self.assertEqual(c.patches, [])
+        self.assertIn("would raise autosize maximum 105.0 GB", steps[-1]["result"])
+        c = FakeCluster([100 * GB, 100 * GB], avail=[50 * GB, 50 * GB], autosize={"mode": "off"})
+        self.later(c, 1, autosize={"mode": "off", "maximum": 105 * GB})               # reported on the last read only
+        steps = self.grow(c, p)
+        self.assertEqual(c.patches, [])
+        self.assertIn("would raise autosize maximum 105.0 GB", steps[-1]["result"])
+
+    def test_verify_every_expand_template_is_asked(self):
+        asked = []
+        runs = {"job_templates/58/jobs/": [{"id": 300, "status": "running"}],
+                "job_templates/61/jobs/": [{"id": 290, "status": "running"}, {"id": 310, "status": "pending"}],
+                "workflow_job_templates/7/workflow_jobs/": [{"id": 299, "status": "running"}, {"id": 280, "status": "waiting"}]}
+
+        def call(path):
+            asked.append(path)
+            if "?name=" in path:
+                name = path.split("?name=")[1]
+                ids = {"job_templates": {"NetApp%20-%20expand%20a%20volume": 58, "Expand%20B": 61},
+                       "workflow_job_templates": {"Expand%20flow": 7}}[path.split("/")[0]]
+                return 200, {"results": [{"id": ids[name]}] if name in ids else []}
+            return 200, {"results": runs.get(path.split("?")[0], [])}
+        busy, why = X.expand_busy(call, ["NetApp - expand a volume", {"template": "Expand B"}, {"template": "Expand flow", "kind": "workflow"},
+                                         "Not made yet"], 58, 300, workflow_job_id=299)
+        self.assertEqual(why, "")
+        self.assertEqual(busy, [280, 290])               # the other template's running run, the workflow queued before; never
+        #                                                  this run (300), its own workflow (299), nor one queued behind (310)
+        self.assertEqual(len([p for p in asked if "job_templates/58/jobs" in p]), 1)          # its own template asked once
+        busy, why = X.expand_busy(lambda path: (500, {}), ["NetApp - expand a volume"], 58, 300)
+        self.assertEqual(busy, [])
+        self.assertIn("could not be asked", why)
+
+    def test_verify_a_thick_lun_needs_the_full_room_no_tolerance(self):
+        p = self.lun_plan(int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)])
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            r = orig(method, path, query, body)
+            if "size" in (body or {}):
+                c.avail = [c.avail[0] - X.MB]                                  # 1 MiB short of the room right after
+            return r
+        c.call = call
+        steps = self.grow(c, p)
+        self.assertTrue(steps[1]["ok"], steps)
+        self.assertEqual(c.lun_size, 2 * TB)
+        self.assertIn("has not the usable room for the thick LUN's new size", steps[-1]["result"])
 
     def test_p1e_the_caps_checked_first(self):
         ok = {"max_target": 110 * GB, "max_lun_target": -1, "max_vol_growth": 10 * GB}

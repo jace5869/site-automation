@@ -88,6 +88,10 @@
 ## the assignment group of the incident ontap_expand_incident: create opens - must be set for create
 # ontap_expand_incident_group: ""
 
+## the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand
+## asks AAP about the runs of each (one at a time)
+# ontap_expand_templates: ["NetApp - expand a volume"]
+
 ## the variable of the survey question the volume list writes (added, single select, when the survey
 ## lacks it)
 # ontap_expand_question: ontap_expand_volume

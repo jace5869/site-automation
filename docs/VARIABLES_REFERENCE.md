@@ -1489,7 +1489,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 | `ontap_expand_incident` | `"off"` | off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one through the ServiceNow API credential when the run changes something, and resolve it with the result. |
 | `ontap_expand_incident_group` | (empty) | the assignment group of the incident ontap_expand_incident: create opens - must be set for create |
-| `ontap_expand_templates` | `["NetApp - expand a volume"]` | the templates (names or IDs; or {template, kind}) whose survey the volume list writes |
+| `ontap_expand_templates` | `["NetApp - expand a volume"]` | the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand asks AAP about the runs of each (one at a time) |
 | `ontap_expand_question` | `ontap_expand_volume` | the variable of the survey question the volume list writes (added, single select, when the survey lacks it) |
 | `ontap_expand_max_choices` | `500` | the most volumes the list offers (the report says how many more) |
 | `ontap_expand_volume` | (empty) | The launch's answers (the survey's questions; never set them in all.yml): the volume picked from the list (a choice NetApp - refresh volume list wrote; it ends with its key) |
