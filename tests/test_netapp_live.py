@@ -320,6 +320,18 @@ class Writer(unittest.TestCase):
             ldb.schema(Conn(), False)
         self.assertIn("ontap_live_volume lacks pt_obj", str(e.exception))
         self.assertIn("ALTER TABLE ontap_live_volume ADD COLUMN pt_obj CHAR(40) NOT NULL DEFAULT '';", open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md")).read())
+        # one table missing (made now), another lacking a column: the column added after the tables are made
+        sent.clear()
+        orig = Cur.execute
+
+        def execute(self_, sql, args=()):
+            orig(self_, sql, args)
+            if "information_schema.tables" in sql:
+                self_.rows = [(t,) for t in ldb.TABLES if t != "ontap_live_part"]
+        Cur.execute = execute
+        self.assertEqual(ldb.schema(Conn(), True), (True, True))
+        self.assertTrue([q for q, _a in sent if q.startswith("CREATE TABLE IF NOT EXISTS ontap_live_part")])
+        self.assertEqual([q for q, _a in sent if q.startswith("ALTER")], ["ALTER TABLE ontap_live_volume ADD COLUMN pt_obj CHAR(40) NOT NULL DEFAULT ''"])
 
     def test_prune(self):
         db = fill()

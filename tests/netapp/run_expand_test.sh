@@ -135,7 +135,7 @@ run "that size as Check: the plan says autosize grow is paused during the change
     -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" -- "autosize grow paused during the change, put back after it"
 run "that size typed: grown 2.00 TB -> 2.18 TB" ok ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$sql\", \"ontap_expand_size\": \"180GB\"}" \
     -- "NetApp expand: vol_sql01 grown 2.00 TB -> 2.18 TB" "The Size box: 180GB" "Done - autosize off for the change" \
-       "Done - autosize grow again, its maximum raised 2.10 TB -> 2.18 TB (under the new size)"
+       "Done - autosize grow again, its maximum raised 2.10 TB -> 2.18 TB (under the volume's size now)"
 check "  7 changes now (vol_ds03's comment and LUN; vol_sql01: autosize off, its size, autosize back with a new maximum)" test "$(patches)" = 7
 check "  ... autosize off before the size, back after it" "$py" -c 'import sys
 p = [l for l in open(sys.argv[1]) if l.startswith("PATCH /api/storage/volumes/v-sql01")]

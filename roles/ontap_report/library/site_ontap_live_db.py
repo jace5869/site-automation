@@ -198,8 +198,7 @@ def schema(conn, create):
         cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
     elif r and int(r[0][0]) > SCHEMA_VERSION:
         raise RuntimeError("the NetApp page's tables are version %s, newer than this release knows (%s) - update site-automation" % (r[0][0], SCHEMA_VERSION))
-    if there:
-        add_missing(conn, create)
+    add_missing(conn, create)                   # also after making the missing ones: another table may lack a column
     conn.commit()
     return True, not there
 

@@ -306,13 +306,23 @@ def volume_for_lun(vol, lun, g):
         data, usable = float(total), size * (1.0 - r)
     if lun.get("thick"):
         need_data, how = max(0.0, data) + g, "thick LUN"
+        need = size_for_usable(need_data, vol.get("snap_pct"), vol.get("snap_used"))
     else:
         need_data = usable * (total + g) / float(total)
         how = "thin LUN, the volume keeps %.2fx its LUN%s" % (usable / float(total), "s" if total > lsize else "")
-    need = max(size_for_usable(need_data, vol.get("snap_pct"), vol.get("snap_used")), lsize + g)
+        # a thin LUN's headroom never grows the volume more than the LUN's growth and its snapshot reserve (growth_limit)
+        need = min(size_for_usable(need_data, vol.get("snap_pct"), vol.get("snap_used")), growth_limit(vol, g))
+    need = max(need, lsize + g)
     if vol.get("snap_pct"):
         how += " + %g %% snapshot reserve" % float(vol["snap_pct"])
     return max(size, _ceil_mb(need)), how
+
+
+def growth_limit(vol, g):
+    """the most a volume grows for a LUN grown by g: g and the snapshot reserve on it (g / (1 - reserve)) - the run's own
+    ceiling, whatever its free space did between the plan and the change"""
+    keep = 1.0 - min(0.95, max(0.0, float(vol.get("snap_pct") or 0) / 100.0))
+    return int(vol["size"]) + _ceil_mb(g / keep)
 
 
 def landing(vol, lun, vg, g):
@@ -375,6 +385,11 @@ def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
         return p
     vt, how = volume_for_lun(vol, lun, g)
     vg = vt - size
+    if vt > growth_limit(vol, g) + SLACK:
+        p["why"] = ("the volume would need +%s for +%s on the LUN (%s) - more than the LUN's growth and its snapshot reserve "
+                    "(+%s): free space in volume %s first (old snapshots, other data), or grow it in ONTAP System Manager"
+                    % (human(vg), human(g), how, human(growth_limit(vol, g) - size), vol["name"]))
+        return p
     p.update(target=vt, vol_growth=vg, vol_how=how if vg else "it has room for the LUN's growth already (%s)" % how,
              lun={"name": lun["name"], "size": lsize, "target": lsize + g, "thick": bool(lun.get("thick")), "used": int(lun.get("used") or 0)})
     take = landing(vol, lun, vg, g)

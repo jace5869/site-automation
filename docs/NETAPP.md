@@ -369,7 +369,11 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
 3. **A LUN volume** grows only as much as the bigger LUN needs, never less than it is:
    - **thick LUN:** the volume's used space now + the LUN's growth;
    - **thin LUN:** the volume keeps its headroom over its LUNs (its usable size against the LUNs' sizes);
-   - then the volume's snapshot reserve on top (it is a % of the volume), and never smaller than the LUN.
+   - then the volume's snapshot reserve on top (it is a % of the volume), and never smaller than the LUN;
+   - **never more than the LUN's growth and its snapshot reserve** (growth / (1 - reserve)): a thin LUN's headroom is
+     capped there; a thick LUN whose volume would need more (it is over-full already) is refused - free space in it first.
+     This is the run's own ceiling: a Check and a later Run are two jobs, so the Run's plan, made before its first write,
+     is the hard ceiling (`max_vol_growth`), and this rule bounds it whatever free space did in between.
    - **If the volume has the room already,** it is not grown; only the LUN is.
    - The plan says it plainly: *LUN 2.00 TB -> 2.20 TB; volume 2.10 TB -> 2.32 TB (thick LUN + 5 % snapshot reserve)*.
 4. Checks the aggregate against what really lands on it: the volume's growth on a volume with a volume guarantee; on
@@ -387,8 +391,11 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    - **Autosize:** a volume whose autosize is `grow` or `grow_shrink` has it paused (off) for the change: the size is
      read once more and sent only when bigger (a size under the volume's own is never sent), then autosize is put back
      as it was - its maximum raised to the new size when it was under it, said in the report. It is put back also when
-     the change fails; if that fails, the report says autosize is off and to set it back. The Check plan shows "autosize
-     grow paused during the change".
+     the change fails (its maximum raised only to a size read back). If the pause's answer is lost, autosize is read
+     again: off - put back, nothing else changed; not readable - the report says "autosize may be OFF - check volume X".
+     If autosize cannot be put back, the LUN is not grown (said). The new size is never more than the planned growth on
+     the size read after the pause (grow_shrink may have shrunk it). The Check plan shows "autosize grow paused during
+     the change".
    - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
      counts the spill at that size, once.
 6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the

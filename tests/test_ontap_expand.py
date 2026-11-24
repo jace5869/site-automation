@@ -53,7 +53,7 @@ class Plans(unittest.TestCase):
         p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/lun_ds01", "size": 9 * GB}, lun_listed=9 * GB)
         self.assertEqual(p["status"], "grow", p["why"])
         self.assertEqual((p["growth"], p["lun"]["target"]), (GB, 10 * GB))
-        self.assertEqual(p["target"], X._ceil_mb(10 * GB * 10 / 9.0))
+        self.assertEqual(p["target"], 11 * GB)                 # 10/9 headroom would be 11.1 GB: capped at the LUN's growth (no reserve)
         self.assertIn("thin LUN, the volume keeps 1.11x its LUN", p["vol_how"])
         self.assertEqual(p["by"], "default")
 
@@ -102,10 +102,11 @@ class Plans(unittest.TestCase):
         self.assertIn("changed since the list", p["why"])
 
     def test_lun_never_bigger_than_its_volume(self):
-        """a thin LUN bigger than its volume (over-provisioned): the volume still grows to at least the LUN's new size"""
+        """a thin LUN bigger than its volume (over-provisioned): the volume would have to grow more than the LUN's growth -
+        refused, said (never a LUN over its volume)"""
         p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 20 * GB}, lun_listed=20 * GB)
-        self.assertEqual(p["status"], "grow", p["why"])
-        self.assertGreaterEqual(p["target"], p["lun"]["target"])
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("more than the LUN's growth and its snapshot reserve", p["why"])
 
     def test_recheck(self):
         p = X.plan(vol(), AGGR, 10 * GB, {})
@@ -197,7 +198,7 @@ class LunPlans(unittest.TestCase):
         lun = dict(self.LUN, thick=False)
         p = X.plan(self.v(int(2.5 * TB), int(0.4 * TB), snap=0), AGGR, int(2.5 * TB), {}, lun=lun, lun_listed=2 * TB)
         g = X.default_growth(2 * TB)
-        self.assertEqual(p["target"], X._ceil_mb(2.5 * TB * (2 * TB + g) / (2 * TB)))
+        self.assertEqual(p["target"], int(2.5 * TB) + g)                # the 1.25x headroom capped at the LUN's growth (no reserve)
         self.assertTrue(p["vol_how"].startswith("thin LUN, the volume keeps 1.25x its LUN"), p["vol_how"])
 
     def test_enough_room_already(self):
@@ -425,7 +426,83 @@ class Grow1124(unittest.TestCase):
         c.call = call
         steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
         self.assertFalse(steps[-1]["ok"])
-        self.assertIn("autosize is OFF on this volume now", steps[-1]["result"])
+        self.assertIn("autosize may be OFF: check volume vol_ds01 (svm1)", steps[-1]["result"])
+
+    def test_p1_the_pause_answer_lost(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB})
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            r = orig(method, path, query, body)
+            if body == {"autosize": {"mode": "off"}}:
+                raise self.V.Unreachable("timed out", "timeout")              # done, the answer lost
+            return r
+        c.call = call
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertIn("it went off all the same", steps[1]["result"])
+        self.assertEqual((steps[2]["step"], steps[2]["ok"]), ("Restore autosize", True))
+        self.assertEqual(c.autosize["mode"], "grow")
+        self.assertFalse([b for _p, b in c.patches if "size" in b])
+        self.assertNotIn("nothing was changed", steps[1]["result"])
+
+    def test_p1_the_pause_answer_lost_and_the_mode_unknown(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB})
+        V = self.V
+        reads = {"n": 0}
+        orig_records = c.records
+
+        def records(path, fields, **q):
+            if path == "/api/storage/volumes":
+                reads["n"] += 1
+                if reads["n"] > 1:
+                    raise V.Unreachable("timed out", "timeout")
+            return orig_records(path, fields, **q)
+
+        def call(method, path, query=None, body=None):
+            raise V.Unreachable("timed out", "timeout")
+        c.records, c.call = records, call
+        steps = V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertIn("autosize may be OFF (read again: not read): check volume vol_ds01 (svm1)", steps[-1]["result"])
+        self.assertNotIn("nothing was changed", steps[-1]["result"])
+
+    def test_p2_shrunk_before_the_pause_never_more_than_the_planned_growth(self):
+        p = self.plan(avail=int(0.1 * TB))
+        vg = p["vol_growth"]
+        c = FakeCluster([3 * TB, int(2.8 * TB)], avail=[int(0.1 * TB), int(0.1 * TB)], autosize={"mode": "grow_shrink", "maximum": 4 * TB})
+        self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        sent = [b["size"] for _p, b in c.patches if "size" in b]
+        self.assertEqual(sent, [int(2.8 * TB) + vg])
+
+    def test_p2_a_rejected_resize_never_raises_the_maximum(self):
+        FakeCluster.Failed = self.V.Failed
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 3 * TB}, fail=("size",))
+        self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.autosize, {"mode": "grow", "maximum": 3 * TB})          # the size read back: 3 TB, the maximum as it was
+
+    def test_p2_no_lun_when_autosize_was_not_put_back(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB})
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            if body and body.get("autosize", {}).get("mode") == "grow":
+                raise self.V.Failed("HTTP 500: no answer")
+            return orig(method, path, query, body)
+        c.call = call
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.lun_size, 2 * TB)                                        # the LUN left as it was
+        self.assertEqual(steps[-1]["step"], "Grow the LUN")
+        self.assertIn("autosize could not be put back", steps[-1]["result"])
+
+    def test_p2_a_thick_lun_never_grows_the_volume_more_than_its_growth_and_reserve(self):
+        over = vol(100 * GB, 100 * GB, available=-20 * GB, snap_pct=0, guarantee="volume")      # 20 GB over-full already
+        p = X.plan(over, AGGR, 100 * GB, {}, lun={"name": "/vol/v/l", "size": 90 * GB, "thick": True, "total": 90 * GB}, lun_listed=90 * GB)
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("more than the LUN's growth and its snapshot reserve", p["why"])
+        self.assertEqual(X.growth_limit({"size": 100 * GB, "snap_pct": 20}, 8 * GB), 110 * GB)
 
     def test_p2_a_lun_resized_since_stops_before_any_write(self):
         p = self.plan(avail=int(0.1 * TB))
