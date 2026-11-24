@@ -396,6 +396,9 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
      If autosize cannot be put back, the LUN is not grown (said). The new size is never more than the planned growth on
      the size read after the pause (grow_shrink may have shrunk it). The Check plan shows "autosize grow paused during
      the change".
+   - **The one rule of every size sent:** a size ONTAP gave just now (above 0), and size now <= new size <= the planned
+     size, to the byte. Anything else: nothing is sent, and the report says why. Each change's ONTAP job is followed to
+     its end; one still queued when the job gives up is said ("autosize may still turn OFF on volume X later").
    - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
      counts the spill at that size, once.
 6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the
