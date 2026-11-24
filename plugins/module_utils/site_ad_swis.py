@@ -116,25 +116,33 @@ def disabled(c):
 def summarize_apps(apps):
     """apps_for's list for one node -> {total, down, warning, unknown, disabled, names (not up, worst first), not_up: [...],
     text, status}. 1.116.5: a component disabled in SolarWinds is not counted (not in total, not_up or the status); the
-    text says how many once, at its end."""
-    total = sum(int(a.get("components") or 0) for a in apps)
+    text says how many once, at its end. Each application's disabled components come off its own count; an application
+    disabled whole (no components) is counted as disabled only."""
+    total, known = 0, True                               # known: every application's count of components was read
     not_up, off = [], 0
     for a in apps:
         raw = a.get("components_not_up") or []
+        own_off = 0
         for c in raw:
             if disabled(c):
-                off += 1
+                own_off += 1
             else:
                 not_up.append(dict(c, app=a.get("app") or ""))
+        whole_off = not raw and a.get("status") in (sw.DOWN, sw.WARNING, sw.UNKNOWN) and not a.get("components") and disabled(a)
+        if a.get("components") is None:
+            known = known and whole_off                  # an application switched off whole: its count does not matter
+        else:
+            total += max(int(a.get("components") or 0) - own_off, 0)
+        off += own_off
         if not raw and a.get("status") in (sw.DOWN, sw.WARNING, sw.UNKNOWN) and not a.get("components"):
-            if disabled(a):
+            if disabled(a):                              # the application itself switched off: none of its components counted
                 off += 1
             else:
                 not_up.append({"name": a.get("app") or "", "app": a.get("app") or "", "status": a.get("status"), "value": "",
                                "message": a.get("status_text") or ""})
     not_up.sort(key=lambda c: (sw.RANK.get(c.get("status"), 2), str(c.get("name") or "").lower()))
     cnt = dict((k, sum(1 for c in not_up if c.get("status") == k)) for k in (sw.DOWN, sw.WARNING, sw.UNKNOWN))
-    total = max(total - off, len(not_up), 0)
+    total = max(total, len(not_up))
     if not apps:
         return {"total": 0, "down": 0, "warning": 0, "unknown": 0, "disabled": 0, "not_up": [], "status": "", "text": "no AD template"}
     names = [c.get("name") or "" for c in not_up]
@@ -151,6 +159,8 @@ def summarize_apps(apps):
         text, st = "%d of %d unknown" % (total, total), sw.UNKNOWN
     elif cnt[sw.UNKNOWN]:
         text, st = some(sw.UNKNOWN, "unknown"), sw.UNKNOWN
+    elif off and not known:                              # the count of components not read: the others are not known to be up
+        text, st, note = "%d disabled in SolarWinds (how many monitors in all: not read)" % off, "", ""
     elif not total and off:                              # every monitor switched off: nothing up, nothing wrong
         text, st, note = "all %d disabled in SolarWinds" % off, "", ""
     else:
@@ -159,11 +169,20 @@ def summarize_apps(apps):
             "names": names, "not_up": not_up, "status": st, "text": text + note}
 
 
+def _eid(e):
+    try:
+        return int(e.get("event_id"))
+    except (TypeError, ValueError):
+        return -1
+
+
 def last_down(events, now, days):
     """A node's events (oldest first: event_time, event_type) -> its newest down in the window and how long it lasted.
     1.116.5: a down under 1 minute (SolarWinds' polling blip) is not an outage: the newest down of 1 minute or more is
     given; only when there is none, the newest blip ({..., "blip": True})."""
-    evs = sorted((e for e in events if _utc(e.get("event_time"))), key=lambda e: _utc(e["event_time"]))
+    # by time, then EventID: the snapshot keeps whole seconds, so a Node Up in the Down's own second closes it when it is later
+    key = lambda e: (_utc(e["event_time"]), _eid(e))     # noqa: E731
+    evs = sorted((e for e in events if _utc(e.get("event_time"))), key=key)
     start = now - datetime.timedelta(days=days)
     downs = [e for e in evs if int(e.get("event_type") or 0) == EVENT_DOWN and _utc(e["event_time"]) >= start]
     if not downs:
@@ -171,7 +190,7 @@ def last_down(events, now, days):
     blip = None
     for d in reversed(downs):
         at = _utc(d["event_time"])
-        ups = [e for e in evs if int(e.get("event_type") or 0) == EVENT_UP and _utc(e["event_time"]) > at]
+        ups = [e for e in evs if int(e.get("event_type") or 0) == EVENT_UP and key(e) > key(d)]
         end = _utc(ups[0]["event_time"]) if ups else now
         rec = {"at": _hm(at), "minutes": max(0, int((end - at).total_seconds() // 60)), "ongoing": not ups}
         if rec["ongoing"] or rec["minutes"] >= 1:

@@ -650,5 +650,35 @@ class Blip1165(unittest.TestCase):
         self.assertEqual((cell, st, row), ("2026-11-23 11:15 CET, for 1 min", "warning", "warning"))
         self.assertIn("back after an outage of 1 min", means)
 
+
+class Review1165(unittest.TestCase):
+    """1.116.5 review: disabled counted per application, an unknown total, Down and Up in one second."""
+
+    def test_a_disabled_app_does_not_hide_another_apps_up(self):
+        s = ad.summarize_apps([{"app": "WU", "status": "Unknown", "status_text": "Disabled", "components": 0, "components_not_up": []},
+                               {"app": "AD", "status": "Up", "components": 1, "components_not_up": []}])
+        self.assertEqual((s["text"], s["status"], s["total"]), ("1 of 1 up · 1 disabled in SolarWinds", sw.UP, 1))
+
+    def test_disabled_per_application(self):
+        s = ad.summarize_apps([{"app": "A", "status": "Unknown", "components": 1,
+                                "components_not_up": [_comp(1, "a", message="Disabled"), _comp(2, "b", message="Disabled")]},
+                               {"app": "B", "status": "Up", "components": 2, "components_not_up": []}])
+        self.assertEqual(s["text"], "2 of 2 up · 2 disabled in SolarWinds")       # A's extra disabled row never takes B's
+
+    def test_an_unknown_total_never_says_all_disabled(self):
+        s = ad.summarize_apps([{"app": "AD", "status": "Unknown", "components": None,
+                                "components_not_up": [_comp(1, "a", message="Disabled")]}])
+        self.assertEqual((s["text"], s["status"]), ("1 disabled in SolarWinds (how many monitors in all: not read)", ""))
+
+    def test_an_up_in_the_downs_second_closes_it(self):
+        now = t("2026-11-23 10:30")
+        evs = [{"event_id": 501, "event_time": "2026-11-23 10:15:05", "event_type": 1},
+               {"event_id": 502, "event_time": "2026-11-23 10:15:05", "event_type": 5}]
+        self.assertEqual(ad.last_down(evs, now, 30), {"at": "2026-11-23 10:15", "minutes": 0, "ongoing": False, "blip": True})
+        later = evs + [{"event_id": 600, "event_time": "2026-11-23 10:20:00", "event_type": 5}]
+        self.assertEqual(ad.last_down(later, now, 30)["minutes"], 0)                # never paired with the later Up
+        before = [dict(evs[1], event_id=500), evs[0]]                                # an Up of an earlier ID: not this Down's end
+        self.assertTrue(ad.last_down(before, now, 30)["ongoing"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
