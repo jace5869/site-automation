@@ -868,7 +868,8 @@ How it finds them - the way the descriptions do:
 What is never renamed unless the map names it (a name the map gives stays: the next run does not rename it again):
 
 - **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - every one that
-  runs on the Network execution environment). The match leaves them out too.
+  runs on the Network execution environment). The match leaves them out too. A template's area here is its catalog area
+  now or the one it had before one section per platform (`skip_areas` in the catalog), so `[Reports]` still works.
 - **The templates and workflows AAP - set up portal actions makes** (*STIG recheck*, *Disk - clean up (approved)* ...):
   that job knows its own by name. Nothing is renamed onto those names either.
 - **One a site portal action runs** - named in `portal_aap_names`, `portal_actions_extra` or `portal_actions`. The site

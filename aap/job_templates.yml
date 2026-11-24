@@ -12,6 +12,8 @@
 #   portal                the site portal launches this playbook (aap_templates_label_portal: portal-actions labels these)
 #   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal); one per
 #                         platform, from the name rules of plugins/filter/site_portal_filters.py (a workflow has one too)
+#   skip_areas            its area before one section per platform and its area now, when they differ:
+#                         aap_templates_rename_skip_areas matches either
 #   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
 #   survey                1.107.0: the survey questions its workflows' nodes answer - each added when missing, never one
 #                         changed or taken off
@@ -210,6 +212,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/disk_report.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     description:
       does: Lists local filesystems, LVM thin pools and snapshots near full (85/90%) and the old data in /tmp and /var/tmp,
         for capacity follow-up.
@@ -228,6 +231,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/tmp_cleanup.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     description:
       does: Deletes old files in /tmp (10 days) and /var/tmp (30 days), never sockets or files systemd, ssh or Kerberos keep,
         to free space.
@@ -306,6 +310,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/service_watch.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     description:
       does: Watches the podman containers that should run; when one is down, ACT finds the cause and proposes the fix (or
         makes it in self-heal).
@@ -325,6 +330,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/service_watch.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     extra_vars:
       watch_mode: approval
     description:
@@ -346,6 +352,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/service_fix_approved.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     description:
       does: After a workflow approval, runs exactly the approved container fix commands on each host, with no model, then
         checks the containers again.
@@ -607,6 +614,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/disk_cleanup_plan.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     made_by: AAP - set up portal actions
     portal: true
     description:
@@ -625,6 +633,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/disk_cleanup.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     made_by: AAP - set up portal actions
     portal: true
     description:
@@ -645,6 +654,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/service_restart.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     portal: true
     description:
       does: 'Workflow 50''s service step for one down service of a health check: look = its status and last log lines; restart
@@ -665,6 +675,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/fapolicyd_allow.yml
     area: Linux
+    skip_areas: [fapolicyd, Linux]
     portal: true
     description:
       does: 'Workflow 51, the portal''s Allow this: for one fapolicyd denial, picks the one trust entry or rule line that
@@ -684,6 +695,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/disk_space_request.yml
     area: Linux
+    skip_areas: [Disk & services, Linux]
     made_by: AAP - set up portal actions
     portal: true
     portal_actions: [disk_space_request]
@@ -704,6 +716,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/portal_open_ticket.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     made_by: AAP - set up portal actions
     portal: true
     portal_actions: [open_ticket]
@@ -845,6 +858,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/workflow_gate.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     made_by: AAP - set up portal actions
     description:
       does: 'Sits between a check and its approval: the workflow goes on only when the check handed on a plan (workflow_gate_var).'
@@ -961,6 +975,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_perf_report.yml
     area: Network
+    skip_areas: [Reports, Network]
     description:
       does: Measures latency, jitter, loss, TCP connect and OCSP answers from each Linux host to its targets, against the
         host's own usual.
@@ -979,6 +994,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/log_analysis.yml
     area: Linux
+    skip_areas: [Reports, Linux]
     description:
       does: 'On demand: reads warning and error log lines of a group of hosts for a time window, groups them into patterns,
         and ACT explains the top ones.'
@@ -997,6 +1013,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/fapolicyd_denials.yml
     area: Linux
+    skip_areas: [fapolicyd, Linux]
     description:
       does: Reads each host's fapolicyd denials from the audit log and has ACT explain them and propose a trust entry or narrow
         rule.
@@ -1052,6 +1069,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
     area: Linux
+    skip_areas: [fapolicyd, Linux]
     description:
       does: Finds what keeps fapolicyd down and what it blocks, and lists each fix to approve; makes only the fixes given
         in fapolicyd_approved.
@@ -1070,6 +1088,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
     area: Linux
+    skip_areas: [fapolicyd, Linux]
     extra_vars:
       fapolicyd_workflow: 'true'
       fapolicyd_since: yesterday
@@ -1091,6 +1110,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
     area: Linux
+    skip_areas: [fapolicyd, Linux]
     extra_vars:
       fapolicyd_since: yesterday
     description:
@@ -1279,6 +1299,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/ad_health_report.yml
     area: Active Directory
+    skip_areas: [Windows, Active Directory]
     description:
       does: Reads the health of every domain controller and domain (replication, DNS, FSMO, time, certificates, recent changes)
         into one report.
@@ -1298,6 +1319,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/ad_lockout.yml
     area: Active Directory
+    skip_areas: [Windows, Active Directory]
     description:
       does: 'For the service desk: shows whether an account is locked out and which computers'' failed sign-ins lock it, read
         from every DC''s Security log.'
@@ -1316,6 +1338,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/cert_report.yml
     area: Certificates
+    skip_areas: [Reports, Certificates]
     description:
       does: Lists every certificate on the Linux hosts (files, keystores, TLS ports) by expiry date and fails hosts with ones
         due within check_certs_warn_days.
@@ -1334,6 +1357,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/cert_renew_csr.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: Makes a new private key and CSR on the host for each Linux certificate due, and attaches the CSR to its ServiceNow
         incident or catalog order.
@@ -1351,6 +1375,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/cert_install_check.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: 'Workflow 29 step 1: finds issued certificates on the renewals'' ServiceNow requests and plans each install; fails
         on purpose when one needs approval.'
@@ -1367,6 +1392,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/cert_install_approved.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: 'After the approval: installs the approved certificates from the check''s plan, reloads the service, checks the
         port; puts old files back on failure.'
@@ -1384,6 +1410,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/cert_restore.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: Puts an earlier certificate back from an install's backup (cert_restore_backup or cert_restore_only), reloads
         the service and checks the port.
@@ -1401,6 +1428,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_cert_report.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: Lists every certificate in the Windows machine stores (and TLS endpoints) by expiry, with where each is used;
         fails servers with ones due.
@@ -1419,6 +1447,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_cert_renew_csr.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: Makes a new key and CSR (certreq -new -machine) on the server for each Windows certificate due, and attaches the
         CSR to ServiceNow.
@@ -1437,6 +1466,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_cert_install_check.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: 'Step 1 of the Windows certificate install: finds issued certificates on the ServiceNow requests and plans each
         install; fails on purpose for approval.'
@@ -1454,6 +1484,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_cert_install_approved.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: 'After the approval: accepts each approved certificate into Personal and moves its bindings (https, Remote Desktop,
         WinRM); moves them back on failure.'
@@ -1472,6 +1503,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_cert_restore.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: Moves a Windows certificate's bindings back to the old certificate from an install's backup record (win_cert_restore_backup
         or _only).
@@ -1489,6 +1521,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/trust_report.yml
     area: Certificates
+    skip_areas: [Reports, Certificates]
     description:
       does: Finds trust stores on the Linux hosts that still hold a compromised or browser-dropped CA (check_trust list) and
         fails the hosts that do.
@@ -1506,6 +1539,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_trust_report.yml
     area: Certificates
+    skip_areas: [Windows, Certificates]
     description:
       does: Finds Windows machine stores, Java cacerts and certifi bundles that still hold a compromised or browser-dropped
         CA, and fails those servers.
@@ -1541,6 +1575,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_trust_report.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: Checks vCenter's trusted roots and each ESXi host's trusted CAs for a compromised or browser-dropped CA; fails
         when one is still held.
@@ -1558,6 +1593,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_cert_report.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: Lists the certificates of vCenter and every ESXi host by expiry, and what the renewal would do for each one due.
       targets: vCenter via its API from the AAP side (VMware vCenter credential, read-only is enough); no Limit
@@ -1574,6 +1610,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_cert_renew.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: 'For each vCenter or ESXi certificate due: a ServiceNow incident (or catalog order) and a CSR made on vCenter
         or the host, attached to it.'
@@ -1591,6 +1628,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_cert_request.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: 'On demand: makes a CSR on the vCenters or ESXi hosts named in vmware_cert_request_for and orders it from the
         PKI''s catalog item now.'
@@ -1609,6 +1647,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_cert_install_check.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: 'Workflow 39 step 1: finds issued vCenter/ESXi certificates on their ServiceNow requests and plans each install;
         fails on purpose for approval.'
@@ -1625,6 +1664,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vmware_cert_install_approved.yml
     area: Certificates
+    skip_areas: [VMware, Certificates]
     description:
       does: 'After the approval: installs the approved certificates on ESXi hosts, then vCenter''s Machine SSL; older vCenter
         restarts its services (10-20 min).'
@@ -1677,6 +1717,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_cert_report.yml
     area: Certificates
+    skip_areas: [Reports, Certificates]
     description:
       does: Reads the TLS certificate each network device presents (switches, iLO, UPS ...) with a TLS hello, soonest expiry
         first; no login to devices.
@@ -1694,6 +1735,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_cert_renew.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: Opens or updates a ServiceNow incident for each network device certificate due within net_cert_warn_days, with
         the steps to renew it.
@@ -1712,6 +1754,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/pki_bundle_check.yml
     area: Certificates
+    skip_areas: [Linux, Certificates]
     description:
       does: Downloads the PKI's PKCS7 CA bundle (pki_bundle_url), verifies it and compares it with your copy (cert_install_ca_bundle).
       targets: The AAP side only (execution environment, localhost); no Limit, no credential
@@ -2101,6 +2144,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/site_portal_deploy.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     description:
       does: Installs or updates the site portal (reports, actions that launch AAP jobs, live jobs, approvals) as podman containers;
         run after updates.
@@ -2313,6 +2357,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_api_test.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Proves the Horizon API connection: logs in, asks each REST API path the other jobs use, checks pool names in
         settings; run first.'
@@ -2329,6 +2374,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_health_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Checks Connection Servers, gateways, vCenter and AD as Horizon sees them, event DB, SAML/True SSO, license, pools
         and broken desktops.
@@ -2347,6 +2393,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_capacity_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Shows per desktop pool its maximum, free, in use, broken and busy desktops and sessions, and how full it is, to
         spot pools running out.
@@ -2365,6 +2412,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_events_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Summarizes Horizon''s event database for the last horizon_events_hours (24): failed logons by user, errors by
         type, admin changes.'
@@ -2383,6 +2431,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_settings_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Compares Horizon's global and per Connection Server settings (timeouts, SSO, FIPS, smart cards) with horizon_settings_baseline.
       targets: Horizon Connection Server REST API (Horizon API credential); runs on the AAP side, no inventory needed.
@@ -2400,6 +2449,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_sessions_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Lists old Horizon Clients, pending sessions, sessions on broken desktops, long sessions, users with two or more
         sessions, protocols.
@@ -2417,6 +2467,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_logon_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Shows desktop logon timing of the last horizon_logon_hours from Horizon''s Help Desk data: per pool median, 95th
         percentile, slowest phase.'
@@ -2435,6 +2486,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_fslogix_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Lists FSLogix profile containers on horizon_fslogix_shares: size vs cap, stale, duplicates, orphan folders, and
         each share''s free space.'
@@ -2454,6 +2506,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_internal_vms_report.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Lists instant-clone internal VMs (cp-template, cp-replica, cp-parent) that are orphaned, inaccessible or unused,
         and the disk they hold.
@@ -2472,6 +2525,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_message_users.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Sends a message (horizon_message) to the Horizon sessions of some pools, an ESXi host's desktops, some users or
         everyone, e.g. before maintenance.
@@ -2490,6 +2544,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_plan.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Step 1 of the ESXi host maintenance workflow: lists the desktops on horizon_maint_host to put in maintenance
         and the sessions to message.'
@@ -2508,6 +2563,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_start.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'After the approval: puts the planned desktops (re-checked) into Horizon maintenance mode and messages the host''s
         sessions; stops without a plan.'
@@ -2527,6 +2583,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_end.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: After the ESXi host's maintenance, takes the desktops the start job put in Horizon maintenance mode back out (horizon_maint_host).
       targets: Horizon Connection Server REST API (Horizon API credential); runs on the AAP side, no inventory needed.
@@ -2543,6 +2600,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_desktops_check.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     extra_vars:
       horizon_desktops_mode: approval
     description:
@@ -2563,6 +2621,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_desktops_fix_approved.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: After the approval in the broken desktops workflow, fixes exactly the approved Horizon desktops that are still
         broken and have no session.
@@ -2582,6 +2641,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/horizon_image_check.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Checks whether a Horizon instant-clone golden image VM is ready to snapshot and push: PASS/WARN/FAIL per check,
         READY or NOT READY.'
@@ -2601,6 +2661,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_image_push_plan.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'Step 1 of the image push workflow: checks the pools, golden VM and snapshot in Horizon and builds the push plan
         for the approver.'
@@ -2620,6 +2681,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_image_push_approved.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: After the approval, schedules the approved golden image push on each pool still there, not protected and with
         no push already scheduled.
@@ -2639,6 +2701,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_user_help.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: 'For the service desk: shows one user''s Horizon sessions and desktops and, if asked, logs off, disconnects, resets,
         restarts or recovers them.'
@@ -2656,6 +2719,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_session_cleanup.yml
     area: Horizon
+    skip_areas: [VMware, Horizon]
     description:
       does: Logs off Horizon sessions disconnected for horizon_session_max_disconnected_hours (8) or more, so their desktops
         are freed and refreshed.
@@ -2675,6 +2739,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_config_backup.yml
     area: Network
+    skip_areas: [Linux, Network]
     description:
       does: Daily backup of each network device's running configuration, with a report of what changed and the diff (secret
         values hidden).
@@ -2694,6 +2759,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_config_load.yml
     area: Network
+    skip_areas: [Linux, Network]
     ask_job_type: true
     description:
       does: Sends configuration lines to network devices, or restores a backup, for a ServiceNow change request in state Implement;
@@ -2714,6 +2780,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_config_load.yml
     area: Network
+    skip_areas: [Linux, Network]
     extra_vars:
       site_dry_run_only: 'true'
     job_type: check
@@ -2811,6 +2878,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ontap_health_report.yml
     area: NetApp
+    skip_areas: [Reports, NetApp]
     description:
       does: 'Reports NetApp ONTAP health: nodes, alerts, hardware, network, capacity, SnapMirror, SVMs, CIFS, LUNs, certificates,
         time, problems first.'
@@ -2829,6 +2897,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ontap_hardware_report.yml
     area: NetApp
+    skip_areas: [Reports, NetApp]
     description:
       does: Lists every ONTAP controller, shelf, disk and port with model, serial number and firmware, for hardware and firmware
         tracking.
@@ -2848,6 +2917,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ontap_capacity_trends.yml
     area: NetApp
+    skip_areas: [Linux, NetApp]
     description:
       does: 'Shows how full ONTAP clusters, aggregates and volumes are and where they are going: growth a day, days to 90%,
         fastest growing volumes.'
@@ -2867,6 +2937,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ontap_volume_list.yml
     area: NetApp
+    skip_areas: [VMware, NetApp]
     description:
       does: Writes the NetApp volumes that may be grown (one per LUN, with their VMware datastore) as the expand job's survey
         list; run on a schedule.
@@ -2886,6 +2957,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ontap_volume_expand.yml
     area: NetApp
+    skip_areas: [VMware, NetApp]
     ask_job_type: true
     survey:
       - question_name: Which volume to grow?
@@ -2923,6 +2995,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/ucs_inventory_report.yml
     area: Network
+    skip_areas: [Reports, Network]
     description:
       does: Lists each Cisco UCS domain's fabric interconnects, chassis, servers, firmware and critical/major faults, for
         inventory and firmware tracking.
@@ -2942,6 +3015,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/netmap_report.yml
     area: Network
+    skip_areas: [Reports, Network]
     description:
       does: Maps the sites, WAN links, nodes and links SolarWinds knows, and what is down or changed since the last run, as
         a globe and site views.
@@ -2961,6 +3035,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/solarwinds_snapshot.yml
     area: Network
+    skip_areas: [Reports, Network]
     description:
       does: 'Every 10 minutes: reads SolarWinds once and keeps it in the report database, so the reports read the database
         instead of SolarWinds.'
@@ -2980,6 +3055,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/tenable_scan.yml
     area: STIG
+    skip_areas: [Linux, STIG]
     description:
       does: Launches Tenable.sc (ACAS) scans of an inventory group, one scan per zone, so each host is scanned from its own
         datacenter's scanner.
@@ -2999,6 +3075,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_test_ticket.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     ask_job_type: true
     description:
       does: Proves AAP can reach ServiceNow and open, read back, note and resolve an incident; run once before the ServiceNow
@@ -3018,6 +3095,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_catalog_test.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: Checks the PKI's ServiceNow catalog item and the cert_renew_catalog_variables answers before certificate renewals
         order from it.
@@ -3036,6 +3114,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_tickets.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: 'Workflow step after a check job: opens a ServiceNow incident per finding, adds work notes to open ones, and notes
         the cleared ones.'
@@ -3054,6 +3133,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_health.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: 'Hourly: does the ServiceNow instance answer its API, and are its MID Servers up, validated and healthy (also
         self-hosted nodes if in inventory).'
@@ -3073,6 +3153,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_health.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     extra_vars:
       servicenow_health_part: nodes
     description:
@@ -3094,6 +3175,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_availability.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: 'Every 5 to 15 minutes: times the ServiceNow REST API and login page; fails when ServiceNow is down, for a workflow''s
         notification.'
@@ -3113,6 +3195,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_war.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: 'Weekly: what a ServiceNow assignment group opened, completed and still has open, with lines to paste into the
         weekly activity report.'
@@ -3131,6 +3214,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_insights.yml
     area: Tickets & incidents
+    skip_areas: [Tickets, Tickets & incidents]
     description:
       does: 'Monthly or quarterly: months of ServiceNow tickets summed up for management: common issues and fixes, backlog,
         P1/P2s, team pages.'
@@ -3150,6 +3234,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_email_question.yml
     area: Admin
+    skip_areas: [Reports, Admin]
     description:
       does: Adds an 'Also email the report to' box to the surveys of every report template and its workflows, so a launcher
         can add recipients.
@@ -3168,6 +3253,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_ee.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     description:
       does: Puts one execution environment on many job templates at once (picked by project, current EE or name), e.g. after
         a new EE is added.
@@ -3185,6 +3271,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_workflow_gates.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     description:
       does: Puts the 'Workflow gate - has a plan' step between each check and its approval in hand-built workflows, so a failed
@@ -3203,6 +3290,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_portal_setup.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     description:
       does: Makes or updates the job templates and workflows the site portal's actions launch, and gives the portal's AAP
@@ -3222,6 +3310,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_templates_setup.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     description:
       does: Makes the catalog's job templates in AAP or checks them; can rename yours to the catalog's names and match their
@@ -3241,6 +3330,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_templates_setup.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     extra_vars:
       aap_templates_describe: 'true'
@@ -3263,6 +3353,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_inventory_move.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     description:
       does: Moves every job template, workflow, workflow node and schedule from one named inventory to another (aap_inventory_replace).
@@ -3281,6 +3372,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_credentials_setup.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     ask_job_type: true
     description:
       does: Renames AAP credentials and attaches them to, or takes them off, job templates (aap_credential_renames, _attach,
@@ -3300,6 +3392,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_health_check.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     description:
       does: 'Checks a containerized AAP 2.5+ host: OS, containers and units, logs, database, controller and gateway API, receptor,
         certificates.'
@@ -3317,6 +3410,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_template_audit.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     description:
       does: 'Reads every job and workflow template''s Variables and says which settings belong elsewhere: inventory, all.yml,
         enclave file, credential.'
@@ -3335,6 +3429,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/report_web_copy.yml
     area: Admin
+    skip_areas: [Reports, Admin]
     description:
       does: 'Copies report pages kept as job artifacts (report_web_copy: true) onto the report website, for report jobs that
         cannot reach the web server.'
@@ -3354,6 +3449,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/incident_aar.yml
     area: Tickets & incidents
+    skip_areas: [Linux, Tickets & incidents]
     description:
       does: Turns the outage details typed in the survey into an after action report Word document (AAR.docx), with an SOP
         from it when asked.
@@ -3373,6 +3469,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/incident_sop.yml
     area: Tickets & incidents
+    skip_areas: [Linux, Tickets & incidents]
     description:
       does: Turns the SOP typed in the survey (purpose, steps to troubleshoot, fix and check, escalation) into a Word document.
       targets: The AAP side only (localhost); no hosts and no machine credential; an ACT model key credential only for the
@@ -3390,6 +3487,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/incident_docs_survey.yml
     area: Admin
+    skip_areas: [Linux, Admin]
     description:
       does: Writes the survey questions of the 'Outage AAR - Word document' and 'SOP - Word document' templates into AAP;
         run once after making them.

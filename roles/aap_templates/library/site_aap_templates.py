@@ -51,6 +51,7 @@ RETURN = r'''
 results: {description: "Each template: {name, action (create|fix|right|differs|other name|skipped|left|missing|failed), diff ({field:
   [has, should be]}), why, labels (the portal labels it gets, or would)}.", type: list}
 problems: {description: "What stopped the job before any write: a name not found, AAP not reached.", type: list}
+stale_labels: {description: "Lines naming an old catalog area's portal-area label on a template, to remove by hand (never taken off).", type: list}
 '''
 
 import fnmatch
@@ -116,7 +117,8 @@ def stale_area_labels(have, prefix, area):
 def areas_of(e):
     """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames). Network is only
     ever the Network EE's: the catalog's own Network area (Network map, SolarWinds, Cisco UCS on the default EE) is never skipped by it."""
-    out = set([str(e.get("area") or "")])
+    # skip_areas: its area before one section per platform and its area now (a site's [Reports] still leaves Log analysis out)
+    out = set(str(x or "") for x in (e.get("skip_areas") or [])) | set([str(e.get("area") or "")])
     out = set(x for x in out if x.casefold() != "network")
     if str(e.get("ee") or "") == "network":
         out.add("Network")
@@ -794,8 +796,6 @@ class Templates(object):
             for r in self.results:
                 if r["name"] in getattr(self, "left_off", {}):
                     r.setdefault("also", self.left_off[r["name"]])
-            for name, lines in sorted((getattr(self, "stale_labels", None) or {}).items()):
-                self.row_of(name).setdefault("stale", lines)
 
     def run_all(self):
         self.wrote = False
@@ -898,7 +898,8 @@ def main():
         if why:
             r["also"] = (r["also"] + "; " + why) if r.get("also") else why
     module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused,
-                     survey_adds=getattr(s, "survey_adds", {}))
+                     survey_adds=getattr(s, "survey_adds", {}),
+                     stale_labels=[x for _, lines in sorted((getattr(s, "stale_labels", None) or {}).items()) for x in lines])
 
 
 if __name__ == "__main__":

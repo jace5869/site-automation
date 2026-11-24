@@ -89,6 +89,36 @@ class Areas(unittest.TestCase):
             self.assertEqual(f({"area": "Network", "ee": "network"}), {"network"})
             self.assertEqual(f({"area": "VMware", "ee": "all"}), {"vmware"})
             self.assertEqual(f({"area": "Tickets & incidents", "ee": "network"}), {"tickets & incidents", "network"})
+            # skip_areas: the area before one section per platform still counts (a site's [Reports] keeps Log analysis out)
+            self.assertEqual(f({"area": "Linux", "skip_areas": ["Reports", "Linux"], "ee": "all"}), {"reports", "linux"})
+            self.assertEqual(f({"area": "Network", "skip_areas": ["Reports", "Network"], "ee": "all"}), {"reports"})
+
+    def test_the_catalog_keeps_the_old_areas(self):
+        import site_aap_rename as R
+        with open(os.path.join(REPO, "aap", "job_templates.yml")) as fh:
+            cat = dict((e["name"], e) for e in yaml.safe_load(fh)["job_templates"])
+        self.assertEqual(cat["Log analysis"]["skip_areas"], ["Reports", "Linux"])
+        self.assertIn("reports", T.areas_of(cat["Log analysis"]))
+        self.assertIn("reports", R.areas_of(cat["Log analysis"]))
+        self.assertIn("disk & services", T.areas_of(cat["Disk - clean up one mount"]))
+        self.assertIn("vmware", T.areas_of(cat["Horizon - health report"]))
+        self.assertEqual(T.areas_of(cat["Network map"]), {"reports"})                           # Network: only the Network EE
+        self.assertNotIn("skip_areas", cat["Health check"])                                    # the same area: none
+
+    def test_a_stale_label_is_never_an_already_right_row(self):
+        """A run stopped before a template was looked at: its stale label is said on its own, never as a row ('already right')."""
+        s = T.Templates.__new__(T.Templates)
+        s.results, s.left_off = [], {}
+        s.stale_labels = {"Health check": ["stale portal-area label portal-area:Reports on Health check - remove it by hand"]}
+
+        def boom():
+            raise RuntimeError("AAP refused a write")
+        s.run_all = boom
+        with self.assertRaises(RuntimeError):
+            s.run()
+        self.assertEqual(s.results, [])
+        src = open(os.path.join(REPO, "roles", "aap_templates", "library", "site_aap_templates.py")).read()
+        self.assertIn("stale_labels=[x for _, lines in sorted(", src)
 
     def test_the_old_area_labels(self):
         have = {"portal", "portal-area:Reports", "portal-area:Linux", "portal-area:Custom", "portal-area:disk & services", "Reports"}
@@ -101,7 +131,7 @@ class Areas(unittest.TestCase):
         src = open(os.path.join(REPO, "roles", "aap_templates", "library", "site_aap_templates.py")).read()
         self.assertIn("remove it by hand", src)
         with open(os.path.join(REPO, "roles", "aap_templates", "tasks", "main.yml")) as fh:
-            self.assertIn("r.stale | default([])", fh.read())
+            self.assertIn("_at.stale_labels", fh.read())
 
 
 if __name__ == "__main__":

@@ -410,6 +410,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the credential's password (secret)
 # portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"
 
+# ---- aap_templates -------------------------------------------------------------------------------
+## "" = the repository's aap/job_templates.yml; a path here = your own catalog
+# aap_templates_catalog: ""
+
 # ---- ad_report -----------------------------------------------------------------------------------
 ## ---- Reader mode -------------------------------------------------------------------------------
 ## the AD domain's DNS name ("" = learned: the DCs' names, their ansible_host, their rootDSE, the

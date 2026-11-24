@@ -4896,7 +4896,8 @@ class Areas1784(unittest.TestCase):
         pa, wa = {"playbooks/health_check.yml": "Linux"}, {"daily health": "Linux"}
         pick = rules.area_label_pick
         self.assertEqual(pick(["Disk & services", "Linux"], "Health check", "playbooks/health_check.yml", pa), "Linux")    # the old label loses
-        self.assertEqual(pick(["Disk & services", "linux"], "x", "health_check.yml", pa), "linux")
+        self.assertEqual(pick(["Disk & services", "linux"], "x", "health_check.yml", pa), "Linux")                        # the catalog's spelling
+        self.assertEqual(pick(["Reports", "linux"], "Health check", "playbooks/health_check.yml", pa), "Linux")             # one heading, never "linux"
         self.assertEqual(pick(["Disk & services", "Tickets"], "x", "playbooks/health_check.yml", pa), "Disk & services")  # none is it: the first
         self.assertEqual(pick(["Disk & services", "Linux"], "Odd", "playbooks/z.yml", pa), "Disk & services")             # no catalog area: the first
         self.assertEqual(pick(["Disk & services", "Linux"], "Linux - x", "playbooks/z.yml", pa), "Disk & services")       # a name rule is not the catalog
@@ -4918,6 +4919,9 @@ class Areas1784(unittest.TestCase):
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
             y = fh.read()
         self.assertIn('PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"', y)
+        self.assertIn("lookup('ansible.builtin.file', aap_templates_catalog, errors='warn')", y)                         # your own catalog, as the setup job reads it
+        self.assertIn("_portal_catalog_doc.workflows", y)
+        self.assertIn("_portal_catalog_doc.job_templates", y)
         self.assertIn('"catalog": "its workflow\'s area in the job catalog"', open(sp.__file__).read())
 
     def test_5_the_rules_are_checked_naming_the_setting(self):

@@ -313,32 +313,38 @@
     fail_msg: "portal_area_rules is not right - nothing was changed: {{ (portal_area_rules | site_portal_area_rules).problems | join(' | ') }}"
     quiet: true
 
-# the area of each playbook in the job-template catalog (aap/job_templates.yml, an 'area' on each entry), when the repository has it
+# the area of each playbook in the job-template catalog (aap/job_templates.yml, an 'area' on each entry), when the repository has it;
+# aap_templates_catalog (a path: your own catalog, as AAP - set up job templates reads it) when it is set
 - name: Areas | the job-template catalog
   ansible.builtin.stat:
     path: "{{ role_path }}/../../aap/job_templates.yml"
   register: _portal_catalog_stat
   delegate_to: localhost
   become: false
+  when: aap_templates_catalog | default('') | length == 0
 
-- name: Areas | the area of each playbook
+# the same lookup as AAP - set up job templates (a relative path found the same way); one that cannot be read: a warning, no areas from it
+- name: Areas | the catalog read
+  ansible.builtin.set_fact:
+    _portal_catalog_doc: >-
+      {{ (lookup('ansible.builtin.file', aap_templates_catalog, errors='warn') | default('', true) | from_yaml)
+         if aap_templates_catalog | default('') | length > 0
+         else (lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml) }}
+  when: aap_templates_catalog | default('') | length > 0 or _portal_catalog_stat.stat.exists | default(false)
+
+- name: Areas | the area of each playbook and of each workflow (by its name - a workflow has no playbook)
   ansible.builtin.set_fact:
     _portal_playbook_areas: >-
-      {{ dict((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+      {{ dict(_portal_catalog_doc.job_templates | default([], true)
               | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='playbook') | list
-              | zip((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+              | zip(_portal_catalog_doc.job_templates | default([], true)
                     | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='area') | list)) }}
-  when: _portal_catalog_stat.stat.exists | default(false)
-
-# a workflow has no playbook: its catalog entry (workflows, an 'area' on each) is found by its name
-- name: Areas | the area of each workflow of the catalog
-  ansible.builtin.set_fact:
     _portal_workflow_areas: >-
-      {{ dict((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).workflows | default([])
+      {{ dict(_portal_catalog_doc.workflows | default([], true)
               | selectattr('area', 'defined') | map(attribute='name') | list
-              | zip((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).workflows | default([])
+              | zip(_portal_catalog_doc.workflows | default([], true)
                     | selectattr('area', 'defined') | map(attribute='area') | list)) }}
-  when: _portal_catalog_stat.stat.exists | default(false)
+  when: _portal_catalog_doc is defined and _portal_catalog_doc is mapping
 
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:

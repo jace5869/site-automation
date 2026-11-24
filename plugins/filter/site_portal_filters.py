@@ -770,9 +770,8 @@ def area_label_pick(labels, name="", playbook="", playbook_areas=None, name_area
     if len(labels) > 1:
         cat, src = area_for(name, playbook, "", playbook_areas, None, name_areas)
         if src in ("playbook", "catalog"):
-            hit = next((x for x in labels if x.casefold() == cat.casefold()), "")
-            if hit:
-                return hit
+            if any(x.casefold() == cat.casefold() for x in labels):
+                return cat                       # the catalog's spelling: one heading, never "linux" beside "Linux"
     return labels[0] if labels else ""
 
 

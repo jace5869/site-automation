@@ -849,8 +849,8 @@ These need scripts and are kept in this browser only; without scripts every page
 ## Which area a found template is in
 
 Each found template gets an area, the first of these that says: **1.** its `portal-area:<area>` label; **2.** its area in the job catalog
-(`aap/job_templates.yml`, an `area` on each entry: a job template by its playbook, a workflow by its name; the deploy reads the file when the
-repository has it); **3.** your own rules, `portal_area_rules`; **4.** the name rules below; **5.** *Other*, last.
+(`aap/job_templates.yml`, or your own catalog when `aap_templates_catalog` names one; an `area` on each entry: a job template by its
+playbook, a workflow by its name; the deploy reads the file when it is there); **3.** your own rules, `portal_area_rules`; **4.** the name rules below; **5.** *Other*, last.
 **Details** says which one: *Area: VMware (from its name)*. The sections are the twelve below in that order, then any other area A to Z, then Other.
 
 The name rules (the same rules give every catalog entry its area): the first that matches wins, `*` is any text, any case.

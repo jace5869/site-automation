@@ -77,7 +77,8 @@ def _why(code, d):
 def areas_of(e):
     """The areas a catalog entry is in, for aap_templates_rename_skip_areas: its own, and Network for the Network EE's. Network is only
     ever the Network EE's: the catalog's own Network area (Network map, SolarWinds, Cisco UCS on the default EE) is never skipped by it."""
-    out = set([str(e.get("area") or "")])
+    # skip_areas: its area before one section per platform and its area now (a site's [Reports] still leaves Log analysis out)
+    out = set(str(x or "") for x in (e.get("skip_areas") or [])) | set([str(e.get("area") or "")])
     out = set(x for x in out if x.casefold() != "network")
     if str(e.get("ee") or "") == "network":
         out.add("Network")
