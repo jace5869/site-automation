@@ -108,6 +108,37 @@ class EveryPlaybook(unittest.TestCase):
         self.assertLessEqual(mods, {"ansible.builtin.set_fact", "ansible.builtin.add_host", "ansible.builtin.debug"})   # never a host
         self.assertTrue(all(t.get("run_once") for t in tasks))
 
+    def test_a_target_with_commas_still_leaves_hosts_out(self):
+        """1.130.0 (Codex): target A,B with A left out - the exclusion is a term of its own (A,B,!site_excluded); with ':'
+        Ansible split at the commas first and A ran. Without a comma (x:&y) ':' stays. Runs ansible-playbook (2.16 too:
+        ANSIBLE_PLAYBOOK)."""
+        import shutil
+        import subprocess
+        import tempfile
+        ap = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
+        if not ap:
+            self.skipTest("no ansible-playbook")
+        tmp = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(tmp, "inv.ini"), "w") as f:
+                f.write("[x]\nhostA ansible_connection=local\nhostB ansible_connection=local\nhostC ansible_connection=local\n"
+                        "[y]\nhostA\nhostB\n")
+            with open(os.path.join(tmp, "p.yml"), "w") as f:
+                f.write("- ansible.builtin.import_playbook: %s\n- hosts: \"{{ target | default('all') }}{{ %s }}\"\n"
+                        "  gather_facts: false\n  tasks:\n    - ansible.builtin.debug:\n        msg: 'RAN-{{ inventory_hostname }}'\n"
+                        % (os.path.join(REPO, "playbooks", "site_exclude.yml"), SUFFIX))
+            env = dict(os.environ, ANSIBLE_FILTER_PLUGINS=os.path.join(REPO, "plugins", "filter"), ANSIBLE_HOST_KEY_CHECKING="False",
+                       ANSIBLE_PYTHON_INTERPRETER=sys.executable, ANSIBLE_LOCALHOST_WARNING="False")
+            for target, want in (("hostA,hostB", {"hostB"}), ("x:&y", {"hostB"}), ("all", {"hostB", "hostC"})):
+                p = subprocess.run([ap, "-i", os.path.join(tmp, "inv.ini"), os.path.join(tmp, "p.yml"), "-e",
+                                    '{"target": "%s", "site_exclude_hosts": ["hostA"]}' % target], cwd=tmp, env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+                self.assertEqual(p.returncode, 0, p.stdout[-3000:])
+                ran = set(x.split("RAN-")[1].split('"')[0] for x in p.stdout.splitlines() if '"msg": "RAN-' in x)
+                self.assertEqual(ran, want, target)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_the_reports_and_vmware_read_it(self):
         with open(os.path.join(REPO, "roles", "site_email", "tasks", "main.yml")) as f:
             self.assertIn("site_exclude_line(10)", f.read())

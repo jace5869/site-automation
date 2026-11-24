@@ -380,6 +380,20 @@ class H(BaseHTTPRequestHandler):
                 out["passwords_needed_to_start"] = ["ssh_password"]
                 out["defaults"] = {"credentials": [{"id": 9, "name": t["password_credential"], "passwords_needed": ["ssh_password"]}]}
             return self._send(200, out)
+        ms = re.match(r"^inventories/(\d+)/script/$", p)
+        if ms:                                                           # 1.130.0: the inventory as Ansible reads it (the Windows rule)
+            inv = next((i for i in STATE["inventories"] if i["id"] == int(ms.group(1))), None)
+            if not inv or inv.get("script_fail"):
+                return self._send(503 if inv else 404, {"detail": "not now"})
+            import yaml as _y
+            vo = lambda t: (_y.safe_load(t) if t else {}) or {}            # noqa: E731
+            kids = inv.get("children") or {}
+            inner = set(c for cs in kids.values() for c in cs)
+            doc = {"all": {"hosts": [], "children": sorted(g for g in inv.get("groups", {}) if g not in inner), "vars": vo(inv.get("variables"))},
+                   "_meta": {"hostvars": dict((h, vo((inv.get("host_vars") or {}).get(h))) for h in inv["hosts"])}}
+            for g, mem in inv.get("groups", {}).items():
+                doc[g] = {"hosts": list(mem), "children": list(kids.get(g, [])), "vars": vo((inv.get("group_vars") or {}).get(g))}
+            return self._send(200, doc)
         mi = re.match(r"^inventories/(\d+)/$", p)
         if mi:                                                           # 1.78.4: one inventory (the portal reads the name of the one a Limit is checked against)
             inv = next((i for i in STATE["inventories"] if i["id"] == int(mi.group(1)) and not i.get("unreadable")), None)

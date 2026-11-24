@@ -1071,7 +1071,7 @@ A card appears only when **both** are true: the portal's account has **Execute**
 
 1. Open the list. It has two parts, **Groups (n)** and **Hosts (n)**. A group shows its host count: *linux_prod (42 hosts)*.
 2. 1.130.0: **Group** (the drop-down above the search box) lists the inventory's groups as AAP has them now (a synced inventory's
-   too; up to 500, by name). Pick one to see only its hosts: **Pick the whole group (n)** adds the group as one pick, or tick
+   too; every group, by name). Pick one to see only its hosts: **Pick the whole group (n)** adds the group as one pick, or tick
    single hosts of it. *All hosts and groups* goes back to the whole list.
 3. Type to filter (any case, any part of the name; with a group picked, its hosts only). The list shows the first 200 matches, then *N more - type to narrow*.
 4. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown (n)** adds the shown ones that fit under the limit.
@@ -1096,6 +1096,19 @@ Only what AAP's API shows counts: group names, and the Variables of hosts, group
 variables too; a dotted name reads into a mapping, e.g. `config.guestId: ["*windows*"]`). Settings in the project's
 `playbooks/group_vars` are not seen. When nothing matches (or the setting is `{}`), every host is listed and one muted line says
 *The Windows filter is not set* or *matches no host of this inventory*; the job's own check skips a host that is not Windows.
+
+The portal reads the inventory as Ansible does (AAP's *inventories/<id>/script/*, one call): a variable counts as the host would
+see it - the inventory's, then its groups from the top down (a child group over its parent; at the same depth the later name),
+then the host's own. It is read again **when the job starts**: a host synced into a picked group after the page opened is
+checked too. When AAP does not answer that read, the list says so and **Run is refused** (*could not check which hosts are
+Windows - try again*); it never falls back to every host.
+
+**A name that is a host's and a group's** (a host `pool`, and a group `pool`) cannot be told apart in a Limit: the picker shows
+it greyed out (*also a group's name - cannot be picked*), and the portal refuses it, and a group that holds it. Rename one in
+the inventory.
+
+**Many groups.** The portal reads the hosts of the first 400 groups with the list. Every other group keeps its name in the
+**Group** drop-down and the search, and its hosts are read when it is opened or picked.
 
 **A playbook's own cap (1.130.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
 schedule a restart* and *Windows - cancel a scheduled restart* take `win_restart_max_hosts` (from the template's Variables when set

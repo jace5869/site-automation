@@ -106,7 +106,6 @@ LAUNCH_DOCS = {
     "Windows troubleshoot": {"portal": True},
     "Windows - local group members": {"portal": True},
     "Windows certificate report": {"portal": True},
-    "Windows - trust store report": {"portal": True},
     "Windows STIG drift report": {"portal": True},
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed

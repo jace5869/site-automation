@@ -10,8 +10,8 @@ yours differ):
 
 ```yaml
 portal_publish_templates: ["Windows connection test", "Windows health check", "Windows troubleshoot",
-                           "Windows - local group members", "Windows certificate report", "Windows - trust store report",
-                           "Windows STIG drift report", "Windows - schedule a restart", "Windows - cancel a scheduled restart"]
+                           "Windows - local group members", "Windows certificate report", "Windows STIG drift report",
+                           "Windows - schedule a restart", "Windows - cancel a scheduled restart"]
 ```
 
 Each template needs Limit **Prompt on launch** and its inventory set (the Windows inventory). The cards appear within a minute.
@@ -20,7 +20,7 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
 - **Windows jobs pick many servers in the site portal, like the Linux ones.** The Hosts box of a Windows job takes several
   servers, a whole inventory group, or some servers of a group; one pick set is one job (the Limit is the hosts, counted
   once). Labelled for the portal now (catalog `portal: true`): *Windows connection test*, *Windows health check*, *Windows
-  troubleshoot*, *Windows - local group members*, *Windows certificate report*, *Windows - trust store report*, *Windows STIG
+  troubleshoot*, *Windows - local group members*, *Windows certificate report*, *Windows STIG
   drift report*; *Windows - schedule a restart* and *cancel* already were. The restart form keeps its survey (24-hour time,
   reason, only if pending, change). **Job type starts on Check** for every template that prompts it (restart, cancel, patch,
   load ...): Run is picked on purpose.
@@ -30,7 +30,7 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   or the inventory's Variables in AAP. No match: every host is listed, with one muted line saying the Windows filter is not set.
 - **A playbook's own cap.** `portal_limit_max_playbooks`: the restart and cancel take at most `win_restart_max_hosts` (the
   template's Variables, else 50); the picker shows it and the launch checks it.
-- **The picker: groups and search.** A **Group** drop-down lists the inventory's groups live from AAP (up to 500); picking one
+- **The picker: groups and search.** A **Group** drop-down lists every group of the inventory live from AAP; picking one
   shows its hosts, with **Pick the whole group (n)** or single hosts to tick. The list has two parts, *Groups (n)* and
   *Hosts (n)*; **Select all shown (n)** says how many. The server sends 200 rows at a time (thousands of hosts are never sent
   whole). Without scripts the plain multi-select has the same two parts.
@@ -39,6 +39,16 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   rare members (under `win_local_groups_rare_pct`, 10 %) are listed. Members at or over `win_local_groups_baseline_pct` (90 %)
   form a suggested baseline: JSON and a pasteable snippet for the Administrators membership check, on the email and the
   website, and a *Suggested baseline* sheet in the workbook.
+- **Fix (every playbook since 1.67.0): a left-out host could still run when `target` held a comma.** `target: A,B` with `A` in
+  `site_exclude_hosts` made `A,B:!site_excluded`, and Ansible splits at the commas first - `A` ran. The exclusion is now a
+  term of its own when `target` has a comma (`A,B,!site_excluded`), and stays `:!site_excluded` otherwise (`x:&y` keeps
+  working). The built-in multi-host STIG recheck (target = the hosts) was affected.
+- Which hosts are Windows is read as Ansible reads the inventory (a child group over its parent, the host over both) and
+  again when the job starts; a failed read refuses the launch. A name that is a host's and a group's is refused. Past 400
+  groups, a group's hosts are read when it is opened. *Windows - trust store report* is not published to the portal (it
+  removes certificates when `check_trust_remove` is true). A template whose playbook has its own cap but does not prompt
+  for Limit is not offered (the reason says so). Local groups baseline: a member some servers could not name, or named in
+  another language, is exported by its SID; well-known principals (S-1-5-11, BUILTIN) are one member in every language.
 - Not in this release: the Windows jobs that change servers (patch, certificate install and restore, CSRs, ACT install) stay in
   their workflows with an approval, not labelled for the portal.
 

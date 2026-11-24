@@ -185,11 +185,12 @@ Leave **Variables** empty: with no `target`, they run on every server in the inv
 first): it gives each the label `portal` and the portal's account Execute (docs/SITE_PORTAL.md, "Add your jobs in bulk").
 `aap_templates_label_portal: portal-actions` on **AAP - set up job templates** labels them too, but gives no Execute. The
 Windows reports whose servers are the Limit then show under **Windows** (STIG drift under
-**STIG**, the certificate and trust store reports under **Certificates**) with a Hosts box - several servers, a whole group or
+**STIG**, the certificate report under **Certificates**) with a Hosts box - several servers, a whole group or
 some servers of a group, one job for all of them, Windows hosts only (docs/SITE_PORTAL.md, "Windows jobs"). They are:
 *Windows connection test*, *Windows health check*, *Windows troubleshoot*, *Windows - local group members*, *Windows certificate
-report*, *Windows - trust store report*, *Windows STIG drift report*, and (since 1.127.0) *Windows - schedule a restart* and
-*Windows - cancel a scheduled restart*. The jobs that change servers (patch, certificate install and restore, CSRs, ACT
+report*, *Windows STIG drift report*, and (since 1.127.0) *Windows - schedule a restart* and
+*Windows - cancel a scheduled restart*. Not *Windows - trust store report*: it removes certificates when
+`check_trust_remove` is true. The jobs that change servers (patch, certificate install and restore, CSRs, ACT
 install) are not labelled: they run in their workflows, with an approval.
 
 ### Windows health check

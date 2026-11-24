@@ -3322,6 +3322,21 @@ class Speed1990(unittest.TestCase):
         self.cfg.aap_token = "another-placeholder"
         self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
 
+    def test_a_changed_cap_or_windows_rule_drops_the_saved_catalog(self):
+        """1.130.0 (Codex): a tightened playbook cap (or another Windows rule) never comes back from the saved catalog."""
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        self.assertTrue(sp.Portal(self.cfg, aap=self.aap).restored)
+        keep = (self.cfg.limit_max_playbooks, self.cfg.windows_from)
+        try:
+            self.cfg.limit_max_playbooks = {"win_restart_schedule.yml": {"var": "", "max": 2}}
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+            self.cfg.limit_max_playbooks = keep[0]
+            self.cfg.windows_from = {"groups": ["*win*"], "vars": {}}
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+        finally:
+            self.cfg.limit_max_playbooks, self.cfg.windows_from = keep
+
     def test_restored_catalog_survives_failed_start(self):
         from unittest import mock
         portal = sp.Portal(self.cfg, aap=self.aap)

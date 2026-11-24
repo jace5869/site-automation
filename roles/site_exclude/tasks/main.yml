@@ -19,9 +19,14 @@
 
 - name: Exclude | each later play leaves them out
   ansible.builtin.set_fact:
-    site_exclude_not: "{{ ':!site_excluded' if _sx_hosts | length > 0 else '' }}"
+    # 1.130.0: a target with commas (A,B - the portal's hosts, a template's Variables) takes the exclusion as one more
+    # comma term (A,B,!site_excluded); appended with ':' Ansible splits at the commas first and the exclusion would bind to B
+    # alone, so A would run although it is left out. Without a comma ':' stays (it binds to the whole of x:&y).
+    site_exclude_not: "{{ ((',' if (target | default('') | string) is search(',') else ':') ~ '!site_excluded') if _sx_hosts | length > 0 else '' }}"
     # for a play this repository cannot edit (ACT's own, imported): its target with the hosts left out
-    site_exclude_target: "{{ target | default('all') }}{{ ':!site_excluded' if _sx_hosts | length > 0 else '' }}"
+    site_exclude_target: >-
+      {{ target | default('all') }}{{ ((',' if (target | default('') | string) is search(',') else ':') ~ '!site_excluded')
+                                       if _sx_hosts | length > 0 else '' }}
     site_excluded: "{{ _sx_hosts }}"
     site_exclude_applied: true
   delegate_to: localhost

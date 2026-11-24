@@ -1546,7 +1546,6 @@ job_templates:
     variables_file: aap/extra_vars/win_trust_report.yml
     area: Certificates
     skip_areas: [Windows, Certificates]
-    portal: true
     description:
       does: Finds Windows machine stores, Java cacerts and certifi bundles that still hold a compromised or browser-dropped
         CA, and fails those servers.

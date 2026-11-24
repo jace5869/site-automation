@@ -54,20 +54,42 @@ class Rules(unittest.TestCase):
         self.assertEqual(sp.playbook_caps(json.dumps(CAPS))["win_restart_schedule.yml"], {"var": "win_restart_max_hosts", "max": 50})
         self.assertEqual(sp.playbook_caps({"playbooks/x.yml": 900, "y.yml": "bad"}), {"x.yml": {"var": "", "max": 500}})
 
+    @staticmethod
+    def script(inv):
+        """The inventory as AAP's inventories/<id>/script/ gives it."""
+        vo = lambda t: sp.site_aap.vars_of(t)                    # noqa: E731
+        kids = inv.get("children") or {}
+        inner = set(c for cs in kids.values() for c in cs)
+        doc = {"all": {"hosts": [], "children": [g for g in inv["groups"] if g not in inner], "vars": vo(inv.get("variables"))},
+               "_meta": {"hostvars": dict((h, vo((inv.get("host_vars") or {}).get(h))) for h in inv["hosts"])}}
+        for g, m in inv["groups"].items():
+            doc[g] = {"hosts": m, "children": kids.get(g, []), "vars": vo((inv.get("group_vars") or {}).get(g))}
+        return doc
+
     def test_which_hosts_are_windows(self):
-        inv = inventory()
-        hv = dict((h, sp.site_aap.vars_of(v)) for h, v in inv["host_vars"].items())
-        gv = dict((g, sp.site_aap.vars_of(v)) for g, v in inv["group_vars"].items())
-        got = sp.windows_hosts(sp.windows_rules(WIN_FROM), inv["hosts"], hv, inv["groups"], gv, {})
+        got = sp.windows_hosts(sp.windows_rules(WIN_FROM), self.script(inventory()))
         self.assertEqual(sorted(got), ["srv-app01.corp.example.mil", "srv-app02.corp.example.mil", "srv-db02.corp.example.mil"])
-        self.assertIsNone(sp.windows_hosts({}, inv["hosts"], hv, inv["groups"], gv, {}))
+        self.assertIsNone(sp.windows_hosts({}, self.script(inventory())))
+        vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
         # the inventory's own Variables, when neither the host nor a group sets it; a dotted name reads into a mapping
-        got = sp.windows_hosts(sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}}), ["a", "b"], {"b": {"ansible_connection": "ssh"}}, {}, {},
-                               {"ansible_connection": "winrm"})
-        self.assertEqual(got, {"a"})
-        got = sp.windows_hosts(sp.windows_rules({"vars": {"config.guestId": ["*windows*"]}}), ["a", "b"],
-                               {"a": {"config": {"guestId": "windows2019srv_64Guest"}}, "b": {"config": {"guestId": "rhel9_64Guest"}}}, {}, {}, {})
-        self.assertEqual(got, {"a"})
+        doc = {"all": {"vars": {"ansible_connection": "winrm"}, "hosts": ["a", "b"]}, "_meta": {"hostvars": {"b": {"ansible_connection": "ssh"}}}}
+        self.assertEqual(sp.windows_hosts(vr, doc), {"a"})
+        doc = {"all": {"hosts": ["a", "b"]}, "_meta": {"hostvars": {"a": {"config": {"guestId": "windows2019srv_64Guest"}},
+                                                                    "b": {"config": {"guestId": "rhel9_64Guest"}}}}}
+        self.assertEqual(sp.windows_hosts(sp.windows_rules({"vars": {"config.guestId": ["*windows*"]}}), doc), {"a"})
+
+    def test_a_child_group_beats_its_parent(self):
+        """1.130.0 (Codex): parent says winrm, child says ssh - the child's host is not Windows (Ansible's order: all, parent,
+        child, host); same depth: the later name wins."""
+        vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
+        inv = {"hosts": ["lin01", "win01"], "groups": {"servers": ["lin01", "win01"], "linux_kids": ["lin01"]},
+               "children": {"servers": ["linux_kids"]}, "group_vars": {"servers": "ansible_connection: winrm", "linux_kids": "ansible_connection: ssh"}}
+        self.assertEqual(sp.windows_hosts(vr, self.script(inv)), {"win01"})
+        inv = {"hosts": ["h1"], "groups": {"a_win": ["h1"], "b_lin": ["h1"]},
+               "group_vars": {"a_win": "ansible_connection: winrm", "b_lin": "ansible_connection: ssh"}}
+        self.assertEqual(sp.windows_hosts(vr, self.script(inv)), set())          # b_lin after a_win at the same depth
+        inv["host_vars"] = {"h1": "ansible_connection: winrm"}
+        self.assertEqual(sp.windows_hosts(vr, self.script(inv)), {"h1"})        # the host's own wins
 
     def test_which_jobs_are_windows(self):
         self.assertEqual(sp.action_os("playbooks/win_restart_schedule.yml", "Windows - schedule a restart"), "windows")
@@ -155,7 +177,7 @@ class Live(unittest.TestCase):
     def test_c_one_group_and_the_group_list(self):
         r = self.items(os_="windows", group="all_app", with_groups=True)
         self.assertEqual([i["name"] for i in r["items"]], ["srv-app01.corp.example.mil", "srv-app02.corp.example.mil"])
-        self.assertEqual(r["group"], {"name": "all_app", "count": 2})
+        self.assertEqual(r["group"], {"name": "all_app", "count": 2, "ambiguous": False})
         self.assertEqual(r["groups"], [{"name": "all_app", "count": 2}, {"name": "sql", "count": 1}, {"name": "windows_servers", "count": 1}])
         self.assertEqual([i["name"] for i in self.items(os_="windows", group="all_app", q="APP02")["items"]], ["srv-app02.corp.example.mil"])
         self.assertIn("error", self.items(os_="windows", group="linux"))                    # no Windows host in it
@@ -223,6 +245,96 @@ class Live(unittest.TestCase):
         sent = {"portal_limit": ["linux"], "win_restart_time": "22:30", "win_restart_reason": "Monthly patches"}
         code, out = self.portal.launch("DOE.JANE.Q.1234567890", "192.0.2.5", a["name"], sent, a["sig"])
         self.assertEqual(code, 400, out)
+
+    def test_j_a_host_synced_after_the_list_is_classified_at_launch(self):
+        """1.130.0 (Codex): a Linux host added to a picked group after the picker read the inventory never reaches the Limit;
+        a Windows one added the same way does."""
+        a = self.act("Windows - schedule a restart")
+        inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
+        self.portal.aap.inventory_listing(iid=INV)                                 # the list as the picker saw it
+        inv["hosts"] += ["lnx-new.corp.example.mil", "srv-new.corp.example.mil"]
+        inv["groups"]["windows_servers"] = inv["groups"]["windows_servers"] + ["srv-new.corp.example.mil"]
+        inv["groups"]["sql"] = inv["groups"]["sql"] + ["lnx-new.corp.example.mil"]
+        inv["host_vars"]["lnx-new.corp.example.mil"] = "ansible_connection: ssh"          # its own ssh beats sql's psrp
+        try:
+            hosts, why = self.portal.aap.expand_now(["sql", "windows_servers"], INV, "windows")
+            self.assertEqual((hosts, why), (["srv-db02.corp.example.mil", "srv-app02.corp.example.mil", "srv-new.corp.example.mil"], ""))
+            hosts, why = self.portal.aap.expand_now(["lnx-new.corp.example.mil"], INV, "windows")
+            self.assertIn("not a Windows host", why)
+            self.assertEqual(a["os"], "windows")
+        finally:
+            inv["hosts"] = inv["hosts"][:-2]
+            inv["groups"]["windows_servers"] = inv["groups"]["windows_servers"][:-1]
+            inv["groups"]["sql"] = inv["groups"]["sql"][:-1]
+            inv["host_vars"].pop("lnx-new.corp.example.mil")
+
+    def test_k_a_failed_windows_read_refuses_the_launch(self):
+        """1.130.0 (Codex): AAP not answering which hosts are Windows is never "no filter": the list says so, the launch is refused."""
+        inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
+        p = self.make(self.env)
+        inv["script_fail"] = True
+        try:
+            r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
+            self.assertIn("could not be read just now", r["os_note"])
+            self.assertIn("could not check which hosts are Windows", p.aap.expand(["all_app"], INV, "windows")[1])
+            self.assertIn("could not check which hosts are Windows", p.aap.expand_now(["all_app"], INV, "windows")[1])
+            self.assertEqual(len(p.aap.expand(["all_app"], INV)[0]), 3)              # a Linux job does not need it
+        finally:
+            inv.pop("script_fail")
+
+    def test_l_a_name_that_is_a_host_and_a_group(self):
+        """1.130.0 (Codex): host "pool" in dept, and a group "pool" with another host - "pool" is never sent."""
+        inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
+        inv["hosts"].append("pool")
+        inv["host_vars"]["pool"] = "ansible_connection: winrm"
+        inv["groups"]["dept"] = ["pool"]
+        inv["groups"]["pool"] = ["srv-app01.corp.example.mil"]
+        try:
+            p = self.make(self.env)
+            r = p.aap.inventory_items("pool", 200, iid=INV, os_="windows")
+            self.assertTrue(all(i.get("ambiguous") for i in r["items"] if i["name"] == "pool"))
+            self.assertIn("both a host's and a group's name", p.aap.expand(["pool"], INV, "windows")[1])
+            self.assertIn("both a host's and a group's name", p.aap.expand_now(["pool"], INV, "windows")[1])
+            self.assertIsNone(p.aap.expand(["dept"], INV, "windows")[0])             # its host is also a group's name
+            page = sp.picker_html(p, "portal_limit", [], 50, inv=INV, os_="windows")
+            self.assertIn('<option value="pool" disabled>', page)
+        finally:
+            inv["hosts"].remove("pool")
+            inv["host_vars"].pop("pool")
+            inv["groups"].pop("dept")
+            inv["groups"].pop("pool")
+
+    def test_m_groups_past_the_read_limit(self):
+        """1.130.0 (Codex): past GROUPS_MAX a group keeps its name (drop-down, search) and its hosts are read when it is opened or picked."""
+        keep = sp.Aap.GROUPS_MAX
+        sp.Aap.GROUPS_MAX = 1
+        try:
+            p = self.make(self.env)
+            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", with_groups=True)
+            self.assertEqual(len(r["groups"]), 4)                                 # all_app read; linux, sql, windows_servers by name
+            self.assertIn({"name": "windows_servers", "count": None}, r["groups"])
+            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", group="sql")
+            self.assertEqual([i["name"] for i in r["items"]], ["srv-db02.corp.example.mil"])
+            self.assertEqual(p.aap.expand(["windows_servers"], INV, "windows"), (["srv-app02.corp.example.mil"], ""))
+        finally:
+            sp.Aap.GROUPS_MAX = keep
+
+    def test_n_a_capped_playbook_without_a_limit_prompt_is_not_offered(self):
+        tid = fake_aap.add_template("job_templates", "Windows - cancel a scheduled restart", ["portal"], limit=False, inventory=INV)
+        fake_aap.STATE["templates"]["job_templates"][-1]["playbook"] = "playbooks/win_restart_cancel.yml"
+        try:
+            p = self.make(self.env)
+            self.assertNotIn("jt_%d" % tid, p.actions)
+            why = dict(p.found["skipped"]).get("Windows - cancel a scheduled restart", "")
+            self.assertIn("Limit is not asked at launch", why)
+        finally:
+            fake_aap.STATE["templates"]["job_templates"].pop()
+
+    def test_o_the_trust_store_report_is_not_published(self):
+        with open(os.path.join(ROOT, "aap", "job_templates.yml")) as fh:
+            cat = dict((t["name"], t) for t in yaml.safe_load(fh)["job_templates"])
+        self.assertFalse(cat["Windows - trust store report"].get("portal"))      # it removes certificates when check_trust_remove is true
+        self.assertTrue(cat["Windows - local group members"].get("portal"))
 
     def test_g_no_filter_says_so(self):
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM="{}"))
