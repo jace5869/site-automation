@@ -458,6 +458,10 @@ from the first day, whatever is written on it. So for a LUN the list and the por
 | `cluster9*/*` (or `cluster9*/`) | every volume on the clusters whose ONTAP name or `ontap_clusters` address matches |
 | `cluster9*/svm_a:*` | SVM svm_a, on those clusters only |
 
+With a cluster rule set, a cluster whose name cannot be read (`/api/cluster` refused) is not offered - the survey keeps
+its last list for it - and the expand job refuses it: "cluster name not read - a cluster rule in ontap_expand_exclude
+can't be checked".
+
 ## The live page
 
 The site portal's **NetApp** page (`/portal/netapp`, [SITE_PORTAL.md](SITE_PORTAL.md)) shows what *NetApp - refresh
@@ -477,6 +481,10 @@ GET only on NetApp; the page only reads the database.
   a volume"). It is off too when the survey's choice now names another volume or LUN under the same path ("the list
   changed - wait for the next refresh"), and when the template cannot be asked for Check ("turn on Prompt on launch for
   Job type on NetApp - expand a volume").
+- **Guards on Expand…:** the launch must carry a volume the survey has now (a blank or old choice is refused before
+  AAP). Its Check also goes to the job as `ontap_expand_require_check` (a portal-only survey question, never shown in the
+  dialog): the playbook stops before anything when it runs for real. If AAP ignored the Job type, the portal cancels the
+  job at once.
 - **SnapMirror:** problems first; lagging is over 2x its schedule or over `ontap_snapmirror_lag_warn_hours`.
 - **Health:** nodes and HA (takeover possible), disks by node (failed, rebuilding, spares), ONTAP's error events of
   `ontap_ems_hours`.

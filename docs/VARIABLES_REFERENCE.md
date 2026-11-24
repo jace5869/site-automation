@@ -1495,6 +1495,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_expand_volume` | (empty) | The launch's answers (the survey's questions; never set them in all.yml): the volume picked from the list (a choice NetApp - refresh volume list wrote; it ends with its key) |
 | `ontap_expand_size` | (empty) | the size to add, e.g. 150GB or 1TB; empty = the default growth (ontap_expand_pct) |
 | `ontap_expand_incident_number` | (empty) | an incident number, written in the volume's comment and the report |
+| `ontap_expand_require_check` | `false` | the site portal's Expand... sets it (a portal-only survey question): the job stops before any change unless it runs as Check |
 | `ontap_live_db` | `true` | ---- the site portal's NetApp page (/portal/netapp): what NetApp - refresh volume list keeps in the report database ---- Only with a "Report database" credential on that template (none = nothing here is used). docs/NETAPP.md, "The live page" keep each run of the list in the report database for the portal's NetApp page… (all of it: the role file) |
 | `ontap_live_db_create` | `true` | make its tables (ontap_live_*) on the first run; false = an admin makes them (docs/REPORT_DATABASE.md) |
 | `ontap_live_db_timeout` | `10` | seconds to wait for the report database's connection |

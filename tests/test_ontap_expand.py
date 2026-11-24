@@ -216,6 +216,51 @@ class Exclusions(unittest.TestCase):
         self.assertIn("svm_backup:*", p["why"])
 
 
+def volume_module():
+    """roles/ontap_report/library/site_ontap_volume.py with its module_utils as Ansible would give them"""
+    import importlib.util
+    import ansible.module_utils
+    import site_ontap
+    for n, m in (("site_ontap", site_ontap), ("site_ontap_expand", X)):
+        sys.modules["ansible.module_utils." + n] = m
+        setattr(ansible.module_utils, n, m)
+    spec = importlib.util.spec_from_file_location("site_ontap_volume", os.path.join(REPO, "roles", "ontap_report", "library", "site_ontap_volume.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+class ClusterNameNotRead(unittest.TestCase):
+    """Codex 1.127.0 P1: /api/cluster refused (403) while the storage reads work - the address is no stand-in for the name
+    when a cluster/ rule is set: that cluster's volumes are not offered, and the expand job refuses."""
+
+    def setUp(self):
+        self.V = volume_module()
+        V = self.V
+
+        class C(object):
+            address = "192.0.2.15"
+
+            def call(self, method, path, query=None, body=None):
+                raise V.Failed("HTTP 403: not authorized for that command")
+
+            def records(self, path, fields, **kw):
+                return []
+        self.c = C()
+
+    def test_no_cluster_rule_the_address_stands_in(self):
+        self.assertEqual(self.V.cluster_name(self.c, need=self.V.cluster_rules(["svm_backup:*", "vol0"])), "192.0.2.15")
+        self.assertEqual(self.V.list_cluster(self.c, {"exclude": ["svm_backup:*"]})[0], "192.0.2.15")
+
+    def test_a_cluster_rule_refuses(self):
+        self.assertTrue(self.V.cluster_rules(["cluster9*/*"]))
+        with self.assertRaises(self.V.Failed) as e:
+            self.V.list_cluster(self.c, {"exclude": ["cluster9*/*"]})
+        self.assertEqual(str(e.exception), "cluster name not read - a cluster rule in ontap_expand_exclude can't be checked")
+        with self.assertRaises(self.V.Failed):
+            self.V.cluster_name(self.c, need=True)
+
+
 class Naa(unittest.TestCase):
     def test_naa(self):
         self.assertEqual(X.naa("80Ab1DmT5zXq"), "naa.600a09803830416231446d54357a5871")
@@ -412,6 +457,24 @@ class Vcenter(unittest.TestCase):
                     resolve=lambda names: set(names) | {"192.0.2.21"})
         self.assertEqual(f["datastore"], "NFS-NAMED")
         self.assertEqual(self.found({"nfs_path": "/", "nfs_ips": ip}), {})
+
+    def test_the_datastore_space_on_the_map_only(self):
+        # Codex 1.127.0 P2: the grow path never reads summary for the space; the map does, and a fault there is {} (the LUN judges)
+        self.ds.summary.freeSpace = int(1.75 * GB)
+        seen, vmfs, nfs = V.scan(content(self.hosts, [self.ds, self.nfs]), "H", "D")
+        m = V.match({"naa": NAA}, seen, vmfs, nfs, with_space=True)
+        self.assertEqual((m["capacity"], m["free"]), (int(8.75 * GB), int(1.75 * GB)))
+        g = V.match({"naa": NAA}, seen, vmfs, nfs)
+        self.assertNotIn("capacity", g)
+
+        class Faulty(object):
+            name = "DS-SITEA-01"
+
+            @property
+            def summary(self):
+                raise RuntimeError("vmodl.fault.ManagedObjectNotFound")
+        self.assertEqual(V.space(Faulty()), {})
+        self.assertEqual(V.space(NS(summary=NS(capacity="n/a", freeSpace=1))), {})
 
     def test_grow_vmfs(self):
         dss = FakeDss(self.ds)

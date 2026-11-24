@@ -101,6 +101,10 @@
 ## an incident number, written in the volume's comment and the report
 # ontap_expand_incident_number: ""
 
+## the site portal's Expand... sets it (a portal-only survey question): the job stops before any
+## change unless it runs as Check
+# ontap_expand_require_check: false
+
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true

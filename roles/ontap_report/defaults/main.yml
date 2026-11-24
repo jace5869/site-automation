@@ -84,6 +84,7 @@ ontap_expand_max_choices: 500            # the most volumes the list offers (the
 ontap_expand_volume: ""                  # the volume picked from the list (a choice NetApp - refresh volume list wrote; it ends with its key)
 ontap_expand_size: ""                    # the size to add, e.g. 150GB or 1TB; empty = the default growth (ontap_expand_pct)
 ontap_expand_incident_number: ""         # an incident number, written in the volume's comment and the report
+ontap_expand_require_check: false        # the site portal's Expand... sets it (a portal-only survey question): the job stops before any change unless it runs as Check
 
 # ---- the site portal's NetApp page (/portal/netapp): what NetApp - refresh volume list keeps in the report database ----
 # Only with a "Report database" credential on that template (none = nothing here is used). docs/NETAPP.md, "The live page"

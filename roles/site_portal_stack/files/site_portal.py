@@ -2306,7 +2306,7 @@ class Portal(object):
         expand = (lambda items: self.aap.expand(items, inv)) if inv else (self.aap.expand if self.cfg.inventory else None)
         return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, expand)
 
-    def launch(self, cn, ip, name, sent, sig=None, job_type=None):
+    def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None):
         """-> (HTTP code, answer). sig: the fingerprint of the template the form was drawn from (a found template): a different one is not started."""
         self.refresh()
         a = self.actions.get(name)
@@ -2325,6 +2325,15 @@ class Portal(object):
             return 409, {"error": "Not started: this job changed in AAP since the page was opened - open it again from the Actions page."}
         if a.get("started_by") and isinstance(sent, dict):      # the survey asks portal_requested_by: never typed - the card's name replaces it
             sent = dict((k, v) for k, v in sent.items() if k != "portal_requested_by")
+        if isinstance(sent, dict) and REQUIRE_CHECK_VAR in sent:   # the portal's own: never from the browser
+            sent = dict((k, v) for k, v in sent.items() if k != REQUIRE_CHECK_VAR)
+        if expand is not None:
+            # Codex 1.127.0: opened by Expand... - the volume picked must be one of the survey's choices now, before any default
+            var = a["vars"].get(expand) or {}
+            got = sent.get(expand) if isinstance(sent, dict) else None
+            if var.get("kind") != "choice" or not isinstance(got, str) or not got or got not in (var.get("values") or []):
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Expand: the choice is not in the survey now"})
+                return 400, {"error": "Not started: " + EXPAND_GONE + ".", "problems": {expand: "is not in the job's list now"}}
         values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
@@ -2342,6 +2351,8 @@ class Portal(object):
             elif job_type == "check" and info.get("default") != "check":       # Check asked, and the template now runs for real
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Check asked; the template's Job type is fixed to Run"})
                 return 409, {"error": "Not started: " + CHECK_GONE + "."}
+        if expand is not None and job_type == "check" and REQUIRE_CHECK_VAR in a["vars"]:
+            values = dict(values, **{REQUIRE_CHECK_VAR: "true"})            # the playbook stops if it runs for real
         key = self.once_key(name, values)
         if key is None:
             return self._launch(cn, ip, name, a, values, jt)
@@ -2460,6 +2471,14 @@ class Portal(object):
             return 502, {"error": "AAP did not start it (HTTP %s): %s." % (code, rules.launch_failure_reason(code))}
         jid = int(data.get("workflow_job") or data.get("job") or data.get("id"))
         ignored = data.get("ignored_fields") or {}
+        if job_type == "check" and "job_type" in ignored:
+            # the template stopped asking the Job type between the form and the launch: AAP runs it for real - cancelled at once
+            # (the expand playbook stops on its own before any change too: ontap_expand_require_check)
+            ccode, _cd = self.aap.call("POST", "jobs/%d/cancel/" % jid, {})
+            self.log.add({"event": "launch_cancelled", "user": cn, "ip": ip, "action": name, "job_id": jid, "http": ccode,
+                          "why": "Check asked; AAP ignored the Job type"})
+            return 409, {"error": "Not started as Check: AAP ignored the Job type (job %d cancelled at once) - %s." % (jid, CHECK_GONE),
+                         "job_id": jid}
         rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": shown_values,
                             "limit": body.get("limit", ""), "job_id": jid, "kind": a["aap"]["type"], "job_type": job_type or "",
                             "ignored_fields": sorted(ignored) if ignored else []})
@@ -3575,6 +3594,8 @@ def details_page(cfg, portal, cn, name):
     return shell(cfg, "Details", body, cn, page="action")
 
 
+EXPAND_GONE = ("the volume picked is not in the job's list now (the refresh rewrote it) - close this and press Expand... again, "
+               "or pick it from the list")
 CHECK_GONE = ("this job can no longer be asked for Check (its Job type is fixed to Run): nothing is started - turn on Prompt "
               "on launch for Job type on the template, then open it again")
 
@@ -3605,7 +3626,11 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     if a is None:                                   # taken off just now (a refresh of the cards)
         return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
     jt_html, jt_ok = job_type_html(a, query)
-    query = dict((k, v) for k, v in query.items() if k != NETAPP_JOB_TYPE)       # never a survey value
+    xq = query.get(NETAPP_EXPAND)
+    xq = (xq[-1] if isinstance(xq, list) and xq else xq) or ""
+    if xq and (a["vars"].get(xq) or {}).get("kind") == "choice":           # opened by Expand...: the launch must carry one of its choices
+        jt_html = '<input type="hidden" name="%s" value="%s">' % (NETAPP_EXPAND, esc(xq)) + jt_html
+    query = dict((k, v) for k, v in query.items() if k not in (NETAPP_JOB_TYPE, NETAPP_EXPAND, REQUIRE_CHECK_VAR))       # never a survey value
     sent = {k: (v if a["vars"].get(k, {}).get("kind") == "multichoice" else v[-1]) for k, v in query.items()
             if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
     allowed = rules.may_run(a, cn, cfg.requesters)
@@ -3614,6 +3639,8 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     _, off = portal.state(name, a) if allowed else (None, "")
     fields = []
     for vn, var in a["vars"].items():
+        if vn == REQUIRE_CHECK_VAR:                 # the portal's own (Expand's Check): never shown, never typed
+            continue
         v = sent.get(vn, "")
         if v in ("", None) and var.get("default") is not None:
             v = var["default"]
@@ -5233,6 +5260,12 @@ class NetmapHistoryLive(ReportIndex):
 NETAPP_STATIC = ("netapp-page.js", "netapp-page.css")
 NETAPP_TAB_EVERY = 300          # whether the database has a NetApp run (the bar's tab): asked this often
 NETAPP_JOB_TYPE = "portal-job-type"      # the Run dialog's Job type field (a template that asks it at launch): never a survey variable
+# Codex 1.127.0: a form opened by Expand... names the survey's volume question - its launch must carry one of that question's
+# choices now (never blank: AAP would put the survey's default, another volume, in its place)
+NETAPP_EXPAND = "portal-expand"
+# ... and its Check is said to the playbook too (the expand template's survey asks it; never shown, never typed): the
+# playbook stops before any change when it runs for real (a template turned to Run between the form and the launch)
+REQUIRE_CHECK_VAR = "ontap_expand_require_check"
 CHOICE_KEY_IDS = re.compile(r"\[vol\|([^|\]]+)\|([^|\]]+)\|([^|\]]+)\|([^|\]]*)\|")
 CHOICE_KEY_UUIDS = re.compile(r"\[vol\|[^|\]]+\|[^|\]]+\|[^|\]]+\|[^|\]]*\|\d+(?:\|(\d*))?(?:\|([A-Za-z0-9-]*))?(?:\|([A-Za-z0-9-]*))?\]\s*$")
 
@@ -5363,7 +5396,7 @@ class NetappLive(object):
                 if now:
                     # every Expand asks Check: the dialog and the launch refuse when the template can no longer run as Check
                     v["x"].append({"lun": v.get("lun", ""), "href": "%sactions/%s?%s" % (self.cfg.path, ex["name"], urllib.parse.urlencode(
-                        [(ex["q"], now), (NETAPP_JOB_TYPE, "check")]))})
+                        [(ex["q"], now), (NETAPP_JOB_TYPE, "check"), (NETAPP_EXPAND, ex["q"])]))})
                 if not v["x"] and not v.get("off"):
                     v["off"] = "not in the job's current list - the portal reads AAP again within portal_discover_seconds"
             elif v.get("offered"):
@@ -5756,8 +5789,12 @@ def make_handler(cfg, portal, static_dir):
                 if var["kind"] in ("multichoice", "hosts") and k not in sent:
                     sent[k] = []
             jt = (form.get(NETAPP_JOB_TYPE) or [None])[-1]           # the Job type, only when the form has one
-            code, out = (portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], jt) if jt is not None
-                         else portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1]))
+            xq = (form.get(NETAPP_EXPAND) or [None])[-1]              # opened by Expand...
+            if xq is not None and a["vars"].get(xq, {}).get("kind") == "choice" and xq not in form:
+                sent[xq] = ""                                          # a blank select is not sent: still an answer, refused below
+            kw = dict(expand=xq) if xq is not None else {}
+            code, out = (portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], jt, **kw) if jt is not None
+                         else portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], **kw))
             if code == 201:
                 return self._send(303, b"", "text/plain", [("Location", out["url"])])
             return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
@@ -5818,8 +5855,9 @@ def make_handler(cfg, portal, static_dir):
                 sent = body.get("vars", {})
                 sig = body.get("sig")
                 jt = body.get("job_type")
+                xq = body.get("expand")
                 args = (cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
-                code, out = portal.launch(*(args + ((jt,) if isinstance(jt, str) else ())))
+                code, out = portal.launch(*(args + ((jt,) if isinstance(jt, str) else ())), **({"expand": xq} if isinstance(xq, str) else {}))
                 return self._send(code, out)
             if m_dec.group(2) == "placement":
                 return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) == {"vms"} else None))

@@ -4,7 +4,8 @@
 
 **To set up:** attach the Report database credential (the writer) and the VMware vCenter credential to NetApp - refresh
 volume list, and schedule it every 15-30 minutes. Run Site portal - deploy once with the read-only report login. On
-NetApp - expand a volume, turn on Prompt on launch for Job type, and give the portal account Execute on it. Optional: `ontap_expand_exclude`
+NetApp - expand a volume, turn on Prompt on launch for Job type, and give the portal account Execute on it. Run AAP - set up job templates
+once (the expand survey gets a portal-only question, the Check guard). Optional: `ontap_expand_exclude`
 now takes a cluster too (`cluster/svm:volume`).
 
 - **NetApp page in the portal (`/portal/netapp`), read only.** Space runway (each LUN and volume, soonest full first,
@@ -23,6 +24,11 @@ now takes a cluster too (`cluster/svm:volume`).
 - **`ontap_expand_exclude` by cluster:** `cluster9*/*` leaves out every volume on matching clusters, `cluster9*/svm_a:*`
   one SVM there (the ONTAP cluster name or the `ontap_clusters` address, any case). The list, the page and the expand
   job all apply it; the reason shown is the pattern.
+  With a cluster rule set, a cluster whose name cannot be read is not offered and the expand job refuses it (its
+  address alone is no stand-in).
+- **Expand… guards:** the launch must carry a volume the survey has now (never blank); its Check also goes to the
+  playbook (`ontap_expand_require_check`, a portal-only survey question), which stops before any change when the job
+  runs for real; a Job type AAP ignored cancels the job at once.
 
 ## 1.126.0 — 2026-11-24
 

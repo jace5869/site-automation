@@ -189,6 +189,29 @@ run "ONTAP's job fails: the step says so, the job fails" fail ontap_volume_expan
     -e "{\"ontap_clusters\": [\"http://127.0.0.1:$((port + 2))\"], \"ontap_expand_volume\": \"$h2\"}" \
     -- "FAILED at: grow the volume" "ONTAP's job failed: fake job"
 
+# ---- the cluster's name not read, with a cluster/ rule in ontap_expand_exclude (Codex 1.127.0 P1) ----------------------
+fresh 3 noname
+c3="http://127.0.0.1:$((port + 3))"
+h3="vol_home (svm1, cluster1) [vol|$c3|svm1|vol_home||1649267441664||v-home]"
+nn="cluster name not read - a cluster rule in ontap_expand_exclude can't be checked"
+run "the name not read, a cluster rule: the list keeps the survey as it was" fail ontap_volume_list.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"cluster9*/*\"], \"ontap_expand_templates\": [\"NetApp - expand a volume\"]}" \
+    -- "$nn" "Survey NOT updated"
+run "... and the expand job refuses, nothing changed" fail ontap_volume_expand.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"cluster9*/*\"], \"ontap_expand_volume\": \"$h3\"}" -- "$nn"
+check "  no PATCH" test "$(patches 3)" = 0
+run "the name not read, no cluster rule: the address stands in (a Check plan)" ok ontap_volume_expand.yml --check \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"svm_backup:*\"], \"ontap_expand_volume\": \"$h3\"}" -- "(nothing changed)"
+
+# ---- the portal's Check guard (ontap_expand_require_check, Codex 1.127.0) ---------------------------------------------------
+n=$(patches 3)
+run "the portal asked for Check, the job runs as Check: the plan" ok ontap_volume_expand.yml --check \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_volume\": \"$h3\", \"ontap_expand_require_check\": \"true\"}" -- "(nothing changed)"
+run "the portal asked for Check, the job runs for real: stopped before anything" fail ontap_volume_expand.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_volume\": \"$h3\", \"ontap_expand_require_check\": \"true\"}" \
+    -- "asked for Check, but this job runs for real" "nothing was changed"
+check "  ... no PATCH" test "$(patches 3)" = "$n"
+
 echo
 [ $fails -eq 0 ] && echo "PASS - NetApp expand e2e" || echo "FAIL - $fails NetApp expand e2e check(s) failed"
 exit $fails

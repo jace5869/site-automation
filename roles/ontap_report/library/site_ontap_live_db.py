@@ -31,6 +31,7 @@ options:
   tls: {description: Use TLS and check the server's certificate., type: bool, default: false}
   ca_file: {description: The CA file the certificate is checked with., type: str, default: ''}
   connect_timeout: {description: Seconds to wait for the connection., type: int, default: 10}
+  read_timeout: {description: "Seconds to wait for each answer of the database (a server that takes the connection and then stops answering never stalls the refresh).", type: int, default: 20}
   create: {description: Make the tables when they are not there., type: bool, default: true}
   read_at: {description: "When this run read the clusters (2026-11-24T14:15:00Z).", type: str, required: true}
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
@@ -322,13 +323,23 @@ def shut(conn):
         pass
 
 
+READ_TIMEOUT = 20
+
+
+def connect_args(p):
+    """the connection's settings: always a finite wait for each answer (Codex 1.127.0: a database that takes the connection
+    and then stops answering would stall the refresh)"""
+    return dict(p, read_timeout=int(p.get("read_timeout") or READ_TIMEOUT))
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(db.ARGS, create=dict(type="bool", default=True), read_at=dict(type="str", required=True),
                            job=dict(type="int", default=0), template_id=dict(type="int", default=0),
                            run=dict(type="dict", required=True), expand_template=dict(type="str", default=""),
                            expand_question=dict(type="str", default=""), opts=dict(type="dict", default={}),
-                           keep_days=dict(type="int", default=14), keep_hours=dict(type="int", default=48)),
+                           keep_days=dict(type="int", default=14), keep_hours=dict(type="int", default=48),
+                           read_timeout=dict(type="int", default=READ_TIMEOUT)),
         supports_check_mode=True)
     p = module.params
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
@@ -348,7 +359,7 @@ def main():
         give_up("read_at is not a time: %r" % p["read_at"])
     conn = None
     try:
-        conn, res["tls"] = db.connect(p)
+        conn, res["tls"] = db.connect(connect_args(p))
         there, res["created"] = schema(conn, p["create"] and not module.check_mode)
         if not there:
             shut(conn)

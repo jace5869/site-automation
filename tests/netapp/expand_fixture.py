@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The fake cluster of tests/netapp/run_expand_test.sh (1.123.0, NetApp - expand a volume), for tests/netapp/fake_ontap.py.
 
-  expand_fixture.py OUT.json USER PASSWORD [race|jobfail]
+  expand_fixture.py OUT.json USER PASSWORD [race|jobfail|noname]
 
 cluster1: aggr1 (20 TB, 71.2 % used), aggr2 (30 TB, 180 GB under 97 %). Volumes:
   vol_ds01   svm_vmware, 10 GB, 88 % used, one thick LUN lun_ds01 (9 GB, 8.1 GB written, serial 80Ab1DmT5zXq)
@@ -11,7 +11,7 @@ cluster1: aggr1 (20 TB, 71.2 % used), aggr2 (30 TB, 180 GB under 97 %). Volumes:
   vol_home   svm1, 1.5 TB;  vol_bk01 svm_backup (excluded by the tests' ontap_expand_exclude)
   never: svm1_root (SVM root), vol_sql01_dr (DP), vol_old (offline), fg_data (FlexGroup)
 race: vol_home is 5 GB bigger from its third read on (someone grew it between the plan and the change).
-jobfail: ONTAP's jobs fail."""
+jobfail: ONTAP's jobs fail. noname: the cluster's name cannot be read (/api/cluster refused)."""
 import json
 import sys
 
@@ -65,4 +65,6 @@ if mode == "race":
     fixture["grow_on_read_at"] = 3          # the plan's read, the change's own plan, then its re-check right before the change
 if mode == "jobfail":
     fixture["job_state"] = "failure"
+if mode == "noname":                        # /api/cluster refused (its name not read), the storage reads work
+    del fixture["paths"]["/api/cluster"]
 json.dump(fixture, open(out, "w"), indent=1)

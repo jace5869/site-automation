@@ -189,15 +189,28 @@ def ips(c):
     return out
 
 
-def cluster_name(c):
+NAME_NOT_READ = "cluster name not read - a cluster rule in ontap_expand_exclude can't be checked"
+
+
+def cluster_rules(patterns):
+    """ontap_expand_exclude has a cluster/ rule (it needs the cluster's name)"""
+    return any("/" in str(p or "") for p in patterns or ())
+
+
+def cluster_name(c, need=False):
+    """the cluster's ONTAP name, else its address; need (a cluster/ rule to check): a name not read is Failed - the
+    address alone would let a cluster reached by its IP pass a rule on its name"""
     try:
-        return c.call("GET", "/api/cluster", {"fields": "name"}).get("name") or c.address
+        name = c.call("GET", "/api/cluster", {"fields": "name"}).get("name")
     except Failed:
-        return c.address
+        name = ""
+    if not name and need:
+        raise Failed(NAME_NOT_READ)
+    return name or c.address
 
 
 def list_cluster(c, opts):
-    name = cluster_name(c)
+    name = cluster_name(c, need=cluster_rules(opts["exclude"]))
     vols = c.records("/api/storage/volumes", VOL_FIELDS)
     arecs = c.records("/api/storage/aggregates", LIST_AGGR_FIELDS)
     aggrs = {a["name"]: aggr_in(a) for a in arecs}
@@ -378,7 +391,7 @@ def main():
         m.fail_json(msg="The choice names cluster %s, which is not in ontap_clusters - nothing was read or changed." % key["address"])
     c = Client(key["address"], user, password, ctx, p["timeout"])
     try:
-        cname = cluster_name(c)
+        cname = cluster_name(c, need=cluster_rules(opts["exclude"]))
         opts["clusters"] = (cname, key["address"])          # ontap_expand_exclude's cluster/ patterns
         plan, _v = read_one(c, key, opts, p["size"])
         plan.update(cluster=cname, address=key["address"])

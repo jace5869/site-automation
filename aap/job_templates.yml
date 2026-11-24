@@ -2976,6 +2976,11 @@ job_templates:
         type: text
         max: 40
         required: false
+      - question_name: Portal only - leave empty (the portal's Check guard)
+        variable: ontap_expand_require_check
+        type: text
+        max: 5
+        required: false
     description:
       does: Grows the NetApp volume picked in its survey (10 %, 1-512 GB, or the size typed), its LUN, and the VMware datastore
         on it; no approval.

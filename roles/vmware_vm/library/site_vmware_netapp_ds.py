@@ -100,7 +100,7 @@ def addresses(names):
     return out
 
 
-def match(key, seen, vmfs, nfs, resolve=addresses):
+def match(key, seen, vmfs, nfs, resolve=addresses, with_space=False):
     """one key -> {datastore, kind, hosts, ds (the object)} or {}. NFS: the export's path, and - when the SVM's addresses are
     known - one of them as the datastore's server: the same path on another SVM is never taken for it."""
     naa = str(key.get("naa") or "").lower()
@@ -110,7 +110,7 @@ def match(key, seen, vmfs, nfs, resolve=addresses):
         if not ds and not hosts:
             return {}
         return dict({"datastore": ds.name if ds else "", "kind": "VMFS" if ds else "LUN (no datastore)", "hosts": sorted(h.name for h in hosts),
-                     "ds": ds, "serial": serial_of(naa)}, **space(ds))
+                     "ds": ds, "serial": serial_of(naa)}, **(space(ds) if with_space else {}))
     path = key.get("nfs_path") or ""
     hits = [(ds, rh) for ds, rh, rp in nfs if same_path(rp, path)]
     ips = set(key.get("nfs_ips") or [])
@@ -120,18 +120,19 @@ def match(key, seen, vmfs, nfs, resolve=addresses):
     if len(hits) != 1:
         return {}
     ds = hits[0][0]
-    return dict({"datastore": ds.name, "kind": "NFS", "hosts": sorted(getattr(m.key, "name", "") for m in ds.host or []), "ds": ds}, **space(ds))
+    return dict({"datastore": ds.name, "kind": "NFS", "hosts": sorted(getattr(m.key, "name", "") for m in ds.host or []), "ds": ds}, **(space(ds) if with_space else {}))
 
 
 def space(ds):
-    """a datastore's own capacity and free space (bytes; read only) - how full a LUN's datastore is, as VMware sees it"""
-    sm = getattr(ds, "summary", None) if ds is not None else None
-    cap, free = getattr(sm, "capacity", None), getattr(sm, "freeSpace", None)
-    if cap is None or free is None:
-        return {}
+    """a datastore's own capacity and free space (bytes; read only) - how full a LUN's datastore is, as VMware sees it.
+    The map only (never on the grow path); any fault reading them: {} - the list then judges the LUN by its blocks written."""
     try:
+        sm = getattr(ds, "summary", None) if ds is not None else None
+        cap, free = getattr(sm, "capacity", None), getattr(sm, "freeSpace", None)
+        if cap is None or free is None:
+            return {}
         return {"capacity": int(cap), "free": int(free)}
-    except (TypeError, ValueError):
+    except Exception:  # pylint: disable=broad-except   # a vCenter fault on a property read, a value not a number
         return {}
 
 
@@ -230,7 +231,7 @@ def main():
         seen, vmfs, nfs = scan(content, vim.HostSystem, vim.Datastore)
         out = []
         for k in keys:
-            f = match(k, seen, vmfs, nfs)
+            f = match(k, seen, vmfs, nfs, with_space=p["action"] == "map")      # the space: the list's only
             if f:
                 f["vcenter"] = name
                 f["seen"] = seen.get(str(k.get("naa") or "").lower(), [])

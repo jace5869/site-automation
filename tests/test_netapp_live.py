@@ -120,6 +120,28 @@ def fill(db=None, hours=(48, 36, 24, 12, 6, 3, 1, 0), now=None):
     return db
 
 
+class ReadTimeout(unittest.TestCase):
+    """Codex 1.127.0 P2: the writer's session gives up on a database that stops answering (20 s an answer)."""
+
+    def test_the_writer_asks_a_read_timeout_and_the_helper_passes_it(self):
+        self.assertEqual(ldb.connect_args({"host": "h", "read_timeout": 0})["read_timeout"], 20)
+        self.assertEqual(ldb.connect_args({"host": "h", "read_timeout": 5})["read_timeout"], 5)
+        got = {}
+
+        def fake(**kw):
+            got.update(kw)
+            raise RuntimeError("stop here")
+        old = site_report_db.pymysql.connect
+        site_report_db.pymysql.connect = fake
+        try:
+            with self.assertRaises(RuntimeError):
+                site_report_db.connect(ldb.connect_args({"host": "127.0.0.1", "port": 1, "user": "u", "password": "p", "database": "d",
+                                                         "tls": False, "ca_file": "", "connect_timeout": 10}))
+        finally:
+            site_report_db.pymysql.connect = old
+        self.assertEqual((got["read_timeout"], got["write_timeout"]), (20, 20))
+
+
 class Growth(unittest.TestCase):
     """site_ontap_live: the slope from the database's sums, the days, the statuses."""
 
@@ -450,6 +472,7 @@ class Expand(unittest.TestCase):
         want = [t for t in texts if "|vol_ds01|/vol/vol_ds01/lun2|" in t][0]
         self.assertEqual(q["ontap_expand_volume"], [want])                       # the exact choice text, key included
         self.assertEqual(q["portal-job-type"], ["check"])
+        self.assertEqual(q["portal-expand"], ["ontap_expand_volume"])          # the launch must carry a choice of that question
         dp = [x for x in m["volumes"] if x["name"] == "vol_ds02_dst"][0]
         self.assertEqual(dp["x"], [])
         self.assertIn("Not offered: DP volume", dp["off"])
@@ -584,6 +607,56 @@ class RunDialog(unittest.TestCase):
         self.assertEqual(len(sent), n)
         self.assertEqual(p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[1]}, "s1")[0], 201)
         self.assertNotIn("job_type", sent[-1][2])                                # a template that does not ask: never sent
+
+
+class ExpandGuards(unittest.TestCase):
+    """Codex 1.127.0: an Expand launch carries a choice the survey has now (never blank: AAP would use its default, another
+    volume); its Check goes to the playbook too (ontap_expand_require_check); a Job type AAP ignored is cancelled at once."""
+
+    def setUp(self):
+        self.texts = newest_texts()
+        a = expand_action(self.texts)
+        a["vars"]["ontap_expand_require_check"] = {"kind": "text", "max": 5, "label": "Portal only - leave empty", "required": False}
+        self.p = RunDialog.portal(self, a)
+        self.sent = []
+        self.answer = (201, {"job": 77, "id": 77})
+        self.p.same_template = lambda a_: ""
+        self.p.aap.call = lambda m, path, body=None: (self.sent.append((m, path, body)) or self.answer)
+
+    def launch(self, choice, jt="check", **kw):
+        return self.p.launch(CN, "192.0.2.5", "jt_58", dict({"ontap_expand_volume": choice}, **kw), "s1", jt, expand="ontap_expand_volume")
+
+    def test_the_dialog_marks_it_and_never_shows_the_guard(self):
+        h = sp.action_page(self.p.cfg, self.p, CN, "jt_58", {"ontap_expand_volume": [self.texts[0]], "portal-job-type": ["check"],
+                                                             "portal-expand": ["ontap_expand_volume"]}, embed=True)
+        self.assertIn('<input type="hidden" name="portal-expand" value="ontap_expand_volume">', h)
+        self.assertNotIn("ontap_expand_require_check", h)
+        h = sp.action_page(self.p.cfg, self.p, CN, "jt_58", {"ontap_expand_volume": [self.texts[0]], "portal-expand": ["ontap_expand_size"]}, embed=True)
+        self.assertNotIn('name="portal-expand"', h)                              # only a single-select question
+
+    def test_a_blank_or_unknown_choice_is_refused_before_aap(self):
+        for bad in ("", self.texts[0].replace("[vol|", "[vol|x"), None):
+            code, out = self.launch(bad)
+            self.assertEqual(code, 400, bad)
+            self.assertIn("not in the job's list now", out["error"])
+        self.assertEqual(self.sent, [])
+
+    def test_check_goes_to_the_playbook_too(self):
+        code, out = self.launch(self.texts[0], ontap_expand_require_check="")       # the browser's own value: dropped
+        self.assertEqual(code, 201, out)
+        self.assertEqual(self.sent[-1][2]["extra_vars"], {"ontap_expand_volume": self.texts[0], "ontap_expand_require_check": "true"})
+        self.assertEqual(self.launch(self.texts[1], jt="run")[0], 201)               # Run picked in the dialog: no guard
+        self.assertNotIn("ontap_expand_require_check", self.sent[-1][2]["extra_vars"])
+        del self.p.actions["jt_58"]["vars"]["ontap_expand_require_check"]          # a survey not set up again yet: not sent
+        self.assertEqual(self.launch(self.texts[2])[0], 201)
+        self.assertNotIn("ontap_expand_require_check", self.sent[-1][2]["extra_vars"])
+
+    def test_a_job_type_aap_ignored_is_cancelled(self):
+        self.answer = (201, {"job": 77, "id": 77, "ignored_fields": {"job_type": "check"}})
+        code, out = self.launch(self.texts[0])
+        self.assertEqual(code, 409)
+        self.assertIn("job 77 cancelled", out["error"])
+        self.assertEqual(self.sent[-1][:2], ("POST", "jobs/77/cancel/"))
 
 
 class Page(unittest.TestCase):
@@ -726,7 +799,8 @@ class DialogSubmit(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         p = sp.Portal(cfg_for(tmp))
         p.actions = {"jt_58": expand_action(texts)}
-        frag = sp.action_page(p.cfg, p, CN, "jt_58", {"ontap_expand_volume": [texts[0]], "portal-job-type": ["check"]}, embed=True)
+        frag = sp.action_page(p.cfg, p, CN, "jt_58", {"ontap_expand_volume": [texts[0]], "portal-job-type": ["check"],
+                                                      "portal-expand": ["ontap_expand_volume"]}, embed=True)
         html = sp.shell(p.cfg, "x", frag, CN, token="t1", page="x").replace("/portal/static/", "")
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -753,6 +827,7 @@ class DialogSubmit(unittest.TestCase):
     def test_check_and_run_launch(self):
         r, texts = self.submit("check")
         self.assertEqual(r["sent"]["job_type"], "check", r)
+        self.assertEqual(r["sent"]["expand"], "ontap_expand_volume")
         self.assertEqual(r["sent"]["vars"], {"ontap_expand_volume": texts[0], "ontap_expand_size": ""})
         self.assertEqual(r["label"], "Launch as Check")
         r, _t = self.submit("run")
