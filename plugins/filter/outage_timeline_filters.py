@@ -3713,6 +3713,22 @@ def outage_review_objects(events, opts=None):
     return _unsafe(out)
 
 
+def vm_placement_lines(result, check_mode=False):
+    """1.116.6: the job output of VMware - VM placement snapshot (site_vm_placement_snapshot's result), a line each."""
+    r = result or {}
+    lines = ["Check: vCenter read, nothing written."] if check_mode else []
+    lines += ["%s: %d VMs, %s, %d rows kept" % (x.get("vcenter", ""), int(x.get("vms") or 0),
+                                                "whole snapshot" if x.get("whole") else "changes only", int(x.get("kept") or 0))
+              for x in r.get("runs") or []]
+    if r.get("pruned"):
+        lines.append("Older rows deleted: %d" % int(r["pruned"]))
+    if r.get("created"):
+        lines.append("Tables vm_placement and vm_placement_run made.")
+    if r.get("error"):
+        lines.append("Not kept: " + str(r["error"]))
+    return lines
+
+
 def outage_placement_missing(items, placements=None):
     """The items the placement history had no snapshot for (as_of empty, or not answered): the review reads vCenter for them."""
     found = {(p.get("vcenter"), p.get("kind"), p.get("name")) for p in placements or [] if isinstance(p, dict) and p.get("as_of")}
@@ -3735,4 +3751,4 @@ class FilterModule(object):
                 "outage_review_aar": outage_review_aar, "outage_review_context": outage_review_context,
                 "outage_events_csv": outage_events_csv, "outage_redact": outage_redact,
                 "outage_review_objects": outage_review_objects, "outage_placement_missing": outage_placement_missing,
-                "outage_placements": outage_placements}
+                "outage_placements": outage_placements, "vm_placement_lines": vm_placement_lines}

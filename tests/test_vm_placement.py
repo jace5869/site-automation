@@ -324,6 +324,21 @@ class EventTier(unittest.TestCase):
         self.assertFalse([line for line in r["draft"]["files_lines"] if "events of their own" in line])
 
 
+class JobOutput(unittest.TestCase):
+    def test_the_lines_come_from_a_filter(self):
+        """1.116.6 (MySQL proof): the job's debug line was a Jinja list comprehension, which Jinja has not - now a filter."""
+        r = dict(runs=[dict(vcenter=VC, vms=4, whole=True, kept=4), dict(vcenter="vc02.example.mil", vms=2, whole=False, kept=1)],
+                 pruned=7, created=True, error="")
+        self.assertEqual(ot.vm_placement_lines(r), ["%s: 4 VMs, whole snapshot, 4 rows kept" % VC,
+                                                    "vc02.example.mil: 2 VMs, changes only, 1 rows kept",
+                                                    "Older rows deleted: 7", "Tables vm_placement and vm_placement_run made."])
+        self.assertEqual(ot.vm_placement_lines(dict(runs=[], error="refused"), True),
+                         ["Check: vCenter read, nothing written.", "Not kept: refused"])
+        tasks = open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "placement.yml")).read()
+        self.assertIn("vm_placement_lines(ansible_check_mode)", tasks)
+        self.assertNotIn(" for r in ", tasks)
+
+
 class Catalog(unittest.TestCase):
     def test_the_job_is_in_the_setup_catalog(self):
         import yaml

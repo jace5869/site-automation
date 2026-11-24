@@ -32,12 +32,7 @@
 
 - name: VM placement | what it kept
   ansible.builtin.debug:
-    msg: >-
-      {{ (['Check: read only, nothing written.'] if ansible_check_mode else [])
-         + ['%s: %d VMs, %s, %d rows kept' % (r.vcenter, r.vms | int, 'whole snapshot' if r.whole else 'changes only', r.kept | int)
-            for r in _vm_place.runs]
-         + (['Older rows deleted: %d' % (_vm_place.pruned | int)] if _vm_place.pruned | int else [])
-         + (['Not kept: ' ~ _vm_place.error] if _vm_place.error else []) }}
+    msg: "{{ _vm_place | vm_placement_lines(ansible_check_mode) }}"
 
 - name: VM placement | the counts (job artifact vm_placement)
   ansible.builtin.set_stats:
