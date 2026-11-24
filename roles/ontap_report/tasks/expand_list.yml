@@ -51,7 +51,9 @@
       {%-   set d = t if t is mapping else {'template': t | string | trim} -%}
       {%-   set _ = out.append({'template': d.template | string, 'kind': d.kind | default('') | string, 'question': ontap_expand_question,
                                 'multiselect': false, 'add_question': 'Which volume to grow?', 'choices': _ol_choices.choices,
-                                'note': 'of ' ~ _ol_when ~ ': ' ~ _ol_choices.choices | length ~ ' volume(s) that may be grown',
+                                'note': 'of ' ~ _ol_when ~ ': ' ~ _ol_choices.choices | length ~ ' volume(s) that may be grown, fullest first; '
+                                        ~ ('VMware datastores named' if lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0 and not _ol_vc_error
+                                           else 'VMware datastores not read - attach the VMware vCenter credential to this job'),
                                 'empty_choice': '(nothing to pick: no volume may be grown - list of ' ~ _ol_when ~ ')'}) -%}
       {%- endfor -%}
       {{ out }}

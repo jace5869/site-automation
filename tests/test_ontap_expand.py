@@ -216,7 +216,7 @@ class Choices(unittest.TestCase):
     def test_text_and_key(self):
         t = X.choice_text(self.E)
         self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free "
-                                     "[LUN lun_a of 2: datastore DS-SITEA-03A] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
+                                     "[VMware datastore DS-SITEA-03A, LUN lun_a of 2] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
         self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
                                              "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
 
@@ -232,10 +232,21 @@ class Choices(unittest.TestCase):
         self.assertTrue(got[2].startswith("vol_other (svm_vmware) - "), got[2])
         self.assertEqual(X.parse_choice(got[1])["address"], "cluster2.example.mil")
 
+    def test_fullest_first(self):
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        a = dict(self.E, lun="", luns=0, datastore="", volume="vol_a", size=100 * GB, used=10 * GB, uuid="a")
+        b = dict(a, volume="vol_b", used=95 * GB, uuid="b")
+        c = dict(a, volume="vol_c", used=50 * GB, uuid="c")
+        got = XF.ontap_expand_choices([a, b, c], [{}, {"datastore": "DS-B"}, {}])["choices"]
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["b", "c", "a"])
+        self.assertIn("[VMware datastore DS-B, NFS]", got[0])                    # its datastore follows it in the sort
+        self.assertEqual(XF.ontap_expand_choices([a, b, c], [], 2)["more"], 1)
+
     def test_plain_and_nfs(self):
         e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")
         t = X.choice_text(e)
-        self.assertIn("[NFS: datastore NFS-DS02]", t)
+        self.assertIn("[VMware datastore NFS-DS02, NFS]", t)
         self.assertEqual(X.parse_choice(t)["lun"], "")
         self.assertNotIn("[LUN", X.choice_text(dict(e, datastore="")))
         self.assertIsNone(X.parse_choice("vol_nfs02 (svm1, cluster1)"))     # typed by hand without the key: refused by the job

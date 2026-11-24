@@ -117,12 +117,13 @@ def choice_text(e, show_cluster=False):
     The key at the end ([vol|address|svm|volume|lun|bytes|lun bytes|volume uuid|lun uuid]) is what the job reads back: the sizes
     are exact (the text is rounded), the UUIDs tell the listed volume and LUN from others made under their names since."""
     name = e["volume"] + (("/" + e["lun"].rsplit("/", 1)[-1]) if e.get("lun") and int(e.get("luns") or 1) > 1 else "")
+    # (user) a VMware datastore is said first, by its name: "VMware datastore DS01, LUN" / "..., NFS"
     what = ""
     if e.get("lun"):
         what = "LUN" + ((" %s of %d" % (e["lun"].rsplit("/", 1)[-1], e["luns"])) if int(e.get("luns") or 1) > 1 else "")
-        what += (": datastore " + e["datastore"]) if e.get("datastore") else ""
+        what = ("VMware datastore %s, %s" % (e["datastore"], what)) if e.get("datastore") else what
     elif e.get("datastore"):
-        what = "NFS: datastore " + e["datastore"]
+        what = "VMware datastore %s, NFS" % e["datastore"]
     # 1.123.1 (user): short - the name, its SVM, the size and how much is free; the cluster and aggregate are in the job's
     # plan and the refresh report, the key stays last (the portal hides it)
     # Codex 1.123.1: two clusters with the same SVM and volume names - the caller asks for the cluster (show_cluster)
