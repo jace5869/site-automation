@@ -397,7 +397,11 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
      size, to the byte - and never over the plan's own sizes. **Right before each change (the volume's, the LUN's)
      everything the plan stood on is read again:** the volume's size and autosize, that it is still on the planned
      aggregate (its UUID too: "the volume moved to aggregate X - run again"), the guarantees, the aggregate's room for
-     what lands (97 %), and the LUN's size and its volume (by UUID). Anything moved: nothing is sent. Each change's
+     what lands (97 %), and the LUN's size, its volume (by UUID) and its space reservation (thin made thick since the
+     plan stops the run). Anything moved: nothing is sent. The volume's need is worked out again from those last reads:
+     a snapshot deleted meanwhile means a smaller size is sent, or none - never more than the plan.
+   - **The report says what was read back** after the change, for the volume and the LUN; "not known" when a change was
+     sent and nothing could be verified; "(not changed)" when nothing was sent. Each change's
      ONTAP job is followed to its end and the size read back (at least the size before + the growth). No definite
      outcome: "resize of volume X: outcome not known - check System Manager before running again", the LUN is not
      grown, the job fails. The LUN's new size is its size + the growth (never over the plan's); a volume that cannot

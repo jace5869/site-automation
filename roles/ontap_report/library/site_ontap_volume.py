@@ -355,7 +355,19 @@ def revalidate(c, p, key, vid, vol_take, lun_take):
     if not ag or (p.get("aggregate_uuid") and ag[0].get("uuid") != p["aggregate_uuid"]):
         return None, None, "the volume moved to aggregate %s (another one of that name) - run again" % an
     a = aggr_in(ag[0])
-    take = X.landing(dict(rec, size=size), p.get("lun"), vol_take, lun_take)
+    lun = p.get("lun")
+    if lun:                                           # the LUN's space reservation as it is now (thin made thick lands on a thin volume)
+        try:
+            lr = [x for x in c.records("/api/storage/luns", LUN_FIELDS, uuid=p["lun_uuid"]) if x.get("uuid") == p["lun_uuid"]]
+        except (Failed, Unreachable, HTTPException, ValueError) as e:
+            return None, None, "the LUN could not be read right before the change (%s)" % e
+        req = (((lr[0].get("space") or {}).get("guarantee") or {}).get("requested")) if lr else None
+        if not isinstance(req, bool):
+            return None, None, "ONTAP gave no space reservation (space.guarantee.requested) for the LUN"
+        if req != bool(lun.get("thick")):
+            return None, None, "the LUN's space reservation changed since the plan (%s, now %s) - run again" % (
+                "thick" if lun.get("thick") else "thin", "thick" if req else "thin")
+    take = X.landing(dict(rec, size=size), lun, vol_take, lun_take)
     if a.get("used") is None or not a.get("size") or not X.aggr_fits(a["size"], a["used"], p["max_pct"], take):
         return None, None, ("%s has no room for it now (%s more would put it at %.1f %%, the limit is %g %%)"
                             % (an, X.human(take), X.pct((a.get("used") or 0) + take, a.get("size") or 1), p["max_pct"]))
@@ -445,6 +457,7 @@ def grow(c, p, key, opts, line, wait):
         steps.append({"step": "Grow the volume", "exactly": "size %s stays%s" % (X.human(size0), (", comment + \"%s\"" % line) if line else ""),
                       "ok": ok, "result": res})
         got = size0
+        p["vol_after"] = size0
     else:
         if vg <= X.SLACK:                             # the plan's least growth is 1 GB: a growth of 1 MiB or less is not one
             steps.append({"step": "Grow the volume", "exactly": "size %s" % X.human(size0), "ok": False,
@@ -456,6 +469,26 @@ def grow(c, p, key, opts, line, wait):
             steps.append({"step": "Grow the volume", "exactly": "read again right before the change", "ok": False,
                           "result": "not sent: %s - nothing was changed" % rwhy})
             return steps
+        if p.get("lun") and size3 == size0:
+            # worked out again from the last reads (a snapshot deleted may have made room): less when less, never more
+            lfin, lwhy = _luns_now(c, p, key)
+            if lwhy:
+                steps.append({"step": "Grow the volume", "exactly": "read again right before the change", "ok": False,
+                              "result": "not sent: %s" % lwhy})
+                return steps
+            vt3, _how = X.volume_for_lun(dict(rec3, size=size3), lfin, p["growth"])
+            if vt3 <= size3:                          # room enough now: no volume change at all
+                p["vol_how"] = "it has room for the LUN's growth now (read right before the change)"
+                p["target"] = p["vol_after"] = size3
+                ok, res = comment_only(c, p, comment, wait, "Not needed - " + p["vol_how"])
+                steps.append({"step": "Grow the volume", "exactly": "size %s stays" % X.human(size3), "ok": ok, "result": res})
+                if not ok:
+                    return steps
+                return _grow_lun(c, p, key, wait, steps, vid)
+            if vt3 < target:
+                target = vt3
+                vg = target - size0
+                p["target"] = target
         if size3 != size0 or rec3.get("autosize") != now.get("autosize") or rec3.get("guarantee") != now.get("guarantee") \
                 or not may_write(size3, target, target):
             steps.append({"step": "Grow the volume", "exactly": "size %s -> %s" % (X.human(size0), X.human(target)), "ok": False,
@@ -466,6 +499,7 @@ def grow(c, p, key, opts, line, wait):
         body = {"size": target}
         if comment is not None:
             body["comment"] = comment
+        p["vol_sent"] = True
         try:
             st, why, juuid = job_state(c, c.call("PATCH", "/api/storage/volumes/" + vid, body=body), wait)
         except Failed as e:                           # ONTAP answered: refused
@@ -474,6 +508,7 @@ def grow(c, p, key, opts, line, wait):
             st, why, juuid = "unknown", "No answer: %s" % e, ""
         rback, got = read_vol(c, vid)
         landed = got is not None and size3 + vg - X.SLACK <= got <= target + X.SLACK
+        p["vol_after"] = got if (st in ("done", "failed") and got is not None) else None      # what was read back, or not known
         if st == "done" and landed:
             ok, res = True, "Done - read back %s" % X.human(got) + (
                 ("; %s - its maximum reads %s now" % (note, X.human((rback or {}).get("autosize_max") or 0))) if note else "")
@@ -562,14 +597,21 @@ def _grow_lun(c, p, key, wait, steps, vid):
                         X.human(size), key["volume"], X.human(size2) if size2 else "not read", where2)
                 else:
                     p["lun"]["target"] = t
+                    p["lun_sent"] = True
                     try:
                         st, bad, _u = job_state(c, c.call("PATCH", "/api/storage/luns/" + p["lun_uuid"], body={"space": {"size": t}}), wait)
                     except Failed as e:
                         st, bad = "failed", "Refused: %s" % e
                     except (Unreachable, HTTPException, ValueError) as e:
                         st, bad = "unknown", "No answer: %s" % e
-                    got, _w, _f = lun_size()
+                    try:
+                        got, _w, _f = lun_size()      # a read that fails after the change: its outcome is not known
+                    except (Failed, Unreachable, IndexError, HTTPException, ValueError) as e:
+                        got, bad = None, (bad + "; " if bad else "") + "the LUN could not be read back (%s)" % e
+                        if st == "done":
+                            st = "unknown"
                     landed = got is not None and t - X.SLACK <= got <= t + X.SLACK
+                    p["lun_after"] = got if (st in ("done", "failed") and got is not None) else None
                     if st == "done" and landed:
                         ok, res = True, "Done - read back %s" % X.human(got)
                     elif st == "failed" and got is not None and got <= size + X.SLACK:

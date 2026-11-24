@@ -33,6 +33,20 @@ def _hand_steps(plan, ds):
             "3. Check: its capacity says %s." % X.human(plan["target"])]
 
 
+def after_values(p, steps, check):
+    """(the volume's size after, the LUN's) as the report shows them after a run: what was read back; 'not known' when a
+    change was sent and nothing was verified; 'X (not changed)' when nothing was sent"""
+    if check:
+        return X.human(p.get("target")), X.human((p.get("lun") or {}).get("target"))
+
+    def one(key, sent, before):
+        if p.get(key):
+            return X.human(p[key])
+        return "not known" if p.get(sent) else "%s (not changed)" % X.human(before)
+    return (one("vol_after", "vol_sent", p.get("size")),
+            one("lun_after", "lun_sent", (p.get("lun") or {}).get("size")) if p.get("lun") else "")
+
+
 def ontap_expand_doc(r):
     """r: {plan, error, ontap_steps, vc_steps, ds ({} or the datastore found), vmware (a vCenter credential attached),
     vc_error, incident {number, opened, typed, error, closed}, check, size, job, cluster} -> the report doc"""
@@ -136,8 +150,10 @@ def ontap_expand_doc(r):
                         "status": "critical" if refused_limit else "info",
                         "note": ("the Size box (%s)" % r.get("size")) if p.get("by") == "size" else p.get("default_text", "")})
     unknown = bool(p.get("outcome_unknown")) or any("outcome not known" in str(s_.get("result") or "") for s_ in steps)
-    if p.get("status") == "grow" and unknown and not check:      # a change whose outcome is not known: never the planned size
-        summary.append({"label": "Volume after", "value": "not known", "status": "warning", "note": "check System Manager"})
+    vol_after, lun_after = after_values(p, steps, check)
+    if p.get("status") == "grow" and not check:      # what was read back after the change - never the planned size
+        summary.append({"label": "Volume after", "value": vol_after, "status": "warning" if vol_after == "not known" else "ok",
+                        "note": "check System Manager" if vol_after == "not known" else "read back"})
     elif p.get("status") == "grow":
         summary.append({"label": "Volume after", "value": X.human(target), "status": "ok", "note": "%.1f %% used" % p.get("used_pct_after", 0)})
         summary.append({"label": "%s after" % p.get("aggr"), "value": "%.1f %%" % aggr_after, "status": "ok",
@@ -173,7 +189,7 @@ def ontap_expand_doc(r):
                          "status": "warning" if " would put " in (p.get("why") or "") else "critical", "lines": lines})
     if failed:
         sections.append({"title": "What failed", "status": "critical", "lines": ["%s: %s" % (s["step"], s["result"]) for s in failed]})
-    rows, cells = [["Volume %s size" % vol, X.human(p.get("size")), X.human(target if p.get("growth") else p.get("size")),
+    rows, cells = [["Volume %s size" % vol, X.human(p.get("size")), X.human(target if p.get("growth") else p.get("size")) if check or p.get("status") != "grow" else vol_after,
                     (p.get("vol_how") or "grows only - never shrinks") if lun else "grows only - never shrinks"],
                    ["Volume used", "%.1f %%" % p.get("used_pct", 0), "%.1f %%" % p.get("used_pct_after", p.get("used_pct", 0)), "%s used" % X.human(p.get("used"))],
                    ["Aggregate %s used" % p.get("aggr"), "%.1f %%" % p.get("aggr_pct", 0), "%.1f %%" % (aggr_after or 0),
@@ -182,7 +198,7 @@ def ontap_expand_doc(r):
     cells = [["", "", "", ""], ["", "warning" if p.get("used_pct", 0) >= 85 else "", "", ""],
              ["", "", "critical" if " would put " in (p.get("why") or "") else "", "ok" if p.get("status") == "grow" else ""]]
     if lun:
-        rows.append(["LUN %s size" % lun["name"].rsplit("/", 1)[-1], X.human(lun["size"]), X.human(lun["target"]),
+        rows.append(["LUN %s size" % lun["name"].rsplit("/", 1)[-1], X.human(lun["size"]), X.human(lun["target"]) if check or p.get("status") != "grow" else lun_after,
                      "grows by %s (%s)" % (X.human(g), "space-reserved, thick" if lun.get("thick") else "thin")])
         cells.append(["", "", "", ""])
     if p.get("status") in ("grow", "refused") and p.get("growth"):

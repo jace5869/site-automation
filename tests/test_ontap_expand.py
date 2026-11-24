@@ -652,11 +652,89 @@ class Grow1124(unittest.TestCase):
         self.assertIn("ONTAP raises it (to about 120 % of the new size) - its maximum reads 3.72 TB now", steps[1]["result"])
 
     def test_final_p2_an_unknown_outcome_in_the_reports_summary(self):
-        p = dict(self.nas_plan(), outcome_unknown=True, cluster="c1")
+        p = dict(self.nas_plan(), outcome_unknown=True, vol_sent=True, cluster="c1")
         doc = XF_doc({"plan": p, "ontap_steps": [{"step": "Grow the volume", "exactly": "", "ok": False,
                                                   "result": "resize of volume vol_ds01 (svm1): outcome not known"}]})
         summ = dict((x["label"], x["value"]) for x in doc["summary"])
         self.assertEqual((summ["Volume after"], summ["Changed"]), ("not known", "not known"))
+
+    def lun_reserve(self, c, after_reads, requested):
+        """the LUN's space.guarantee.requested from its after_reads-th read by UUID on (None: not given)"""
+        orig = c.records
+        n = {"i": 0}
+
+        def records(path, fields, **q):
+            r = orig(path, fields, **q)
+            if path == "/api/storage/luns" and q.get("uuid") == "l1":
+                n["i"] += 1
+                if n["i"] > after_reads:
+                    r = [dict(r[0], space=dict(r[0]["space"], guarantee={} if requested is None else {"requested": requested}))]
+            return r
+        c.records = records
+
+    def test_last_p1_a_thin_lun_made_thick_since_the_plan_stops(self):
+        thin_vol = vol(3 * TB, int(2.15 * TB), available=int(0.85 * TB), snap_pct=0, guarantee="none", name="vol_ds01", svm="svm1")
+        p = X.plan(thin_vol, AGGR, 3 * TB, {}, lun={"name": "/vol/vol_ds01/l", "size": 2 * TB, "thick": False, "total": 2 * TB}, lun_listed=2 * TB)
+        p.update(volume_uuid="v1", lun_uuid="l1")
+        c = FakeCluster([3 * TB], avail=[int(0.85 * TB)])
+        self.lun_reserve(c, 0, True)                                                      # space-reserved now
+        steps = self.run_(c, p)
+        self.assertEqual(c.lun_size, 2 * TB)
+        self.assertIn("the LUN's space reservation changed since the plan (thin, now thick) - run again", steps[-1]["result"])
+        c = FakeCluster([3 * TB], avail=[int(0.85 * TB)])
+        self.lun_reserve(c, 0, None)                                                      # not given: never guessed
+        steps = self.run_(c, p)
+        self.assertEqual(c.lun_size, 2 * TB)
+        self.assertIn("ONTAP gave no space reservation", steps[-1]["result"])
+
+    def test_last_p2_a_snapshot_deleted_right_before_the_patch_sends_less(self):
+        p = self.plan(avail=int(0.1 * TB))
+        planned = p["target"]
+        c = FakeCluster([3 * TB, 3 * TB, 3 * TB], avail=[int(0.1 * TB), int(0.15 * TB), int(0.15 * TB)])     # room freed after READ
+        steps = self.run_(c, p)
+        sent = [b["size"] for _p, b in c.patches if "size" in b]
+        self.assertEqual(len(sent), 1)
+        self.assertLess(sent[0], planned)                                                # less, never more
+        self.assertTrue(all(x["ok"] for x in steps), steps)
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB, 3 * TB, 3 * TB], avail=[int(0.1 * TB), int(0.5 * TB), int(0.5 * TB)])       # room enough now
+        steps = self.run_(c, p)
+        self.assertFalse([b for _p, b in c.patches if "size" in b])                       # no volume change at all
+        self.assertEqual(c.lun_size, 2 * TB + p["growth"])
+
+    def test_last_p2_the_report_shows_what_was_read_back(self):
+        p = self.nas_plan()
+        c = FakeCluster([100 * GB], avail=[50 * GB], fail=("size",))
+        steps = self.run_(c, p)
+        doc = XF_doc({"plan": dict(p, cluster="c1"), "ontap_steps": steps[1:]})
+        summ = dict((x["label"], x["value"]) for x in doc["summary"])
+        self.assertEqual(summ["Volume after"], "100.0 GB")                               # refused: what it reads, not the plan's 110
+        rows = [x for x in doc["sections"] if x.get("title", "").startswith("Now and")]
+        self.assertEqual(rows[0]["rows"][0][2], "100.0 GB")                                # the After column too
+
+    def test_last_p2_a_lun_read_back_that_fails_is_an_unknown_outcome(self):
+        p = self.plan(avail=int(0.9 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)])
+        orig = c.records
+        sent = {"done": False}
+        oc = c.call
+
+        def call(method, path, query=None, body=None):
+            if "luns" in path:
+                sent["done"] = True
+            return oc(method, path, query, body)
+
+        def records(path, fields, **q):
+            if sent["done"] and path == "/api/storage/luns":
+                raise self.V.Unreachable("timed out", "timeout")
+            return orig(path, fields, **q)
+        c.call, c.records = call, records
+        steps = self.run_(c, p)
+        self.assertFalse(steps[-1]["ok"])
+        self.assertIn("resize of LUN /vol/vol_ds01/l: outcome not known", steps[-1]["result"])
+        self.assertTrue(p["outcome_unknown"])
+        doc = XF_doc({"plan": dict(p, cluster="c1"), "ontap_steps": steps[1:]})
+        self.assertEqual(dict((x["label"], x["value"]) for x in doc["summary"])["Changed"], "not known")
 
     def test_job_state(self):
         V = self.V
