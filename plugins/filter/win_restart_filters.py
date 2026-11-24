@@ -178,7 +178,7 @@ def win_restart_model(hosts, opts=None):
         r = h.get("result") or {}
         row = {"host": str(h.get("host")), "status": "", "level": "info", "pending": "", "why": "", "up": _uptime(r),
                "at_local": r.get("at_local", ""), "ours": _list(r.get("ours")), "replaced": _list(r.get("replaced")),
-               "removed": _list(r.get("removed")), "error": "", "swis": h.get("swis") or {}}
+               "removed": _list(r.get("removed")), "cleanup_note": r.get("cleanup_note", ""), "error": "", "swis": h.get("swis") or {}}
         if h.get("unreached"):
             row.update(status="not reached", level="critical", error=str(h["unreached"])[:300])
             rows.append(row)
@@ -287,6 +287,8 @@ def win_restart_doc(model, when):
             r += "; the earlier restart at %s was removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["removed"])
         elif x["status"] == "skipped" and x["ours"] and check:
             r += "; the earlier restart at %s would be removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["ours"])
+        if x["cleanup_note"]:
+            r += " - " + x["cleanup_note"]
         res.append(r)
     sw_on = any(x["swis"].get("text") for x in rows)
     table = {"title": "Servers", "columns": ["Server", "Reboot pending", "Why", "Up since", "Restart at (server time)", "Result"],
@@ -356,9 +358,12 @@ def win_restart_cancel_doc(model):
     for x in rows:
         tasks = (x["removed"] if x["status"] == "removed" else x["ours"]) or [{}]
         for t in tasks:
+            result = x["status"] + ((": " + x["error"]) if x["error"] else "")
+            if x["cleanup_note"]:
+                result += " - " + x["cleanup_note"]
             trs.append([_short(x["host"]), ("%s%s" % (t.get("path", ""), t.get("name", ""))) if t else "-",
                         (t.get("next_run") or t.get("start") or "-") if t else "-", t.get("description", "-") if t else "-",
-                        x["status"] + ((": " + x["error"]) if x["error"] else "")])
+                        result])
             cs.append(["", "", "", "", _cell(x["status"])])
     summary = [{"label": "Servers", "value": len(rows), "status": "info", "note": "the Limit"},
                {"label": "Would be cancelled" if check else "Cancelled", "value": done, "status": "ok" if done else "info",
@@ -419,6 +424,8 @@ def win_restart_log(model, when=None):
             bits.append("removed " + _task_line(t))
         if x["status"] == "would remove":
             bits.append("; ".join(_task_line(t) for t in x["ours"]))
+        if x["cleanup_note"]:
+            bits.append(x["cleanup_note"])
         out.append("%s: %s" % (_short(x["host"]), " - ".join(bits)))
     o = model.get("opts") or {}
     if o.get("swis_note"):

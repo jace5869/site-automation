@@ -2,7 +2,7 @@
 
 ## 1.128.0 (part: Windows restart fixes from review)
 
-- Windows restart scheduling secures the task directory and its dedicated parent, refuses reparse points, and verifies the script owner and permissions before registration.
+- Windows restart scripts now inherit the protections of `Program Files\site-automation\restart`. The job checks for reparse points and unsafe write grants before writing or registering a script. The job refuses `win_restart_dir` outside a subdirectory of `$env:ProgramFiles` or `$env:SystemRoot`. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
 - A later queued AAP job can wait for the current run. Target exclusions work with colon-separated patterns. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
 - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
 - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
