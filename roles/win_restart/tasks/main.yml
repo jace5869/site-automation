@@ -14,7 +14,7 @@
           'count_file_renames': win_restart_count_file_renames | bool, 'task_path': win_restart_task_path,
           'task_name': win_restart_task_name, 'dir': win_restart_dir, 'comment': _wr_comment | default(''),
           'description': _wr_comment | default(''), 'code': win_restart_reason_code | string | trim,
-          'delay': win_restart_delay_seconds | int, 'record_rid': (_wr_record | default({})).rid | default(''), 'record_json': (_wr_record | default({})) | to_json, 'task_script': lookup('ansible.builtin.file', 'win_restart_task.ps1')} | to_json }}
+          'delay': win_restart_delay_seconds | int, 'task_script': lookup('ansible.builtin.file', 'win_restart_task.ps1')} | to_json }}
   register: _wr_out
   changed_when: >-
     _wr_action in ['schedule', 'cancel'] and ((_wr_out.stdout_lines | default([]) | win_restart_parse).scheduled | default(false)
@@ -24,7 +24,7 @@
 
 - name: Restart | the result
   ansible.builtin.set_fact:
-    "{{ _wr_result_var | default('win_restart_result') }}": >-
+    win_restart_result: >-
       {{ (_wr_out.stdout_lines | default([]) | win_restart_parse)
          if _wr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | length > 0
          else {'error': 'the script did not finish: ' ~ ((_wr_out.stderr | default(_wr_out.msg | default('no output')) | string | trim)[:300] or 'no output')} }}

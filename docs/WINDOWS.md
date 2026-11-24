@@ -650,37 +650,39 @@ To set it up:
    credential of it whose account may manage nodes (Orion: Node Management rights). It has its own variables
    (`SOLARWINDS_MANAGE_*`): the read-only credential of the reports is never used for this, not even to read.
 2. Name it in **AAP - set up job templates**: `aap_templates_credentials: {solarwinds_manage: "<that credential>"}`. It is
-   attached to the two restart templates only.
+   attached to Windows - schedule a restart only (cancel calls nothing in SolarWinds).
 3. `win_restart_solarwinds: auto` (the default) uses it when it is attached. Without it each run says "SolarWinds: no
    credential - node stays managed". `false` = never.
 
 What it does:
 
-- The node is found by name only: the server's full name, else a short name no other node shares. Never by IP (a
-  cluster address can belong to another node): "matched by IP only - not unmanaged". Not found, or more than one: the
-  row says so (a warning), and the restart still goes ahead.
+- The node is found by name only: the server's full name, else a short name exactly one SolarWinds node has. Two nodes
+  with the name: refused, never decided by an IP. A short name whose node has another domain than the server's: refused.
+  Only an IP matches (a cluster address can belong to another node): "matched by IP only - not unmanaged". The row says
+  why (a warning), and the restart still goes ahead.
 - Only for servers whose task was verified. A skipped server ("only if pending", nothing pending) is not unmanaged.
-- The call: SWIS Invoke `Orion.Nodes/Unmanage` with `["N:<id>", <from UTC>, <until UTC>, false]`.
-- Ours is only a window this job wrote: after its Unmanage the node is read back, and what SolarWinds returned is
-  recorded with the restart's registration and the Orion server (`restart-<id>.solarwinds.json` beside the task's
-  settings). Later it is ours only when both ends are exactly that, on that server. A window anyone else set - even
-  the same times - is left as it is, with a warning, and cancel never manages it again.
-- Each node is read again right before each call; one changed meanwhile is left as it is.
+- Right before the call the node is read again by its ID: its name must still be the one matched.
+- Only a node with no unmanage window at all is unmanaged: SWIS Invoke `Orion.Nodes/Unmanage` with
+  `["N:<id>", <from UTC>, <until UTC>, false]`. A node that already has a window - a person's, or this job's from an
+  earlier run - is left as it is: "SolarWinds: node already has an unmanage window (from-until) - left as it is" (a
+  warning; "likely the replaced restart's" when its times are those of the restart a reschedule replaced).
+- The job never manages a node again (no Remanage): a window always ends by itself. A reschedule leaves the earlier
+  window to expire; a cancel says "the unmanage window ... stays and ends by itself; re-manage the node by hand in
+  SolarWinds if needed".
+- After the call one read-back reports the window as SolarWinds shows it, and whether SWIS returns times as UTC or as
+  local time ("SolarWinds returns times as ..."). Check on the first real run that the node's window in Orion is the
+  report's.
 - A failed SolarWinds call is a warning on that row; the restart stays scheduled; the job ends as a warning.
 - With "only if pending" the node is unmanaged for the window even if, at the restart time, nothing is pending and the
   server does not restart.
-- Cancel manages the node again (`Orion.Nodes/Remanage`) only when its window is still the one ours recorded.
-- The window is sent in UTC. What SWIS returns for `UnManageFrom` and `UnManageUntil` is not documented: the first
-  read-back after our Unmanage is checked as UTC or as the site's zone (within 90 seconds), and the report says which
-  ("SolarWinds returns times as UTC" / "as local time"). If neither matches, the window is not recorded as ours. Check on
-  the first real run that the node's window in Orion is the report's.
 
 ### Cancel it
 
 Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our task; Run removes it. Only the
 task `win_restart_task_path` + `win_restart_task_name` is touched, and only when this job made it (its author, its
 description and its script in `win_restart_dir`). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
-`shutdown /a` on the server within the 60 seconds.
+`shutdown /a` on the server within the 60 seconds. It calls nothing in SolarWinds: an unmanage window the restart set
+stays and ends by itself.
 
 All settings: [win_restart](VARIABLES_REFERENCE.md#win_restart).
 

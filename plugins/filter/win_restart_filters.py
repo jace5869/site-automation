@@ -322,7 +322,7 @@ def win_restart_doc(model, when):
     elif o.get("swis_note"):
         lines.append(o["swis_note"])
     for t in o.get("swis_times") or []:
-        lines.append("SolarWinds returns times as %s (its unmanage window read back and matched ours)." % ("UTC" if t == "utc" else "local time"))
+        lines.append("SolarWinds returns times as %s (the window read back after the unmanage)." % ("UTC" if t == "utc" else "local time"))
     sections = [table, {"title": "When and why", "lines": lines}]
     if check and sched:
         sections.append({"title": "Run it for real", "lines": [
@@ -372,7 +372,7 @@ def win_restart_cancel_doc(model):
         sections.append({"title": "Run it for real", "lines": [
             "This was a Check run: nothing was changed. Launch it again without Check to remove the tasks."]})
     sw_lines = ([o["swis_note"]] if o.get("swis_note") else []) + [
-        "SolarWinds returns times as %s (its unmanage window read back and matched ours)." % ("UTC" if t == "utc" else "local time")
+        "SolarWinds returns times as %s (the window read back after the unmanage)." % ("UTC" if t == "utc" else "local time")
         for t in o.get("swis_times") or []]
     if sw_lines:
         sections.append({"title": "SolarWinds", "lines": sw_lines})
@@ -529,59 +529,99 @@ def win_restart_check(o):
     return bad
 
 
-def _rec(tasks):
-    """The SolarWinds window a task of ours wrote and recorded ({node_id, orion, rid, from, until} - from and until exactly as
-    SWIS returned them), or {}. The record file's text arrives as it is (a JSON string)."""
+_rs = None
+
+
+def _swis():
+    """plugins/module_utils/site_win_restart_swis.py (its window and time helpers), loaded by its path as the filters load
+    each other."""
+    global _rs
+    if _rs is None:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("site_win_restart_swis_for_filters", os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_win_restart_swis.py"))
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils")
+        import sys
+        if here not in sys.path:
+            sys.path.insert(0, here)                       # its own imports: site_swis, site_host_swis
+        _rs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_rs)
+    return _rs
+
+
+def _earlier(tasks, before=5, after=10):
+    """The unmanage window an earlier restart of ours asked for ({from, until}, from its settings' restart moment), or {}."""
     for t in _list(tasks):
-        r = (t or {}).get("solarwinds") if isinstance(t, dict) else None
-        if isinstance(r, str):
-            try:
-                r = json.loads(r)
-            except ValueError:
-                r = None
-        if isinstance(r, dict) and r.get("node_id") and r.get("rid"):
-            return {"node_id": int(r["node_id"]), "orion": str(r.get("orion") or ""), "rid": str(r["rid"]),
-                    "from": str(r.get("from") or ""), "until": str(r.get("until") or "")}
+        at_ = (t or {}).get("at_utc") if isinstance(t, dict) else ""
+        if at_:
+            return _swis().window(at_, before, after)
     return {}
 
 
-def win_restart_swis_items(hosts, found, window, mode="schedule", check=False):
-    """hosts: [{host, result}] -> the SolarWinds steps: op schedule (a restart scheduled - or, in Check, one that would be),
-    op remove (our restart taken away: a skip with nothing pending, or cancel)."""
+def win_restart_swis_items(hosts, found, window, mode="schedule", check=False, before=5, after=10):
+    """hosts: [{host, result}] -> the Unmanage steps: one per server whose restart is scheduled (or, in Check, would be).
+    Nothing else ever calls SolarWinds: no Remanage, not for a skip, a reschedule or a cancel."""
     out = []
+    if mode != "schedule":
+        return out
     for h in hosts or []:
         r, host = h.get("result") or {}, str(h.get("host"))
         if not r or r.get("error"):
             continue
         f = (found or {}).get(host) or {}
-        if mode == "schedule" and ((check and r.get("restart")) or (not check and r.get("scheduled"))):
-            out.append({"host": host, "op": "schedule", "node_id": ((f.get("node") or {}).get("node_id")), "why": f.get("why", ""),
-                        "rid": (r.get("scheduled") or {}).get("id", ""), "window": window,
-                        "earlier": _rec(r.get("replaced") if not check else r.get("ours"))})
-        else:
-            gone = r.get("ours") if check and (mode == "cancel" or not r.get("restart")) else r.get("removed")
-            if _rec(gone):
-                out.append({"host": host, "op": "remove", "earlier": _rec(gone)})
+        if (check and r.get("restart")) or (not check and r.get("scheduled")):
+            out.append({"host": host, "node_id": ((f.get("node") or {}).get("node_id")), "name": f.get("name", ""),
+                        "why": f.get("why", ""), "window": window,
+                        "earlier": _earlier(r.get("replaced") if not check else r.get("ours"), before, after)})
     return out
 
 
-def win_restart_swis_map(hosts, result, state="on", why=""):
-    """The SolarWinds line of each server: {host: {text, level}}. state: on, off, nocred, error (why). hosts may carry
-    record_result: the step that writes the record (a failure there: the window stays, but is not ours - said)."""
+def win_restart_swis_map(hosts, result, state="on", why="", zone="", before=5, after=10):
+    """The SolarWinds line of each server: {host: {text, level}}. state: on, off, nocred, error (why)."""
     out = {}
     if state != "on":
         return out
+    tz = _swis_tz(zone)
     for h in hosts or []:
         r, host = h.get("result") or {}, str(h.get("host"))
         got = (result or {}).get(host)
         if got and got.get("text"):
             out[host] = {"text": got["text"], "level": got.get("level", "info")}
-            rr = h.get("record_result") or {}
-            if got.get("record") and (rr.get("error") or not rr.get("recorded")):
-                out[host] = {"text": got["text"] + " - not recorded as ours (%s): cancel will not manage it again" % (
-                    rr.get("error") or "the record was not written"), "level": "warning"}
         elif r and not r.get("error") and r.get("restart") is False:
-            out[host] = {"text": "SolarWinds: not unmanaged (skipped: no reboot pending)", "level": "info"}
+            text = "SolarWinds: not unmanaged (skipped: no reboot pending)"
+            e = _earlier(r.get("removed") or r.get("ours"), before, after)
+            if e:
+                text += "; the earlier restart's unmanage window (%s), if it was set, ends by itself" % _swis().shown(e, tz)
+            out[host] = {"text": text, "level": "info"}
+    return out
+
+
+def _swis_tz(zone):
+    z = str(zone or "").strip()
+    if not z or z.upper() in UTC_NAMES or zoneinfo is None:
+        return None
+    try:
+        return zoneinfo.ZoneInfo(z)
+    except Exception:  # noqa: BLE001 - shown in UTC then
+        return None
+
+
+def win_restart_swis_cancel(hosts, check=False, zone="", before=5, after=10, state="on"):
+    """Cancel never calls SolarWinds: the line of each server whose restart of ours goes - its unmanage window (if it was
+    set) stays and ends by itself."""
+    out = {}
+    if state == "off":
+        return out
+    tz = _swis_tz(zone)
+    for h in hosts or []:
+        r, host = h.get("result") or {}, str(h.get("host"))
+        if not r or r.get("error"):
+            continue
+        e = _earlier(r.get("ours") if check else r.get("removed"), before, after)
+        if e:
+            out[host] = {"level": "info", "text": "SolarWinds: the unmanage window %s (if it was set) %s and ends by itself; re-manage the "
+                                                  "node by hand in SolarWinds if needed" % (_swis().shown(e, tz), "would stay" if check else "stays")}
     return out
 
 
@@ -600,4 +640,5 @@ class FilterModule(object):
                 "win_restart_selector": win_restart_selector, "win_restart_hosts": win_restart_hosts,
                 "win_restart_unnamed": win_restart_unnamed,
                 "win_restart_swis_items": win_restart_swis_items, "win_restart_swis_map": win_restart_swis_map,
+                "win_restart_swis_cancel": win_restart_swis_cancel,
                 "win_restart_swis_note": win_restart_swis_note}

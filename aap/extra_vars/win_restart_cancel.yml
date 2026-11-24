@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows - cancel a scheduled restart"
 #   playbook:    playbooks/win_restart_cancel.yml
-#   credentials: Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window)
+#   credentials: Machine (Windows)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -61,8 +61,11 @@
 ## stays managed". false = never.
 # win_restart_solarwinds: auto
 
-## Seconds to wait for SolarWinds' answer to one call.
-# win_restart_solarwinds_timeout: 30
+## The window: this many minutes before the restart time ...
+# win_restart_solarwinds_before_minutes: 5
+
+## ... to this many minutes after it.
+# win_restart_solarwinds_minutes: 10
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

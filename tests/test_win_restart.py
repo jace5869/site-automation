@@ -478,10 +478,6 @@ function Get-ScheduledTaskInfo {
 function Export-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath) $global:Store[[string]$TaskPath + [string]$TaskName].Xml }
 function icacls.exe { $global:LASTEXITCODE = 0 }
 function Step($cfg) {
-    if ($cfg.record_rid -eq '@current') {             # the registration there now (its id is the job's own, unknown before)
-        $cfg.record_rid = ((Get-ChildItem -Path $cfg.dir -Filter 'restart-task-*.ps1' | Select-Object -First 1).Name -replace '^restart-task-', '' -replace '\.ps1$', '')
-        $cfg.record_json = ([string]$cfg.record_json).Replace('@current', $cfg.record_rid)
-    }
     $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
     $line = (. $global:PS | Select-Object -Last 1)
     $o = ConvertFrom-Json ($line -replace '^###SITE-JSON### ', '')
@@ -536,21 +532,11 @@ class Registration(unittest.TestCase):
         m = w.win_restart_model([{"host": "h", "result": b["out"]}], {"mode": "schedule"})
         self.assertIn("was removed", w.win_restart_doc(m, WHEN)["sections"][0]["rows"][0][5])
 
-    def test_solarwinds_record_only_by_the_record_step(self):
-        rec = json.dumps({"node_id": 412, "orion": ORION, "rid": "@current", "from": "2026-11-25T03:25:00", "until": "2026-11-25T03:40:00"})
-        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "record", "record_rid": "wrong", "record_json": rec}])
-        self.assertIn("not registration wrong any more", b["out"]["error"])
-        self.assertFalse(any(f.endswith(".solarwinds.json") for f in b["files"]))
-        self.assertIsNone(b["out"]["ours"][0].get("solarwinds"))                # nothing written: nothing is ours in SolarWinds
-        a, b, c = self.run_steps([{"action": "schedule", "only_if_pending": False},
-                                  {"action": "record", "record_rid": "@current", "record_json": rec},
-                                  {"action": "schedule", "only_if_pending": False, "later": True}])
-        rid = a["out"]["scheduled"]["id"]
-        self.assertEqual(b["out"]["recorded"], rid)
-        self.assertIn("restart-%s.solarwinds.json" % rid, b["files"])
-        got = w.win_restart_swis_items([{"host": "h", "result": c["out"]}], {}, {}, "schedule")[0]["earlier"]
-        self.assertEqual(got, {"node_id": 412, "orion": ORION, "rid": rid, "from": "2026-11-25T03:25:00", "until": "2026-11-25T03:40:00"})
-        self.assertFalse(any(f.endswith(".solarwinds.json") for f in c["files"]))   # the replaced registration's record went with it
+    def test_ours_carry_their_restart_moment(self):
+        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "list"}])
+        # its settings' restart moment (only to say an unmanage window there is likely that restart's): 2 hours ahead here
+        at_ = rs.parse(b["out"]["ours"][0]["at_utc"]) or rs.parse(datetime.datetime.strptime(b["out"]["ours"][0]["at_utc"], "%m/%d/%Y %H:%M:%S").strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertLess(abs((at_ - datetime.datetime.now(U)).total_seconds() - 7200), 180)
 
     def test_own_files_and_replace(self):
         a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False, "later": True}])
@@ -648,45 +634,41 @@ ORION = "https://orion.example.mil:17774"
 
 
 class FakeSwis(object):
-    """Orion.Nodes as SWIS answers it: SELECTs by name, DNS, IP or NodeID; the two verbs recorded (or failing). local: the
-    window read back in that zone, without one (as an Orion keeping local time would return it). after_read: {node_id: fn}
-    run after that node is read by id (an operator acting meanwhile)."""
+    """Orion.Nodes as SWIS answers it: SELECTs by name, DNS, IP or NodeID; Unmanage recorded (or failing); Remanage must
+    never be asked for. zone_local: the window read back in that zone, without one. before_read: {node_id: fn} run before
+    that node is read by its ID (a change meanwhile)."""
 
     url = ORION
 
-    def __init__(self, nodes, fail=None, zone_local=None, after_read=None):
-        self.nodes, self.calls, self.fail, self.zone_local, self.after_read, self.reads = nodes, [], fail, zone_local, after_read or {}, []
+    def __init__(self, nodes, fail=None, zone_local=None, before_read=None):
+        self.nodes, self.calls, self.fail, self.zone_local, self.before_read = nodes, [], fail, zone_local, before_read or {}
 
     def query(self, swql, params=None):
         p = dict((k, str(v).lower()) for k, v in (params or {}).items())
         if "NodeID = @id" in swql:
             nid = int(params["id"])
-            self.reads.append(nid)
-            got = [dict(n) for n in self.nodes if int(n["NodeID"]) == nid]
-            if nid in self.after_read:
-                self.after_read.pop(nid)(self.nodes)
-            return got
+            if nid in self.before_read:
+                self.before_read.pop(nid)(self.nodes)
+            return [dict(n) for n in self.nodes if int(n["NodeID"]) == nid]
         out = []
         for n in self.nodes:
             cap, dns, ip = str(n["Caption"]).lower(), str(n.get("DNS") or "").lower(), str(n.get("IPAddress") or "")
             if (cap in (p.get("short"), p.get("full")) or dns in (p.get("short"), p.get("full")) or ip == p.get("ip")
                     or cap.startswith(p.get("short", "#") + ".") or dns.startswith(p.get("short", "#") + ".")):
-                out.append(n)
+                out.append(dict(n))
         return out
 
     def invoke(self, verb, args):
+        assert verb != "Remanage", "Remanage must never be called"
         if self.fail:
             raise rs.sw.SwisError(self.fail, "auth")
         self.calls.append([verb] + list(args))
         nid = int(str(args[0]).split(":")[1])
         n = next(x for x in self.nodes if int(x["NodeID"]) == nid)
-        if verb == "Unmanage":
-            f, u = rs.parse(args[1]), rs.parse(args[2])
-            if self.zone_local is not None:
-                f, u = f.astimezone(self.zone_local), u.astimezone(self.zone_local)
-            n.update(UnManageFrom=f.strftime("%Y-%m-%dT%H:%M:%S"), UnManageUntil=u.strftime("%Y-%m-%dT%H:%M:%S"), UnManaged=False)
-        else:
-            n.update(UnManaged=False, UnManageFrom="", UnManageUntil="")
+        f, u = rs.parse(args[1]), rs.parse(args[2])
+        if self.zone_local is not None:
+            f, u = f.astimezone(self.zone_local), u.astimezone(self.zone_local)
+        n.update(UnManageFrom=f.strftime("%Y-%m-%dT%H:%M:%S"), UnManageUntil=u.strftime("%Y-%m-%dT%H:%M:%S"), UnManaged=False)
         return True
 
 
@@ -695,15 +677,17 @@ def orion():
             {"NodeID": 418, "Caption": "SRV-DB01", "DNS": "srv-db01.corp.example.mil", "IPAddress": "192.0.2.11"},
             {"NodeID": 501, "Caption": "srv-web02", "DNS": "", "IPAddress": "192.0.2.20"},
             {"NodeID": 502, "Caption": "SRV-WEB02", "DNS": "", "IPAddress": "192.0.2.21"},
-            {"NodeID": 600, "Caption": "SQL-CLUSTER-A", "DNS": "", "IPAddress": "192.0.2.30"}]
+            {"NodeID": 600, "Caption": "SQL-CLUSTER-A", "DNS": "", "IPAddress": "192.0.2.30"},
+            {"NodeID": 700, "Caption": "srv-mail01", "DNS": "srv-mail01.other.example.mil", "IPAddress": "192.0.2.40"},
+            {"NodeID": 800, "Caption": "SRV-FS01", "DNS": "", "IPAddress": "192.0.2.50"}]
 
 
 NOW = at(2026, 11, 24, 15, 0)
 WIN = rs.window("2026-11-25T03:30:00Z", 5, 10)
 
 
-def record(nid=412, f="2026-11-24T22:55:00", u="2026-11-24T23:30:00", rid="20261124120000-1234", orion_=ORION):
-    return {"node_id": nid, "orion": orion_, "rid": rid, "from": f, "until": u}
+def item(host="a", nid=412, name="srv-app01.corp.example.mil", **k):
+    return dict({"host": host, "node_id": nid, "name": name, "why": "", "window": WIN, "earlier": {}}, **k)
 
 
 class SolarWinds(unittest.TestCase):
@@ -714,122 +698,121 @@ class SolarWinds(unittest.TestCase):
         self.assertEqual(rs.shown(WIN, zoneinfo.ZoneInfo("America/New_York")), "22:25-22:40 EST")
         self.assertEqual(rs.shown(rs.window("2026-11-25T04:55:00Z", 5, 10), zoneinfo.ZoneInfo("America/New_York")), "23:50-2026-11-25 00:05 EST")
 
-    def test_first_read_back_utc_or_local(self):
-        # only to tell which convention SWIS uses, from the first read-back after our own Unmanage
+    def test_read_back_tells_the_convention_only(self):
         import zoneinfo
         ber = zoneinfo.ZoneInfo("Europe/Berlin")
         win = rs.window("2026-11-24T21:30:00Z")
         self.assertEqual(rs.same({"from": "2026-11-24T21:25:00.0000000", "until": "2026-11-24T21:40:00"}, win, ber), "utc")
         self.assertEqual(rs.same({"from": "2026-11-24T22:25:00", "until": "2026-11-24T22:40:00"}, win, ber), "local")
-        self.assertEqual(rs.same({"from": "2026-11-24T22:25:00+01:00", "until": "2026-11-24T21:40:00Z"}, win, ber), "utc")
         self.assertEqual(rs.same({"from": "2026-11-24T22:25:00Z", "until": "2026-11-24T22:40:00Z"}, win, ber), "")
-        self.assertEqual(rs.same({"from": "2026-11-24T20:25:00", "until": "2026-11-24T23:40:00"}, win, ber), "")
-        # in a run: an Orion that returns local time - the record is what it returned, and the report says "local time"
         c = FakeSwis(orion(), zone_local=ber)
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "rid": "r1", "window": win, "earlier": {}}], at(2026, 11, 24, 15), False, ber)
-        self.assertEqual(res["a"]["times"], "local")
-        self.assertEqual(res["a"]["record"], {"node_id": 412, "orion": ORION, "rid": "r1", "from": "2026-11-24T22:25:00", "until": "2026-11-24T22:40:00"})
+        res = rs.run(c, [item(window=win)], at(2026, 11, 24, 15), False, ber)
+        self.assertEqual((res["a"]["times"], res["a"]["done"]), ("local", True))
         m = w.win_restart_model([], {"mode": "schedule", "swis_window": "x", "swis_times": ["local"]})
         self.assertIn("SolarWinds returns times as local time", " ".join(w.win_restart_doc(m, WHEN)["sections"][1]["lines"]))
 
-    def test_ownership_is_exact(self):
-        n = {"node_id": 412, "from": "2026-11-24T22:55:00", "until": "2026-11-24T23:30:00"}
-        self.assertTrue(rs.mine(n, record(), ORION))
-        self.assertFalse(rs.mine(dict(n, until="2026-11-24T23:31:00"), record(), ORION))             # one minute moved: not ours
-        self.assertFalse(rs.mine(dict(n, **{"from": "2026-11-24T22:56:00", "until": "2026-11-24T23:31:00"}), record(), ORION))
-        self.assertFalse(rs.mine(n, record(), "https://orion2.example.mil:17774"))                   # another Orion server
-        self.assertFalse(rs.mine(n, dict(record(), rid=""), ORION))                                   # no registration id
-        self.assertFalse(rs.mine(n, {}, ORION))
-
-    def test_find_by_name_only(self):
-        f = rs.find(FakeSwis(orion()), [{"host": "srv-app01.corp.example.mil", "ip": "192.0.2.10"}, {"host": "srv-web02", "ip": ""},
-                                        {"host": "srv-gone.corp.example.mil", "ip": ""},
-                                        {"host": "sql01.corp.example.mil", "ip": "192.0.2.30"}])
-        self.assertEqual(f["srv-app01.corp.example.mil"]["node"]["node_id"], 412)
+    def test_find_by_name(self):
+        f = rs.find(FakeSwis(orion()), [
+            {"host": "srv-app01.corp.example.mil", "ip": "192.0.2.10"},          # full name
+            {"host": "srv-web02", "ip": "192.0.2.20"},                            # two nodes named so: refused, the IP never decides
+            {"host": "srv-gone.corp.example.mil", "ip": ""},
+            {"host": "sql01.corp.example.mil", "ip": "192.0.2.30"},               # only an IP (a cluster address)
+            {"host": "srv-mail01.corp.example.mil", "ip": ""},                    # its short name's node is of another domain
+            {"host": "srv-fs01.corp.example.mil", "ip": ""}])                     # the node has no domain: the short name will do
+        self.assertEqual((f["srv-app01.corp.example.mil"]["node"]["node_id"], f["srv-app01.corp.example.mil"]["name"]),
+                         (412, "srv-app01.corp.example.mil"))
         self.assertIsNone(f["srv-web02"]["node"])
-        self.assertIn("2 SolarWinds nodes", f["srv-web02"]["why"])
+        self.assertEqual(f["srv-web02"]["why"], "2 SolarWinds nodes are named srv-web02")
         self.assertIsNone(f["srv-gone.corp.example.mil"]["node"])
-        # a cluster address: only the IP matches another node - never unmanaged, said
-        self.assertIsNone(f["sql01.corp.example.mil"]["node"])
         self.assertIn("matched by IP only (SQL-CLUSTER-A N:600) - not unmanaged", f["sql01.corp.example.mil"]["why"])
-        res = rs.run(FakeSwis(orion()), [{"host": "s", "op": "schedule", "node_id": None, "why": f["sql01.corp.example.mil"]["why"],
-                                         "window": WIN}], NOW, False)
-        self.assertEqual(res["s"]["text"], "SolarWinds: matched by IP only (SQL-CLUSTER-A N:600) - not unmanaged")
+        self.assertIsNone(f["srv-mail01.corp.example.mil"]["node"])
+        self.assertIn("a SolarWinds node named srv-mail01 is srv-mail01.other.example.mil", f["srv-mail01.corp.example.mil"]["why"])
+        self.assertEqual(f["srv-fs01.corp.example.mil"]["node"]["node_id"], 800)
+        # a server given without a domain: the short name's one node, whatever its domain
+        f = rs.find(FakeSwis(orion()), [{"host": "srv-mail01", "ip": ""}])
+        self.assertEqual(f["srv-mail01"]["node"]["node_id"], 700)
+        # one node two servers of the job could be: neither gets it
+        f = rs.find(FakeSwis(orion()), [{"host": "srv-fs01", "ip": ""}, {"host": "srv-fs01.corp.example.mil", "ip": ""}])
+        self.assertTrue(all(v["node"] is None and "2 servers of this job" in v["why"] for v in f.values()))
 
-    def test_unmanage_call_and_record(self):
+    def test_unmanage_call(self):
         c = FakeSwis(orion())
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "rid": "r1", "window": WIN, "earlier": {}}], NOW, False)
+        res = rs.run(c, [item()], NOW, False)
         self.assertEqual(c.calls, [["Unmanage", "N:412", "2026-11-25T03:25:00Z", "2026-11-25T03:40:00Z", False]])
-        self.assertTrue(res["a"]["done"])
-        self.assertEqual(res["a"]["times"], "utc")
-        self.assertEqual(res["a"]["record"], {"node_id": 412, "orion": ORION, "rid": "r1", "from": "2026-11-25T03:25:00",
-                                              "until": "2026-11-25T03:40:00"})               # exactly what SWIS returned
+        self.assertEqual((res["a"]["done"], res["a"]["times"]), (True, "utc"))
+        self.assertIn("node SRV-APP01 (N:412) unmanaged", res["a"]["text"])
         c = FakeSwis(orion())
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "window": WIN, "earlier": {}}], NOW, True)
-        self.assertEqual((c.calls, res["a"]["record"]), ([], {}))
+        res = rs.run(c, [item()], NOW, True)
+        self.assertEqual(c.calls, [])
         self.assertIn("would be unmanaged", res["a"]["text"])
-        res = rs.run(FakeSwis(orion()), [{"host": "b", "op": "schedule", "node_id": None, "why": "2 SolarWinds nodes are named srv-web02",
-                                         "window": WIN}], NOW, False)
+        res = rs.run(FakeSwis(orion()), [item("b", None, "", why="2 SolarWinds nodes are named srv-web02")], NOW, False)
         self.assertEqual((res["b"]["level"], res["b"]["done"]), ("warning", False))
         self.assertIn("node not found (2 SolarWinds nodes are named srv-web02) - not unmanaged", res["b"]["text"])
 
-    def test_a_window_we_did_not_write_is_never_ours(self):
-        # an operator set exactly the requested window: left (a warning), no record - and cancel never manages it again
+    def test_any_window_is_left_alone(self):
+        cases = [dict(UnManaged=True),                                                                # unmanaged now
+                 dict(UnManageFrom="2026-11-25T03:25:00", UnManageUntil="2026-11-25T03:40:00"),         # the very window asked for
+                 dict(UnManageFrom="2026-11-24T10:00:00", UnManageUntil="2026-11-24T23:00:00"),         # a person's, ahead
+                 dict(UnManageFrom="2026-11-24T10:00:00", UnManageUntil="2026-11-24T15:30:00")]         # past as UTC, ahead as Berlin
+        import zoneinfo
+        for case in cases:
+            nodes = orion()
+            nodes[0].update(case)
+            c = FakeSwis(nodes)
+            res = rs.run(c, [item()], NOW, False, zoneinfo.ZoneInfo("Europe/Berlin"))
+            self.assertEqual((c.calls, res["a"]["level"]), ([], "warning"), case)
+            self.assertIn("already has an unmanage window", res["a"]["text"])
+            self.assertIn("left as it is", res["a"]["text"])
+        # a window over in both readings: none now - unmanaged
         nodes = orion()
-        nodes[0].update(UnManageFrom="2026-11-25T03:25:00", UnManageUntil="2026-11-25T03:40:00")
+        nodes[0].update(UnManageFrom="2026-11-23T10:00:00", UnManageUntil="2026-11-23T11:00:00")
         c = FakeSwis(nodes)
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "rid": "r2", "window": WIN, "earlier": {}}], NOW, False)
-        self.assertEqual((c.calls, res["a"]["record"], res["a"]["level"]), ([], {}, "warning"))
-        self.assertIn("unmanaged by someone else", res["a"]["text"])
-        items = w.win_restart_swis_items([{"host": "a", "result": {"ours": [{"name": "t"}], "removed": [{"name": "t"}]}}], {}, {}, "cancel")
-        self.assertEqual(items, [])                                                                # no record: nothing to manage again
+        rs.run(c, [item()], NOW, False, zoneinfo.ZoneInfo("Europe/Berlin"))
+        self.assertEqual(len(c.calls), 1)
 
-    def test_ours_replaced_a_persons_left(self):
+    def test_reschedule_says_the_old_window_ends_by_itself(self):
         nodes = orion()
-        nodes[0].update(UnManageFrom="2026-11-24T22:55:00", UnManageUntil="2026-11-24T23:30:00")      # ours, from an earlier run
-        nodes[1].update(UnManageFrom="2026-11-24T20:00:00", UnManageUntil="2026-11-25T06:00:00")      # a person's
+        nodes[0].update(UnManageFrom="2026-11-24T22:55:00", UnManageUntil="2026-11-24T23:10:00")
         c = FakeSwis(nodes)
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "rid": "r3", "window": WIN, "earlier": record()},
-                         {"host": "b", "op": "schedule", "node_id": 418, "rid": "r3", "window": WIN, "earlier": record(418)}], NOW, False)
-        self.assertEqual(c.calls, [["Remanage", "N:412"], ["Unmanage", "N:412", WIN["from"], WIN["until"], False]])
-        self.assertIn("our earlier window", res["a"]["text"])
-        self.assertEqual(res["a"]["record"]["rid"], "r3")
-        self.assertEqual(res["b"]["level"], "warning")
-        self.assertIn("unmanaged by someone else", res["b"]["text"])
-
-    def test_replace_reads_again_before_writing(self):
-        nodes = orion()
-        nodes[0].update(UnManageFrom="2026-11-24T22:55:00", UnManageUntil="2026-11-24T23:30:00")
-
-        def extend(ns):
-            ns[0]["UnManageUntil"] = "2026-11-25T02:00:00"                     # an operator extends it after our first read
-        c = FakeSwis(nodes, after_read={412: extend})
-        res = rs.run(c, [{"host": "a", "op": "schedule", "node_id": 412, "rid": "r4", "window": WIN, "earlier": record()}], NOW, False)
+        earlier = rs.window("2026-11-24T23:00:00Z")
+        res = rs.run(c, [item(earlier=earlier)], NOW, False)
         self.assertEqual(c.calls, [])
-        self.assertIn("changed while this job ran", res["a"]["text"])
+        self.assertIn("likely the replaced restart's (it ends by itself) - left as it is", res["a"]["text"])
+        hosts = [{"host": "a", "result": {"restart": True, "scheduled": {"id": "2"}, "replaced": [{"at_utc": "2026-11-24T23:00:00Z"}]}}]
+        self.assertEqual(w.win_restart_swis_items(hosts, {"a": {"node": {"node_id": 412}, "name": "x"}}, WIN, "schedule")[0]["earlier"], earlier)
 
-    def test_remanage_only_ours_each_read_right_before(self):
-        nodes = orion()
-        nodes[0].update(UnManageFrom="2026-11-25T03:25:00", UnManageUntil="2026-11-25T03:40:00")
-        nodes[1].update(UnManageFrom="2026-11-25T03:25:00", UnManageUntil="2026-11-25T03:40:00")
+    def test_name_checked_again_before_the_write(self):
+        def rename(ns):
+            ns[0].update(Caption="SRV-OTHER", DNS="srv-other.corp.example.mil")
+        c = FakeSwis(orion(), before_read={412: rename})
+        res = rs.run(c, [item()], NOW, False)
+        self.assertEqual(c.calls, [])
+        self.assertEqual(res["a"]["level"], "warning")
+        self.assertIn("node N:412 is not named srv-app01.corp.example.mil any more - not unmanaged", res["a"]["text"])
 
-        def extend(ns):
-            ns[1]["UnManageUntil"] = "2026-11-25T09:00:00"                     # while node 412 is handled, 418 is extended
-        c = FakeSwis(nodes, after_read={412: extend})
-        ours = lambda nid: record(nid, "2026-11-25T03:25:00", "2026-11-25T03:40:00")      # noqa: E731
-        res = rs.run(c, [{"host": "a", "op": "remove", "earlier": ours(412)},
-                         {"host": "b", "op": "remove", "earlier": ours(418)},
-                         {"host": "c", "op": "remove", "earlier": ours(501)}], NOW, False)
-        self.assertEqual(c.calls, [["Remanage", "N:412"]])
-        self.assertEqual(c.reads, [412, 418, 501])                              # one read each, right before its own call
-        self.assertIn("managed again", res["a"]["text"])
-        self.assertIn("not the one this job wrote", res["b"]["text"])
-        self.assertIn("is managed - nothing to do", res["c"]["text"])
+    def test_no_remanage_anywhere(self):
+        for p in (os.path.join(REPO, "plugins", "module_utils", "site_win_restart_swis.py"),
+                  os.path.join(REPO, "roles", "win_restart", "library", "site_win_restart_swis.py"),
+                  os.path.join(REPO, "plugins", "filter", "win_restart_filters.py")):
+            with open(p) as fh:
+                self.assertNotIn('invoke("Remanage"', fh.read(), p)
+        self.assertEqual(rs.VERBS, ("Unmanage",))
+        # skip and cancel: no SolarWinds step at all - only words
+        self.assertEqual(w.win_restart_swis_items([{"host": "c", "result": {"restart": False, "removed": [{"at_utc": "2026-11-25T03:30:00Z"}]}}],
+                                                  {}, WIN, "schedule"), [])
+        self.assertEqual(w.win_restart_swis_items([{"host": "c", "result": {"removed": [{"at_utc": "2026-11-25T03:30:00Z"}]}}], {}, WIN, "cancel"), [])
+        with open(os.path.join(REPO, "playbooks", "win_restart_cancel.yml")) as fh:
+            self.assertNotIn("site_win_restart_swis", fh.read())
+        mp = w.win_restart_swis_cancel([{"host": "c", "result": {"removed": [{"at_utc": "2026-11-25T03:30:00Z"}]}}], False, "America/New_York")
+        self.assertEqual(mp["c"]["text"], "SolarWinds: the unmanage window 22:25-22:40 EST (if it was set) stays and ends by itself; "
+                                          "re-manage the node by hand in SolarWinds if needed")
+        mp = w.win_restart_swis_map([{"host": "c", "result": {"restart": False, "removed": [{"at_utc": "2026-11-25T03:30:00Z"}]}}], {}, "on", "",
+                                    "America/New_York")
+        self.assertIn("not unmanaged (skipped: no reboot pending); the earlier restart's unmanage window (22:25-22:40 EST)", mp["c"]["text"])
 
     def test_a_failed_call_is_a_warning(self):
-        res = rs.run(FakeSwis(orion(), fail="SolarWinds refused it (HTTP 403): the account may not manage nodes"),
-                     [{"host": "a", "op": "schedule", "node_id": 412, "window": WIN, "earlier": {}}], NOW, False)
-        self.assertEqual((res["a"]["level"], res["a"]["record"]), ("warning", {}))
+        res = rs.run(FakeSwis(orion(), fail="SolarWinds refused it (HTTP 403): the account may not manage nodes"), [item()], NOW, False)
+        self.assertEqual(res["a"]["level"], "warning")
         self.assertIn("unmanage failed (SolarWinds refused it (HTTP 403)", res["a"]["text"])
 
     def test_invoke_request(self):
@@ -845,12 +828,12 @@ class SolarWinds(unittest.TestCase):
                 return R()
         m = rs.Manager("orion.example.mil", "u", "p", opener=Opener())
         m.invoke("Unmanage", ["N:412", WIN["from"], WIN["until"], False])
-        m.invoke("Remanage", ["N:412"])
         self.assertEqual(sent[0], (ORION + "/SolarWinds/InformationService/v3/Json/Invoke/Orion.Nodes/Unmanage",
                                    ["N:412", "2026-11-25T03:25:00Z", "2026-11-25T03:40:00Z", False], "POST"))
-        self.assertTrue(sent[1][0].endswith("/Invoke/Orion.Nodes/Remanage"))
-        with self.assertRaises(rs.sw.SwisError):
-            m.invoke("Delete", ["N:412"])
+        for verb in ("Remanage", "Delete"):
+            with self.assertRaises(rs.sw.SwisError):
+                m.invoke(verb, ["N:412"])
+        self.assertEqual(len(sent), 1)
         with self.assertRaises(rs.sw.SwisError):            # the read-only client's SELECT-only rule still holds
             m.query("DELETE FROM Orion.Nodes")
 
@@ -868,24 +851,16 @@ class SolarWinds(unittest.TestCase):
                                                           "SOLARWINDS_MANAGE_USERNAME", "SOLARWINDS_MANAGE_VERIFY"])
 
     def test_items_and_rows(self):
-        found = {"a": {"node": {"node_id": 412}, "why": ""}, "b": {"node": None, "why": "no node"}}
-        rec = record(7)
-        hosts = [{"host": "a", "result": {"restart": True, "scheduled": {"id": "1"}, "replaced": [{"solarwinds": json.dumps(rec)}]}},
+        found = {"a": {"node": {"node_id": 412}, "name": "srv-app01", "why": ""}, "b": {"node": None, "why": "no node"}}
+        hosts = [{"host": "a", "result": {"restart": True, "scheduled": {"id": "1"}}},
                  {"host": "b", "result": {"restart": True, "scheduled": {"id": "2"}}},
-                 {"host": "c", "result": {"restart": False, "removed": [{"solarwinds": json.dumps(rec)}]}},
                  {"host": "d", "result": {"restart": False}},
                  {"host": "e", "result": {"error": "Access is denied"}}]
         items = w.win_restart_swis_items(hosts, found, WIN, "schedule", False)
-        self.assertEqual([(i["host"], i["op"]) for i in items], [("a", "schedule"), ("b", "schedule"), ("c", "remove")])
-        self.assertEqual((items[0]["earlier"], items[0]["rid"]), (rec, "1"))
+        self.assertEqual([(i["host"], i["node_id"], i["name"]) for i in items], [("a", 412, "srv-app01"), ("b", None, "")])
         mp = w.win_restart_swis_map(hosts, {"a": {"text": "SolarWinds: x", "level": "ok"}})
         self.assertEqual(mp["d"]["text"], "SolarWinds: not unmanaged (skipped: no reboot pending)")
         self.assertNotIn("e", mp)
-        # the record step failed: the window stays, said not ours
-        mp = w.win_restart_swis_map([dict(hosts[0], record_result={"error": "the task is not registration 1 any more: not recorded"})],
-                                    {"a": {"text": "SolarWinds: node A (N:412) unmanaged 22:25-22:40 EST", "level": "ok", "record": rec}})
-        self.assertEqual(mp["a"]["level"], "warning")
-        self.assertIn("not recorded as ours (the task is not registration 1 any more: not recorded)", mp["a"]["text"])
         self.assertEqual(w.win_restart_swis_map(hosts, {}, "nocred"), {})
         self.assertIn("no credential - node stays managed", w.win_restart_swis_note("nocred"))
         m = w.win_restart_model([dict(hosts[1], result=res("b", ["Windows Update"], scheduled={"id": "2"}),
@@ -898,8 +873,8 @@ class SolarWinds(unittest.TestCase):
         self.assertEqual(d["status"], "warning")
         self.assertIn("22:25-22:40 EST", " ".join(d["sections"][1]["lines"]))
         m = w.win_restart_model([{"host": "a", "result": {"ours": [], "removed": [{"name": "t", "path": "\\x\\"}]},
-                                  "swis": {"text": "SolarWinds: node A (N:1) managed again", "level": "ok"}}], {"mode": "cancel"})
-        self.assertEqual(w.win_restart_cancel_doc(m)["sections"][0]["rows"][0][-1], "node A (N:1) managed again")
+                                  "swis": {"text": "SolarWinds: the unmanage window x stays and ends by itself", "level": "info"}}], {"mode": "cancel"})
+        self.assertEqual(w.win_restart_cancel_doc(m)["sections"][0]["rows"][0][-1], "the unmanage window x stays and ends by itself")
 
 
 class Catalog(unittest.TestCase):
@@ -917,7 +892,8 @@ class Catalog(unittest.TestCase):
             e = jt[name]
             self.assertEqual(e["playbook"], "playbooks/" + pb)
             self.assertEqual((e["credentials"], e["ee"], e["area"]), (["machine_windows"], "windows", "Windows"))
-            self.assertEqual(e["optional_credentials"], ["solarwinds_manage"])       # never the read-only solarwinds kind
+            # the schedule job's unmanage credential only (never the read-only solarwinds kind); cancel calls nothing in SolarWinds
+            self.assertEqual(e["optional_credentials"], ["solarwinds_manage"] if "schedule" in pb else [])
             self.assertTrue(e["ask_limit"] and e["ask_job_type"] and e["portal"])
             self.assertTrue(all(e["description"][k] for k in ("does", "targets", "produces", "supports")))
             self.assertTrue(e["description"]["supports"].startswith("Run constraint="))

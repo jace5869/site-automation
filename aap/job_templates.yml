@@ -1616,7 +1616,7 @@ job_templates:
   - name: Windows - cancel a scheduled restart
     playbook: playbooks/win_restart_cancel.yml
     credentials: [machine_windows]
-    optional_credentials: [solarwinds_manage]
+    optional_credentials: []
     ask_limit: true
     ask_variables: false
     ask_inventory: false

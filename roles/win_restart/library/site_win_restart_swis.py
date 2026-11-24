@@ -1,14 +1,13 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""Windows - schedule a restart / cancel a scheduled restart: each server's SolarWinds node (plugins/module_utils/
-site_win_restart_swis.py). On the AAP side, with a "SolarWinds (manage nodes)" credential (aap/credential_types/solarwinds_manage.yml:
-SOLARWINDS_MANAGE_URL, _USERNAME, _PASSWORD, _VERIFY, _CA_PATH; an account that may manage nodes). The read-only
-credential's SOLARWINDS_* are never used here, not even to read.
-  action find: the node of each host (read only) -> {found: {host: {node, how, why}}, window}
-  action run:  items [{host, op: schedule | remove, node_id, rid, why, window, earlier}] -> {result: {host: {text, level, done,
-               record, times}}} - record: what makes the window ours (written beside the task's settings by the next step)
-               - Check (or check: true): what it would do, nothing invoked
-No credential: {skipped: why} - never a failure. A SolarWinds error is each server's warning, never the job's failure."""
+"""Windows - schedule a restart: each server's SolarWinds node unmanaged for the restart window (plugins/module_utils/
+site_win_restart_swis.py). On the AAP side, with a "SolarWinds (manage nodes)" credential (aap/credential_types/
+solarwinds_manage.yml: SOLARWINDS_MANAGE_URL, _USERNAME, _PASSWORD, _VERIFY, _CA_PATH; an account that may manage nodes).
+The read-only credential's SOLARWINDS_* are never used here, not even to read.
+  action find: the node of each host, by name only (read only) -> {found: {host: {node, name, why}}, window}
+  action run:  items [{host, node_id, name, why, window, earlier}] -> {result: {host: {text, level, done, times}}} - Unmanage
+               only for a node with no unmanage window at all; never Remanage. Check (or check: true): nothing invoked.
+No credential: {skipped_why} - never a failure. A SolarWinds error is each server's warning, never the job's failure."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 

@@ -138,7 +138,7 @@ aap_templates_credentials:
   # report_db_reader: Report database (reader)  # 1.101.2: the read-only account report_reader, for the portal's deploy
   # ontap: NetApp ONTAP read-only               # the NetApp reports and the volume list
   # ontap_write: NetApp ONTAP write             # 1.123.0: NetApp - expand a volume (an account that may grow volumes and LUNs)
-  # solarwinds_manage: SolarWinds manage nodes  # Windows - schedule a restart / cancel: unmanage the node (an account that may manage nodes)
+  # solarwinds_manage: SolarWinds manage nodes  # Windows - schedule a restart: unmanage the node (an account that may manage nodes)
 ## The execution environment of each kind (all, windows, network); a kind left out: the project's
 # aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
 ## Only some templates (* and ?, any case)
@@ -896,7 +896,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## SolarWinds: the node unmanaged from 5 minutes before to 10 after (auto: with a solarwinds_manage credential; false: never)
 # win_restart_solarwinds: auto
 """),
-    "win_restart_cancel.yml": ("Windows - cancel a scheduled restart", "Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window)", "", """\
+    "win_restart_cancel.yml": ("Windows - cancel a scheduled restart", "Machine (Windows)", "", """\
 ## docs/WINDOWS.md "Schedule a restart". Limit: the servers (required). Job type: Check first = what it removes.
 ## Removes only our restart tasks (name starts with win_restart_task_name) and their files.
 """),
