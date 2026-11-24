@@ -252,12 +252,20 @@ read and what the vCenter event read showed.
   A span with only a watch observation starts at that run (*down by 23:40 (the watch's run)*).
   Cluster-wide loss and overlaps count from there. An earlier recorded loss dates the span when available.
 - **Order of events** groups changes of the same kind and direction within 15 minutes of the previous change.
-  Each line gives the count, time span and names. Open **and N more** after the first ten names. Alarms join the
-  change they describe. Tickets and work notes each have their own line. **See the card** links to the matching
-  pattern above. The timeline chart follows immediately, open on the page.
-- **What it affected** gives the VM count in the heading and lists datastore and host members and the watch's
-  findings on those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only
-  from membership reads *on the lost datastore (state not read)* or *on the down host (state not read)*.
+  A change the other way in between (paths back, then lost again) starts a new line.
+  The time column gives the span to the second. Each line gives the count and names: eight, then **+N more**.
+  Open it on the page; the AAR stops at eight. A host's paths and a datastore lost together are one line:
+  *All paths down (APD) and datastore ds_shared_01 lost on 5 hosts*. Their return is one line too:
+  *Datastore ds_shared_01 back on 8 hosts*. Path redundancy and storage alarms of those hosts join that line.
+  Other alarms join the change they describe. Tickets and work notes each have their own line. **See the card** links
+  to the matching pattern above. The timeline chart follows immediately, open on the page.
+- **What it affected** gives the VM count in the heading and lists host members and the watch's findings on
+  those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only from a down
+  host's membership reads *on the down host (state not read)*. A VM with files on a lost datastore and no signal of
+  its own is never counted: a separate line says *3 VMs have files on ds_shared_01 (may have hung or failed)*.
+  The watch lists a datastore's VMs only while the datastore is not accessible. After a recovery the line reads
+  *VMs on ds_shared_01: not read*. With no confirmed VM the heading reads *What it affected: no VM confirmed*.
+  The tile and the AAR carry the same line.
 - **Down now** lists current conditions worst first. When the watch read falls after the selected window, it lists only
   current conditions for that window's roots. If the condition has no time,
   it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
@@ -382,12 +390,17 @@ someone opens it, checks it and writes the rest.
 - **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
   instructions before the appendices.
 - **Overview** gives the incident date, time and impact. **Likely causes**, **What went down** and **Order of events**
-  follow. The timeline prints every name. **What it affected**, **Down now** and **Back to normal** come next.
+  follow. A pattern card is compact: its meaning, typical causes, read-only checks, and where it was seen, counted.
+  The timeline names eight objects, then *+N more*. **What it affected**, **Down now** and **Back to normal** come next.
 - **Event Response** keeps the tickets with resolution and close notes, the two measures (first signal to ticket and
   time down), and Actions for the team's account of its response.
 - **RFO & Recovery** points to *Back to normal*. Lessons Learned keeps its fields and task table.
-- **Appendix A** groups matching events within three minutes by phase and sums noise separately. By default it lists
-  all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number omitted.
+- **Appendix A** follows the body on the same page. It groups matching events within three minutes by phase:
+  Time, Level and What happened, with the names in the sentence. An APD and the datastore heartbeat loss of the same
+  hosts within a minute are one row, with that burst's path redundancy and storage alarms. Their return is one row
+  too. Eight names, then *+N more*; the workbook and the CSV have every event. Noise is one line per alarm.
+  By default it lists all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number
+  omitted.
 - **Appendix B** contains the operations handoff with Down now, the objects that went down and their durations,
   the impact and the compact pattern cards. The same handoff is available as a separate Word file.
 - **ACT's possible causes** (`vm_outage_act`, when it is on) are under the root cause as *Suggested - confirm*. So is what

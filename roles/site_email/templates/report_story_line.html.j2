@@ -1,5 +1,7 @@
 {%- macro sentence(r) -%}
-{{ r.text | e }}{{ r.names[:10] | join(', ') | e }}
-{%- if r.names | length > 10 %} <details class="st-more"><summary>and {{ r.names | length - 10 }} more</summary>{{ r.names[10:] | join(', ') | e }}</details>{% endif -%}
+{#- 1.116.6: 8 names, then "+N more" (as the AAR; never "+1 more"); the rest opens in place -#}
+{%- set cut = 8 if r.names | length > 9 else r.names | length -%}
+{{ r.text | e }}{{ r.names[:cut] | join(', ') | e }}
+{%- if r.names | length > cut %} <details class="st-more"><summary>+{{ r.names | length - cut }} more</summary>{{ r.names[cut:] | join(', ') | e }}</details>{% endif -%}
 {{ r.suffix | e }}{% if r.card %}. <a href="#outage-card-{{ r.card | replace(' ', '-') | e }}">See the card: {{ r.card | e }}</a>{% endif %}
 {%- endmacro -%}

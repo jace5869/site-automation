@@ -374,7 +374,7 @@ class ReviewCutB(unittest.TestCase):
         self.assertIn(["esx1", "host connected again", "8 min"], r["draft"]["recovered"])
         self.assertEqual(r["draft"]["went"][0][2:4], ["8 min", "Back"])
         self.assertEqual(r["numbers"]["down_s"], 510)
-        self.assertIn("down by 00:16 (the watch's run)", str(r["draft"]["story"]["rows"]))
+        self.assertIn("down by 00:16:30 (the watch's run)", str(r["draft"]["story"]["rows"]))
         self.assertIn("the watch's run", r["draft"]["start"])
 
     def test_cluster_lost_by_recorded_observations(self):
@@ -486,7 +486,8 @@ class ReviewCutB(unittest.TestCase):
                                             (second_start, "esx-b", "problem.storage.apd.start"),
                                             (1680, "esx-a", "clear.storage.apd.exit"), (3960, "esx-b", "clear.storage.apd.exit")]]
                 r = self.review(events, [watch_run(990, datastores=[store])])
-                clears = [row for row in r["draft"]["story"]["rows"] if row["text"].startswith("Storage paths restored")]
+                clears = [row for row in r["draft"]["story"]["rows"] if row["text"].startswith(("Storage paths restored",
+                                                                                                 "Datastore example-store back on"))]
                 self.assertEqual([(row["names"], row["time"]["clock"]) for row in clears],
                                  [(["esx-a"], "00:28:00"), (["esx-b"], "01:06:00")])
                 recovered, = r["draft"]["recovered"]
@@ -533,7 +534,9 @@ class ReviewCutB(unittest.TestCase):
             self.assertIn("Example question", str(states))
             self.assertTrue(all(row[1] == "ds" for row in rows))
             if duplicate:
-                self.assertIn("state not read", states["1: example-vm [vm-2]"])
+                # 1.116.6: the second VM of that name has files there and no signal of its own: named apart, not counted
+                self.assertNotIn("1: example-vm [vm-2]", states)
+                self.assertEqual(r["draft"]["files_lines"], ["1 VM has files on ds (may have hung or failed): example-vm [vm-2]"])
                 ambiguous = self.review([], triggers=triggers)["draft"]["affected"]
                 self.assertTrue(all("state not read" in row[-1] for row in ambiguous))
 
@@ -682,7 +685,7 @@ class Review1162(unittest.TestCase):
                 self.assertFalse(result["root_judgments"])
                 self.assertIn(self.vm, str(draft["affected"]))
                 self.assertEqual([r["time"]["clock"] for r in draft["story"]["rows"]],
-                                 ["00:10:00", "00:10:00", "00:13:20", "00:25:00", "00:25:00"])
+                                 ["00:10:00", "00:13:20", "00:25:00"])      # 1.116.6: paths and datastore, one line
 
     def test_recorded_vm_and_root_without_current_inventory(self):
         root = self.condition("datastore", self.ds, "datastore %s is not accessible: the VMs on it are hung or down" % self.ds)
@@ -938,7 +941,7 @@ class SmartReview(unittest.TestCase):
         for obj in ("ds-sitea-07", "ds-sitea-08", "ds-sitea-09", "esx-sitea-02", "esx-sitea-04", "esx-sitea-05"):
             self.assertIn(obj, paths[2])
         self.assertEqual(d["events"], [])
-        self.assertEqual(len(d["groups"]), 28)
+        self.assertEqual(len(d["groups"]), 23)          # 1.116.6: APD and heartbeat loss (and return) of the same hosts, one row
         self.assertLessEqual(len(d["groups"]), d["group_total"])
         self.assertEqual([s["name"] for s in r["sheets"]], ["Timeline", "Outage summary", "Noise"])
         self.assertEqual(sorted(row[17] for row in r["sheet"]["rows"] if row[9]), sorted(e["key"] for e in events))
@@ -993,7 +996,8 @@ class SmartReview(unittest.TestCase):
             opts = dict(begin=500, end=6000, watch_runs=runs, datastores=stores)
             d = ot.outage_timeline(events, [], opts)["draft"]
             self.assertEqual([row[0] for row in d["recovered"]], ["ds-1", "ds-2"])
-            self.assertEqual(sum(r["text"].startswith("Storage paths down") for r in d["story"]["rows"]), 1 if grouped else 2)
+            self.assertEqual(sum(r["text"].startswith(("Storage paths down", "All paths down")) for r in d["story"]["rows"]),
+                             1 if grouped else 2)
             self.assertEqual(d["now"], [])
 
     def test_only_artifacts_in_the_window_supply_roots(self):
@@ -1018,7 +1022,7 @@ class SmartReview(unittest.TestCase):
                      message="" if clear else "Device naa.1234") for t, clear in ((1000, False), (2000, True), (8200, False), (9200, True))]
         d = ot.outage_timeline(rows, [], dict(begin=100, end=10000, datastores=[ds], watch_runs=[watch_run(1500, datastores=[ds], vc=ds["vcenter"])]))["draft"]
         self.assertEqual([r[0] for r in d["recovered"]], [ds["name"]])
-        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:16:40", "00:33:20", "00:33:20", "02:16:40", "02:16:40", "02:33:20", "02:33:20"])
+        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
         self.assertEqual(d["story"]["window"]["end"]["clock"], "02:33:20")
 
     def test_ha_destination_host_in_the_failed_hosts_cluster(self):
@@ -1111,7 +1115,7 @@ class SmartReview(unittest.TestCase):
                   for t, back in ((1000, False), (2000, True), (8200, False), (9200, True))]
         d = ot.outage_timeline(events, [], dict(begin=100, end=10000, watch_runs=[watch_run(1500, datastores=[dict(name="ds", moid="ds-1")])]))["draft"]
         self.assertEqual(len(d["recovered"]), 1)
-        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:16:40", "00:33:20", "00:33:20", "02:16:40", "02:16:40", "02:33:20", "02:33:20"])
+        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
 
     def test_all_vm_signals_require_episode_and_placement(self):
         apd = dict(type="esx.problem.storage.apd.start", time=1000, host="esx", datastore="ds", vcenter="vc")
@@ -1180,7 +1184,9 @@ class SmartReview(unittest.TestCase):
                   for t, back in ((1000, False), (2000, True), (8200, False), (9200, True))]
         r = ot.outage_timeline(events, [], dict(begin=100, end=10000, watch_runs=[watch_run(1500, datastores=[dict(name="ds", moid="ds-1")])]))
         story = r["draft"]["story"]
-        self.assertEqual([x["time"]["clock"] for x in story["rows"]], ["00:16:40", "00:16:40", "00:33:20", "00:33:20", "02:16:40", "02:16:40", "02:33:20", "02:33:20"])
+        self.assertEqual([x["time"]["clock"] for x in story["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
+        self.assertEqual([x["text"] for x in story["rows"]][:2], ["All paths down (APD) and datastore ds lost on 1 host: ",
+                                                                  "Datastore ds back on 1 host: "])
         self.assertEqual(story["window"]["end"]["clock"], "02:33:20")
         self.assertEqual(r["draft"]["recovered"][0][-1], "17 min")
         review = ot.outage_timeline(*director_outage())
@@ -1254,8 +1260,8 @@ class SmartReview(unittest.TestCase):
                                         suspects=[vm(2, verdict="hung"), vm(3, verdict="one-signal")]))
         r = ot.outage_timeline([], [], dict(begin=1000, end=2000, triggers=cond))
         items = [i for i in r["issues"] if i["kind"] == "vm"]
-        self.assertEqual({i["name"]: i["what"] for i in items},
-                         {"app0": "on the lost datastore (state not read)", "app1": "invalid", "app2": "hung", "app3": "no heartbeat"})
+        self.assertEqual({i["name"]: i["what"] for i in items}, {"app1": "invalid", "app2": "hung", "app3": "no heartbeat"})
+        self.assertEqual(r["draft"]["files_lines"], ["1 VM has files on example-store (may have hung or failed): app0"])
         one_signal, = [i for i in r["issues"] if i["kind"] == "vm" and i["what"] == "no heartbeat"]
         self.assertEqual(one_signal["state"], "Not judged")
         self.assertEqual(len(r["draft"]["now"]), len(cond))
@@ -1274,11 +1280,11 @@ class SmartReview(unittest.TestCase):
         data = dict(datastores=stores)
         cond = vm_watch_conditions(data)
         result = ot.outage_timeline([], [], dict(begin=100, end=200, triggers=cond, datastores=stores))
-        self.assertEqual(result["numbers"]["affected_vms"], 1)
+        self.assertEqual(result["numbers"]["affected_vms"], 0)                # 1.116.6: files there, no signal of its own
+        self.assertEqual(result["draft"]["files_lines"], ["1 VM has files on DS [ds-1] (may have hung or failed): app"])
         self.assertEqual(result["draft"]["went"][0][0], "DS [ds-1]")
         finding, = vm_watch_health(data, cond)["vc"]["findings"]
         self.assertEqual(finding["id"], "vm-watch:datastore:DS")             # 1.112.4c: a datastore ticket is by name
-        self.assertIn("app", str(result["draft"]["affected"]))
         self.assertNotIn("vm-2", finding["summary"])
 
     def test_noise_off_unfolds_only_root_events(self):
@@ -1438,7 +1444,7 @@ class ReviewEmailAcceptance(unittest.TestCase):
         record = docs.incident_review_fill(docs.incident_record({"kind": "aar"}), draft)
         blocks = docs.incident_aar_docx(record, {}, [], False, draft)["blocks"]
         appendix = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix A"))
-        count = sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == [draft["time_column"], "What", "Objects", "Level"])
+        count = sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == [draft["time_column"], "Level", "What happened"])
         self.assertGreater(draft["group_total"], self.opts["appendix_max"])
         self.assertEqual(count, self.opts["appendix_max"])
 
@@ -1448,7 +1454,7 @@ class ReviewEmailAcceptance(unittest.TestCase):
 
         story = self.review["draft"]["story"]
         rows = story["rows"]
-        self.assertEqual(len(rows), 17)
+        self.assertEqual(len(rows), 15)          # 1.116.6: paths and datastores lost (and back) together are one line each
         self.assertEqual([r["divider"] for r in rows if r["divider"]], ["Fri 20 Nov", "Sat 21 Nov", "Mon 23 Nov - the review"])
         inside = [r for r in rows if r["window"]]
         self.assertEqual((inside[0]["time"]["clock"], inside[-1]["time"]["clock"]), ("23:09:55", "23:58:10"))
@@ -1794,7 +1800,7 @@ class Review(unittest.TestCase):
         self.assertEqual(t["title"], ot.RAW_TITLE)
         self.assertTrue(t["collapsed"])
         self.assertEqual(t["rows"], [g["row"] for g in r["draft"]["groups"]])
-        self.assertEqual(t["rows"][0], ["12 Nov 02:19:40 CET", "Host not responding", "esx03", "Critical"])
+        self.assertEqual(t["rows"][0], ["02:19:40", "Host not responding", "esx03", "Critical"])
         self.assertEqual(t["rows"][3][1], "HA restarted a VM (x14)")
         self.assertEqual(t["row_status"], [row[3].lower() if row[3] in ("Low", "Warning", "Critical") else "" for row in t["rows"]])
         self.assertEqual(len(r["sheet"]["rows"]), 33)
@@ -3241,7 +3247,8 @@ class AarDraft1120(unittest.TestCase):
         d = reviewed(events(), notes, triggers=[current])["draft"]
         record = incident_review_fill(incident_record({"kind": "aar"}), d)
         blocks = incident_aar_docx(record, {}, [], False, d)["blocks"]
-        body = [r for b in blocks if b.get("columns", [])[-1:] == ["What happened"] for r in b["rows"]]
+        appendix = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix A"))
+        body = [r for b in blocks[:appendix] if b.get("columns", [])[-1:] == ["What happened"] for r in b["rows"]]
         self.assertGreater(len(body), 20)
         self.assertEqual([r[0] for r in body], [r["span"] for r in d["story"]["rows"]])
         for want in ("not responding", "restarted by HA", "Ticket INC0012345 opened", "connected again", "Still down:"):

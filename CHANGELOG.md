@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.116.6 — 2026-11-24
+
+**To set up:** nothing.
+
+- One datastore lost by all paths down (APD) on many hosts made a long AAR (the user's 10 pages came from 1.116.2).
+  On the test shape (tests/test_outage_compact.py, LibreOffice render) 1.116.4 gives 6 pages; 1.116.6 gives 4.
+- **Order of events** (page, email, AAR): a host's paths and a datastore lost together are one line, as is their return.
+  *All paths down (APD) and datastore ds_shared_01 lost on 5 hosts: esx01, ...* and
+  *Datastore ds_shared_01 back on 8 hosts: ...*. Path redundancy and storage alarms of those hosts join that line.
+  A change the other way in between starts a new line. The time column gives the span to the second.
+- A line names eight objects, then **+N more**: open it on the page. The workbook and the CSV have every event.
+  What went down, its note and Back to normal shorten long host lists the same way.
+- **Appendix A** (and the page's folded *Every event, grouped*): the APD and the datastore heartbeat loss of the same
+  hosts within a minute are one row, with that burst's path redundancy and storage alarms; their return is one row.
+  A one-day window writes the clock alone. In the AAR the rows are Time, Level and What happened, the names in the
+  sentence, and noise is one line per alarm.
+- **The AAR's layout:** Appendix A follows the body on the same page; Appendix B keeps its own page. A pattern card is
+  compact: meaning, typical causes, the read-only checks, and one line with who to escalate to and where it was
+  seen, counted (*ds_shared_01 and 14 hosts, 07:08:41 to 07:16:40*). The outage window line is one line on one day.
+- **What it affected:** an APD with no VM recorded by the watch or HA showed *0 VMs*. It now reads
+  *no VM confirmed*. A VM with files on a lost datastore and no signal of its own is named apart and never counted:
+  *3 VMs have files on ds_shared_01 (may have hung or failed)*. The watch lists a datastore's VMs only while it is
+  not accessible, so after a recovery the line reads *VMs on ds_shared_01: not read*. Same line in the tile, the
+  page, the AAR and the handoff.
+
+Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
+each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
+
+Tests: tests/test_outage_compact.py (new), tests/test_outage_timeline.py, tests/test_outage_one_place.py and
+tests/test_incident_docs.py.
+
 ## 1.116.4 — 2026-11-24
 
 **To set up:** nothing.

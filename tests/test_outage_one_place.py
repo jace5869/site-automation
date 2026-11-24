@@ -119,8 +119,8 @@ def event_places(review, sections):
         if title.startswith("Noise"):
             for row in draft["noise"]:
                 body = body.replace(row[3], "")
-        # Expand the visible ten-name page preview into the same sentence as the Word table.
-        body = re.sub(r"\s*and \d+ more\s+", ", ", body)
+        # Expand the visible eight-name page preview ("+N more", 1.116.6) into the same sentence as the Word table.
+        body = re.sub(r"\s*\+\d+ more\s+", ", ", body)
         for row in rows:
             sentence = row["text"] + ", ".join(row["names"]) + row["suffix"]
             if sentence in body:
@@ -198,6 +198,8 @@ class OnePlace(unittest.TestCase):
                 titles = [s["title"] for s in doc["sections"]]
                 count = review["numbers"]["affected_vms"]
                 affected = "What it affected: %d VM%s" % (count, "" if count == 1 else "s")
+                if not count and review["draft"]["files_lines"]:
+                    affected = "What it affected: no VM confirmed"      # 1.116.6
                 chart = "All events (%d) - chart" % review["numbers"]["full_events"]
                 self.assertEqual(titles, ["Likely causes", "What went down", STORY, chart, affected, "Down now",
                                           "Back to normal", "Issues by type", "Noise: summed up, not rows",
@@ -248,32 +250,32 @@ class OnePlace(unittest.TestCase):
         events, tickets, opts = fixtures.director_outage()
         review = fixtures.ot.outage_timeline(events, tickets, opts)
         aar, _ = word(review)
-        rows = [r[2] for b in aar if b.get("columns", [])[-2:] == ["Level", "What happened"] for r in b["rows"]]
+        appendix = next(i for i, b in enumerate(aar) if b.get("text", "").startswith("Appendix A"))
+        rows = [r[2] for b in aar[:appendix] if b.get("columns", [])[-2:] == ["Level", "What happened"] for r in b["rows"]]
         h = "esx-sitea-02, esx-sitea-04, esx-sitea-05"
         reset = ", ".join("sitea-app%02d" % i for i in range(1, 6))
         restarted = ", ".join("sitea-app%02d" % i for i in range(6, 15))
+        # 1.116.6: the times are in the Time column (to the second); the paths and the datastores lost (and back) on the
+        # same hosts together are one line.
         expected = [
-            "Storage path redundancy lost on 1 host (22:58-23:06): esx-sitea-04 (to ds-sitea-07)",
-            "Storage paths down on 3 hosts (23:09-23:12): " + h,
-            "3 datastores not accessible (23:09-23:10): ds-sitea-07, ds-sitea-08, ds-sitea-09 - all paths down (APD), "
-            "I/O failed from 23:12; alarms red. See the card: All paths down (APD)",
-            "2 hosts not responding (23:13-23:14): esx-sitea-04, esx-sitea-05 - HA declared both failed; alarms red",
-            "5 VMs reset by HA (23:16-23:17): " + reset,
+            "Storage path redundancy lost on 1 host: esx-sitea-04 (to ds-sitea-07)",
+            "All paths down (APD) and datastores ds-sitea-07, ds-sitea-08, ds-sitea-09 lost on 3 hosts: " + h +
+            " - I/O failed from 23:12:20; alarms red. See the card: All paths down (APD)",
+            "2 hosts not responding: esx-sitea-04, esx-sitea-05 - HA declared both failed; alarms red",
+            "5 VMs reset by HA: " + reset,
             "Ticket XINC0045678 opened, 32 min after the first signal",
             "Work note: Storage team engaged: controller B of san-sitea-01 shows a fault.",
             "Work note: Controller B failed over to controller A; paths are coming back.",
-            "Storage paths restored on 3 hosts (23:48-23:49): " + h,
-            "2 datastores accessible again (23:49): ds-sitea-07, ds-sitea-08",
-            "Datastore ds-sitea-09 lost for good (PDL) on 3 hosts (23:49): " + h + ". See the card: Permanent device loss (PDL)",
-            "9 VMs restarted by HA (23:51-23:53): " + restarted + " (on esx-sitea-01, esx-sitea-03, esx-sitea-06)",
-            "5 VMs reset by HA again (23:52-23:53): " + reset,
-            "4 VMs HA could not restart (23:55-23:56): sitea-db01, sitea-db02, sitea-db03, sitea-db04 (on ds-sitea-09)",
-            "2 hosts connected again (23:58-00:12): esx-sitea-04 (23:58), esx-sitea-05 (00:12); alarms green",
+            "Datastores ds-sitea-07, ds-sitea-08 back on 3 hosts: " + h,
+            "Datastore ds-sitea-09 lost for good (PDL) on 3 hosts: " + h + ". See the card: Permanent device loss (PDL)",
+            "9 VMs restarted by HA: " + restarted + " (on esx-sitea-01, esx-sitea-03, esx-sitea-06)",
+            "5 VMs reset by HA again: " + reset,
+            "4 VMs HA could not restart: sitea-db01, sitea-db02, sitea-db03, sitea-db04 (on ds-sitea-09)",
+            "2 hosts connected again: esx-sitea-04 (23:58:10), esx-sitea-05 (00:12:30); alarms green",
             "Work note: ds-sitea-07 and -08 back; ds-sitea-09 LUN lost on controller B. Vendor case open; on hold."]
         # All matching kinds now get the same pointer that the mockup spelled out on APD and PDL.
-        for i, card in [(0, "Storage path redundancy lost"), (1, "All paths down (APD)"),
-                        (3, "Host not responding or disconnected"), (4, "HA reset a VM"),
-                        (12, "HA reset a VM"), (13, "HA could not restart a VM")]:
+        for i, card in [(0, "Storage path redundancy lost"), (2, "Host not responding or disconnected"),
+                        (3, "HA reset a VM"), (10, "HA reset a VM"), (11, "HA could not restart a VM")]:
             expected[i] += ". See the card: " + card
         self.assertEqual(rows, expected)
         for web, look in ((True, "report_atlas"), (False, "report")):
@@ -283,11 +285,13 @@ class OnePlace(unittest.TestCase):
                                r'</b> &nbsp; (.*?)</div>', html, re.S)
             self.assertEqual([unescape(re.sub("<[^>]*>", "", line)).strip() for line in lines], expected)
         self.assertEqual(review["draft"]["group_total"], len(review["draft"]["groups"]))
-        appendix_rows = [r for b in aar if b.get("columns", [])[1:] == ["What", "Objects", "Level"] for r in b["rows"]]
+        # 1.116.6: the AAR writes the page's rows as Time | Level | What happened, the objects in the sentence
+        appendix_rows = [r for b in aar[appendix:] if b.get("columns", [])[1:] == ["Level", "What happened"] for r in b["rows"]]
         for section_list in ("sections", "web_sections"):
-            self.assertEqual(review[section_list][-1]["rows"], appendix_rows)
-        green = [r for r in appendix_rows if r[1] == "Alarm back to green: Host connection and power state"]
+            self.assertEqual([docs._appendix_row(r) for r in review[section_list][-1]["rows"]], appendix_rows)
+        green = [r for r in review["sections"][-1]["rows"] if r[1] == "Alarm back to green: Host connection and power state"]
         self.assertEqual([r[2] for r in green], ["esx-sitea-04", "esx-sitea-05"])
+        self.assertIn("Alarm back to green: Host connection and power state - esx-sitea-04", [r[2] for r in appendix_rows])
         sheet = review["sheets"][0]
         exported = list(csv.reader(io.StringIO(fixtures.ot.outage_events_csv(sheet))))
         self.assertEqual(exported[1:], [[str(cell) for cell in row] for row in sheet["rows"]])
@@ -303,7 +307,8 @@ class OnePlace(unittest.TestCase):
             draft = review["draft"]
             self.assertGreater(draft["group_total"], 40)
             aar, _ = word(review)
-            shown = sum(len(b["rows"]) for b in aar if b.get("columns", [])[1:] == ["What", "Objects", "Level"])
+            at = next(i for i, b in enumerate(aar) if b.get("text", "").startswith("Appendix A"))
+            shown = sum(len(b["rows"]) for b in aar[at:] if b.get("columns", [])[1:] == ["Level", "What happened"])
             self.assertEqual(shown, draft["group_total"] if limit is None else limit)
             omitted = [b["text"] for b in aar if "further grouped rows" in b.get("text", "")]
             self.assertEqual(omitted, [] if limit is None else [
@@ -319,7 +324,7 @@ class OnePlace(unittest.TestCase):
                   dict(alarm, time=900, to="green")]
         for later in ([], [c.event("VmPoweredOnEvent", 1200, host=c.host, vm=c.vm)]):
             rows = c.review(events + later, hosts=[host])["draft"]["story"]["rows"]
-            self.assertEqual([r["span"] for r in rows if "back up" in r["text"]], ["00:20"] if later else [])
+            self.assertEqual([r["span"] for r in rows if "back up" in r["text"]], ["00:20:00"] if later else [])
             self.assertEqual([r["names"] for r in rows if r["text"].startswith("Alarms green")], [[c.vm]])
 
     def test_alarm_spans_after_storage_assignment(self):
@@ -331,9 +336,10 @@ class OnePlace(unittest.TestCase):
                   c.event("esx.problem.storage.apd.start", 1200, host=c.host, datastore=c.ds),
                   dict(alarm, time=1980)]
         rows = c.review(events)["draft"]["story"]["rows"]
-        self.assertEqual([r["span"] for r in rows if r["text"].startswith("Alarms red")], ["00:05", "00:33"])
-        self.assertEqual([(r["span"], r["names"]) for r in rows if "datastore not accessible" in r["text"]],
-                         [("00:19-00:20", [c.ds])])
+        self.assertEqual([r["span"] for r in rows if r["text"].startswith("Alarms red")], ["00:05:00", "00:33:00"])
+        # 1.116.6: the host's paths and the datastore lost together are one line; the storage alarm joins it
+        self.assertEqual([(r["span"], r["names"], r["suffix"]) for r in rows if "datastore " + c.ds + " lost on" in r["text"]],
+                         [("00:20:00", [c.host], "; alarms red")])
 
     def test_storage_loss_identities(self):
         c = fixtures.Review1162()
@@ -345,7 +351,7 @@ class OnePlace(unittest.TestCase):
         rows = c.review(events)["draft"]["story"]["rows"]
         lines = [r["text"] + ", ".join(r["names"]) + r["suffix"] for r in rows]
         with self.subTest(loss="named datastore"):
-            self.assertIn("Datastore SITEA-store lost for good (PDL) on 1 host (00:06-00:07): " + c.host, lines)
+            self.assertIn("Datastore SITEA-store lost for good (PDL) on 1 host: " + c.host, lines)
         with self.subTest(loss="devices"):
             devices = [line for line in lines if "PDL" in line and c.ds not in line]
             self.assertEqual(len(devices), 1)
@@ -419,13 +425,14 @@ class OnePlace(unittest.TestCase):
         review, names = vm_review()
         aar, _ = word(review)
         lines = [r[-1] for b in aar if b.get("columns", [])[-1:] == ["What happened"] for r in b["rows"]]
+        # 1.116.6: 8 names, then +N more, in the AAR and on the page (where the rest opens in place)
         self.assertEqual([line for line in lines if "VMs reported down" in line],
-                         ["13 VMs reported down (00:10-00:13): " + ", ".join(names)])
+                         ["13 VMs reported down: " + ", ".join(names[:8]) + " +5 more"])
         page = fixtures.ot.outage_timeline_doc(fixtures.WATCH, review, True, True)
         for look in PAGE_LOOKS:
             html = render(look + ".html.j2", page)
-            self.assertRegex(html, r"13 VMs reported down \(00:10-00:13\): " + ", ".join(names[:10]) +
-                             r'\s*<details[^>]*><summary>and 3 more</summary>' + ", ".join(names[10:]) + r"</details>")
+            self.assertRegex(html, r"13 VMs reported down: " + ", ".join(names[:8]) +
+                             r'\s*<details[^>]*><summary>\+5 more</summary>' + ", ".join(names[8:]) + r"</details>")
 
     def test_fifteen_minutes_from_previous_change(self):
         case = fixtures.Review1162()
