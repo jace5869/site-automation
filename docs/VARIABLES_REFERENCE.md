@@ -3216,7 +3216,7 @@ File: `roles/win_restart/defaults/main.yml`
 | `win_restart_reason_code` | `"p:0:0"` | The shutdown reason code (shutdown /d): p:0:0 = Other (Planned). p:4:1 = Application: Maintenance (Planned). |
 | `win_restart_task_path` | `"\\site-automation\\"` | The scheduled task's folder in Task Scheduler. |
 | `win_restart_task_name` | `"site-automation restart"` | The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made. |
-| `win_restart_dir` | `'$env:ProgramFiles\site-automation\restart'` | The task directory on the server. Use an administrator-controlled path under Program Files or SystemRoot. |
+| `win_restart_dir` | `'$env:ProgramFiles\site-automation\restart'` | The task directory must be a subdirectory of Program Files with a trusted owner and ACL. |
 | `win_restart_solarwinds` | `auto` | SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a window around the restart; SolarWinds manages it again by itself at the window's end. auto = when the template has a "SolarWinds (manage nodes)" credential (aap/credential_types/solarwinds_manage.yml, kind solarwinds_mana… (all of it: the role file) |
 | `win_restart_solarwinds_before_minutes` | `5` | The window: this many minutes before the restart time ... |
 | `win_restart_solarwinds_minutes` | `10` | ... to this many minutes after it. |

@@ -131,7 +131,10 @@ class Checks(unittest.TestCase):
         self.assertEqual(self.ok(), [])
         self.assertIn("Reason is empty", self.ok(reason=" ")[0])
         self.assertIn("change number", self.ok(change="CHG 1; rm")[0])
-        self.assertIn("reason_code", self.ok(code="0:0")[0])
+        for code in ("0:0", "u:0:0", "P:0:0", "p:0:0 /s", "p:０:0"):
+            with self.subTest(code=code):
+                self.assertIn("reason_code", self.ok(code=code)[0])
+        self.assertEqual(self.ok(code="p:4:1"), [])
         self.assertIn("delay", self.ok(delay=9999)[0])
         for lim, tgt in (("", ""), ("  ", None), ("all", ""), ("!srv-app01", ""), ("", "all"), (",", " ")):
             self.assertIn("no servers picked", self.ok(limit=lim, target=tgt)[0], (lim, tgt))
@@ -166,6 +169,11 @@ class Checks(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertEqual(w.win_restart_unnamed(hosts, [term], groups), [h for h in hosts if h not in expected])
 
+    def test_colon_terms_after_regex_exclusion(self):
+        self.assertEqual(w.win_restart_hosts("web*:!~web01:&staging", "!site_excluded"),
+                         "web*,!~web01,&staging,!site_excluded")
+        self.assertEqual(w.win_restart_hosts("web*", "!~canary:!dc01"), "web*,!~canary,!dc01")
+
     def test_reserved_group_terms_are_refused(self):
         groups = {"all": ["app01"], "ungrouped": ["app01"], "apps": ["app01"]}
         for term, group in (("*", "all"), ("a*", "all"), ("[a]ll", "all"), ("~^al", "all"), ("all[0:2]", "all"),
@@ -191,16 +199,15 @@ class Checks(unittest.TestCase):
     def test_regex_ipv6_and_separator_precedence(self):
         regex = "~^(?:SRV-APP|SRV-WEB)[0-9]+$"
         ip = "2001:db8::1"
-        for pattern, expected in (("db," + regex, ["db", regex]), (regex, [regex]), (ip, [ip]),
-                                  (ip + ",db", [ip, "db"]), ("web:" + ip, ["web", ip]),
-                                  (ip + ":web", [ip, "web"]),
-                                  ("db:" + regex, ["db", regex]), ("a:b,c", ["a:b", "c"]),
-                                  ("~^[a,b]:x$,db", ["~^[a,b]:x$", "db"]),
-                                  ("~^[],]$,db", ["~^[],]$", "db"])):
+        for pattern, expected in (("db," + regex, ["db", regex]), (regex, ["~^(?", "SRV-APP|SRV-WEB)[0-9]+$"]),
+                                  (ip, [ip]), (ip + ",db", [ip, "db"]), ("web:" + ip, ["web", "2001", "db8", "1"]),
+                                  ("a:b,c", ["a:b", "c"]), ("~^[a,b]:x$,db", ["~^[a", "b]:x$", "db"]),
+                                  ("[fe80::1]:443", ["[fe80::1]:443"]), ("fe80::[a:b]", ["fe80::[a:b]"]),
+                                  ("web[01:03]:443", ["web[01:03]:443"]), ([" a:b,c ", ["d:e"]], ["a:b", "c", "d", "e"])):
             with self.subTest(pattern=pattern):
                 self.assertEqual(w.win_restart_selector(pattern), expected)
                 self.assertEqual(w.win_restart_hosts(pattern, ":!old"), ",".join(expected + ["!old"]))
-        self.assertEqual(w.win_restart_hosts("web", "!::1"), "web,!::1")
+        self.assertEqual(w.win_restart_hosts("web", "!::1,"), "web,!::1")
         self.assertEqual(self.ok(limit=ip + "," + regex, resolved=[ip, "SRV-APP01"]), [])
 
     def test_invalid_limit_refused(self):
@@ -211,10 +218,11 @@ class Checks(unittest.TestCase):
                 self.assertIn(why, errors[0])
 
     def test_comment(self):
-        c = w.win_restart_comment('Patch "now"\nplease', "chg001", 42)
-        self.assertEqual(c, "CHG001: Patch 'now' please (site-automation, AAP job 42)")
-        self.assertNotIn('"', c)
+        c = w.win_restart_comment('Patch "now"\x00\x7f\x80\nplease', "chg001", 42)
+        self.assertEqual(c, "CHG001: Patch now please (site-automation, AAP job 42)")
+        self.assertEqual(w.win_restart_comment('"\x01\t'), "Scheduled restart (site-automation)")
         self.assertLessEqual(len(w.win_restart_comment("x" * 2000, "CHG1", 1)), 500)
+        self.assertLessEqual(len(w.win_restart_comment("x", "a" * 600, "b" * 600)), 500)
         self.assertEqual(w.win_restart_comment("Patch"), "Patch (site-automation)")
 
 
@@ -405,10 +413,11 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
         try:
             os.makedirs(os.path.join(tmp, "root", "System32"))
             os.makedirs(os.path.join(tmp, "task"))
-            fake = os.path.join(tmp, "root", "System32", "shutdown.exe")
-            with open(fake, "w") as fh:
-                fh.write('#!/bin/sh\necho "$@" > "%s/args.txt"\n' % tmp)
-            os.chmod(fake, 0o755)
+            for command in ("shutdown", "eventcreate"):
+                fake = os.path.join(tmp, "root", "System32", command + ".exe")
+                with open(fake, "w") as fh:
+                    fh.write('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/%s.txt"\n' % (tmp, command))
+                os.chmod(fake, 0o755)
             shutil.copy(TASK, os.path.join(tmp, "task", "restart-task-20261124-1111.ps1"))
             # another registration's settings beside it: never read by this one
             with open(os.path.join(tmp, "task", "restart-20261124-2222.json"), "w") as fh:
@@ -424,20 +433,31 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
             # Run clicked in Task Scheduler an hour early: nothing
             r = run({"only_if_pending": False, "comment": "x", "code": "p:0:0", "delay": 60, "at_utc": later})
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertFalse(os.path.exists(os.path.join(tmp, "args.txt")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "shutdown.txt")))
             os.unlink(os.path.join(tmp, "task", "restart.log"))
-            r = run({"only_if_pending": False, "comment": "CHG1: Patch (site-automation, AAP job 7)", "code": "p:0:0", "delay": 60, "at_utc": now_})
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            with open(os.path.join(tmp, "args.txt")) as fh:
-                self.assertEqual(fh.read().strip(), "/r /t 60 /d p:0:0 /c CHG1: Patch (site-automation, AAP job 7)")
-            os.unlink(os.path.join(tmp, "args.txt"))
+            for comment, expected in (('Patch "phase 1"\x00\x7f\x85\n  now', "Patch phase 1 now"),
+                                      ('\x01"\t', "Scheduled restart"), ("x" * 501, "x" * 500)):
+                r = run({"only_if_pending": False, "comment": comment, "code": "p:4:1", "delay": 60, "at_utc": now_})
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                with open(os.path.join(tmp, "shutdown.txt")) as fh:
+                    self.assertEqual(fh.read().splitlines(), ["/r", "/t", "60", "/d", "p:4:1", "/c", expected])
+                os.unlink(os.path.join(tmp, "shutdown.txt"))
+            r = run({"comment": "x", "code": "u:0:0", "at_utc": now_})
+            self.assertNotEqual(r.returncode, 0)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "shutdown.txt")))
             # only if pending, nothing pending here: no shutdown, a SKIPPED line
-            r = run({"only_if_pending": True, "comment": "x", "code": "p:0:0", "delay": 60, "at_utc": now_})
+            r = run({"only_if_pending": True, "comment": 'Ticket "7"\n complete', "code": "p:0:0", "delay": 60, "at_utc": now_})
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertFalse(os.path.exists(os.path.join(tmp, "args.txt")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "shutdown.txt")))
+            with open(os.path.join(tmp, "eventcreate.txt")) as fh:
+                args = fh.read().splitlines()
+                self.assertEqual(args[-2], "/D")
+                self.assertTrue(args[-1].endswith("Ticket 7 complete"), args)
             with open(os.path.join(tmp, "task", "restart.log")) as fh:
                 self.assertEqual([ln.split(" ", 3)[3] for ln in fh.read().splitlines()],
-                                 ["RESTART - restart at the chosen time - CHG1: Patch (site-automation, AAP job 7)", "SKIPPED - no reboot pending"])
+                                 ["RESTART - restart at the chosen time - " + value
+                                  for value in ("Patch phase 1 now", "Scheduled restart", "x" * 500)]
+                                 + ["NOT RUN - invalid planned shutdown reason code", "SKIPPED - no reboot pending"])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -553,7 +573,14 @@ function Invoke-CimMethod {
         (-not $global:AfterWrite -or $global:ScriptWritten))) {
         $aces += @{ AceFlags = $global:GrantFlags; AceType = 0; AccessMask = $global:GrantMask; Trustee = @{ SIDString = $global:GrantSid } }
     }
-    @{ ReturnValue = 0; Descriptor = @{ DACL = $aces } }
+    $owner = 'S-1-5-32-544'
+    if ($path -like '*.ps1') { $owner = 'S-1-5-18' }
+    if ($path -like '*.json') { $owner = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' }
+    if ($global:BadOwnerPath -and $path -like $global:BadOwnerPath) {
+        if (-not $global:AfterWrite -or (Get-ChildItem -LiteralPath $path -Recurse -Filter 'restart-task-*.ps1' |
+            Where-Object { $_.Length -gt 0 })) { $owner = $global:BadOwner }
+    }
+    @{ ReturnValue = 0; Descriptor = @{ Owner = @{ SIDString = $owner }; DACL = $aces } }
 }
 $global:GrantFlags = 0
 $global:GrantMask = 2
@@ -562,8 +589,7 @@ function Step($cfg) {
     $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
     $line = (. $global:PS | Select-Object -Last 1)
     $o = ConvertFrom-Json ($line -replace '^###SITE-JSON### ', '')
-    $filesDir = $cfg.dir
-    if ($cfg.dir -eq '$env:ProgramFiles\site-automation\restart') { $filesDir = Join-Path $env:ProgramFiles 'site-automation\restart' }
+    $filesDir = $cfg.dir.Replace('$env:ProgramFiles', $env:ProgramFiles).Replace('$env:SystemRoot', $env:SystemRoot)
     $files = @(Get-ChildItem -LiteralPath $filesDir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
     $t = $global:Store.Values | Select-Object -First 1
     $saved = ''
@@ -577,6 +603,7 @@ function Step($cfg) {
     $legacy = @(Get-ChildItem -LiteralPath $legacyDir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
     Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; xml = [string]$t.Xml; author = [string]$t.Author;
                                 saved = $saved; registrations = $global:Registrations; legacy = $legacy; written = [bool]$global:ScriptWritten
+                                dir_exists = (Test-Path -LiteralPath $filesDir)
                               } | ConvertTo-Json -Compress -Depth 6))
 }
 """
@@ -687,7 +714,8 @@ if ((Get-Content -LiteralPath (Join-Path '{dir}' 'restart.log') -Raw) -notmatch 
         self.assertEqual((len(b["out"]["removed"]), b["task"], b["files"]), (1, "", ["restart.log"]))
 
     def test_allowed_roots(self):
-        for folder in ("ProgramData", "Program Files extra", "Program Files/../outside", "Program Files/.. /outside", "Program Files/%TEMP%", "Program Files"):
+        for folder in ("ProgramData", "Program Files extra", "Program Files/../outside", "Program Files/.. /outside",
+                       "Program Files/%TEMP%", "Program Files", "Program Files/a[b", "Program Files/a]b", "root/Temp/restart"):
             with self.subTest(folder=folder):
                 (a,) = self.run_steps([{"action": "schedule", "dir": "{root}/" + folder}])
                 self.assertIn("win_restart_dir", a["out"]["error"])
@@ -696,8 +724,30 @@ if ((Get-Content -LiteralPath (Join-Path '{dir}' 'restart.log') -Raw) -notmatch 
                                       for action in ("cancel", "list", "plan")]):
             self.assertIn("win_restart_dir", result["out"]["error"])
             self.assertEqual(result["registrations"], 0)
-        (a,) = self.run_steps([{"action": "schedule", "dir": "{root}/root/site/restart"}])
-        self.assertTrue(a["out"].get("scheduled"), a)
+        (a,) = self.run_steps([{"action": "schedule", "dir": r"$env:SystemRoot\site\restart"}])
+        self.assertIn("win_restart_dir", a["out"]["error"])
+        self.assertEqual(a["registrations"], 0)
+
+    def test_ancestor_acl_before_creating_child(self):
+        (a,) = self.run_steps(["$global:BadDir = Split-Path -Parent '{dir}'", {"action": "schedule"}])
+        self.assertIn("Unsafe permissions", a["out"]["error"])
+        self.assertEqual((a["dir_exists"], a["registrations"]), (False, 0))
+
+    def test_untrusted_or_missing_owner(self):
+        for path, owner in (("Split-Path -Parent '{dir}'", "'S-1-5-32-545'"), ("'{dir}'", "$null"),
+                            ("'*.json'", "'S-1-5-32-545'")):
+            with self.subTest(path=path):
+                (a,) = self.run_steps([f"$global:BadOwnerPath = {path}; $global:BadOwner = {owner}", {"action": "schedule"}],
+                                      constrained=True)
+                self.assertIn("Untrusted owner", a["out"]["error"])
+                self.assertEqual((a["written"], a["registrations"]), (False, 0))
+
+    def test_ancestor_owner_rechecked_before_registration(self):
+        (a,) = self.run_steps(["$global:BadOwnerPath = Split-Path -Parent '{dir}'; $global:AfterWrite = $true; "
+                               "$global:BadOwner = 'S-1-5-32-545'", {"action": "schedule"}])
+        self.assertIn("Untrusted owner", a["out"]["error"])
+        self.assertTrue(any(f.endswith(".ps1") for f in a["files"]))
+        self.assertEqual(a["registrations"], 0)
 
     def test_untrusted_directory_grants_refused(self):
         for sid, flags, mask in (("S-1-5-32-545", 0, "2"), ("S-1-5-32-545", 11, "0x10000000"), ("S-1-3-0", 3, "0x1f01ff")):
@@ -737,6 +787,15 @@ if ((Get-Content -LiteralPath (Join-Path '{dir}' 'restart.log') -Raw) -notmatch 
                                        "$null = New-Item -ItemType SymbolicLink -Path $p -Target $env:SystemRoot", {"action": "schedule"}])
                 self.assertIn("reparse point", a["out"]["error"])
                 self.assertEqual((a["registrations"], a["files"]), (0, []))
+
+    def test_dangling_log_and_lock_refused(self):
+        for name in ("restart.log", "restart.lock"):
+            with self.subTest(name=name):
+                (a,) = self.run_steps(["$null = New-Item -Path '{dir}' -ItemType Directory -Force",
+                                       "$null = New-Item -ItemType SymbolicLink -Path (Join-Path '{dir}' '" + name + "') "
+                                       "-Target (Join-Path '{dir}' 'missing')", {"action": "schedule"}])
+                self.assertIn("reparse point", a["out"]["error"])
+                self.assertEqual(a["registrations"], 0)
 
     def test_legacy_registration(self):
         legacy = r"""

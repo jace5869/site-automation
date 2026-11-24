@@ -13,9 +13,11 @@ __metaclass__ = type
 import datetime
 import fnmatch
 import functools
-import ipaddress
 import json
 import re
+
+from ansible.module_utils.common.text.converters import to_text
+from ansible.parsing.utils.addresses import parse_address
 
 try:
     import zoneinfo
@@ -27,7 +29,7 @@ U = datetime.timezone.utc
 UTC_NAMES = ("UTC", "Z", "ETC/UTC", "GMT")
 TIME = re.compile(r"^([01]?\d|2[0-3]):?([0-5]\d)$")
 CHANGE = re.compile(r"^[A-Za-z0-9_-]{0,40}$")
-CODE = re.compile(r"^[pu]:\d{1,3}:\d{1,5}$")
+CODE = re.compile(r"p:[0-9]{1,3}:[0-9]{1,5}")
 COMMENT_MAX = 500                                     # shutdown /c takes 512 characters
 NOTE = ("How it works: each server gets a one-time scheduled task (SYSTEM) for this moment in its own time zone. At that "
         "time it runs shutdown /r with the reason as comment (System event 1074). With \"only if pending\" it checks again "
@@ -126,15 +128,24 @@ def win_restart_when(text, zone="", min_lead=5, now=None):
     return out
 
 
+def _clean_comment(value):
+    text = str(value or "").replace('"', "").replace("'", "")
+    return " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text).split())
+
+
 def win_restart_comment(reason, change="", job=""):
-    """The shutdown comment and the task's description: '<change>: <reason> (site-automation, AAP job N)' - one line, no
-    double quote (shutdown's /c), at most 500 characters."""
-    def clean(s):
-        return " ".join(str(s or "").replace('"', "'").split())
-    tail = " (site-automation%s)" % ((", AAP job %s" % clean(job)) if clean(job) else "")
-    head = ("%s: " % clean(change).upper()) if clean(change) else ""
-    body = clean(reason)[:COMMENT_MAX - len(head) - len(tail)]
-    return head + body + tail
+    """Build a single native argument, keeping the task's registration marker when truncating."""
+    body = _clean_comment(reason) or "Scheduled restart"
+    change = _clean_comment(change).upper()
+    if change:
+        body = "%s: %s" % (change, body)
+    tail = "(site-automation"
+    job = _clean_comment(job)
+    if job:
+        tail += ", AAP job " + job
+    tail = tail[:COMMENT_MAX - 1].rstrip() + ")"
+    body = body[:max(0, COMMENT_MAX - len(tail) - 1)].rstrip()
+    return (body + " " + tail).strip()
 
 
 def win_restart_parse(stdout_lines):
@@ -441,65 +452,26 @@ GROUP_SLICE = re.compile(r"(.+)\[(-?\d+|(?=:))(?:[:-](-?\d+|))?\]")
 RESERVED_GROUPS = ("all", "ungrouped")
 
 
-def _ipv6_parts(parts, start):
-    # Eight hextets, or seven plus a leading/trailing double colon. Prefer the longest literal.
-    if not re.fullmatch(r"[!&]?[a-fA-F0-9]{0,4}", parts[start].strip()):
-        return 0
-    for end in range(min(len(parts), start + 9), start + 1, -1):
-        candidate = ":".join(parts[start:end]).strip().lstrip("!&")
+def _split_host_pattern(pattern):
+    """Follow ansible.inventory.manager.split_host_pattern, including its legacy colon syntax."""
+    if isinstance(pattern, list):
+        return [part for item in pattern for part in _split_host_pattern(item)]
+    if not isinstance(pattern, str):
+        pattern = to_text(pattern, errors="surrogate_or_strict")
+    if "," in pattern:
+        parts = pattern.split(",")
+    else:
         try:
-            ipaddress.IPv6Address(candidate)
-        except ValueError:
-            continue
-        if ":" not in candidate.partition("%")[2]:
-            return end - start
-    return 0
-
-
-def _split_host_pattern(text):
-    pattern = str(text or "").strip()
-    separator = "," if "," in pattern else ":"
-    parts = []
-    start = 0
-    first_in_class = None
-    escaped = False
-    for i, char in enumerate(pattern):
-        if char == separator and first_in_class is None:
-            parts.append(pattern[start:i])
-            start = i + 1
-            escaped = False
-        elif escaped:
-            escaped = False
-        elif char == "\\":
-            escaped = True
-        elif char == "[" and first_in_class is None:
-            first_in_class = i + 1
-            if pattern[first_in_class:first_in_class + 1] in ("^", "!"):
-                first_in_class += 1
-        elif char == "]" and first_in_class is not None and i > first_in_class:
-            # A closing bracket in the first position is a literal member of the class.
-            first_in_class = None
-    parts.append(pattern[start:])
-    if separator == ",":
-        return [part.strip() for part in parts if part.strip()]
-
-    terms = []
-    i = 0
-    while i < len(parts):
-        term = parts[i].strip()
-        if term.lstrip("!&").startswith("~"):
-            terms.append(":".join(parts[i:]).strip())
-            break
-        count = _ipv6_parts(parts, i) or 1
-        term = ":".join(parts[i:i + count]).strip()
-        if term:
-            terms.append(term)
-        i += count
-    return terms
+            parse_address(pattern, allow_ranges=True)
+        except Exception:
+            parts = re.findall(r"(?:[^\s:\[\]]|\[[^\]]*\])+", pattern)
+        else:
+            parts = [pattern]
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _terms(text):
-    return [term for term in _split_host_pattern(text) if not term.startswith(("!", "&"))]
+    return [term for term in _split_host_pattern(text or "") if not term.startswith(("!", "&"))]
 
 
 def win_restart_selector(limit="", target=""):
@@ -598,8 +570,8 @@ def win_restart_unnamed(hosts, terms, groups=None):
 def win_restart_hosts(target="", exclude_not=""):
     """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
     'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
-    parts = _split_host_pattern(target) or ["all"]
-    ex = _split_host_pattern(exclude_not)
+    parts = _split_host_pattern(target or "") or ["all"]
+    ex = _split_host_pattern(exclude_not or "")
     return ",".join(parts + ex)
 
 
@@ -607,11 +579,11 @@ def win_restart_check(o):
     """The launch's answers -> [] or the reasons the job refuses (nothing is read or changed then)."""
     o = dict(o or {})
     bad = []
-    if not str(o.get("reason") or "").strip():
+    if not _clean_comment(o.get("reason")):
         bad.append("Reason is empty: say why the servers restart (it goes into the shutdown comment and the report)")
     if not CHANGE.match(str(o.get("change") or "").strip()):
         bad.append("the change number is letters, digits, - and _ only (e.g. CHG0012345)")
-    if not CODE.match(str(o.get("code") or "").strip()):
+    if not CODE.fullmatch(str(o.get("code") or "").strip()):
         bad.append("win_restart_reason_code is p:<major>:<minor> (e.g. p:0:0)")
     try:
         if not 0 <= int(o.get("delay")) <= 600:

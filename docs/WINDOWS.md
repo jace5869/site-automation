@@ -594,6 +594,7 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
    group `all` or `ungrouped` stops the job. Negative slice bounds count from the end of the ordered, deduplicated
    group members in the job’s validation. The Ansible inventory parser must also support the slice in a command-line
    Limit. Use commas between terms that contain regexes or IPv6 addresses. In a comma list, colons are literal.
+   For example, `web*:!~web01:&staging` selects staging web hosts and excludes names matching the `web01` regex.
    Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
@@ -621,6 +622,9 @@ What the job does on each server:
   Scheduler root. Leading and trailing backslashes are optional for a named folder.
 - At that time the task runs `shutdown /r /t 60 /d p:0:0 /c "<change>: <reason> (site-automation, AAP job N)"`.
   Logged-on users get 60 seconds' warning (`win_restart_delay_seconds`).
+  The reason code must have the planned form `p:<major>:<minor>`. The job and the task strip quotes and control
+  characters, collapse whitespace and limit the comment to 500 characters. The task uses `Scheduled restart`
+  if the stored comment is empty after cleaning.
 - With "only if pending" it checks again first. Nothing pending any more: no restart; a line in `restart.log` and the
   Application log (source `site-automation`, event 101).
 - One restart of ours per server: a new run replaces the earlier task in one step (the report says "replaces ...").
@@ -631,8 +635,11 @@ What the job does on each server:
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
 - The task's script and settings inherit the permissions of `$env:ProgramFiles\site-automation\restart`
   (usually `C:\Program Files\site-automation\restart`), so ordinary users cannot replace a script that runs as SYSTEM.
-  The job requires `win_restart_dir` to be a subdirectory of `$env:ProgramFiles` or `$env:SystemRoot`.
-  Choose an administrator-controlled directory tree. The job refuses reparse points and unsafe write grants.
+  `win_restart_dir` must be a subdirectory of `$env:ProgramFiles`. Square brackets are refused anywhere in
+  the path. Before writing files and again before registering
+  the task, the job checks every directory from the first child of Program Files through `win_restart_dir`, plus
+  the script and settings files. Each must be owned by SYSTEM, Administrators or TrustedInstaller, and only those
+  trustees may have effective write or control grants. Reparse points anywhere along the path are refused.
 - Cancel and reschedule remove or replace the matching 1.127.x scheduled task and leave every file in the old
   directory. Rescheduling writes the new script in the protected directory. The affected server's result includes
   `old files left in C:\ProgramData\site-automation\restart - delete that folder by hand`.

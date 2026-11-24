@@ -28,7 +28,7 @@ win_restart_reason_code: "p:0:0"
 win_restart_task_path: "\\site-automation\\"
 # The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made.
 win_restart_task_name: "site-automation restart"
-# The task directory on the server. Use an administrator-controlled path under Program Files or SystemRoot.
+# The task directory must be a subdirectory of Program Files with a trusted owner and ACL.
 win_restart_dir: '$env:ProgramFiles\site-automation\restart'
 # SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a window around the restart;
 # SolarWinds manages it again by itself at the window's end. auto = when the template has a "SolarWinds (manage nodes)"

@@ -11,8 +11,8 @@
 function Read-SiteRestartProbes {
     # The registry and the ConfigMgr client, read only -> a hashtable the decision below takes (tests feed their own)
     $p = @{ cbs = $false; wu = $false; file_renames = $false; rename = $false; ccm = $null; active_name = ''; pending_name = '' }
-    $p.cbs = Test-Path -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
-    $p.wu = Test-Path -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+    $p.cbs = $null -ne (Get-Item -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending' -Force -ErrorAction SilentlyContinue)
+    $p.wu = $null -ne (Get-Item -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired' -Force -ErrorAction SilentlyContinue)
     $pfro = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
     if ($null -ne $pfro -and @($pfro.PendingFileRenameOperations | Where-Object { "$_".Trim() }).Count -gt 0) { $p.file_renames = $true }
     $a = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' -Name ComputerName -ErrorAction SilentlyContinue
@@ -63,6 +63,14 @@ if (-not $SiteRestartLibrary) {
     $json = $PSCommandPath -replace 'restart-task-([^\\]+)\.ps1$', 'restart-$1.json'
     if ($json -eq $PSCommandPath) { Write-SiteRestartLog -Dir $dir -Text ('NOT RUN - not a registration script: ' + $PSCommandPath); exit 1 }
     $cfg = Get-Content -LiteralPath $json -Raw | ConvertFrom-Json
+    $code = [string]$cfg.code
+    if ($code -cnotmatch '\Ap:[0-9]{1,3}:[0-9]{1,5}\z') {
+        Write-SiteRestartLog -Dir $dir -Text 'NOT RUN - invalid planned shutdown reason code'
+        exit 1
+    }
+    $comment = (([string]$cfg.comment -replace '["'']', '') -replace '[\p{Cc}\s]+', ' ').Trim()
+    if (-not $comment) { $comment = 'Scheduled restart' }
+    if ($comment.Length -gt 500) { $comment = $comment.Substring(0, 500).TrimEnd() }
     # never before its time: a Run clicked in Task Scheduler (or a clock that jumped) does nothing earlier than 2 minutes before
     $atU = $null
     if ($cfg.at_utc -is [datetime]) { $atU = $cfg.at_utc.ToUniversalTime() }
@@ -79,12 +87,12 @@ if (-not $SiteRestartLibrary) {
     if ($cfg.only_if_pending) { $reasons = @(Get-SiteRestartReasons -Probes (Read-SiteRestartProbes) -CountFileRenames ([bool]$cfg.count_file_renames)) }
     $d = Get-SiteRestartDecision -OnlyIfPending ([bool]$cfg.only_if_pending) -Reasons $reasons
     if (-not $d.restart) {
-        $msg = 'site-automation: the scheduled restart did not restart this server: no reboot pending (only if pending). ' + [string]$cfg.comment
+        $msg = 'site-automation: the scheduled restart did not restart this server: no reboot pending (only if pending). ' + $comment
         Write-SiteRestartLog -Dir $dir -Text ('SKIPPED - ' + $d.why)
         try { & "$env:SystemRoot\System32\eventcreate.exe" /T INFORMATION /ID 101 /L APPLICATION /SO site-automation /D $msg | Out-Null } catch { }
         exit 0
     }
-    Write-SiteRestartLog -Dir $dir -Text ('RESTART - ' + $d.why + ' - ' + [string]$cfg.comment)
-    & "$env:SystemRoot\System32\shutdown.exe" /r /t ([int]$cfg.delay) /d ([string]$cfg.code) /c ([string]$cfg.comment)
+    Write-SiteRestartLog -Dir $dir -Text ('RESTART - ' + $d.why + ' - ' + $comment)
+    & "$env:SystemRoot\System32\shutdown.exe" /r /t ([int]$cfg.delay) /d $code /c $comment
     exit $LASTEXITCODE
 }
