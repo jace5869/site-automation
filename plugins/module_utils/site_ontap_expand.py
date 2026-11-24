@@ -74,21 +74,28 @@ def serial_of(naa_id):
         return ""
 
 
-def _match(pattern, svm, vol):
+def _match(pattern, svm, vol, clusters=()):
+    """pattern: vol, svm:vol or cluster/svm:vol (cluster/ alone = every volume there); * and ?, any case. The cluster part
+    matches the cluster's ONTAP name or its ontap_clusters address (clusters: both); not known = no match."""
     p = str(pattern or "").strip()
     if not p:
         return False
+    if "/" in p:
+        pc, p = p.rsplit("/", 1)          # the last /: an address may have its own (https://...)
+        if not any(fnmatch.fnmatchcase(str(c or "").lower(), pc.strip().lower()) for c in clusters or ()):
+            return False
+        p = p.strip() or "*"
     if ":" in p:
         ps, pv = p.split(":", 1)
         return fnmatch.fnmatchcase(svm.lower(), ps.strip().lower()) and fnmatch.fnmatchcase(vol.lower(), (pv.strip() or "*").lower())
     return fnmatch.fnmatchcase(vol.lower(), p.lower())
 
 
-def excluded(vol, patterns=()):
+def excluded(vol, patterns=(), clusters=()):
     """Why a volume may never be grown by this job ('' = it may). vol: an ONTAP volume record (name, svm.name, state, type,
     style, is_svm_root). Always: a node's root volume (vol0) or an SVM's root, a DP (SnapMirror destination) or
-    load-sharing volume, one not online, a FlexGroup (a later version). Then ontap_expand_exclude: name patterns, or
-    svm:volume (* and ? are wildcards, any case)."""
+    load-sharing volume, one not online, a FlexGroup (a later version). Then ontap_expand_exclude: name patterns,
+    svm:volume or cluster/svm:volume (* and ? are wildcards, any case; clusters: the volume's cluster name and address)."""
     name = str(vol.get("name") or "")
     svm = str((vol.get("svm") or {}).get("name") or "")
     if vol.get("is_svm_root") or name.endswith("_root") and name == svm + "_root":
@@ -106,7 +113,7 @@ def excluded(vol, patterns=()):
     if str(vol.get("style") or "flexvol").lower() == "flexgroup" or len(vol.get("aggregates") or []) > 1:
         return "FlexGroup - not yet"
     for p in patterns or ():
-        if _match(p, svm, name):
+        if _match(p, svm, name, clusters):
             return "ontap_expand_exclude: %s" % str(p).strip()
     return ""
 
@@ -127,8 +134,12 @@ def choice_text(e, show_cluster=False):
     # 1.123.1 (user): short - the name, its SVM, the size and how much is free; the cluster and aggregate are in the job's
     # plan and the refresh report, the key stays last (the portal hides it)
     # Codex 1.123.1: two clusters with the same SVM and volume names - the caller asks for the cluster (show_cluster)
-    return "%s (%s) - %s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
-        name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), human(e["size"]), max(0, 100 - int(round(pct(e["used"], e["size"])))),
+    # (user) a LUN volume is judged by its LUN: the size and the free space shown are the LUN's (or its datastore's, lun_fullness)
+    # - display only: the key (sizes the expand job plans with) is unchanged
+    fsize, fused, _src = lun_fullness(e)
+    return "%s (%s) - %s%s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
+        name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), "LUN " if e.get("lun") else "", human(fsize),
+        max(0, 100 - int(round(pct(fused, fsize)))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
 
@@ -178,7 +189,7 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
         return p
     p["aggr_pct"] = pct(p["aggr_used"], p["aggr_size"])
     p["room"] = room(p["aggr_size"], p["aggr_used"], o["max_pct"])
-    why = excluded(rec, o["exclude"])
+    why = excluded(rec, o["exclude"], o.get("clusters") or ())
     if why:
         p["why"] = "excluded: " + why
         return p
@@ -236,12 +247,33 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
     return p
 
 
-def recheck(p, vol, aggr, exclude=()):
+def lun_fullness(e):
+    """How full a choice is, as the person sees it -> (size, used, source). A LUN volume is always about as full as its LUN
+    takes (a space-reserved LUN all of it), so for a LUN it is the LUN: the VMware datastore's own used space when vCenter
+    was read (capacity and free space), else the LUN's blocks written in ONTAP (space.used - it drops only after UNMAP).
+    A volume without a LUN (NFS): the volume's."""
+    if e.get("lun"):
+        cap, free = e.get("ds_capacity"), e.get("ds_free")
+        if cap and free is not None and int(cap) > 0:
+            return int(cap), max(0, int(cap) - int(free)), "datastore"
+        size = int(e.get("lun_size") or 0)
+        if size:
+            return size, int(e.get("lun_used") or 0), "LUN"
+    return int(e.get("size") or 0), int(e.get("used") or 0), "volume"
+
+
+def fullness_text(e):
+    """'datastore 82% used' / 'LUN 82% written' / 'volume 82% used'"""
+    size, used, src = lun_fullness(e)
+    return "%s %d%% %s" % (src, int(round(pct(used, size))), "written" if src == "LUN" else "used")
+
+
+def recheck(p, vol, aggr, exclude=(), clusters=()):
     """Right before the change: '' when the volume and its aggregate still are as planned, else why it stops. vol: the volume
     read again ({name, svm, size, state, type, style, is_svm_root, aggregates}), aggr: its aggregate now."""
     rec = {"name": vol.get("name", p["volume"]), "svm": {"name": vol.get("svm", p["svm"])}, "state": vol.get("state", "online"),
            "type": vol.get("type"), "style": vol.get("style"), "is_svm_root": vol.get("is_svm_root"), "aggregates": vol.get("aggregates") or [p["aggr"]]}
-    why = excluded(rec, exclude)
+    why = excluded(rec, exclude, clusters)
     if why:
         return "the volume is now excluded (%s) - nothing was changed" % why
     if (vol.get("aggregates") or [p["aggr"]])[0] != p["aggr"]:

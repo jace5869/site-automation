@@ -2930,7 +2930,7 @@ job_templates:
   - name: NetApp - refresh volume list
     playbook: playbooks/ontap_volume_list.yml
     credentials: [ontap, aap]
-    optional_credentials: [vmware]
+    optional_credentials: [vmware, report_db]
     ask_limit: false
     ask_variables: false
     ask_inventory: false

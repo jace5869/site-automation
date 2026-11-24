@@ -43,7 +43,8 @@ author: site automation
 RETURN = r'''
 clusters: {description: "list: each cluster read - {address, name, reachable, error}.", type: list, returned: always}
 choices: {description: "list: the volumes that may be grown (site_ontap_expand.choice_text's fields + choice, naa, nfs_path, nfs_ips).", type: list, returned: always}
-excluded: {description: "list: [{volume, svm, cluster, why}].", type: list, returned: always}
+excluded: {description: "list: [{volume, svm, cluster, why, address, size, used, aggr, aggr_free, uuid, root}].", type: list, returned: always}
+aggregates: {description: "list: every aggregate read - [{cluster, address, name, node, size, used}].", type: list, returned: always}
 plan: {description: "plan, grow: site_ontap_expand.plan's answer + volume_uuid, lun_uuid, naa, nfs_path, nfs_ips, cluster.", type: dict, returned: always}
 steps: {description: "grow: [{step, exactly, ok, result}] in order.", type: list, returned: always}
 '''
@@ -65,6 +66,10 @@ from ansible.module_utils import site_ontap_expand as X
 VOL_FIELDS = "uuid,name,svm.name,aggregates.name,state,type,style,is_svm_root,space.size,space.used,nas.path,comment"
 AGGR_FIELDS = "uuid,name,space.block_storage.size,space.block_storage.used"
 LUN_FIELDS = "uuid,name,svm.name,location.volume.name,space.size,serial_number"
+LIST_AGGR_FIELDS = AGGR_FIELDS + ",node.name"     # the list's aggregates also name their node (the portal's NetApp page)
+# the list's LUNs: space.used = the blocks written (drops only after UNMAP; how full a LUN is when vCenter was not read),
+# space.guarantee.requested = space-reserved (thick) or thin - read for the list and the portal's NetApp page only
+LIST_LUN_FIELDS = LUN_FIELDS + ",space.used,space.guarantee.requested"
 
 
 class Failed(Exception):
@@ -170,6 +175,12 @@ def aggr_in(rec):
     return {"name": rec.get("name"), "size": int(bs.get("size") or 0), "used": None if bs.get("used") is None else int(bs["used"])}
 
 
+def lun_thick(rec):
+    """a LUN is space-reserved (thick) when ONTAP says its space guarantee is requested"""
+    g = ((rec.get("space") or {}).get("guarantee") or {}).get("requested")
+    return g is True or str(g).lower() == "true"
+
+
 def ips(c):
     """each SVM's data addresses (an NFS datastore names one of them)"""
     out = {}
@@ -188,20 +199,24 @@ def cluster_name(c):
 def list_cluster(c, opts):
     name = cluster_name(c)
     vols = c.records("/api/storage/volumes", VOL_FIELDS)
-    aggrs = {a["name"]: aggr_in(a) for a in c.records("/api/storage/aggregates", AGGR_FIELDS)}
+    arecs = c.records("/api/storage/aggregates", LIST_AGGR_FIELDS)
+    aggrs = {a["name"]: aggr_in(a) for a in arecs}
     luns = {}
-    for l_ in c.records("/api/storage/luns", LUN_FIELDS):
+    for l_ in c.records("/api/storage/luns", LIST_LUN_FIELDS):
         luns.setdefault(((l_.get("svm") or {}).get("name"), ((l_.get("location") or {}).get("volume") or {}).get("name")), []).append(l_)
     addr = ips(c)
     choices, excluded = [], []
     for v in sorted(vols, key=lambda r: ((r.get("svm") or {}).get("name") or "", r.get("name") or "")):
-        why = X.excluded(v, opts["exclude"])
+        why = X.excluded(v, opts["exclude"], (name, c.address))
         svm = (v.get("svm") or {}).get("name") or ""
-        if why:
-            excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why})
-            continue
         vi = vol_in(v)
         a = aggrs.get((vi["aggregates"] or [""])[0]) or {"name": (vi["aggregates"] or ["?"])[0], "size": 0, "used": 0}
+        if why:
+            # the sizes too (the portal's NetApp page shows a volume not offered with its reason)
+            excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why, "address": c.address,
+                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)),
+                             "uuid": v.get("uuid") or "", "root": bool(v.get("is_svm_root")) or v.get("name") == "vol0" or not svm})
+            continue
         base = {"cluster": name, "address": c.address, "svm": svm, "volume": vi["name"], "size": vi["size"], "used": vi["used"],
                 "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
                 "nfs_ips": addr.get(svm, []), "lun": "", "luns": 0, "naa": ""}
@@ -210,10 +225,12 @@ def list_cluster(c, opts):
             e = dict(base)
             if l_:
                 e.update(lun=l_.get("name") or "", luns=len(mine), naa=X.naa(l_.get("serial_number")), lun_size=gb_of(l_, "space", "size"),
-                         lun_uuid=l_.get("uuid") or "")
+                         lun_uuid=l_.get("uuid") or "", lun_used=gb_of(l_, "space", "used"), lun_thick=lun_thick(l_))
             e["uuid"] = v.get("uuid") or ""
             choices.append(e)
-    return name, choices, excluded
+    ag_out = [{"cluster": name, "address": c.address, "name": r.get("name") or "", "node": (r.get("node") or {}).get("name") or "",
+               "size": aggr_in(r)["size"], "used": aggr_in(r)["used"]} for r in arecs]
+    return name, choices, excluded, ag_out
 
 
 def read_one(c, key, opts, size_text):
@@ -243,7 +260,7 @@ def read_one(c, key, opts, size_text):
             raise Failed("LUN %s is not the one the list showed (it was made again since): run NetApp - refresh volume list and pick it "
                          "again" % key["lun"])
         lun = {"name": lrec["name"], "size": gb_of(lrec, "space", "size")}
-    elif count and not X.excluded(v, opts["exclude"]):
+    elif count and not X.excluded(v, opts["exclude"], opts.get("clusters") or ()):
         raise Failed("volume %s holds %d LUN(s): pick its LUN in the list (each LUN is its own choice), so the LUN grows with it"
                      % (key["volume"], count))
     p = X.plan(vi, aggr, key["listed"], opts, lun=lun, size_text=size_text, lun_listed=key.get("lun_listed") or 0)
@@ -267,7 +284,8 @@ def grow(c, p, key, opts, line, wait):
     elif now["name"] != key["volume"] or now["svm"] != key["svm"]:
         why = "the volume is now %s on %s - nothing was changed" % (now["name"], now["svm"])
     else:
-        why = X.recheck(p, now, aggr_in(ag[0]) if ag else {"name": an, "size": 0, "used": None}, opts["exclude"])
+        why = X.recheck(p, now, aggr_in(ag[0]) if ag else {"name": an, "size": 0, "used": None}, opts["exclude"],
+                        opts.get("clusters") or ())
     steps.append({"step": "Read the volume and %s again" % p["aggr"], "exactly": "right before the change", "ok": not why,
                   "result": why or "unchanged since the plan"})
     if why:
@@ -335,21 +353,22 @@ def main():
     ctx = ssl_context(p["validate_certs"], p["ca_path"], p["tls_legacy"])
 
     if p["action"] == "list":
-        out, choices, excluded = [], [], []
+        out, choices, excluded, aggregates = [], [], [], []
         for a in clusters:
             c = Client(a, user, password, ctx, p["timeout"])
             try:
-                name, ch, ex = list_cluster(c, opts)
+                name, ch, ex, ag = list_cluster(c, opts)
                 out.append({"address": a, "name": name, "reachable": True, "error": ""})
                 choices += ch
                 excluded += ex
+                aggregates += ag
             except Unreachable as e:
                 out.append({"address": a, "name": a, "reachable": False, "error": explain(str(e), e.kind, a, p["timeout"])})
             except Failed as e:
                 out.append({"address": a, "name": a, "reachable": True, "error": str(e)})
         for e in choices:
             e["choice"] = X.choice_text(e)
-        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded)
+        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded, aggregates=aggregates)
 
     key = X.parse_choice(p["choice"])
     if not key:
@@ -359,8 +378,10 @@ def main():
         m.fail_json(msg="The choice names cluster %s, which is not in ontap_clusters - nothing was read or changed." % key["address"])
     c = Client(key["address"], user, password, ctx, p["timeout"])
     try:
+        cname = cluster_name(c)
+        opts["clusters"] = (cname, key["address"])          # ontap_expand_exclude's cluster/ patterns
         plan, _v = read_one(c, key, opts, p["size"])
-        plan.update(cluster=cluster_name(c), address=key["address"])
+        plan.update(cluster=cname, address=key["address"])
         if p["action"] == "plan" or m.check_mode or plan["status"] != "grow":
             m.exit_json(changed=False, plan=plan, steps=[], msg="" if plan["status"] != "refused" else plan["why"])
         if p["expect_volume_uuid"] and (plan["volume_uuid"] != p["expect_volume_uuid"] or plan["lun_uuid"] != p["expect_lun_uuid"]):

@@ -207,22 +207,28 @@ def ontap_expand_key(e):
 def ontap_expand_choices(choices, found=None, limit=500):
     """the list's survey choices: each with its datastore (found: one per choice, from site_vmware_netapp_ds map), at most limit"""
     found = found or []
-    # (user) the fullest first: used % of the volume, most to least (the limit keeps the fullest)
-    order = sorted(range(len(choices or [])), key=lambda i: -(float(choices[i].get("used") or 0) / float(choices[i].get("size") or 1)))
+    choices = [dict(e, datastore=(found[i] or {}).get("datastore") or "" if i < len(found) else "",
+                    ds_capacity=(found[i] or {}).get("capacity") if i < len(found) else None,
+                    ds_free=(found[i] or {}).get("free") if i < len(found) else None) for i, e in enumerate(choices or [])]
+
+    def full(e):
+        size, used, _src = X.lun_fullness(e)
+        return float(used) / float(size or 1)
+    # (user) the fullest first - a LUN volume by its LUN (or its datastore), never by the volume (X.lun_fullness); the limit
+    # keeps the fullest
+    order = sorted(range(len(choices)), key=lambda i: -full(choices[i]))
     choices = [choices[i] for i in order]
     found = [found[i] if i < len(found) else {} for i in order]
     out = []
     for i, e in enumerate(choices or []):
-        f = found[i] if i < len(found) and found[i] else {}
-        out.append(X.choice_text(dict(e, datastore=f.get("datastore") or "")))
+        out.append(X.choice_text(e))
     # Codex 1.123.1: choices a person could not tell apart (the same SVM and volume on two clusters) show their cluster
     seen = {}
     for t in out:
         seen[X.choice_shown(t)] = seen.get(X.choice_shown(t), 0) + 1
     for i, e in enumerate(choices or []):
         if seen.get(X.choice_shown(out[i]), 0) > 1:
-            f = found[i] if i < len(found) and found[i] else {}
-            out[i] = X.choice_text(dict(e, datastore=f.get("datastore") or ""), show_cluster=True)
+            out[i] = X.choice_text(e, show_cluster=True)
     return {"choices": out[:int(limit)], "more": max(0, len(out) - int(limit))}
 
 
@@ -254,11 +260,13 @@ def ontap_expand_list_doc(r):
     for i, e in enumerate(ents[:len(r.get("choices") or [])]):
         f = found[i] if i < len(found) and found[i] else {}
         name = e["volume"] + (("/" + e["lun"].rsplit("/", 1)[-1]) if e.get("lun") and int(e.get("luns") or 1) > 1 else "")
-        used = X.pct(e["used"], e["size"])
-        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), "%d %%" % round(used), e["aggr"], X.human(e["aggr_free"]),
+        fe = dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free"))
+        fsize, fused, _src = X.lun_fullness(fe)
+        used = X.pct(fused, fsize)
+        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], X.human(e["aggr_free"]),
                      ("%s %s" % (f.get("kind"), f.get("datastore"))) if f.get("datastore") else ("LUN" if e.get("lun") else "-")])
         cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if e["aggr_free"] < X.TB else "", ""])
-    sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Size", "Used", "Aggregate", "Aggr free", "Datastore"],
+    sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Volume size", "How full", "Aggregate", "Aggr free", "Datastore"],
                      "rows": rows, "cell_status": cells, "keep_case": True})
     if r.get("more"):
         sections.append({"title": "Not in the list", "status": "warning", "lines": [
