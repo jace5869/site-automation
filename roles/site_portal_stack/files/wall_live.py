@@ -174,14 +174,14 @@ class VcenterSource(object):
                 h["Cookie"] = self.cookie
             conn.request("POST", "/sdk", env, h)
             r = conn.getresponse()
+            if r.status in (401, 403):                             # the status first, whatever the body (cut, a proxy's SOAP fault): a refusal
+                raise AuthError(AUTH_WHY + " (HTTP %d)" % r.status)
             data = r.read()
             for k, v in r.getheaders():
                 if k.lower() == "set-cookie" and "vmware_soap_session" in v:
                     self.cookie = v.split(";", 1)[0].strip()
         finally:
             conn.close()
-        if r.status in (401, 403):                                 # whatever the body (a proxy's SOAP fault too): a refusal
-            raise AuthError(AUTH_WHY + " (HTTP %d)" % r.status)
         try:
             root = ET.fromstring(data)
         except ET.ParseError:
@@ -406,11 +406,11 @@ class OntapSource(object):
         try:
             conn.request(verb, path, headers={"Authorization": self._auth, "Accept": "application/json"})
             r = conn.getresponse()
+            if r.status in (401, 403):                             # the status first: a cut 401 is still a refusal
+                raise AuthError(AUTH_WHY + " (HTTP %d)" % r.status)
             data = r.read()
         finally:
             conn.close()
-        if r.status in (401, 403):
-            raise AuthError(AUTH_WHY)
         if r.status != 200:
             try:
                 msg = _g(json.loads(data.decode("utf-8", "replace")), "error.message", "") or ""
@@ -533,7 +533,12 @@ class Collector(object):
         """the active back-offs (under self.lock)"""
         if not self.state_file:
             return
-        d = dict((self._hkey(c), b["next_try"]) for c, b in self.buckets.items() if b["next_try"])
+        now = self.clock()
+        d = dict((k, v) for k, v in self._load().items() if v > now)          # what the file holds still in force: kept
+        for c, b in self.buckets.items():
+            if b["next_try"]:
+                k = self._hkey(c)
+                d[k] = max(d.get(k, 0), b["next_try"])          # the later deadline wins
         try:
             tmp = self.state_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
@@ -601,6 +606,7 @@ class Collector(object):
             t.join(max(0.0, end - time.time()))
 
     def _run(self, s, now):
+        logins = getattr(s, "logins", None)
         try:
             snap = s.poll()
         except AuthError as e:
@@ -635,13 +641,21 @@ class Collector(object):
         done = self.clock()
         with self.lock:
             b = self.buckets[s._bucket]
-            kick = not b["verified"]
-            gone = b["next_try"] is not None
-            b.update(verified=True, since=None, errored=set(), next_try=None)
-            if gone:
-                self._save()
             st = self.st[s.key]
             was = st["state"]
+            if b["next_try"] is not None:
+                # Codex 1.129.0: the account was refused while this read (on a session it already had) ran - its data is good, the
+                # back-off stays as it is (its deadline, its file): only a login after the window may end it
+                st.update(at=done, snap=snap)
+                if s.kind == "vcenter":
+                    self._keep(s.key, snap, done)
+                return
+            logged_in = s.kind == "ontap" or logins is None or getattr(s, "logins", None) != logins
+            kick = not b["verified"] and logged_in
+            if logged_in:
+                b.update(verified=True, since=None, errored=set())
+            elif not b["verified"]:
+                b["errored"].add(s.key)                        # read on an old session: proves nothing of the password - another tries
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
             if s.kind == "vcenter":
                 self._keep(s.key, snap, done)

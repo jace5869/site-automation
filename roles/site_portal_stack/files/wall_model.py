@@ -308,7 +308,7 @@ def gb(b):
 def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     """the NetApp page's newest run (netapp_live's model) + the vCenters' datastores -> (part, conds, feeds)"""
     conds, feeds = [], {}
-    part = {"configured": bool(nm), "why": why, "clusters": [], "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0,
+    part = {"configured": bool(nm), "why": why, "ran": {"sm": False, "nodes": False}, "clusters": [], "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0,
             "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "paths": {}, "source": "report database"}
     rx = site_rule(o["site_pattern"])
     if nm:
@@ -330,6 +330,8 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             part["aggr"].append(r)
         part["aggr"].sort(key=lambda a: -a["v"])
         parts = nm.get("parts") or {}
+        # the health checks run only with ontap_live_health on NetApp - refresh volume list: without them, no "None broken" in green
+        part["ran"] = {"sm": "snapmirror" in parts, "nodes": "nodes" in parts}
         sm = parts.get("snapmirror") or {}
         part["smRel"] = int((sm.get("counts") or {}).get("all") or 0)
         for r in sm.get("rows") or []:
@@ -383,6 +385,23 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds
 
 
+IP = re.compile(r"^[0-9.]+$|:")
+
+
+def cluster_ids(*names):
+    """Codex verify 1.129.0: one cluster under its names - the management FQDN or address, the short name, the cluster name -
+    as a set of normalized keys (lower case; a host name also as its first label)"""
+    out = set()
+    for n in names:
+        n = str(n or "").strip().lower().strip("[]")
+        if not n:
+            continue
+        out.add(n)
+        if not IP.search(n):
+            out.add(n.split(".", 1)[0])
+    return out
+
+
 def ontap_live(view, o, rx, part, conds, feeds):
     """the live ONTAP reads (wall_live.OntapSource, when the portal has the "NetApp ONTAP" login): they take the place of the
     NetApp run's aggregates, nodes and SnapMirror for their clusters, and add volumes / LUNs offline. -> True when there is one"""
@@ -414,10 +433,11 @@ def ontap_live(view, o, rx, part, conds, feeds):
         if not snap:
             continue
         live_cl.add(cl)
-        part["aggr"] = [a for a in part["aggr"] if a["c"] != cl]
+        ids = cluster_ids(cl, src.get("name"))
+        part["aggr"] = [a for a in part["aggr"] if not (cluster_ids(a["c"]) & ids)]
         # the run's conditions of a cluster read live now are superseded (whatever the run's feed is called by now)
-        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and c.get("cluster") == cl)]
-        part["smBroken"] = [b for b in part["smBroken"] if b.get("c") != cl]
+        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and cluster_ids(c.get("cluster")) & ids)]
+        part["smBroken"] = [b for b in part["smBroken"] if not (cluster_ids(b.get("c")) & ids)]
         for a in snap.get("aggrs") or []:
             size_b, used = int(a.get("size") or 0), int(a.get("used") or 0)
             pct = round(100.0 * used / size_b, 1) if size_b else 0.0
@@ -458,6 +478,8 @@ def ontap_live(view, o, rx, part, conds, feeds):
                 conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), word), "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""),
                               "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
     part["aggr"].sort(key=lambda a: -a["v"])
+    if live_cl:
+        part["ran"] = {"sm": True, "nodes": True}            # the live read reads both every time
     part["clusters"] = sorted(set(part["clusters"]) | live_cl)
     part["source"] = "live" if live_cl else part["source"]
     return True

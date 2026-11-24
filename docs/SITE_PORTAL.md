@@ -1051,6 +1051,11 @@ condition needs the full window again).
   answer), and when the portal itself does not answer two reads in a row it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
+- **One rule for every status on the page:** green only when the check ran, its source is there and current, and the
+  value is OK - every counter, gauge, light, list row, map dot and detail-card row follows it (a test walks them all).
+  A check that did not run (SnapMirror and the nodes with `ontap_live_health: false` on NetApp - refresh volume list) is
+  grey "Not on the wall", never "None broken". On Lights the hosts are listed critical first, then warnings, then the rest;
+  none that is not OK is ever left out.
 - Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), the
   NetApp counters are grey "Not on the wall" when the portal has no NetApp read at all, and a wall with nothing read yet
   shows "No current data".

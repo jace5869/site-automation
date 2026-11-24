@@ -108,7 +108,7 @@ def netapp_db(minutes_old=11):
     return T.fill(now=now)
 
 
-def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True):
+def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True, health=True):
     """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it"""
     import json
     import shutil
@@ -126,6 +126,8 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector
     nal = None
     if netapp:                                       # netapp=False: a portal with no NetApp read at all
         db = netapp_db(netapp_minutes_old)
+        if not health:                               # ontap_live_health false: the run has no SnapMirror and no node parts
+            db.db.execute("DELETE FROM ontap_live_part WHERE part IN ('snapmirror', 'nodes', 'clusters')")
         nal = sp.NetappLive(cfg, p.log, p, db=nl.Database(lambda: db, mark="?"))
         nal.refresh()
     cfg.netapp_tab = True

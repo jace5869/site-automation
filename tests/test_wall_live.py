@@ -709,6 +709,56 @@ class Codex(unittest.TestCase):
             W.VcenterSource("127.0.0.1", "u", "p", verify=False, port=port).poll()
 
 
+class CodexVerify(unittest.TestCase):
+    """Codex verify 1.129.0: a read on an old session never ends a back-off; a cut 401 is a refusal"""
+
+    def test_an_in_flight_read_never_clears_the_back_off(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        state = os.path.join(d, "wall-backoff.json")
+        a, b = Fake(key="vcenter:vc01.corp.example.mil"), Fake(key="vcenter:vc02.corp.example.mil")
+        a.cred = b.cred = ("account", "svc-wall")
+        clock = Clock()
+        c = W.Collector([a, b], seconds=60, auth_retry=900, clock=clock, state_file=state)
+        c.cycle()
+        c.wait(10)
+        time.sleep(0.05)
+        c.wait(10)                                             # both read once: the account verified
+        clock.t += 60
+        a.delay, b.result = 0.5, W.AuthError(W.AUTH_WHY)       # vc02 refused now; vc01's read (an old session) ends after it
+        c.cycle()
+        c.wait(10)
+        bk = list(c.buckets.values())[0]
+        self.assertEqual(bk["next_try"], clock.t + 900)          # still backed off
+        self.assertEqual(list(json.load(open(state)).values()), [clock.t + 900])   # and the file still says so
+        self.assertEqual(c.view()["sources"][a.key]["state"], "auth")
+
+    def cut_401(self, verb):
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def go(self):
+                self.send_response(401)
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                self.wfile.write(b"Unauth")                     # cut: 6 of 1000 bytes, then the connection ends
+                self.wfile.flush()
+                self.close_connection = True
+            do_GET = do_POST = go
+        srv, port = serve(H)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return port
+
+    def test_a_cut_401_is_a_refusal_in_both_clients(self):
+        port = self.cut_401("POST")
+        with self.assertRaises(W.AuthError):
+            W.VcenterSource("127.0.0.1", "u", "p", verify=False, port=port, timeout=5).poll()
+        with self.assertRaises(W.AuthError):
+            W.OntapSource("127.0.0.1:%d" % port, "u", "p", verify=False, timeout=5).poll()
+
+
 def closed_port():
     import socket
     sk = socket.socket()

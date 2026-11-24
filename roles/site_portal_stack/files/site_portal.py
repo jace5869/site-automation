@@ -137,6 +137,8 @@ def _set_but_empty(v):
     if isinstance(v, list):
         raw = v
     else:
+        if isinstance(v, str) and v and not v.strip():
+            return True                                     # "   " in the settings: set, and nothing in it
         t = str(v or "").strip()
         try:
             raw = json.loads(t) if t.startswith("[") else re.split(r"[,\n]", t) if t else []

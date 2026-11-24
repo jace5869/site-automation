@@ -236,6 +236,32 @@ class CodexModel(unittest.TestCase):
         self.assertEqual([a["id"] for a in m["areas"] if a["on"]], [])
 
 
+class CodexVerifyModel(unittest.TestCase):
+    def test_a_live_read_clears_the_runs_alert_under_another_name(self):
+        import netapp_live as nl
+        db = demo.netapp_db(25)
+        nm = nl.Database(lambda: db, mark="?").read()
+        nm["parts"]["clusters"] = {"rows": [{"name": "cluster1.example.mil", "why": "not read: timed out"}]}   # the run: by its address
+        m0 = M.build(demo.view(NOW), nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+        self.assertIn("node:cluster1.example.mil", [c["id"] for c in m0["conds"]])
+        v = demo.view(NOW)
+        v["sources"]["ontap:192.0.2.10"] = {"kind": "ontap", "name": "192.0.2.10", "state": "ok", "why": "", "at": NOW - 20,
+                                           "snap": {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [],
+                                                    "volumes": [], "luns": [], "snapmirror": []}}
+        m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], [])             # the live read: "cluster1"
+        self.assertEqual(M.cluster_ids("Cluster1.Example.mil"), {"cluster1.example.mil", "cluster1"})
+
+    def test_checks_not_run(self):
+        import netapp_live as nl
+        db = demo.netapp_db(5)
+        nm = nl.Database(lambda: db, mark="?").read()
+        self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": True, "nodes": True})
+        for k in ("snapmirror", "nodes"):
+            nm["parts"].pop(k, None)                                                           # ontap_live_health false
+        self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": False, "nodes": False})
+
+
 # ---- the portal: the page, the answer, the Feedback ------------------------------------------------------------------------
 JDOE, JDOE_CN = demo.DN, demo.CN
 OTHER = "CN=ROE.RICHARD.A.2234567890,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US"
@@ -339,6 +365,11 @@ class Portal(unittest.TestCase):
         self.assertEqual(json.loads(call("/api/wall")[1])["me"], dict(json.loads(call("/api/wall")[1])["me"], feedback=False, reader=False))
         t = open(os.path.join(ROLE, "tasks", "main.yml")).read()
         self.assertIn("portal_wall_feedback_groups | map('string') | map('trim') | select('equalto', '') | list | length == 0", t)
+
+    def test_a_blank_settings_string_closes_the_feedback(self):
+        cfg, p, call, base = serve(self, PORTAL_WALL_FEEDBACK_GROUPS="   ")
+        self.assertFalse(sp.wall_may_feedback(cfg, JDOE_CN))
+        self.assertEqual(post_feedback(call, base, portal=p)[0], 403)
 
     def test_freeze_only_in_the_test_harness(self):
         _cfg, _p, call, _b = serve(self)
@@ -670,6 +701,118 @@ class Browser(unittest.TestCase):
         self.addCleanup(stop)
         out = self.run_page(url, "style=cockpit&pull=2", budget=20000)
         self.assertIn('data-ready="1"', out)
+
+    GREEN = re.compile(r'class="(?:word ok|wd ok|lamp s-ok|ctr ok|fl f-ok|val g-ok|ln g-ok|cell s-ok|brow s-ok|gauge s-ok|'
+                       r'(?:sdot|sc|tag|nr|cd|sg) k-ok)[" ]')
+
+    def greens(self, out):
+        return [m.group(0) for m in self.GREEN.finditer(out)]
+
+    def test_never_green_walk(self):
+        """every status element, every style, the areas and the detail cards, with the sources old / missing: none green"""
+        def old_vc():
+            v = demo.view(vc2_state="ok")
+            for k in ("vcenter:" + demo.VC1, "vcenter:" + demo.VC2):
+                v["sources"][k]["at"] = time.time() - 900
+            return v
+        cases = (("vCenter old, no NetApp", old_vc, False), ("nothing read", lambda: {"sources": {}, "history": {}}, False))
+        refs = ("", "ctr:hosts", "ctr:sm", "ctr:nodes", "ctr:hot", "host:%s|sita01-esx02.corp.example.mil" % demo.VC1,
+                "cl:%s|SITA01-CL02|hosts" % demo.VC1, "cl:%s|SITA01-CL02|cpu" % demo.VC1, "ds:%s|DS-SITEA-01" % demo.VC1, "feed:vc:" + demo.VC1)
+        for name, fn, netapp in cases:
+            url, stop = demo.portal(netapp=netapp, collector=demo.FakeCollector(fn))
+            try:
+                for st in ("lights", "cockpit", "map"):
+                    for area in ("overview", "storage", "vmware"):
+                        out = self.run_page(url, "style=%s&area=%s&freeze=1" % (st, area))
+                        self.assertIn('data-ready="1"', out, (name, st, area))
+                        self.assertEqual(self.greens(out), [], (name, st, area))
+                for ref in refs[1:]:
+                    out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote(ref))
+                    self.assertEqual(self.greens(out), [], (name, ref))
+            finally:
+                stop()
+
+    def test_checks_not_run_are_grey(self):
+        import test_netapp_live as T
+        url, stop = demo.portal(collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")), netapp_minutes_old=1)
+        self.addCleanup(stop)
+        db = None
+        out = self.run_page(url, "style=cockpit&freeze=1")
+        self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken')              # the run has the health parts
+        url2, stop2 = demo.portal(collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")), netapp_minutes_old=1, health=False)
+        self.addCleanup(stop2)
+        for st, area in (("cockpit", "overview"), ("cockpit", "storage"), ("lights", "storage")):
+            out = self.run_page(url2, "style=%s&area=%s&freeze=1" % (st, area))
+            self.assertNotIn("None broken", out, (st, area))
+            self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes)"', (st, area))
+        out = self.run_page(url2, "style=cockpit&freeze=1&open=ctr:sm")
+        self.assertEqual(self.greens(out.split('id="dsCard"', 1)[1]), [])
+
+    def test_a_host_state_not_read_is_never_all_connected(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            v["sources"]["vcenter:" + demo.VC1]["snap"]["hosts"][2]["state"] = ""            # esx03: no state (and not down any more)
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1")
+        self.assertNotIn("all hosts connected", out)
+        self.assertRegex(out, r'<div class="ctr stale"[^>]*data-d="ctr:hosts"')
+
+    def test_aggregate_card_links_by_vcenter_and_name(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            d7 = [d for d in v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"] if d["name"] == "DS-SITEA-07"][0]
+            v["sources"]["vcenter:" + demo.VC2]["snap"]["datastores"] = [dict(d7, free=d7["capacity"] // 2)]
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("aggr:cluster2|aggr2_c2n2"))
+        self.assertIn('data-d="ds:%s|DS-SITEA-07"' % demo.VC1, out)
+        self.assertIn('data-d="ds:%s|DS-SITEA-07"' % demo.VC2, out)
+
+    def test_path_card_unread_fill_is_not_ok(self):
+        url, stop = demo.portal(collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")), netapp_minutes_old=1)   # a current run
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("ds:%s|DS-SITEA-03" % demo.VC1))
+        card = out.split('id="dsCard"', 1)[1]
+        for row in ("<b>LUN</b>", "<b>Volume</b>"):                                            # VMFS: the run has the datastore's fill only
+            part = card.split(row, 1)[1].split('class="lr', 1)[0]
+            self.assertIn("the LUN's own fill is not in this read" if row == "<b>LUN</b>" else "size ", part)
+            self.assertNotIn('class="wd ok"', part, row)
+
+    def test_path_card_an_old_live_aggregate_is_not_ok(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            TB = 1024 ** 4
+            v["sources"]["ontap:cluster2.example.mil"] = {"kind": "ontap", "name": "cluster2.example.mil", "state": "error", "why": "timed out",
+                                                         "at": time.time() - 900,
+                                                         "snap": {"cluster": "cluster2", "nodes": [], "volumes": [], "luns": [], "snapmirror": [],
+                                                                  "aggrs": [{"name": "aggr2_c2n2", "node": "cluster2-02", "size": 10 * TB, "used": 5 * TB}]}}
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view), netapp_minutes_old=1)     # the run (the path) current, the live read old
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("ds:%s|DS-SITEA-07" % demo.VC1))
+        part = out.split('id="dsCard"', 1)[1].split("<b>Aggregate</b>", 1)[1].split('class="lr', 1)[0]
+        self.assertNotIn('class="wd ok"', part)
+
+    def test_lights_down_hosts_first_never_hidden(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
+            for h in snap["hosts"]:
+                if h["state"] == "notResponding":
+                    h["name"] = "zz-down.corp.example.mil"                                     # last by name
+            for i in range(150):
+                snap["hosts"].append(demo.host("aa-maint%03d.corp.example.mil" % i, "SITA01-CL02", 10, 10, [], [], maint=True))
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=lights&area=vmware&freeze=1")
+        cells = re.findall(r'class="cell (s-[a-z]+)[^"]*"[^>]*data-tip="([^|"]+)', out)
+        self.assertEqual(cells[0], ("s-crit", "zz-down.corp.example.mil"))
+        self.assertNotIn("all connected", out)
+        self.assertEqual(len([c for c in cells if c[0] == "s-warn"]), 150)                    # every warning shown, none hidden
 
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):
