@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.118.8 — 2026-11-24
+
+**To set up:** the limit needs to know when the last email went. Best: attach the "Red Hat Ansible Automation
+Platform" credential to *VM - outage watch*. The report database is the fallback: switch the watch's "Report
+database" credential from the reader (`report_reader`) to the writer (`report_writer`); the review's reads work with
+it. Or make the table by hand (docs/REPORT_DATABASE.md). If the job output says *No AAP credential or report
+database*, neither works yet.
+
+- The VM outage watch could email on every run. It now emails at most once per 30 minutes, whatever changed.
+  A change inside that time is held. The first run after it sends one email with all of it, in *Since the last email*.
+  A change that came and went in between is listed as *Earlier*.
+- The first email and the *Recovered* email wait too. A review launched by hand always emails. The reminder
+  (`vm_watch_email_every_hours`) is as before.
+- A held run says so: *No email: last one at 07:30, next possible at 08:00 (vm_watch_email_min_minutes: 30)*.
+- The likely cause: the watch could not read its last email from AAP, and then emailed every report. When AAP cannot
+  be read, it now reads the last email from the report database (table `vm_watch_email_state`, made on the first run).
+- Neither readable: only a critical condition is emailed, by a run in the first 15 minutes of each 30-minute slot.
+  The job output says what to attach on every run.
+- `vm_watch_email_on_change: false` is limited too. `vm_watch_email_min_minutes: 0` = no limit, as before.
+- The report database and the job artifact keep an email as sent only after the mail relay took it. A failed or skipped
+  send keeps the last state, so the next run tries again.
+- A database login that can read but not write the table counts as no database. The job output says so.
+  A database that stops answering is given up after 20 seconds, before the email.
+- Held changes are never lost: they go after the 30 minutes, also on a clean run, also with
+  `vm_watch_email_on_change: false`, and in a review's email. A vCenter not read holds back only the *Recovered*
+  email, not what another vCenter showed.
+- What the watch finds, its web page and its tickets are unchanged. tests/test_watch_frozen.py lists the changed
+  tasks of watch_email.yml; the rest stays 1.118.4's.
+
+Tests: tests/test_vm_watch_email.py, tests/test_watch_frozen.py.
 ## 1.123.1 — 2026-11-24
 
 **To set up:** run Site portal - deploy (the wider Run dialog). The NetApp list is short after the next run of

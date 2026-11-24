@@ -457,7 +457,7 @@ INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES ('netm
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4; 1.111.0 `netmap`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4; 1.111.0 `netmap`: 1; 1.118.8 `vm_watch_email`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
@@ -466,6 +466,7 @@ INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES ('netm
 | `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
 | `ad_run`, `ad_dc`, `ad_link` | 1.101.2: each AD run, its DCs and its replication links, for the portal's live AD page (*The AD runs for the portal*) |
 | `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |
+| `vm_watch_email_state` | 1.118.8: one row per outage watch template - its last email (*The outage watch's last email*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -1355,6 +1356,64 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_heat', 1
 | `vm_heat_db_create` | `true` | Make the table on the first run |
 | `vm_heat_db_timeout` | `10` | Seconds to connect |
 | `vm_heat_db_keep_days` | `400` | Delete older points. `0`: never |
+
+## The outage watch's last email (1.118.8)
+
+*VM - outage watch* emails at most once per 30 minutes. For that it must know when it last emailed. It reads that
+from AAP (the **Red Hat Ansible Automation Platform** credential, [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md)). When
+AAP cannot be read, it reads it here. Each run keeps it here while the credential is attached, so it is current.
+
+1. Add the **Report database** credential with the writer, `report_writer`, to the template *VM - outage watch*.
+   The writer also works for the outage review's reads. With the reader `report_reader` (as since 1.116.1), the
+   watch cannot make the table, so it neither reads nor keeps the state - unless the table and the grant below are
+   made by hand.
+2. Launch it. The first run makes the table `vm_watch_email_state`.
+
+| | |
+|---|---|
+| What a run writes | one row per job template: the last email's time and conditions (JSON, a few KB at most), after the email went |
+| What a read checks | that a write works (written and rolled back). A login with SELECT only counts as no database |
+| A database that stops answering | given up after 20 seconds, before the email |
+| What a run deletes | nothing: the row is replaced |
+| When the database is down | a run that needs it (AAP not readable) warns in the job output. Then, only a critical condition is emailed, in the first 15 minutes of each 30 |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `vm_watch_email_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE vm_watch_email_state;` and `DELETE FROM schema_version WHERE component = 'vm_watch_email';` |
+
+The table holds host, datastore and VM names of the conditions, and times. No passwords.
+
+**By hand.** If the writer may not create tables, make the table once as root, in `site_reports`. The writer then needs
+SELECT, INSERT and UPDATE on it. To keep `report_reader` on the watch instead, also run
+`GRANT INSERT, UPDATE ON site_reports.vm_watch_email_state TO 'report_reader'@'%';`. The first statement is the one of
+*Making the tables by hand*; it may run again.
+
+<!-- the statements: site_vm_watch_email_db.ddl(), word for word (tests/test_vm_watch_email.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS vm_watch_email_state (
+  template BIGINT NOT NULL PRIMARY KEY,
+  job BIGINT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL,
+  state MEDIUMTEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_watch_email', 1, UTC_TIMESTAMP());
+```
+<!-- end of the outage watch statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_watch_email_db` | `true` | Keep the state here when the template has the credential |
+| `vm_watch_email_min_minutes` | `30` | At most one email per this many minutes. `0`: no limit |
 
 ## The SolarWinds snapshot (1.96.0)
 

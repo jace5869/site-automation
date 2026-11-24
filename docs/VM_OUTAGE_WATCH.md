@@ -164,6 +164,27 @@ No email: nothing changed since the email of 2026-11-23 07:10 CET (vm_watch_emai
 
 What stays the same: **the web page and the tickets are updated every run.** Only the email waits.
 
+### At most one email per 30 minutes (1.118.8)
+
+The watch emails at most once per `vm_watch_email_min_minutes` (30), whatever changed. A new critical condition waits
+too. A change inside that time is held. The first run after it sends one email with all of it, in *Since the last
+email*. A change that came and went in between is listed as `Earlier (07:40): New: ...`. The job output of a held run:
+
+```
+No email: last one at 07:30, next possible at 08:00 (vm_watch_email_min_minutes: 30)
+```
+
+- The first email and the *Recovered* email wait too. *Recovered* goes after the 30 minutes, if all is still clear.
+- The reminder (`vm_watch_email_every_hours`) is as before.
+- A review launched by hand (`vm_watch_review`) always emails. Its *Since the last email* box has what was held.
+- A change that was held always reaches an email: after the 30 minutes, also when nothing is down by then. A vCenter
+  that was not read holds back only *Recovered*; what the others showed still goes.
+- The 30 minutes count from the start of the run that sent the last email. A run that starts up to a minute early
+  counts as on time.
+- `vm_watch_email_on_change: false` emails every report, but also at most once per 30 minutes. A condition seen only
+  in between is listed as `Earlier (07:40): Seen: ...` in the next email.
+- `vm_watch_email_min_minutes: 0` = no limit, as before 1.118.8.
+
 - **What counts as one condition.** The conditions of `vm_watch_report_on`, folded as the tickets are: a VM on a lost
   datastore, or on a host that is down, counts as that datastore or host. More VMs lost on the same datastore is no new
   email; the reminder and the web page have them.
@@ -185,11 +206,26 @@ What stays the same: **the web page and the tickets are updated every run.** Onl
 email went, and its conditions). The next run reads it back from this template's last runs in AAP, failed runs too (the
 watch fails on a critical condition by design; the last 15 runs), also with `report_history: false`. That needs the template's **"Red Hat Ansible Automation Platform"
 credential**, the same one as the report history, and its user must see the template's jobs (Organization Auditor on its
-organization, or a role on the template). Without it, or when AAP cannot be read, every report is emailed as before,
-and the job output says why: *Email on every report this run: the last email could not be read from AAP - ...*.
-A dry run (Check) reads but keeps nothing.
+organization, or a role on the template). A dry run (Check) reads but keeps nothing.
 
-`vm_watch_email_on_change: false` = the old way: every run that finds something emails.
+**When AAP cannot be read** (1.118.8): the state comes from the report database. That needs the **"Report
+database"** credential with the writer (`report_writer`) on *VM - outage watch*. The review attached it with the reader
+(`report_reader`) since 1.116.1: the reader cannot make the table. Switch it to the writer (the review's reads work with
+it), or make the table and grant by hand ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The outage watch's last email*).
+Each run then also keeps the state there, in the table `vm_watch_email_state` (one row per template), after the email
+went: a failed send keeps the last state. The first run makes the table. A login that can read but not write it counts
+as no database. `vm_watch_email_db: false` = not used.
+
+**Neither readable** (no AAP credential and no report database): the watch cannot know when it last emailed. Then only a
+critical condition is emailed, and only by a run that starts in the first 15 minutes of each 30-minute slot of the
+clock (07:00-07:15, 07:30-07:45 ...). A 15-minute schedule then sends at most one email per 30 minutes, a 10-minute
+schedule at most two. No *Recovered* email goes. The job output says so on every run:
+
+```
+No AAP credential or report database: the 30-minute email limit cannot work - attach the Red Hat Ansible Automation Platform credential to VM - outage watch (AAP: ...; report database: ...).
+```
+
+`vm_watch_email_on_change: false` = every run that finds something emails, within `vm_watch_email_min_minutes`.
 
 ## Review an outage (the time line)
 
@@ -446,6 +482,8 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 | `vm_watch_report_on` | [critical] | severities that make a report (email, web page); `[critical, warning]` for the warnings too |
 | `vm_watch_email_on_change` | true | email only when something changed since the last email, a reminder, and one recovered email (1.112.5); false = every report |
 | `vm_watch_email_every_hours` | 4 | a reminder while the conditions last, this long after the last email; 0 = never. Also the most one scheduled review is made |
+| `vm_watch_email_min_minutes` | 30 | at most one email per this many minutes; a change inside is held and sent after (1.118.8). 0 = no limit |
+| `vm_watch_email_db` | true | keep the email state in the report database too, with the "Report database" credential (1.118.8) |
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
 | `vm_watch_review_object` | "" | current or historical datastore or host name. Leave empty to review all roots |

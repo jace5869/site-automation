@@ -138,13 +138,27 @@
 ## ("Recovered"). The web page and the tickets are updated every run. A review (vm_watch_review)
 ## always emails; on a schedule it is made at most once per vm_watch_email_every_hours (4 h when
 ## that is 0). The last email is read back from this template's runs in AAP (the "Red Hat Ansible
-## Automation Platform" credential, as report_history); without it every report is emailed, as
-## before, and the job output says why. false = every run that finds a condition of
-## vm_watch_report_on emails (as before 1.112.5)
+## Automation Platform" credential, as report_history). 1.118.8: at most one email per
+## vm_watch_email_min_minutes, whatever changed. A change inside that time is held; the first run
+## after it sends one email with all of it ("Since the last email"). The first email and Recovered
+## wait too. A review launched by hand always emails. AAP not readable: the last email is kept in
+## the report database (the "Report database" credential on the template, table
+## vm_watch_email_state). Neither readable: only a critical condition is emailed, by a run that
+## starts in the first 15 minutes of each vm_watch_email_min_minutes slot, and the job output says
+## what to attach. false = every run that finds a condition of vm_watch_report_on emails, within
+## vm_watch_email_min_minutes
 # vm_watch_email_on_change: true
 
 ## a reminder while the conditions last, this many hours after the last email; 0 = never
 # vm_watch_email_every_hours: 4
+
+## at most one email per this many minutes (a review by hand is not held); 0 = no limit (as before
+## 1.118.8)
+# vm_watch_email_min_minutes: 30
+
+## keep the email state in the report database too, when the template has a "Report database"
+## credential
+# vm_watch_email_db: true
 
 ## the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked
 # vm_watch_sso: true
