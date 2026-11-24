@@ -11,6 +11,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import fnmatch
+import functools
 import json
 import re
 
@@ -251,7 +253,7 @@ def win_restart_doc(model, when):
     title += "".join(", %d %s" % (c, w) for c, w in ((skipped, "skipped"), (bad, "failed or not reached")) if c)
     if check:
         title += " (nothing changed)"
-    sw_warn = any(x["swis"].get("level") == "warning" for x in rows)
+    sw_warn = o.get("swis_state") == "error" or any(x["swis"].get("level") == "warning" for x in rows)
     status = "critical" if bad else ("warning" if sw_warn else ("ok" if sched or not check else "info"))
     summary = [{"label": "Servers", "value": n, "status": "info", "note": "the Limit"},
                {"label": "Would restart" if check else "Scheduled", "value": sched, "status": "warning" if check and sched else ("ok" if sched else "info"),
@@ -427,11 +429,14 @@ def win_restart_log(model, when=None):
     return out or ["No server in this run."]
 
 
+PATTERN_SEPARATOR = re.compile(r"[,:](?![^\[]*\])")
+
+
 def _terms(text):
     """A host pattern -> its picking terms: split at , and : (not inside a [range]), without the exclusions (!x) and the
     narrowing ones (&x)."""
     out = []
-    for t in re.split(r"[,:](?![^\[]*\])", str(text or "")):
+    for t in PATTERN_SEPARATOR.split(str(text or "")):
         t = t.strip()
         if t and not t.startswith(("!", "&")):
             out.append(t)
@@ -448,19 +453,39 @@ def win_restart_selector(limit="", target=""):
     return []
 
 
-def _match(host, term):
-    """A host against an Ansible host pattern term: * and ?, and a range web[01:03] (web01, web02, web03)."""
+@functools.lru_cache(maxsize=128)
+def _host_matcher(term):
+    """Compile a selector once, bounding inventory range expansion before building the regex."""
+    if term.startswith("~"):
+        try:
+            return re.compile(term[1:]).search
+        except (re.error, OverflowError) as exc:
+            raise ValueError("invalid Limit regex %s (%s)" % (term, exc)) from exc
+    term = term.lower()
     out, i = "", 0
-    for m in re.finditer(r"\[(\d+):(\d+)\]|\[([a-z]):([a-z])\]", term):
+    for m in re.finditer(r"\[([0-9]+):([0-9]+)\]|\[([a-z]):([a-z])\]", term):
         out += _glob(term[i:m.start()])
         if m.group(1) is not None:
-            a, b, w = int(m.group(1)), int(m.group(2)), len(m.group(1))
-            out += "(?:%s)" % "|".join("%0*d" % (w, n) for n in range(a, b + 1))
+            start, end = m.group(1, 2)
+            if max(len(start), len(end)) > 16:
+                raise ValueError("host range %s has an oversized endpoint" % m.group())
+            a, b = int(start), int(end)
+            if b < a:
+                raise ValueError("reversed host range %s" % m.group())
+            if b - a >= 1000:
+                raise ValueError("host range %s exceeds 1000 entries" % m.group())
+            out += "(?:%s)" % "|".join("%0*d" % (len(start), n) for n in range(a, b + 1))
         else:
+            if m.group(4) < m.group(3):
+                raise ValueError("reversed host range %s" % m.group())
             out += "[%s-%s]" % (m.group(3), m.group(4))
         i = m.end()
-    out += _glob(term[i:])
-    return re.fullmatch(out, host) is not None
+    return re.compile(out + _glob(term[i:]), re.IGNORECASE).fullmatch
+
+
+def _match(host, term):
+    match = _host_matcher(term)
+    return bool(match(host) or match(host.split(".")[0]))
 
 
 def _glob(text):
@@ -471,27 +496,39 @@ def win_restart_unnamed(hosts, terms, groups=None):
     """The hosts of the run that no picked term names: a host name (any case; a short name too), a pattern of them (* ? [..]),
     or an inventory group the host is in. [] when every one was picked."""
     groups = groups or {}
-    out = []
-    for h in hosts or []:
-        h_ = str(h).lower()
-        ok = False
-        for t in terms or []:
-            tl = t.lower().lstrip("~")
-            if t in groups and h in (groups.get(t) or []):
-                ok = True
-            elif tl in (h_, h_.split(".")[0]) or any(_match(x, tl) for x in (h_, h_.split(".")[0])):
-                ok = True
-            if ok:
-                break
-        if not ok:
-            out.append(str(h))
-    return out
+    hosts = list(hosts or [])
+    named = set()
+    for term in terms or []:
+        if term.startswith("~"):
+            match = _host_matcher(term)
+            for group, members in groups.items():
+                if match(group):
+                    named.update(members)
+        else:
+            sub = re.fullmatch(r"(.+)\[(-?\d+)(?::(\d*))?\]", term)
+            pattern = sub[1] if sub else term
+            matching = [g for g in groups if fnmatch.fnmatchcase(g, pattern)]
+            members = [h for g in matching for h in groups[g]]
+            if matching and sub:
+                start = int(sub[2])
+                if sub[3] is None:
+                    if -len(members) <= start < len(members):
+                        named.add(members[start])
+                else:
+                    stop = int(sub[3]) if sub[3] else None
+                    if stop is not None and stop < start:
+                        raise ValueError("reversed group slice %s" % term)
+                    named.update(members[start:None if stop is None else stop + 1])
+                continue
+            named.update(members)
+        named.update(h for h in hosts if _match(str(h), term))
+    return [str(h) for h in hosts if h not in named]
 
 
 def win_restart_hosts(target="", exclude_not=""):
     """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
     'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
-    parts = [t.strip() for t in str(target or "all").split(",") if t.strip()] or ["all"]
+    parts = [t.strip() for t in PATTERN_SEPARATOR.split(str(target or "all")) if t.strip()] or ["all"]
     ex = [t for t in re.split(r"[,:]", str(exclude_not or "")) if t.strip()]
     return ",".join(parts + ex)
 
@@ -511,18 +548,22 @@ def win_restart_check(o):
             raise ValueError
     except (TypeError, ValueError):
         bad.append("win_restart_delay_seconds is 0 to 600")
+    terms = win_restart_selector(o.get("limit"), o.get("target"))
     if any(t.startswith("@") for t in _terms(o.get("limit")) + _terms(o.get("target"))):
         bad.append("a Limit from a file (@file) is not taken here: pick the servers by name (or group) in the Limit")
-    elif not win_restart_selector(o.get("limit"), o.get("target")):
+    elif not terms:
         bad.append("no servers picked: set the Limit (or the Hosts box on the site portal) to the servers - an empty one, 'all' or "
                    "only exclusions ('!name') is refused; this job never acts on every server")
     elif o.get("resolved") is not None and not o["resolved"]:
         bad.append("the Limit matches no server")
-    elif o.get("resolved") is not None and win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")),
-                                                                o.get("groups") or {}):
-        bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(
-            win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")), o.get("groups") or {})))
-    elif o.get("excluded_in"):
+    elif o.get("resolved") is not None:
+        try:
+            unnamed = win_restart_unnamed(o["resolved"], terms, o.get("groups"))
+            if unnamed:
+                bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(unnamed))
+        except ValueError as exc:
+            bad.append(str(exc))
+    if o.get("excluded_in"):
         bad.append("left out by site_exclude_hosts but in this run: %s - the job stops" % ", ".join(o["excluded_in"]))
     elif int(o.get("hosts") or 0) > int(o.get("max_hosts") or 0):
         bad.append("%s servers in the Limit; at most %s in one run (win_restart_max_hosts)" % (o.get("hosts"), o.get("max_hosts")))

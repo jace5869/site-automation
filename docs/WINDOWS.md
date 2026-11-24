@@ -588,7 +588,10 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
 1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit, `all`, only
    exclusions (`!name`) or a Limit from a file (`@file`) is refused, and so is a run with a server the Limit did not
    name; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
-   will act on. Servers in `site_exclude_hosts` are always left out.
+   will act on. The Limit accepts group slices such as `windows[0:4]` (both ends included) and `windows[0]`,
+   group wildcards such as `win_app*`, and regex terms such as `~^SRV-APP[0-9]+$`. Host ranges must run
+   forwards and can expand to at most 1,000 values per range. Targets can use commas or colons between terms.
+   Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
    | Question | Example | Notes |
@@ -611,7 +614,8 @@ Success looks like: `SRV-APP01: SCHEDULED - at Tue 2026-11-24 22:30 EST (server:
 What the job does on each server:
 
 - Registers the task `\site-automation\site-automation restart` (SYSTEM) for that moment. The moment is fixed in UTC,
-  so a server in another time zone restarts at the same moment.
+  so a server in another time zone restarts at the same moment. An empty `win_restart_task_path` uses the Task
+  Scheduler root. Leading and trailing backslashes are optional for a named folder.
 - At that time the task runs `shutdown /r /t 60 /d p:0:0 /c "<change>: <reason> (site-automation, AAP job N)"`.
   Logged-on users get 60 seconds' warning (`win_restart_delay_seconds`).
 - With "only if pending" it checks again first. Nothing pending any more: no restart; a line in `restart.log` and the
@@ -621,8 +625,13 @@ What the job does on each server:
 - Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`); the
   earlier one's are removed only after the new task reads back right. If it does not, the earlier task is put back.
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
-- The task's script and settings are in `win_restart_dir` (`C:\ProgramData\site-automation\restart`), readable by
-  SYSTEM and Administrators only.
+- The task's script and settings are in `win_restart_dir` (default `C:\ProgramData\site-automation\restart`).
+  The job secures the dedicated `site-automation` parent and the restart folder, granting full control only to SYSTEM
+  and Administrators, with Administrators as owner and inheritance disabled. A junction or symlink in the directory
+  path stops the operation. An existing directory that another account could replace must be provisioned securely
+  by an administrator. Registration checks the script's owner and permissions, including when restoring an earlier task.
+- The settings file stores the UTC restart time as `yyyy-MM-ddTHH:mm:ssZ` on Windows PowerShell and PowerShell 7.
+  Rescheduling, skipping or cancelling can use that time to identify the earlier SolarWinds window in the report.
 - It never restarts a server right away. Run in Task Scheduler is switched off for the task, and the task's script does
   nothing when it starts more than 2 minutes before its time (a line in `restart.log`).
 - One schedule or cancel at a time per server (`restart.lock` in that folder; one older than 10 minutes is taken as left over).
@@ -676,12 +685,16 @@ What it does:
 - After the call one read-back reports the window as SolarWinds shows it, and whether SWIS returns times as UTC or as
   local time ("SolarWinds returns times as ..."). A failed read-back does not undo the write: "unmanaged; the read-back
   failed". Check on the first real run that the node's window in Orion is the report's.
-- "No window" means: not unmanaged, and an end (`UnManageUntil`) that is empty or past every way it can be read - as UTC
-  and in the site's zone, both readings on the night the clocks go back. An end that cannot be read is a window: left.
+- For a managed node, an empty `UnManageUntil` clears the way for a new window. An end with a UTC offset is compared
+  at that instant. When Orion omits the offset, the job adds 14 hours to the reported end read as UTC. If that could
+  still be in the future, the report says the window was "left as it is". An unreadable end also preserves the window.
 - One run at a time: the template is made with **Concurrent jobs** off, and with a "Red Hat Ansible Automation
-  Platform" credential (optional) each run also refuses to start while another run of it is going. The race left
+  Platform" credential (optional) each run also checks for another running job or an earlier pending or waiting job
+  of the same template. A later queued job lets the current run finish. The race left
   needs two writers at once on one node - this job and a person (or another tool) unmanaging it in the same seconds.
-- A failed SolarWinds call is a warning on that row; the restart stays scheduled; the job ends as a warning.
+- A failed SolarWinds call adds a warning to the affected row. If the initial lookup fails for every server, the
+  report shows a warning and includes the lookup error. Each verified restart stays scheduled. A server that could
+  not be reached or scheduled still makes the report critical.
 - With "only if pending" the node is unmanaged for the window even if, at the restart time, nothing is pending and the
   server does not restart.
 

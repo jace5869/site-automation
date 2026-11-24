@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.128.0 (part: Windows restart fixes from review)
+
+- Windows restart scheduling secures the task directory and its dedicated parent, refuses reparse points, and verifies the script owner and permissions before registration.
+- A later queued AAP job can wait for the current run. Target exclusions work with colon-separated patterns. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+- Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
+- SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
+
 ## 1.127.3 — 2026-11-24
 
 **To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**

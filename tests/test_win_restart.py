@@ -153,9 +153,25 @@ class Checks(unittest.TestCase):
         # the exclusion is its own comma-separated part: 'A,B:!x' would bind it to B alone
         self.assertEqual(w.win_restart_hosts("A,B", ":!site_excluded"), "A,B,!site_excluded")
         self.assertEqual(w.win_restart_hosts(None, ":!site_excluded"), "all,!site_excluded")
-        self.assertEqual(w.win_restart_hosts("web:&prod", ""), "web:&prod")
+        self.assertEqual(w.win_restart_hosts("web:&prod", ":!site_excluded"), "web,&prod,!site_excluded")
+        self.assertEqual(w.win_restart_hosts("windows[0:4]:SRV-APP01", ""), "windows[0:4],SRV-APP01")
         self.assertEqual(w.win_restart_selector("web[01:03]", ""), ["web[01:03]"])
         self.assertIn("at most 50", self.ok(hosts=51)[0])
+
+    def test_group_limits_and_regex(self):
+        hosts = ["SRV-APP%02d" % n for n in range(1, 7)]
+        groups = {"windows": hosts, "win_app": hosts[:2]}
+        for term, expected in (("windows[0:4]", hosts[:5]), ("windows[0]", hosts[:1]), ("windows[-1]", hosts[-1:]),
+                               ("win_a*", hosts[:2]), ("~^win_app$", hosts[:2]), (r"~APP0[1-3]$", hosts[:3])):
+            with self.subTest(term=term):
+                self.assertEqual(w.win_restart_unnamed(hosts, [term], groups), [h for h in hosts if h not in expected])
+
+    def test_invalid_limit_refused(self):
+        for term, why in (("web[z:a]", "reversed"), ("web[3:1]", "reversed"), ("web[0:999999999]", "exceeds"),
+                          ("web[0:" + "9" * 4500 + "]", "oversized"), ("~[", "invalid Limit regex")):
+            with self.subTest(why=why):
+                errors = self.ok(limit="SRV-APP01," + term, resolved=["SRV-APP01"])
+                self.assertIn(why, errors[0])
 
     def test_comment(self):
         c = w.win_restart_comment('Patch "now"\nplease', "chg001", 42)
@@ -391,7 +407,7 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
             t = fh.read()
         self.assertIn("<StartWhenAvailable>false</StartWhenAvailable>", t)                             # off at the time: no restart later
         self.assertIn("<EndBoundary>$EndUtc</EndBoundary>", t)
-        self.assertIn("/inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'", t)   # the script SYSTEM runs: admins only
+        self.assertIn("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", t)   # the script SYSTEM runs: admins only
         self.assertIn("/setowner '*S-1-5-32-544'", t)
         self.assertIn("<UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel>", t)
         self.assertNotIn("Restart-Computer", t)
@@ -456,6 +472,7 @@ function Get-ScheduledTask {
 }
 function Register-ScheduledTask {
     [CmdletBinding()] param($Xml, $TaskName, $TaskPath, [switch]$Force)
+    $global:Registrations++
     if ($global:Inject) { Invoke-Expression $global:Inject; $global:Inject = '' }       # something else acts right before
     if ($global:FailRegister) { throw 'Access is denied' }
     if (-not $Force -and $global:Store.ContainsKey([string]$TaskPath + [string]$TaskName)) { throw 'Cannot create a file when that file already exists' }
@@ -476,16 +493,64 @@ function Get-ScheduledTaskInfo {
     [pscustomobject]@{ NextRunTime = $n }
 }
 function Export-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath) $global:Store[[string]$TaskPath + [string]$TaskName].Xml }
-function icacls.exe { $global:LASTEXITCODE = 0 }
+$global:Hardened = @{}
+$global:AclCalls = @()
+$global:Registrations = 0
+function whoami.exe { $global:LASTEXITCODE = 0; '"admin","S-1-5-21-1000"' }
+function Get-Acl { param($LiteralPath) @{ Sddl = $LiteralPath } }
+function ConvertFrom-SddlString {
+    param($Sddl)
+    $dir = Test-Path -LiteralPath $Sddl -PathType Container
+    $owner = 'S-1-5-32-544'
+    $flags = 16
+    $control = 0
+    if ($dir) {
+        $flags = 3
+        if ($global:Hardened[$Sddl]) { $control = 0x1000 }
+        elseif ($global:UnsafeDirOwner) { $owner = 'S-1-5-21-2000' }
+    }
+    $aces = @(foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+        @{ AceFlags = $flags; AceType = 'AccessAllowed'; AccessMask = 0x1f01ff; SecurityIdentifier = @{ Value = $sid } }
+    })
+    if ($global:LegacyParent -eq $Sddl -and -not $control) {
+        $aces += @{ AceFlags = 2; AceType = 'AccessAllowed'; AccessMask = 0x106; SecurityIdentifier = @{ Value = 'S-1-5-32-545' } }
+    }
+    if (-not $dir -and $Sddl -like '*.ps1') {
+        if ($global:BadOwner) { $owner = 'S-1-5-21-2000' }
+        if ($global:BadGrant) { $aces += @{ AceType = 'AccessAllowed'; AccessMask = 2; SecurityIdentifier = @{ Value = 'S-1-1-0' } } }
+    }
+    @{ RawDescriptor = @{ Owner = @{ Value = $owner }; ControlFlags = $control; DiscretionaryAcl = $aces } }
+}
+function icacls.exe {
+    param($Path, $Operation, $Value, $Link)
+    $global:AclCalls += "$Operation $Path"
+    $global:LASTEXITCODE = 0
+    if ($Operation -eq $global:FailAcl -or ($global:FailScriptAcl -and $Path -like '*.ps1') -or $Link -ne '/L') { $global:LASTEXITCODE = 5; return }
+    if ($Operation -eq '/restore') {
+        $leaf, $dacl = Get-Content -LiteralPath $Value -Encoding Unicode
+        if ($dacl -ne 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)') { throw 'unexpected policy' }
+        $global:Hardened[(Join-Path $Path $leaf)] = $true
+    }
+}
+function Move-Item {
+    param($LiteralPath, $Destination, $ErrorAction)
+    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -ErrorAction Stop
+    $global:Hardened[(Join-Path $Destination (Split-Path -Leaf $LiteralPath))] = $global:Hardened[$LiteralPath]
+}
 function Step($cfg) {
     $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
     $line = (. $global:PS | Select-Object -Last 1)
     $o = ConvertFrom-Json ($line -replace '^###SITE-JSON### ', '')
     $files = @(Get-ChildItem -Path $cfg.dir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
-    $t = $global:Store[$cfg.task_path + $cfg.task_name]
+    $t = $global:Store.Values | Select-Object -First 1
+    $saved = ''
+    if ($o.scheduled) {
+        $settingsFile = Join-Path $cfg.dir ('restart-' + $o.scheduled.id + '.json')
+        $saved = Get-Content -LiteralPath $settingsFile -Raw
+    }
     $args_ = ''
     if ($null -ne $t) { $args_ = [string]$t.Actions[0].Arguments }
-    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; author = [string]$t.Author } | ConvertTo-Json -Compress -Depth 6))
+    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; author = [string]$t.Author; saved = $saved; registrations = $global:Registrations; acl = $global:AclCalls } | ConvertTo-Json -Compress -Depth 6))
 }
 """
 
@@ -499,7 +564,7 @@ class Registration(unittest.TestCase):
     def run_steps(self, steps):
         tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         try:
-            d = os.path.join(tmp, "restart")
+            d = os.path.join(tmp, "site-automation", "restart")
             os.makedirs(os.path.join(tmp, "root"))
             at_ = (datetime.datetime.now(U) + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:00Z")
             at2 = (datetime.datetime.now(U) + datetime.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:00Z")
@@ -515,7 +580,7 @@ class Registration(unittest.TestCase):
                 cfg.setdefault("comment", "CHG1: Patch (site-automation, AAP job 7)")
                 cfg["description"] = cfg["comment"]
                 code.append("Step (ConvertFrom-Json '%s')" % json.dumps(cfg).replace("'", "''"))
-            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root")})
+            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root"), "ProgramData": tmp, "TEMP": os.path.join(tmp, "root"), "TZ": "America/New_York"})
             out = [json.loads(x[5:]) for x in r.stdout.splitlines() if x.startswith("STEP ")]
             self.assertEqual(len(out), len([x for x in steps if not isinstance(x, str)]), r.stdout + r.stderr)
             return out
@@ -535,8 +600,76 @@ class Registration(unittest.TestCase):
     def test_ours_carry_their_restart_moment(self):
         a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "list"}])
         # its settings' restart moment (only to say an unmanage window there is likely that restart's): 2 hours ahead here
-        at_ = rs.parse(b["out"]["ours"][0]["at_utc"]) or rs.parse(datetime.datetime.strptime(b["out"]["ours"][0]["at_utc"], "%m/%d/%Y %H:%M:%S").strftime("%Y-%m-%dT%H:%M:%SZ"))
-        self.assertLess(abs((at_ - datetime.datetime.now(U)).total_seconds() - 7200), 180)
+        saved = json.loads(a["saved"])["at_utc"]
+        self.assertRegex(saved, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual(b["out"]["ours"][0]["at_utc"], saved)
+        self.assertLess(abs((rs.parse(saved) - datetime.datetime.now(U)).total_seconds() - 7200), 180)
+
+    def test_task_path_normalized_for_readback_and_cancel(self):
+        for path, expected in (("", "\\"), ("\\", "\\"), ("site-automation", "\\site-automation\\")):
+            with self.subTest(path=path):
+                a, b = self.run_steps([{"action": "schedule", "task_path": path}, {"action": "cancel", "task_path": expected}])
+                self.assertEqual(a["out"]["scheduled"]["path"], expected)
+                self.assertEqual(len(b["out"]["removed"]), 1)
+                self.assertEqual((b["task"], b["files"]), ("", []))
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows NTFS ACLs")
+    def test_native_directory_and_script_acl(self):
+        import ctypes
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            self.skipTest("requires an elevated Windows test process")
+        with tempfile.TemporaryDirectory() as root:
+            cfg = {"action": "none", "task_name": "SRV-APP01", "task_script": read(TASK)}
+            code = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n. '%s'\n" % PS.replace("'", "''") + r"""
+$ErrorActionPreference = 'Stop'
+$parent = Join-Path $env:ProgramData 'site-automation'
+$dir = Join-Path $parent 'restart'
+Initialize-SiteRestartDir $dir
+$file = New-Item -Path (Join-Path $dir 'restart-task-1-1.ps1') -ItemType File
+$null = & icacls.exe $file.FullName /setowner '*S-1-5-32-544' /L
+if ($LASTEXITCODE -ne 0) { throw 'could not set test script owner' }
+Assert-SiteRestartFileAcl $file.FullName
+foreach ($path in @($parent, $dir)) {
+    if (-not (Test-SitePrivateAcl (Get-SiteRestartAcl $path) -Directory)) { throw "unexpected ACL on $path" }
+}
+'ACL verified'
+"""
+            proc = pwsh(code, {"ProgramData": root, "SITE_CHECK_CONFIG": json.dumps(cfg)})
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("ACL verified", proc.stdout)
+
+    def test_harden_parent_then_restart_directory(self):
+        (a,) = self.run_steps([{"action": "schedule"}])
+        self.assertTrue(a["out"].get("scheduled"), a)
+        self.assertEqual([op.split()[0] for op in a["acl"]], ["/setowner", "/restore", "/setowner", "/restore", "/setowner"])
+        self.assertTrue(a["acl"][0].endswith("site-automation"))
+        self.assertTrue(a["acl"][2].endswith("restart"))
+
+    def test_existing_parent_with_legacy_protected_child(self):
+        (a,) = self.run_steps(["$null = New-Item -ItemType Directory -Path '{dir}' -Force; $global:Hardened['{dir}'] = $true; "
+                               "$global:LegacyParent = Split-Path -Parent '{dir}'", {"action": "schedule"}])
+        self.assertTrue(a["out"].get("scheduled"), a)
+        self.assertTrue(a["acl"][0].endswith("site-automation"))
+        self.assertEqual(len(a["acl"]), 3)
+
+    def test_hardening_failures_prevent_registration(self):
+        for flag, why in (("$global:FailAcl = '/setowner'", "/setowner"), ("$global:FailAcl = '/restore'", "/restore"),
+                          ("New-Item -ItemType Directory -Path (Split-Path -Parent '{dir}') | Out-Null; $global:UnsafeDirOwner = $true",
+                           "Unsafe existing owner"),
+                          ("$global:FailScriptAcl = $true", "/setowner"),
+                          ("$global:BadOwner = $true", "Unexpected owner or ACL"), ("$global:BadGrant = $true", "Unexpected owner or ACL")):
+            with self.subTest(flag=flag):
+                (a,) = self.run_steps([flag, {"action": "schedule"}])
+                self.assertIn(why, a["out"]["error"])
+                self.assertEqual((a["registrations"], a["files"]), (0, []))
+
+    def test_reparse_point_refused_at_either_level(self):
+        for link in ("(Split-Path -Parent '{dir}')", "'{dir}'"):
+            with self.subTest(link=link):
+                (a,) = self.run_steps(["$p = " + link + "; $null = New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force; "
+                                       "$null = New-Item -ItemType SymbolicLink -Path $p -Target $env:SystemRoot", {"action": "schedule"}])
+                self.assertIn("reparse point", a["out"]["error"])
+                self.assertEqual((a["registrations"], a["files"]), (0, []))
 
     def test_own_files_and_replace(self):
         a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False, "later": True}])
@@ -616,7 +749,7 @@ class Registration(unittest.TestCase):
     def test_ours_needs_all_three_marks(self):
         code = ". '%s'\n" % PS.replace("'", "''") + r"""
 $d = Join-Path ([IO.Path]::GetTempPath()) 'restart'
-$ok = '-NoProfile -File "' + (Join-Path $d 'restart-task-1.ps1') + '"'
+$ok = '-NoProfile -File "' + (Join-Path $d 'restart-task-1-1.ps1') + '"'
 function T($author, $desc, $args_) { Test-SiteOurTask -Task ([pscustomobject]@{ Author = $author; Description = $desc; Actions = @([pscustomobject]@{ Arguments = $args_ }) }) -Dir $d }
 'MARKS ' + (@((T 'site-automation' 'x (site-automation, AAP job 1)' $ok), (T 'Other' 'x (site-automation)' $ok), (T 'site-automation' 'x' $ok),
   (T 'site-automation' 'x (site-automation)' '-File "/other/restart-task-1.ps1"')) -join ',')
@@ -775,6 +908,15 @@ class SolarWinds(unittest.TestCase):
         run_(c, [item()], tz=zoneinfo.ZoneInfo("Europe/Berlin"))
         self.assertEqual(len(c.calls), 1)
 
+    def test_naive_end_fourteen_hour_boundary(self):
+        for end, preserved in (("01:00:01", True), ("01:00:00", False), ("14:59:59Z", False), ("14:59:59-01:00", True)):
+            nodes = orion()
+            nodes[0].update(UnManageUntil="2026-11-24T" + end)
+            client = FakeSwis(nodes)
+            result = run_(client, [item()])[APP]
+            self.assertEqual(bool(client.calls), not preserved, end)
+            self.assertEqual("left as it is" in result["text"], preserved, end)
+
     def test_fall_back_second_fold_is_still_ahead(self):
         # New York, 2026-11-01 at 06:15 UTC (01:15 EST, the second 01:xx): an end 01:45 without a zone - the first 01:45
         # (05:45 UTC) has passed, the second (06:45 UTC) has not: a window, left
@@ -782,7 +924,7 @@ class SolarWinds(unittest.TestCase):
         ny = zoneinfo.ZoneInfo("America/New_York")
         now = at(2026, 11, 1, 6, 15)
         self.assertTrue(rs.has_window({"until": "2026-11-01T01:45:00"}, now, ny))
-        self.assertFalse(rs.has_window({"until": "2026-11-01T01:45:00"}, at(2026, 11, 1, 6, 50), ny))
+        self.assertTrue(rs.has_window({"until": "2026-11-01T01:45:00"}, at(2026, 11, 1, 6, 50), ny))
         self.assertTrue(rs.has_window({"until": "2026-11-01T01:45:00Z"}, at(2026, 11, 1, 1, 0), ny))
         self.assertFalse(rs.has_window({"until": "2026-11-01T01:45:00Z"}, now, ny))     # with a zone: exactly that
         self.assertTrue(rs.has_window({"until": "not a time"}, now, ny))
@@ -923,6 +1065,39 @@ class SolarWinds(unittest.TestCase):
             t = fh.read()
         self.assertIn("status__in=pending,waiting,running", t)          # the playbook runs it in every e2e run below (no AAP: said)
 
+    def test_busy_job_order_and_pagination(self):
+        from unittest.mock import Mock, patch
+        import site_aap
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("busy", os.path.join(REPO, "roles", "win_restart", "library", "site_win_restart_busy.py"))
+        busy = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"ansible.module_utils.site_aap": site_aap}):
+            spec.loader.exec_module(busy)
+        module = Mock(params={"job_id": 100, "template_id": 1, "ca_path": "", "timeout": 20})
+        api = Mock()
+        api.probe.return_value = ""
+        api.call.side_effect = [(200, {"results": [{"id": 100, "status": "running"}, {"id": 101, "status": "waiting"}]}),
+                                (200, {"next": True, "results": [{"id": 100, "status": "running"}, {"id": 101, "status": "waiting"},
+                                                                  {"id": 102, "status": "pending"}]}),
+                                (200, {"results": [{"id": 103, "status": "running"}]}),
+                                (200, {"results": [{"id": 97, "status": "running"}, {"id": 98, "status": "pending"},
+                                                   {"id": 99, "status": "waiting"}, {"id": 101, "status": "waiting"}]})]
+        with patch.object(busy, "AnsibleModule", return_value=module), patch.object(busy, "Api", return_value=api), \
+                patch.object(busy, "connection", return_value={"host": "controller", "login": "token"}):
+            for expected in ([], [103], [97, 98, 99]):
+                busy.main()
+                module.exit_json.assert_called_with(changed=False, checked=True, busy=expected, why="")
+
+    def test_total_swis_failure_report_severity(self):
+        host = {"host": "SRV-APP01", "result": {"restart": True, "scheduled": {"id": "1"}}}
+        for state, status in (("error", "warning"), ("off", "ok"), ("nocred", "ok")):
+            opts = {"swis_state": state, "swis_note": w.win_restart_swis_note(state, "HTTP 401")}
+            doc = w.win_restart_doc(w.win_restart_model([host], opts), WHEN)
+            self.assertEqual(doc["status"], status)
+            self.assertIn(opts["swis_note"], doc["sections"][1]["lines"])
+        self.assertEqual(w.win_restart_doc(w.win_restart_model([{"host": "SRV-APP01", "unreached": "timeout"}],
+                                                               {"swis_state": "error"}), WHEN)["status"], "critical")
+
     def test_items_and_rows(self):
         hosts = [{"host": "a", "ip": "192.0.2.10", "result": {"restart": True, "scheduled": {"id": "1"}}},
                  {"host": "b", "result": {"restart": True, "scheduled": {"id": "2"}}},
@@ -1024,9 +1199,10 @@ class Playbook(unittest.TestCase):
             # a SolarWinds that cannot be reached: said, the plan goes on, never a failure
             r = self.run_local("win_restart_schedule.yml", {"win_restart_time": "23:59", "win_restart_reason": "x", "win_restart_time_zone": "UTC",
                                                            "win_restart_min_lead_minutes": 0, "win_restart_solarwinds_timeout": 2}, binary=b,
-                               env={"SOLARWINDS_MANAGE_URL": "https://192.0.2.1", "SOLARWINDS_MANAGE_USERNAME": "u", "SOLARWINDS_MANAGE_PASSWORD": "p"})
+                               env={"ANSIBLE_VERBOSITY": "1", "SOLARWINDS_MANAGE_URL": "https://192.0.2.1", "SOLARWINDS_MANAGE_USERNAME": "u", "SOLARWINDS_MANAGE_PASSWORD": "p"})
             self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr)
             self.assertIn("SolarWinds: SolarWinds could not be read", r.stdout)
+            self.assertIn('"swis_state": "error"', r.stdout)
             # only the read-only credential's variables (a report's): never taken for a write - no credential
             r = self.run_local("win_restart_schedule.yml", {"win_restart_time": "23:59", "win_restart_reason": "x", "win_restart_time_zone": "UTC",
                                                            "win_restart_min_lead_minutes": 0}, binary=b,
@@ -1051,7 +1227,7 @@ class Playbook(unittest.TestCase):
         bins = [None] + [x for x in [os.environ.get("ANSIBLE_PLAYBOOK")] if x and os.path.exists(x)]
         for binary in bins:
             for pb in ("win_restart_cancel.yml", "win_restart_schedule.yml"):
-                for extra in ({"target": "srv-app01,srv-app02"}, {}):
+                for extra in ({"target": "srv-app01:srv-app02"}, {}):
                     r = self.run_local(pb, dict(extra, site_exclude_hosts=["srv-app01"], win_restart_time="23:59", win_restart_reason="x",
                                                 win_restart_time_zone="UTC", win_restart_min_lead_minutes=0), binary=binary)
                     self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr)
