@@ -28,6 +28,9 @@
 ## would restart nearly every server.
 # win_restart_count_file_renames: false
 
+## The most servers one run may schedule (the Limit is required: an empty one is refused).
+# win_restart_max_hosts: 50
+
 ## The warning time before the restart (seconds): shutdown /r /t <this>. Logged-on users see it.
 # win_restart_delay_seconds: 60
 
@@ -38,8 +41,8 @@
 ## The scheduled task's folder in Task Scheduler.
 # win_restart_task_path: "\\site-automation\\"
 
-## The scheduled task's name (one per server). Cancel removes only tasks whose name starts with it,
-## in any folder.
+## The scheduled task's name (one per server). Only this exact folder and name is touched, and only
+## a task this job made.
 # win_restart_task_name: "site-automation restart"
 
 ## Where the task's script and its settings live on each server (only SYSTEM and Administrators may

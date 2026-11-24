@@ -585,8 +585,9 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
 
 ### Run it
 
-1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit is refused;
-   at most `win_restart_max_hosts` (50) servers.
+1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit, `all`, or only
+   exclusions (`!name`) is refused; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
+   will act on. Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
    | Question | Example | Notes |
@@ -614,11 +615,16 @@ What the job does on each server:
   Logged-on users get 60 seconds' warning (`win_restart_delay_seconds`).
 - With "only if pending" it checks again first. Nothing pending any more: no restart; a line in `restart.log` and the
   Application log (source `site-automation`, event 101).
-- One restart of ours per server: a new run replaces the earlier task (the report says "replaces ...").
+- One restart of ours per server: a new run replaces the earlier task in one step (the report says "replaces ...").
+  With "only if pending" and nothing pending, the server is skipped and an earlier restart of ours is removed.
+- Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`); the
+  earlier one's are removed only after the new task reads back right. If it does not, the earlier task is put back.
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
 - The task's script and settings are in `win_restart_dir` (`C:\ProgramData\site-automation\restart`), readable by
   SYSTEM and Administrators only.
 - It never restarts a server right away.
+- Like every Windows job here, it runs its scripts with Ansible's `script` module. The scripts run in Constrained
+  Language Mode; whether Ansible itself gets through on such a server depends on your ansible-core version (step 5).
 
 A reboot is pending when any of these says so (the same as the patching check):
 
@@ -631,8 +637,9 @@ A reboot is pending when any of these says so (the same as the patching check):
 
 ### Cancel it
 
-Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our tasks; Run removes them. Only
-tasks whose name starts with `win_restart_task_name` are touched. A restart already counting down is not stopped: run
+Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our task; Run removes it. Only the
+task `win_restart_task_path` + `win_restart_task_name` is touched, and only when this job made it (its author, its
+description and its script in `win_restart_dir`). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
 `shutdown /a` on the server within the 60 seconds.
 
 All settings: [win_restart](VARIABLES_REFERENCE.md#win_restart).

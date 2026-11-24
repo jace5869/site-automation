@@ -26,7 +26,7 @@ win_restart_delay_seconds: 60
 win_restart_reason_code: "p:0:0"
 # The scheduled task's folder in Task Scheduler.
 win_restart_task_path: "\\site-automation\\"
-# The scheduled task's name (one per server). Cancel removes only tasks whose name starts with it, in any folder.
+# The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made.
 win_restart_task_name: "site-automation restart"
 # Where the task's script and its settings live on each server (only SYSTEM and Administrators may change it).
 win_restart_dir: 'C:\ProgramData\site-automation\restart'

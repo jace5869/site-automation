@@ -3193,7 +3193,7 @@ File: `roles/win_restart/defaults/main.yml`
 | `win_restart_delay_seconds` | `60` | The warning time before the restart (seconds): shutdown /r /t <this>. Logged-on users see it. |
 | `win_restart_reason_code` | `"p:0:0"` | The shutdown reason code (shutdown /d): p:0:0 = Other (Planned). p:4:1 = Application: Maintenance (Planned). |
 | `win_restart_task_path` | `"\\site-automation\\"` | The scheduled task's folder in Task Scheduler. |
-| `win_restart_task_name` | `"site-automation restart"` | The scheduled task's name (one per server). Cancel removes only tasks whose name starts with it, in any folder. |
+| `win_restart_task_name` | `"site-automation restart"` | The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made. |
 | `win_restart_dir` | `'C:\ProgramData\site-automation\restart'` | Where the task's script and its settings live on each server (only SYSTEM and Administrators may change it). |
 
 ## win_troubleshoot

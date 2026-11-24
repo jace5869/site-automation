@@ -81,7 +81,33 @@ class When(unittest.TestCase):
         # Saturday 12:00 CEST, 11:00 typed: tomorrow (Sunday) is winter time already - CET, UTC+1
         r = w.win_restart_when("11:00", "Europe/Berlin", 5, at(2026, 10, 24, 10, 0))
         self.assertEqual((r["utc"], r["site"]), ("2026-10-25T10:00:00Z", "Sun 2026-10-25 11:00 CET"))
-        self.assertEqual(r["note"], "11:00 today has passed (it is 12:00 now): tomorrow.")
+        self.assertEqual(r["note"], "11:00 today has passed (it is 12:00 CEST now): tomorrow.")
+
+    def test_lead_in_real_time_across_the_change(self):
+        # Berlin 2026-03-29, 01:59 CET (00:59 UTC): 03:02 CEST is 01:02 UTC - 3 minutes away in real time: refused
+        r = w.win_restart_when("03:02", "Europe/Berlin", 5, at(2026, 3, 29, 0, 59))
+        self.assertFalse(r["ok"])
+        self.assertIn("less than 5 minutes", r["error"])
+        r = w.win_restart_when("03:10", "Europe/Berlin", 5, at(2026, 3, 29, 0, 59))
+        self.assertEqual(r["utc"], "2026-03-29T01:10:00Z")
+        # the skipped hour: before the jump it is refused; after it, tomorrow
+        self.assertIn("does not exist", w.win_restart_when("02:30", "Europe/Berlin", 5, at(2026, 3, 29, 0, 30))["error"])
+        r = w.win_restart_when("02:30", "Europe/Berlin", 5, at(2026, 3, 29, 1, 10))          # 03:10 CEST
+        self.assertEqual((r["utc"], r["day"]), ("2026-03-30T00:30:00Z", "tomorrow"))
+
+    def test_twice_first_has_passed(self):
+        # Berlin 2026-10-25 02:10 CET (01:10 UTC, the second 02:10): the first 02:30 (00:30 UTC) has passed - the second, 01:30 UTC
+        r = w.win_restart_when("02:30", "Europe/Berlin", 5, at(2026, 10, 25, 1, 10))
+        self.assertEqual((r["utc"], r["site"], r["day"]), ("2026-10-25T01:30:00Z", "Sun 2026-10-25 02:30 CET", "today"))
+        self.assertIn("the second one (the first has passed)", r["note"])
+        # 02:13 then: the second is 3 minutes away in real time: refused, never the first (past)
+        self.assertIn("less than 5 minutes", w.win_restart_when("02:13", "Europe/Berlin", 5, at(2026, 10, 25, 1, 10))["error"])
+        # 02:05 then: both have passed - tomorrow
+        self.assertEqual(w.win_restart_when("02:05", "Europe/Berlin", 5, at(2026, 10, 25, 1, 10))["utc"], "2026-10-26T01:05:00Z")
+        # still in the first 02:xx (00:10 UTC = 02:10 CEST): 02:30 is the first one
+        r = w.win_restart_when("02:30", "Europe/Berlin", 5, at(2026, 10, 25, 0, 10))
+        self.assertEqual(r["utc"], "2026-10-25T00:30:00Z")
+        self.assertIn("the first one, CEST", r["note"])
 
     def test_bad_input(self):
         for typed in ("", "24:00", "7:5", "12:60", "noon", "1230pm", "12.30", "-1:00", None):
@@ -94,7 +120,7 @@ class When(unittest.TestCase):
 
 class Checks(unittest.TestCase):
     def ok(self, **k):
-        o = dict(reason="Monthly patches", change="CHG0012345", code="p:0:0", delay=60, limited=True, hosts=3, max_hosts=50)
+        o = dict(reason="Monthly patches", change="CHG0012345", code="p:0:0", delay=60, limit="srv-app01,srv-app02", target="", hosts=3, max_hosts=50)
         o.update(k)
         return w.win_restart_check(o)
 
@@ -104,7 +130,18 @@ class Checks(unittest.TestCase):
         self.assertIn("change number", self.ok(change="CHG 1; rm")[0])
         self.assertIn("reason_code", self.ok(code="0:0")[0])
         self.assertIn("delay", self.ok(delay=9999)[0])
-        self.assertIn("no Limit", self.ok(limited=False)[0])
+        for lim, tgt in (("", ""), ("  ", None), ("all", ""), ("*", ""), ("!srv-app01", ""), ("", "all"), (",", " ")):
+            self.assertIn("no servers picked", self.ok(limit=lim, target=tgt)[0], (lim, tgt))
+        self.assertEqual(self.ok(limit="", target="srv-app01"), [])
+        self.assertEqual(self.ok(limit="all", target="srv-app01"), [])
+        self.assertIn("left out by site_exclude_hosts", self.ok(excluded_in=["srv-app01"])[0])
+
+    def test_hosts_pattern(self):
+        # the exclusion is its own comma-separated part: 'A,B:!x' would bind it to B alone
+        self.assertEqual(w.win_restart_hosts("A,B", ":!site_excluded"), "A,B,!site_excluded")
+        self.assertEqual(w.win_restart_hosts(None, ":!site_excluded"), "all,!site_excluded")
+        self.assertEqual(w.win_restart_hosts("web:&prod", ""), "web:&prod")
+        self.assertEqual(w.win_restart_selector("web[01:03]", ""), ["web[01:03]"])
         self.assertIn("at most 50", self.ok(hosts=51)[0])
 
     def test_comment(self):
@@ -163,7 +200,7 @@ class Model(unittest.TestCase):
         self.assertEqual(d["sections"][0]["columns"], ["Server", "Reboot pending", "Why", "Up since", "Restart at (server time)", "Result"])
         dbrow = next(r for r in rows if r[0] == "srv-db01")
         self.assertIn("replaces \\site-automation\\site-automation restart at 2026-11-23 23:00", dbrow[5])
-        self.assertIn("an earlier one of ours stays", next(r for r in rows if r[0] == "srv-app02")[5])
+        self.assertIn("the earlier restart at 2026-11-23 23:00 would be removed", next(r for r in rows if r[0] == "srv-app02")[5])
         self.assertIn("Run it for real", [s["title"] for s in d["sections"]])
         self.assertIn("DRY RUN", d["footer"])
         items = w.win_restart_summary_items(m, WHEN)
@@ -180,10 +217,16 @@ class Model(unittest.TestCase):
         # a restart the script said yes to but no task came back from: failed, never "scheduled"
         m = w.win_restart_model([{"host": "a", "result": res("a", [])}], {"mode": "schedule", "check": False})
         self.assertEqual(m["rows"][0]["status"], "failed")
-        # registration failed after the earlier task was removed: said, never "replaces"
-        m = w.win_restart_model([{"host": "a", "result": res("a", [], error="Access is denied", replaced=[OLD])}], {"mode": "schedule"})
-        self.assertIn("none is scheduled now", m["rows"][0]["error"])
+        # registration failed: the script's roll back words, never "replaces"
+        m = w.win_restart_model([{"host": "a", "result": res("a", [], error="the task could not be registered right (x) - rolled back: "
+                                                                    "the earlier restart (2026-11-23 23:00) is scheduled again")}], {"mode": "schedule"})
+        self.assertIn("rolled back", m["rows"][0]["error"])
         self.assertNotIn("replaces", w.win_restart_doc(m, WHEN)["sections"][0]["rows"][0][5])
+        # only if pending, none pending, an earlier unconditional restart of ours: removed, and said
+        m = w.win_restart_model([{"host": "b", "result": res("b", [], restart=False, ours=[], removed=[OLD])}], {"mode": "schedule"})
+        self.assertEqual(m["rows"][0]["status"], "skipped")
+        self.assertIn("Skipped: no reboot pending; the earlier restart at 2026-11-23 23:00 was removed",
+                      w.win_restart_doc(m, WHEN)["sections"][0]["rows"][0][5])
 
     def test_cancel(self):
         hosts = [{"host": "srv-app01.corp.example.mil", "result": {"ours": [OLD], "removed": [OLD]}},
@@ -298,12 +341,15 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
             with open(fake, "w") as fh:
                 fh.write('#!/bin/sh\necho "$@" > "%s/args.txt"\n' % tmp)
             os.chmod(fake, 0o755)
-            shutil.copy(TASK, os.path.join(tmp, "task", "restart-task.ps1"))
+            shutil.copy(TASK, os.path.join(tmp, "task", "restart-task-20261124-1111.ps1"))
+            # another registration's settings beside it: never read by this one
+            with open(os.path.join(tmp, "task", "restart-20261124-2222.json"), "w") as fh:
+                json.dump({"only_if_pending": False, "comment": "OTHER", "code": "p:0:0", "delay": 1}, fh)
 
             def run(cfg):
-                with open(os.path.join(tmp, "task", "restart.json"), "w") as fh:
+                with open(os.path.join(tmp, "task", "restart-20261124-1111.json"), "w") as fh:
                     json.dump(cfg, fh)
-                return subprocess.run(["pwsh", "-NoProfile", "-File", os.path.join(tmp, "task", "restart-task.ps1")], capture_output=True,
+                return subprocess.run(["pwsh", "-NoProfile", "-File", os.path.join(tmp, "task", "restart-task-20261124-1111.ps1")], capture_output=True,
                                       text=True, timeout=120, env=dict(os.environ, SystemRoot=os.path.join(tmp, "root")))
             r = run({"only_if_pending": False, "comment": "CHG1: Patch (site-automation, AAP job 7)", "code": "p:0:0", "delay": 60})
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -371,6 +417,141 @@ class Constrained(unittest.TestCase):
         p = pwsh("$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n$SiteRestartLibrary = $true\n. '%s'\n"
                  "(Get-SiteRestartReasons -Probes (Read-SiteRestartProbes)).Count\n" % TASK)
         self.assertEqual(p.stdout.strip().splitlines()[-1], "0", p.stdout + p.stderr)
+
+
+# Task Scheduler stand-ins (functions win over commands in PowerShell): a store of tasks by folder + name, built from the
+# XML the script registers; switches make a registration fail or read back wrong
+STORE = r"""
+$global:Store = @{}
+$global:FailRegister = $false
+$global:BadNext = $false
+function Get-ScheduledTask { [CmdletBinding()] param($TaskPath, $TaskName) $global:Store[[string]$TaskPath + [string]$TaskName] }
+function Register-ScheduledTask {
+    [CmdletBinding()] param($Xml, $TaskName, $TaskPath, [switch]$Force)
+    if ($global:FailRegister) { throw 'Access is denied' }
+    $x = [xml]$Xml
+    $t = [pscustomobject]@{ TaskPath = $TaskPath; TaskName = $TaskName; Author = [string]$x.Task.RegistrationInfo.Author;
+                            Description = [string]$x.Task.RegistrationInfo.Description; State = 'Ready'; Xml = $Xml;
+                            Actions = @([pscustomobject]@{ Arguments = [string]$x.Task.Actions.Exec.Arguments });
+                            Triggers = @([pscustomobject]@{ StartBoundary = [string]$x.Task.Triggers.TimeTrigger.StartBoundary }) }
+    $global:Store[[string]$TaskPath + [string]$TaskName] = $t
+    $t
+}
+function Unregister-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath, [switch]$Confirm) $global:Store.Remove([string]$TaskPath + [string]$TaskName) }
+function Get-ScheduledTaskInfo {
+    [CmdletBinding()] param($TaskName, $TaskPath)
+    $t = $global:Store[[string]$TaskPath + [string]$TaskName]
+    $n = [datetime]::Parse($t.Triggers[0].StartBoundary).ToLocalTime()
+    if ($global:BadNext -and $t.Xml.Contains($global:BadNext)) { $n = $n.AddDays(1) }
+    [pscustomobject]@{ NextRunTime = $n }
+}
+function Export-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath) $global:Store[[string]$TaskPath + [string]$TaskName].Xml }
+function icacls.exe { $global:LASTEXITCODE = 0 }
+function Step($cfg) {
+    $env:SITE_CHECK_CONFIG = ($cfg | ConvertTo-Json -Compress)
+    $line = (. $global:PS | Select-Object -Last 1)
+    $o = ConvertFrom-Json ($line -replace '^###SITE-JSON### ', '')
+    $files = @(Get-ChildItem -Path $cfg.dir -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
+    $t = $global:Store[$cfg.task_path + $cfg.task_name]
+    $args_ = ''
+    if ($null -ne $t) { $args_ = [string]$t.Actions[0].Arguments }
+    Write-Output ('STEP ' + (@{ out = $o; files = $files; task = $args_; author = [string]$t.Author } | ConvertTo-Json -Compress -Depth 6))
+}
+"""
+
+
+@unittest.skipUnless(shutil.which("pwsh"), "no pwsh")
+class Registration(unittest.TestCase):
+    """The schedule and cancel actions against stand-in Task Scheduler cmdlets: an earlier restart removed on a skip; another
+    product's task of our name never touched; each registration its own files, the earlier ones kept until the new task reads
+    back right; a failed read-back or registration rolled back, and said."""
+
+    def run_steps(self, steps):
+        tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        try:
+            d = os.path.join(tmp, "restart")
+            os.makedirs(os.path.join(tmp, "root"))
+            at_ = (datetime.datetime.now(U) + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:00Z")
+            at2 = (datetime.datetime.now(U) + datetime.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:00Z")
+            base = {"task_path": "\\site-automation\\", "task_name": "site-automation restart", "dir": d, "code": "p:0:0", "delay": 60,
+                    "task_script": read(TASK), "count_file_renames": False}
+            code = ["$global:PS = '%s'" % PS.replace("'", "''"), STORE]
+            for st in steps:
+                if isinstance(st, str):
+                    code.append(st.replace("{dir}", d))
+                    continue
+                cfg = dict(base, **st)
+                cfg["at_utc"] = at2 if cfg.pop("later", False) else at_
+                cfg.setdefault("comment", "CHG1: Patch (site-automation, AAP job 7)")
+                cfg["description"] = cfg["comment"]
+                code.append("Step (ConvertFrom-Json '%s')" % json.dumps(cfg).replace("'", "''"))
+            r = pwsh("\n".join(code), {"SystemRoot": os.path.join(tmp, "root")})
+            out = [json.loads(x[5:]) for x in r.stdout.splitlines() if x.startswith("STEP ")]
+            self.assertEqual(len(out), len([x for x in steps if not isinstance(x, str)]), r.stdout + r.stderr)
+            return out
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_skip_removes_our_earlier_restart(self):
+        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": True}])
+        self.assertTrue(a["out"]["scheduled"])
+        self.assertTrue(any(f.startswith("restart-task-") for f in a["files"]))
+        self.assertFalse(b["out"]["restart"])
+        self.assertEqual(len(b["out"]["removed"]), 1)                 # the earlier unconditional restart: gone
+        self.assertEqual((b["task"], b["files"]), ("", []))
+        m = w.win_restart_model([{"host": "h", "result": b["out"]}], {"mode": "schedule"})
+        self.assertIn("was removed", w.win_restart_doc(m, WHEN)["sections"][0]["rows"][0][5])
+
+    def test_own_files_and_replace(self):
+        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False, "later": True}])
+        ida, idb = a["out"]["scheduled"]["id"], b["out"]["scheduled"]["id"]
+        self.assertNotEqual(ida, idb)
+        self.assertIn("restart-task-%s.ps1" % idb, b["task"])
+        self.assertEqual(b["files"], ["restart-%s.json" % idb, "restart-task-%s.ps1" % idb])   # the earlier's removed after
+        self.assertEqual(len(b["out"]["replaced"]), 1)
+
+    def test_rollback_on_bad_read_back(self):
+        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False},
+                               "$global:BadNext = 'AAP job 8'",
+                               {"action": "schedule", "only_if_pending": False, "later": True, "comment": "CHG2: x (site-automation, AAP job 8)"}])
+        ida = a["out"]["scheduled"]["id"]
+        self.assertIn("rolled back: the earlier restart", b["out"]["error"])
+        self.assertIn("restart-task-%s.ps1" % ida, b["task"])          # the earlier task is back, with its own files
+        self.assertEqual(b["files"], ["restart-%s.json" % ida, "restart-task-%s.ps1" % ida])
+
+    def test_rollback_when_registration_fails(self):
+        (a,) = self.run_steps(["$global:FailRegister = $true", {"action": "schedule", "only_if_pending": False}])
+        self.assertIn("rolled back: no restart of ours is scheduled", a["out"]["error"])
+        self.assertEqual((a["task"], a["files"]), ("", []))
+
+    def test_another_products_task_is_never_touched(self):
+        foreign = ("$global:Store['\\site-automation\\site-automation restart'] = [pscustomobject]@{ TaskPath = '\\site-automation\\'; "
+                   "TaskName = 'site-automation restart'; Author = 'OtherVendor'; Description = 'their job'; State = 'Ready'; Xml = '<x/>'; "
+                   "Actions = @([pscustomobject]@{ Arguments = '-File C:\\other\\run.ps1' }); Triggers = @() }")
+        a, b, c = self.run_steps([foreign, {"action": "plan", "only_if_pending": False}, {"action": "schedule", "only_if_pending": False},
+                                  {"action": "cancel"}])
+        for x in (a, b, c):
+            self.assertIn("did not make", x["out"]["error"])
+            self.assertEqual(x["author"], "OtherVendor")
+        self.assertEqual(b["files"], [])
+
+    def test_cancel(self):
+        a, b, c = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "list"}, {"action": "cancel"}])
+        self.assertEqual(len(b["out"]["ours"]), 1)
+        self.assertEqual(len(c["out"]["removed"]), 1)
+        self.assertEqual((c["task"], c["files"]), ("", []))
+
+    def test_ours_needs_all_three_marks(self):
+        code = ". '%s'\n" % PS.replace("'", "''") + r"""
+$d = Join-Path ([IO.Path]::GetTempPath()) 'restart'
+$ok = '-NoProfile -File "' + (Join-Path $d 'restart-task-1.ps1') + '"'
+function T($author, $desc, $args_) { Test-SiteOurTask -Task ([pscustomobject]@{ Author = $author; Description = $desc; Actions = @([pscustomobject]@{ Arguments = $args_ }) }) -Dir $d }
+'MARKS ' + (@((T 'site-automation' 'x (site-automation, AAP job 1)' $ok), (T 'Other' 'x (site-automation)' $ok), (T 'site-automation' 'x' $ok),
+  (T 'site-automation' 'x (site-automation)' '-File "/other/restart-task-1.ps1"')) -join ',')
+"""
+        r = pwsh(code, {"SITE_CHECK_CONFIG": json.dumps({"action": "none", "task_name": "x", "task_path": "\\x\\", "dir": "/nonexistent",
+                                                         "task_script": read(TASK)})})
+        self.assertIn("MARKS True,False,False,False", r.stdout, r.stdout + r.stderr)
 
 
 class Catalog(unittest.TestCase):
@@ -450,6 +631,35 @@ class Playbook(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr)
             self.assertIn("srv-app01: NOTHING TO CANCEL", r.stdout)
 
+    @unittest.skipUnless(shutil.which("pwsh"), "no pwsh")
+    def test_excluded_server_left_out(self):
+        # srv-app01 in site_exclude_hosts, A,B picked: only srv-app02 - by target and by Limit; never the excluded one alone
+        bins = [None] + [x for x in [os.environ.get("ANSIBLE_PLAYBOOK")] if x and os.path.exists(x)]
+        for binary in bins:
+            for pb in ("win_restart_cancel.yml", "win_restart_schedule.yml"):
+                for extra in ({"target": "srv-app01,srv-app02"}, {}):
+                    r = self.run_local(pb, dict(extra, site_exclude_hosts=["srv-app01"], win_restart_time="23:59", win_restart_reason="x",
+                                                win_restart_time_zone="UTC", win_restart_min_lead_minutes=0), binary=binary)
+                    self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr)
+                    self.assertIn("The servers (1): srv-app02", r.stdout)
+                    self.assertNotIn("srv-app01: ", r.stdout)
+        # exclusions set, nothing picked: refused (it would be every server left)
+        tmp = tempfile.mkdtemp()
+        try:
+            inv = os.path.join(tmp, "inv")
+            with open(inv, "w") as fh:
+                fh.write("srv-app01 ansible_connection=local\nsrv-app02 ansible_connection=local\n")
+            for pb in ("win_restart_cancel.yml", "win_restart_schedule.yml"):
+                r = subprocess.run(["ansible-playbook", "-i", inv, os.path.join(REPO, "playbooks", pb), "--check", "-e",
+                                    json.dumps({"target": "", "site_exclude_hosts": ["srv-app01"], "site_windows_connections": ["local"],
+                                                "win_restart_time": "23:59", "win_restart_reason": "x", "win_restart_time_zone": "UTC"})],
+                                   capture_output=True, text=True, timeout=300, cwd=REPO, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=tmp))
+                self.assertNotEqual(r.returncode, 0, pb)
+                self.assertIn("no servers picked", r.stdout, pb)
+                self.assertNotIn("Reach the host", r.stdout, pb)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_no_limit_refused(self):
         # no Limit: refused before any server is touched (localhost stands in for a server; nothing connects)
         tmp = tempfile.mkdtemp()
@@ -462,7 +672,7 @@ class Playbook(unittest.TestCase):
                                capture_output=True, text=True, timeout=300, cwd=REPO, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=tmp))
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("Nothing was read or changed", r.stdout)
-            self.assertIn("no Limit", r.stdout)
+            self.assertIn("no servers picked", r.stdout)
             self.assertNotIn("Reach the host", r.stdout)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

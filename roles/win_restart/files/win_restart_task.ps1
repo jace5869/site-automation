@@ -1,5 +1,6 @@
 # site-automation - the scheduled restart (roles/win_restart; docs/WINDOWS.md "Schedule a restart").
-# The job "Windows - schedule a restart" copies this file and restart.json beside it into win_restart_dir and registers a
+# The job "Windows - schedule a restart" writes this file as restart-task-<id>.ps1 with restart-<id>.json beside it
+# (each registration its own, never rewritten) into win_restart_dir and registers a
 # one-time scheduled task (SYSTEM) that runs it at the chosen time. Then:
 #   only_if_pending false: shutdown /r /t <delay> /d <code> /c <comment> (System event 1074 carries the comment)
 #   only_if_pending true:  the pending-reboot state is read again first; none pending = no restart (logged in restart.log
@@ -58,7 +59,10 @@ function Write-SiteRestartLog {
 
 if (-not $SiteRestartLibrary) {
     $dir = $PSScriptRoot
-    $cfg = Get-Content -Path (Join-Path $dir 'restart.json') -Raw | ConvertFrom-Json
+    # this registration's own settings: restart-task-<id>.ps1 reads restart-<id>.json (never another registration's)
+    $json = $PSCommandPath -replace 'restart-task-([^\\]+)\.ps1$', 'restart-$1.json'
+    if ($json -eq $PSCommandPath) { Write-SiteRestartLog -Dir $dir -Text ('NOT RUN - not a registration script: ' + $PSCommandPath); exit 1 }
+    $cfg = Get-Content -Path $json -Raw | ConvertFrom-Json
     $reasons = @()
     if ($cfg.only_if_pending) { $reasons = @(Get-SiteRestartReasons -Probes (Read-SiteRestartProbes) -CountFileRenames ([bool]$cfg.count_file_renames)) }
     $d = Get-SiteRestartDecision -OnlyIfPending ([bool]$cfg.only_if_pending) -Reasons $reasons

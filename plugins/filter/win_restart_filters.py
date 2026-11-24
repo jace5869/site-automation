@@ -20,6 +20,7 @@ except ImportError:                                  # Python before 3.9
     zoneinfo = None
 
 MARK = "###SITE-JSON### "
+U = datetime.timezone.utc
 UTC_NAMES = ("UTC", "Z", "ETC/UTC", "GMT")
 TIME = re.compile(r"^([01]?\d|2[0-3]):?([0-5]\d)$")
 CHANGE = re.compile(r"^[A-Za-z0-9_-]{0,40}$")
@@ -68,32 +69,56 @@ def win_restart_when(text, zone="", min_lead=5, now=None):
     if tz is None:
         out["error"] = why
         return out
-    now = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(tz)
+    now_utc = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(U)
+    now = now_utc.astimezone(tz)
     out["now"] = _show(now)
     lead = datetime.timedelta(minutes=max(0, int(min_lead or 0)))
-    day = now.date()
-    wall = datetime.datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
-    if wall <= now:
-        day = day + datetime.timedelta(days=1)
+
+    def candidates(day):
+        """The moments (UTC) the time stands for that day: one; two when the clocks go back (the first, then the second);
+        none when the clocks skip it - with the first's UTC moment as if it existed (to tell 'passed' from 'ahead')."""
         wall = datetime.datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
-        out["day"] = "tomorrow"
-        out["note"] = "%s today has passed (it is %s now): tomorrow." % (out["time"], now.strftime("%H:%M"))
-    else:
-        out["day"] = "today"
-        if wall - now < lead:
-            out["error"] = ("%s is less than %d minutes away (it is %s now): pick a later time - this job never restarts "
-                            "right away (win_restart_min_lead_minutes)" % (out["time"], lead.seconds // 60, now.strftime("%H:%M")))
+        u0 = wall.astimezone(U)
+        if u0.astimezone(tz).replace(tzinfo=None) != wall.replace(tzinfo=None):
+            return [], u0, wall
+        out_ = [(u0, wall)]
+        w1 = wall.replace(fold=1)
+        if w1.utcoffset() != wall.utcoffset():
+            out_.append((w1.astimezone(U), w1))
+        return out_, u0, wall
+
+    pick, which = None, ""
+    for n, day in enumerate((now.date(), now.date() + datetime.timedelta(days=1))):
+        cands, u0, wall = candidates(day)
+        if not cands:                                  # the clocks skip it that night
+            if n == 0 and now.replace(tzinfo=None) >= wall.replace(tzinfo=None):   # the wall clock is past it (no fold that day)
+                continue                               # the clocks have jumped past it today: tomorrow
+            out["day"] = "today" if n == 0 else "tomorrow"
+            out["error"] = ("%s does not exist on %s in %s (the clocks go forward that night): pick another time"
+                            % (out["time"], wall.strftime("%Y-%m-%d"), out["zone"]))
             return out
-    back = wall.astimezone(datetime.timezone.utc).astimezone(tz)
-    if back.replace(tzinfo=None) != wall.replace(tzinfo=None):
-        out["error"] = ("%s does not exist on %s in %s (the clocks go forward that night): pick another time"
-                        % (out["time"], wall.strftime("%Y-%m-%d"), out["zone"]))
+        ahead = [(u, wl, i) for i, (u, wl) in enumerate(cands) if u > now_utc]
+        if not ahead:
+            continue
+        pick = ahead[0]
+        out["day"] = "today" if n == 0 else "tomorrow"
+        if n == 1:
+            out["note"] = "%s today has passed (it is %s now): tomorrow." % (out["time"], now.strftime("%H:%M %Z"))
+        if len(cands) > 1:
+            which = "the first one" if pick[2] == 0 else "the second one (the first has passed)"
+            out["note"] = (out["note"] + " " if out["note"] else "") + (
+                "%s happens twice on %s (the clocks go back that night): %s, %s." % (out["time"], pick[1].strftime("%Y-%m-%d"), which,
+                                                                                    pick[1].strftime("%Z")))
+        break
+    if pick is None:                                   # cannot happen (tomorrow is always ahead); said, never guessed
+        out["error"] = "%s could not be placed in %s" % (out["time"], out["zone"])
         return out
-    if wall.replace(fold=1).utcoffset() != wall.utcoffset():
-        out["note"] = (out["note"] + " " if out["note"] else "") + (
-            "%s happens twice on %s (the clocks go back that night): the first one, %s." % (out["time"], wall.strftime("%Y-%m-%d"), wall.strftime("%Z")))
-    out["utc"] = wall.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out["site"] = _show(wall)
+    if pick[0] - now_utc < lead:                       # in real time (UTC), not on the wall clock
+        out["error"] = ("%s is less than %d minutes away (it is %s now): pick a later time - this job never restarts "
+                        "right away (win_restart_min_lead_minutes)" % (out["time"], lead.seconds // 60, now.strftime("%H:%M %Z")))
+        return out
+    out["utc"] = pick[0].strftime("%Y-%m-%dT%H:%M:%SZ")
+    out["site"] = _show(pick[1])
     out["ok"] = True
     return out
 
@@ -156,9 +181,7 @@ def win_restart_model(hosts, opts=None):
             rows.append(row)
             continue
         if not r or r.get("error"):
-            err = str(r.get("error") or "no result")[:300]
-            if row["replaced"]:
-                err += " - the earlier restart of ours was removed: none is scheduled now"
+            err = str(r.get("error") or "no result")[:400]
             row.update(status="failed", level="critical", error=err)
             rows.append(row)
             continue
@@ -251,8 +274,10 @@ def win_restart_doc(model, when):
             pass
         elif x["replaced"] or (check and x["ours"] and x["status"] == "would restart"):
             r += " - replaces %s" % "; ".join(_task_line(t) for t in (x["replaced"] or x["ours"]))
-        elif x["ours"] and x["status"] == "skipped":
-            r += " - an earlier one of ours stays: %s" % "; ".join(_task_line(t) for t in x["ours"])
+        elif x["status"] == "skipped" and x["removed"]:
+            r += "; the earlier restart at %s was removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["removed"])
+        elif x["status"] == "skipped" and x["ours"] and check:
+            r += "; the earlier restart at %s would be removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["ours"])
         res.append(r)
     table = {"title": "Servers", "columns": ["Server", "Reboot pending", "Why", "Up since", "Restart at (server time)", "Result"],
              "kinds": ["", "", "wrap", "", "wrap", "wrap"],
@@ -353,6 +378,35 @@ def win_restart_log(model, when=None):
     return out or ["No server in this run."]
 
 
+def _terms(text):
+    """A host pattern -> its picking terms: split at , and : (not inside a [range]), without the exclusions (!x) and the
+    narrowing ones (&x)."""
+    out = []
+    for t in re.split(r"[,:](?![^\[]*\])", str(text or "")):
+        t = t.strip()
+        if t and not t.startswith(("!", "&")):
+            out.append(t)
+    return out
+
+
+def win_restart_selector(limit="", target=""):
+    """The servers the person picked: the Limit's terms, else target's; [] when nothing real was picked (empty, all, *, or
+    only exclusions) - the job then refuses."""
+    for text in (limit, target):
+        terms = [t for t in _terms(text) if t.lower() not in ("all", "*")]
+        if terms:
+            return terms
+    return []
+
+
+def win_restart_hosts(target="", exclude_not=""):
+    """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
+    'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
+    parts = [t.strip() for t in str(target or "all").split(",") if t.strip()] or ["all"]
+    ex = [t for t in re.split(r"[,:]", str(exclude_not or "")) if t.strip()]
+    return ",".join(parts + ex)
+
+
 def win_restart_check(o):
     """The launch's answers -> [] or the reasons the job refuses (nothing is read or changed then)."""
     o = dict(o or {})
@@ -368,8 +422,11 @@ def win_restart_check(o):
             raise ValueError
     except (TypeError, ValueError):
         bad.append("win_restart_delay_seconds is 0 to 600")
-    if not o.get("limited"):
-        bad.append("no Limit: pick the servers (the Limit, or the Hosts box on the site portal) - this job never restarts every server")
+    if not win_restart_selector(o.get("limit"), o.get("target")):
+        bad.append("no servers picked: set the Limit (or the Hosts box on the site portal) to the servers - an empty one, 'all' or "
+                   "only exclusions ('!name') is refused; this job never acts on every server")
+    elif o.get("excluded_in"):
+        bad.append("left out by site_exclude_hosts but in this run: %s - the job stops" % ", ".join(o["excluded_in"]))
     elif int(o.get("hosts") or 0) > int(o.get("max_hosts") or 0):
         bad.append("%s servers in the Limit; at most %s in one run (win_restart_max_hosts)" % (o.get("hosts"), o.get("max_hosts")))
     return bad
@@ -379,4 +436,5 @@ class FilterModule(object):
     def filters(self):
         return {"win_restart_when": win_restart_when, "win_restart_comment": win_restart_comment, "win_restart_parse": win_restart_parse,
                 "win_restart_model": win_restart_model, "win_restart_doc": win_restart_doc, "win_restart_cancel_doc": win_restart_cancel_doc,
-                "win_restart_summary_items": win_restart_summary_items, "win_restart_log": win_restart_log, "win_restart_check": win_restart_check}
+                "win_restart_summary_items": win_restart_summary_items, "win_restart_log": win_restart_log, "win_restart_check": win_restart_check,
+                "win_restart_selector": win_restart_selector, "win_restart_hosts": win_restart_hosts}

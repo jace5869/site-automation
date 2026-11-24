@@ -46,8 +46,8 @@
 ## The scheduled task's folder in Task Scheduler.
 # win_restart_task_path: "\\site-automation\\"
 
-## The scheduled task's name (one per server). Cancel removes only tasks whose name starts with it,
-## in any folder.
+## The scheduled task's name (one per server). Only this exact folder and name is touched, and only
+## a task this job made.
 # win_restart_task_name: "site-automation restart"
 
 ## Where the task's script and its settings live on each server (only SYSTEM and Administrators may
