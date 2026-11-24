@@ -28,6 +28,7 @@
         season_twinkle: "{{ report_theme_season_twinkle | default(true) | bool }}"
         season_snow: "{{ report_theme_season_snow | default(true) | bool }}"
         season_sleigh: "{{ report_theme_season_sleigh | default(true) | bool }}"
+        motion: "{{ 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | trim | lower) }}"      # YAML: an unquoted off is false
         time_zone: "{{ report_time_zone | default('', true) | string | trim }}"      # the copy job's own
         json: "{{ report_web_json | bool }}"
         # the report template's own (kept with its report), else the copy job's

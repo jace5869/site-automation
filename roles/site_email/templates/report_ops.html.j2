@@ -98,7 +98,7 @@
 {%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
 <!DOCTYPE html>
-{%- set _motion = report_motion | default('auto') | string | trim | lower %}
+{%- set _motion = 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | trim | lower) %}{# YAML: an unquoted off is false #}
 <html lang="en"{% if _motion in ['off', 'always'] %} class="motion-{{ _motion }}"{% endif %}>
 <head>
 <meta charset="utf-8">

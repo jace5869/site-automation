@@ -258,6 +258,8 @@ class RealChrome(unittest.TestCase):
             for look in ("brief", "ops"):                                  # every look made for a browser
                 os.makedirs(os.path.join(cls.dir, "%s-%s" % (sub, look)))
                 publish(os.path.join(cls.dir, "%s-%s" % (sub, look)), season, theme=look)
+        os.makedirs(os.path.join(cls.dir, "still"))                         # report_motion: off, unquoted in YAML: false
+        publish(os.path.join(cls.dir, "still"), "christmas", motion=False)
         os.makedirs(os.path.join(cls.dir, "eight"))
         publish(os.path.join(cls.dir, "eight"), "christmas", season_style="8bit", season_snow=False, season_twinkle=False)
         with open(os.path.join(cls.dir, "on", "vm", "latest.html")) as f:
@@ -564,6 +566,13 @@ class RealChrome(unittest.TestCase):
         self.c.js("document.documentElement.classList.add('motion-off')")
         self.parked()
 
+    def test_12b_report_motion_off_parks_it_on_the_index_too(self):
+        for w in (1280, 800):
+            self.open("still/index.html", w, clear=True)                                          # no reduced-motion wish
+            self.assertTrue(self.c.js("document.documentElement.classList.contains('motion-off')"))
+            self.assertEqual(self.shown(".fz-sky"), 1)
+            self.parked()
+
     def test_13_the_snowman_by_the_reports_title_not_on_the_index(self):
         for look in ("", "-brief", "-ops"):
             self.open("on%s/vm/latest.html" % look, clear=True)
@@ -649,6 +658,50 @@ class SleighAndSnowman(unittest.TestCase):
         self.assertNotIn("fz-snowman", h)                                                       # 8bit
         h = sp.shell(sp.Config(dict(base, PORTAL_SEASON="none")), "Actions", body, ME, page="home")
         self.assertNotIn("fz-", h)
+
+    def test_motion_off_unquoted_is_off(self):
+        import site_report_web as rw
+        for v in ("off", "OFF ", False, "false", "no", "0"):
+            self.assertEqual(rw.motion_of(v), "off", v)
+        self.assertEqual(rw.motion_of("Always"), "always")
+        for v in ("auto", "", None, "sideways", True):
+            self.assertEqual(rw.motion_of(v), "auto", v)
+        args = ([], "index.html", "Site automation", None, "2026-12-14 09:30 CET", (), "atlas")
+        self.assertIn('<html lang="en" class="motion-off">', rw.index_html(*args, motion=False))
+        self.assertIn('<html lang="en" class="motion-always">', rw.index_html(*args, motion="always"))
+        self.assertIn('<html lang="en">', rw.index_html(*args))
+        import test_report_hover as trh
+        env = trh.EmailTiles()._env()
+        for look in ("atlas", "brief", "ops"):
+            for v, cls in ((False, ' class="motion-off"'), ("off", ' class="motion-off"'), ("always", ' class="motion-always"'), ("auto", "")):
+                h = env.get_template("report_%s.html.j2" % look).render(_report=REPORT, _email_footer="", report_email_header_text="x", report_motion=v)
+                self.assertIn('<html lang="en"%s>' % cls, h, (look, v))
+        d = tempfile.mkdtemp()
+        try:
+            publish(d, "christmas", motion=False)
+            with open(os.path.join(d, "index.html")) as fh:
+                self.assertRegex(fh.read(), r'<html [^>]*lang="en" class="motion-off">')
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_every_report_motion_reader_takes_false_as_off(self):
+        def rd(*p):
+            with open(os.path.join(REPO, *p)) as fh:
+                return fh.read()
+        off = "'off' if report_motion | default('auto') is sameas false else"
+        for f in (("roles", "site_email", "templates", "report_atlas.html.j2"), ("roles", "site_email", "templates", "report_brief.html.j2"),
+                  ("roles", "site_email", "templates", "report_ops.html.j2"), ("roles", "ad_report", "tasks", "main.yml"),
+                  ("roles", "netmap_report", "tasks", "main.yml"), ("roles", "servicenow_insights", "tasks", "main.yml")):
+            self.assertIn(off, rd(*f), f)
+        for f in ("main.yml", "copy_page.yml", "pages.yml"):
+            self.assertIn('motion: "{{ %s' % off, rd("roles", "site_email", "tasks", f), f)
+        import subprocess as sp_
+        out = sp_.run(["git", "grep", "-n", "report_motion", "--", "roles/*.yml", "roles/*.j2", "playbooks"], cwd=REPO,
+                      stdout=sp_.PIPE, universal_newlines=True).stdout
+        for line in out.splitlines():                                    # any new reader must take false as off too
+            code = line.split(":", 2)[2]
+            if ("{{" in code or "{%" in code) and "report_motion" in code and "defaults/" not in line:
+                self.assertIn("sameas false", code, line)
 
     def test_the_setting_is_wired(self):
         def rd(*p):

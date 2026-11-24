@@ -487,7 +487,8 @@ report_theme_season: auto        # none (default) | christmas | auto (Dec 1 to J
   any width - about 3 seconds after a page opens and then every 4 minutes, 18 seconds from left to right. It does not
   fly again on the next page if it flew less than 4 minutes ago (the time is kept in that browser). It takes no click.
   With Lights off there is no strip, so no sleigh. The **snowman** is beside the title, on its line, and waves now and then.
-- **Less motion**: when the viewer's system asks for reduced motion, or with `report_motion: off`, the lights do not
+- **Less motion**: when the viewer's system asks for reduced motion, or with `report_motion: off` (quoted or not - YAML's
+  `false` counts as off, on the report pages and the index alike), the lights do not
   twinkle and there is no snow (their switches are not offered), the sleigh stands still at the bar's right end and the
   snowman does not wave, whatever else is set.
 - **The content never changes**: At a glance, the tables, the chips and the status colours are the same as with the

@@ -118,7 +118,7 @@
     _nm_doc: "{{ _nm | netmap_doc(_nm_opts) }}"
     _nm_doc_web: "{{ _nm | netmap_doc(_nm_opts | combine({'web': true})) }}"
     _nm_xlsx: "{{ _nm | netmap_xlsx if netmap_xlsx | bool and _nm.reachable else [] }}"
-    _nm_extra: "{{ _nm | netmap_page_extra(report_motion | default('auto') | string | lower, _nm_ad) }}"
+    _nm_extra: "{{ _nm | netmap_page_extra('off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | lower), _nm_ad) }}"
 
 - name: Network map | what was read (one line a site) and what could not be
   ansible.builtin.debug:
