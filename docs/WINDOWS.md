@@ -585,8 +585,9 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
 
 ### Run it
 
-1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit, `all`, or only
-   exclusions (`!name`) is refused; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
+1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit, `all`, only
+   exclusions (`!name`) or a Limit from a file (`@file`) is refused, and so is a run with a server the Limit did not
+   name; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
    will act on. Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
@@ -622,7 +623,9 @@ What the job does on each server:
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
 - The task's script and settings are in `win_restart_dir` (`C:\ProgramData\site-automation\restart`), readable by
   SYSTEM and Administrators only.
-- It never restarts a server right away.
+- It never restarts a server right away. Run in Task Scheduler is switched off for the task, and the task's script does
+  nothing when it starts more than 2 minutes before its time (a line in `restart.log`).
+- One schedule or cancel at a time per server (`restart.lock` in that folder; one older than 10 minutes is taken as left over).
 - Like every Windows job here, it runs its scripts with Ansible's `script` module. The scripts run in Constrained
   Language Mode; whether Ansible itself gets through on such a server depends on your ansible-core version (step 5).
 

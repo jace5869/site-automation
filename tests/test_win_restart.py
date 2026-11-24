@@ -135,6 +135,16 @@ class Checks(unittest.TestCase):
         self.assertEqual(self.ok(limit="", target="srv-app01"), [])
         self.assertEqual(self.ok(limit="all", target="srv-app01"), [])
         self.assertIn("left out by site_exclude_hosts", self.ok(excluded_in=["srv-app01"])[0])
+        # a Limit from a file: refused (an empty one would pick every server)
+        for lim in ("@hosts.txt", "srv-app01,@more.txt"):
+            self.assertIn("pick the servers by name", self.ok(limit=lim)[0])
+        self.assertIn("pick the servers by name", self.ok(limit="", target="@hosts.txt")[0])
+        # every server of the run was named; none resolved: refused
+        self.assertIn("matches no server", self.ok(resolved=[])[0])
+        self.assertIn("not named in the Limit: srv-db01", self.ok(resolved=["srv-app01", "srv-db01"])[0])
+        self.assertEqual(self.ok(limit="web[01:03],grp", resolved=["web02.corp.example.mil", "srv-x"], groups={"grp": ["srv-x"]}), [])
+        self.assertIn("web04", self.ok(limit="web[01:03]", resolved=["web04"])[0])
+        self.assertEqual(self.ok(limit="SRV-APP*", resolved=["srv-app01.corp.example.mil"]), [])
 
     def test_hosts_pattern(self):
         # the exclusion is its own comma-separated part: 'A,B:!x' would bind it to B alone
@@ -351,13 +361,20 @@ ConvertTo-Json -InputObject $out -Depth 4 -Compress
                     json.dump(cfg, fh)
                 return subprocess.run(["pwsh", "-NoProfile", "-File", os.path.join(tmp, "task", "restart-task-20261124-1111.ps1")], capture_output=True,
                                       text=True, timeout=120, env=dict(os.environ, SystemRoot=os.path.join(tmp, "root")))
-            r = run({"only_if_pending": False, "comment": "CHG1: Patch (site-automation, AAP job 7)", "code": "p:0:0", "delay": 60})
+            now_ = datetime.datetime.now(U).strftime("%Y-%m-%dT%H:%M:%SZ")
+            later = (datetime.datetime.now(U) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # Run clicked in Task Scheduler an hour early: nothing
+            r = run({"only_if_pending": False, "comment": "x", "code": "p:0:0", "delay": 60, "at_utc": later})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "args.txt")))
+            os.unlink(os.path.join(tmp, "task", "restart.log"))
+            r = run({"only_if_pending": False, "comment": "CHG1: Patch (site-automation, AAP job 7)", "code": "p:0:0", "delay": 60, "at_utc": now_})
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             with open(os.path.join(tmp, "args.txt")) as fh:
                 self.assertEqual(fh.read().strip(), "/r /t 60 /d p:0:0 /c CHG1: Patch (site-automation, AAP job 7)")
             os.unlink(os.path.join(tmp, "args.txt"))
             # only if pending, nothing pending here: no shutdown, a SKIPPED line
-            r = run({"only_if_pending": True, "comment": "x", "code": "p:0:0", "delay": 60})
+            r = run({"only_if_pending": True, "comment": "x", "code": "p:0:0", "delay": 60, "at_utc": now_})
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertFalse(os.path.exists(os.path.join(tmp, "args.txt")))
             with open(os.path.join(tmp, "task", "restart.log")) as fh:
@@ -408,6 +425,7 @@ class Constrained(unittest.TestCase):
         ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
         self.assertEqual(root.find("t:Triggers/t:TimeTrigger/t:StartBoundary", ns).text, "2026-11-25T03:30:00Z")
         self.assertEqual(root.find("t:Settings/t:StartWhenAvailable", ns).text, "false")
+        self.assertEqual(root.find("t:Settings/t:AllowStartOnDemand", ns).text, "false")      # no Run by hand
         self.assertEqual(root.find("t:Settings/t:DeleteExpiredTaskAfter", ns).text, "P1D")
         self.assertEqual(root.find("t:RegistrationInfo/t:Description", ns).text, 'CHG1: a & b <c> "d"')
         self.assertEqual(root.find("t:Actions/t:Exec/t:Arguments", ns).text, '-File "C:\\x y\\restart-task.ps1"')
@@ -425,10 +443,19 @@ STORE = r"""
 $global:Store = @{}
 $global:FailRegister = $false
 $global:BadNext = $false
-function Get-ScheduledTask { [CmdletBinding()] param($TaskPath, $TaskName) $global:Store[[string]$TaskPath + [string]$TaskName] }
+$global:FailList = $false
+$global:Inject = ''
+function Get-ScheduledTask {
+    [CmdletBinding()] param($TaskPath, $TaskName)
+    if ($global:FailList) { throw 'The RPC server is unavailable' }
+    if ($TaskName) { return $global:Store[[string]$TaskPath + [string]$TaskName] }
+    $global:Store.Values
+}
 function Register-ScheduledTask {
     [CmdletBinding()] param($Xml, $TaskName, $TaskPath, [switch]$Force)
+    if ($global:Inject) { Invoke-Expression $global:Inject; $global:Inject = '' }       # something else acts right before
     if ($global:FailRegister) { throw 'Access is denied' }
+    if (-not $Force -and $global:Store.ContainsKey([string]$TaskPath + [string]$TaskName)) { throw 'Cannot create a file when that file already exists' }
     $x = [xml]$Xml
     $t = [pscustomobject]@{ TaskPath = $TaskPath; TaskName = $TaskName; Author = [string]$x.Task.RegistrationInfo.Author;
                             Description = [string]$x.Task.RegistrationInfo.Description; State = 'Ready'; Xml = $Xml;
@@ -521,6 +548,11 @@ class Registration(unittest.TestCase):
 
     def test_rollback_when_registration_fails(self):
         (a,) = self.run_steps(["$global:FailRegister = $true", {"action": "schedule", "only_if_pending": False}])
+        self.assertIn("nothing this run registered is there: left as it is", a["out"]["error"])
+        self.assertEqual((a["task"], a["files"]), ("", []))
+
+    def test_rollback_new_task_when_none_before(self):
+        (a,) = self.run_steps(["$global:BadNext = 'AAP job 7'", {"action": "schedule", "only_if_pending": False}])
         self.assertIn("rolled back: no restart of ours is scheduled", a["out"]["error"])
         self.assertEqual((a["task"], a["files"]), ("", []))
 
@@ -534,6 +566,37 @@ class Registration(unittest.TestCase):
             self.assertIn("did not make", x["out"]["error"])
             self.assertEqual(x["author"], "OtherVendor")
         self.assertEqual(b["files"], [])
+
+    def test_vendor_task_made_meanwhile_is_left(self):
+        foreign = ("$global:Store['\\site-automation\\site-automation restart'] = [pscustomobject]@{ TaskPath = '\\site-automation\\'; "
+                   "TaskName = 'site-automation restart'; Author = 'OtherVendor'; Description = 'theirs'; State = 'Ready'; Xml = '<x/>'; "
+                   "Actions = @([pscustomobject]@{ Arguments = '-File C:\\other\\run.ps1' }); Triggers = @() }")
+        (a,) = self.run_steps(['$global:Inject = "%s"' % foreign.replace('"', '`"').replace("$", "`$"), {"action": "schedule", "only_if_pending": False}])
+        self.assertIn("nothing this run registered is there: left as it is", a["out"]["error"])
+        self.assertEqual(a["author"], "OtherVendor")                  # never overwritten, never deleted
+        self.assertEqual(a["files"], [])
+
+    def test_lookup_error_stops(self):
+        (a,) = self.run_steps(["$global:FailList = $true", {"action": "schedule", "only_if_pending": False}])
+        self.assertIn("RPC server is unavailable", a["out"]["error"])
+        self.assertEqual((a["task"], a["files"]), ("", []))
+
+    def test_lock(self):
+        a, b = self.run_steps(["New-Item -ItemType Directory -Path '{dir}' -Force | Out-Null; New-Item -ItemType File -Path (Join-Path '{dir}' 'restart.lock') | Out-Null",
+                               {"action": "schedule", "only_if_pending": False},
+                               "(Get-Item (Join-Path '{dir}' 'restart.lock')).LastWriteTime = (Get-Date).AddMinutes(-20)",
+                               {"action": "schedule", "only_if_pending": False}])
+        self.assertIn("another schedule or cancel", a["out"]["error"])
+        self.assertEqual(a["task"], "")
+        self.assertTrue(b["out"]["scheduled"])                         # a lock older than 10 minutes is left over
+        self.assertNotIn("restart.lock", b["files"])
+
+    def test_only_the_replaced_registrations_files(self):
+        a, b = self.run_steps([{"action": "schedule", "only_if_pending": False},
+                               "Set-Content -Path (Join-Path '{dir}' 'restart-task-20990101000000-1234.ps1') -Value 'x'",
+                               {"action": "schedule", "only_if_pending": False, "later": True}])
+        idb = b["out"]["scheduled"]["id"]
+        self.assertEqual(b["files"], sorted(["restart-%s.json" % idb, "restart-task-%s.ps1" % idb, "restart-task-20990101000000-1234.ps1"]))
 
     def test_cancel(self):
         a, b, c = self.run_steps([{"action": "schedule", "only_if_pending": False}, {"action": "list"}, {"action": "cancel"}])

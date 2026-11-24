@@ -63,6 +63,18 @@ if (-not $SiteRestartLibrary) {
     $json = $PSCommandPath -replace 'restart-task-([^\\]+)\.ps1$', 'restart-$1.json'
     if ($json -eq $PSCommandPath) { Write-SiteRestartLog -Dir $dir -Text ('NOT RUN - not a registration script: ' + $PSCommandPath); exit 1 }
     $cfg = Get-Content -Path $json -Raw | ConvertFrom-Json
+    # never before its time: a Run clicked in Task Scheduler (or a clock that jumped) does nothing earlier than 2 minutes before
+    $atU = $null
+    if ($cfg.at_utc -is [datetime]) { $atU = $cfg.at_utc.ToUniversalTime() }
+    elseif ([string]$cfg.at_utc) {
+        $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+        $atU = [DateTime]::Parse([string]$cfg.at_utc, [Globalization.CultureInfo]::InvariantCulture, $styles)
+    }
+    if ($null -eq $atU) { Write-SiteRestartLog -Dir $dir -Text 'NOT RUN - no restart time in its settings'; exit 0 }
+    if ((Get-Date).ToUniversalTime() -lt $atU.AddMinutes(-2)) {
+        Write-SiteRestartLog -Dir $dir -Text ('NOT YET - started before its time (' + $atU.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + '): no restart')
+        exit 0
+    }
     $reasons = @()
     if ($cfg.only_if_pending) { $reasons = @(Get-SiteRestartReasons -Probes (Read-SiteRestartProbes) -CountFileRenames ([bool]$cfg.count_file_renames)) }
     $d = Get-SiteRestartDecision -OnlyIfPending ([bool]$cfg.only_if_pending) -Reasons $reasons

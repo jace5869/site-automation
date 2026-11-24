@@ -399,6 +399,46 @@ def win_restart_selector(limit="", target=""):
     return []
 
 
+def _match(host, term):
+    """A host against an Ansible host pattern term: * and ?, and a range web[01:03] (web01, web02, web03)."""
+    out, i = "", 0
+    for m in re.finditer(r"\[(\d+):(\d+)\]|\[([a-z]):([a-z])\]", term):
+        out += _glob(term[i:m.start()])
+        if m.group(1) is not None:
+            a, b, w = int(m.group(1)), int(m.group(2)), len(m.group(1))
+            out += "(?:%s)" % "|".join("%0*d" % (w, n) for n in range(a, b + 1))
+        else:
+            out += "[%s-%s]" % (m.group(3), m.group(4))
+        i = m.end()
+    out += _glob(term[i:])
+    return re.fullmatch(out, host) is not None
+
+
+def _glob(text):
+    return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in text)
+
+
+def win_restart_unnamed(hosts, terms, groups=None):
+    """The hosts of the run that no picked term names: a host name (any case; a short name too), a pattern of them (* ? [..]),
+    or an inventory group the host is in. [] when every one was picked."""
+    groups = groups or {}
+    out = []
+    for h in hosts or []:
+        h_ = str(h).lower()
+        ok = False
+        for t in terms or []:
+            tl = t.lower().lstrip("~")
+            if t in groups and h in (groups.get(t) or []):
+                ok = True
+            elif tl in (h_, h_.split(".")[0]) or any(_match(x, tl) for x in (h_, h_.split(".")[0])):
+                ok = True
+            if ok:
+                break
+        if not ok:
+            out.append(str(h))
+    return out
+
+
 def win_restart_hosts(target="", exclude_not=""):
     """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
     'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
@@ -422,9 +462,17 @@ def win_restart_check(o):
             raise ValueError
     except (TypeError, ValueError):
         bad.append("win_restart_delay_seconds is 0 to 600")
-    if not win_restart_selector(o.get("limit"), o.get("target")):
+    if any(t.startswith("@") for t in _terms(o.get("limit")) + _terms(o.get("target"))):
+        bad.append("a Limit from a file (@file) is not taken here: pick the servers by name (or group) in the Limit")
+    elif not win_restart_selector(o.get("limit"), o.get("target")):
         bad.append("no servers picked: set the Limit (or the Hosts box on the site portal) to the servers - an empty one, 'all' or "
                    "only exclusions ('!name') is refused; this job never acts on every server")
+    elif o.get("resolved") is not None and not o["resolved"]:
+        bad.append("the Limit matches no server")
+    elif o.get("resolved") is not None and win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")),
+                                                                o.get("groups") or {}):
+        bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(
+            win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")), o.get("groups") or {})))
     elif o.get("excluded_in"):
         bad.append("left out by site_exclude_hosts but in this run: %s - the job stops" % ", ".join(o["excluded_in"]))
     elif int(o.get("hosts") or 0) > int(o.get("max_hosts") or 0):
@@ -437,4 +485,5 @@ class FilterModule(object):
         return {"win_restart_when": win_restart_when, "win_restart_comment": win_restart_comment, "win_restart_parse": win_restart_parse,
                 "win_restart_model": win_restart_model, "win_restart_doc": win_restart_doc, "win_restart_cancel_doc": win_restart_cancel_doc,
                 "win_restart_summary_items": win_restart_summary_items, "win_restart_log": win_restart_log, "win_restart_check": win_restart_check,
-                "win_restart_selector": win_restart_selector, "win_restart_hosts": win_restart_hosts}
+                "win_restart_selector": win_restart_selector, "win_restart_hosts": win_restart_hosts,
+                "win_restart_unnamed": win_restart_unnamed}

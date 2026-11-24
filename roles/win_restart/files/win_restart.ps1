@@ -51,6 +51,7 @@ function New-SiteRestartTaskXml {
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>false</StartWhenAvailable>
+    <AllowStartOnDemand>false</AllowStartOnDemand>
     <ExecutionTimeLimit>PT15M</ExecutionTimeLimit>
     <DeleteExpiredTaskAfter>P1D</DeleteExpiredTaskAfter>
     <Enabled>true</Enabled>
@@ -71,12 +72,27 @@ function Test-SiteOurTask {
     return ([string]$acts[0].Arguments).Contains('-File "' + (Join-Path $Dir 'restart-task-'))
 }
 
+function Find-SiteTask {
+    # the task of that exact folder and name, or $null. A failed lookup stops the run (never taken as "none there").
+    param([string]$Path, [string]$Name)
+    if ($null -eq (Get-Command -Name Get-ScheduledTask -ErrorAction SilentlyContinue)) { return $null }
+    $all = @(Get-ScheduledTask -ErrorAction Stop)
+    return ($all | Where-Object { [string]$_.TaskPath -eq $Path -and [string]$_.TaskName -eq $Name } | Select-Object -First 1)
+}
+
+function Get-SiteRegistrationId {
+    # the registration id in a task of ours: its action's restart-task-<id>.ps1
+    param($Task)
+    $m = [regex]::Match([string]@($Task.Actions)[0].Arguments, 'restart-task-([0-9]+-[0-9]+)\.ps1')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return ''
+}
+
 function Get-SiteRestartTask {
     # our one task: the exact folder and name only -> @{ ours = @(its facts) or @(); collision = '' or why it is not ours }
     param([string]$Path, [string]$Name, [string]$Dir)
     $res = @{ ours = @(); collision = '' }
-    if ($null -eq (Get-Command -Name Get-ScheduledTask -ErrorAction SilentlyContinue)) { return $res }
-    $t = Get-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction SilentlyContinue
+    $t = Find-SiteTask -Path $Path -Name $Name
     if ($null -eq $t) { return $res }
     if (-not (Test-SiteOurTask -Task $t -Dir $Dir)) {
         $res.collision = ('a task ' + $Path + $Name + ' is there that this job did not make (author ' + [string]$t.Author +
@@ -92,20 +108,42 @@ function Get-SiteRestartTask {
     $start = ''
     if (@($t.Triggers).Count -gt 0) { $start = [string]@($t.Triggers)[0].StartBoundary }
     $res.ours = @(@{ path = $Path; name = $Name; state = [string]$t.State; next_run = $next; start = $start;
-                     description = [string]$t.Description })
+                     description = [string]$t.Description; id = (Get-SiteRegistrationId -Task $t) })
     return $res
 }
 
 function Remove-SiteRestartFiles {
-    # our task scripts and settings in our folder, but the registration $Keep (restart.log stays)
-    param([string]$Dir, [string]$Keep = '')
-    if (-not (Test-Path -Path $Dir)) { return }
-    foreach ($f in @(Get-ChildItem -Path $Dir -File -ErrorAction SilentlyContinue)) {
-        $n = [string]$f.Name
-        if (($n -like 'restart-task-*.ps1' -or $n -like 'restart-*.json') -and -not ($Keep -and $n.Contains($Keep))) {
-            Remove-Item -LiteralPath $f.FullName -Force
-        }
+    # one registration's script and settings in our folder (restart.log and every other registration's stay)
+    param([string]$Dir, [string]$Id)
+    if (-not $Id) { return }
+    foreach ($n in @(('restart-task-' + $Id + '.ps1'), ('restart-' + $Id + '.json'))) {
+        $f = Join-Path $Dir $n
+        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
     }
+}
+
+function Initialize-SiteRestartDir {
+    # the folder: only SYSTEM and Administrators (the task runs its script as SYSTEM); owner Administrators, nothing inherited
+    param([string]$Dir)
+    $null = New-Item -ItemType Directory -Path $Dir -Force
+    $null = & icacls.exe $Dir /setowner '*S-1-5-32-544'
+    if ($LASTEXITCODE -ne 0) { throw ('icacls /setowner on ' + $Dir + ' failed (' + $LASTEXITCODE + ')') }
+    $null = & icacls.exe $Dir /reset
+    $null = & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+    if ($LASTEXITCODE -ne 0) { throw ('icacls on ' + $Dir + ' failed (' + $LASTEXITCODE + ')') }
+}
+
+function Enter-SiteRestartLock {
+    # one schedule or cancel at a time on a server: restart.lock in our folder; one older than 10 minutes is left over
+    param([string]$Dir)
+    $lock = Join-Path $Dir 'restart.lock'
+    if (Test-Path -LiteralPath $lock) {
+        if ((Get-Item -LiteralPath $lock).LastWriteTime -lt (Get-Date).AddMinutes(-10)) { Remove-Item -LiteralPath $lock -Force }
+        else { throw ('another schedule or cancel of a restart is running on this server (' + $lock + '): launch it again in a few minutes') }
+    }
+    try { $null = New-Item -ItemType File -Path $lock -ErrorAction Stop }
+    catch { throw ('another schedule or cancel of a restart is running on this server (' + $lock + '): launch it again in a few minutes') }
+    return $lock
 }
 
 $out = @{ computer = $env:COMPUTERNAME; action = [string]$cfg.action }
@@ -135,91 +173,105 @@ try {
     }
     $dir = [string]$cfg.dir
     $tpath = [string]$cfg.task_path
-    $task = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
-    $ours = $task.ours
-    $out.ours = $ours
-    if ($task.collision) { throw $task.collision }
-    if ($cfg.action -eq 'schedule' -and -not $out.restart) {
-        # skipped (only if pending, none pending): an earlier restart of ours must not stay armed
-        if ($ours.Count -gt 0) {
+    $lock = ''
+    if ($cfg.action -in @('schedule', 'cancel')) {
+        Initialize-SiteRestartDir -Dir $dir
+        $lock = Enter-SiteRestartLock -Dir $dir
+    }
+    try {
+        $task = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
+        $ours = $task.ours
+        $out.ours = $ours
+        if ($task.collision) { throw $task.collision }
+        if ($cfg.action -eq 'schedule' -and -not $out.restart -and $ours.Count -gt 0) {
+            # skipped (only if pending, none pending): an earlier restart of ours must not stay armed
             Unregister-ScheduledTask -TaskName $prefix -TaskPath $tpath -Confirm:$false
-            Remove-SiteRestartFiles -Dir $dir
+            Remove-SiteRestartFiles -Dir $dir -Id ([string]$ours[0].id)
             $out.removed = $ours
         }
-    }
-    if ($cfg.action -eq 'schedule' -and $out.restart) {
-        if ($atUtc -le (Get-Date).ToUniversalTime().AddSeconds(60)) {
-            throw ('the restart time ' + $out.at_local + ' has passed while the job ran: launch it again')
-        }
-        if ($null -eq (Get-Command -Name Register-ScheduledTask -ErrorAction SilentlyContinue)) {
-            throw 'Register-ScheduledTask is not on this server (Windows Server 2012 or later has it)'
-        }
-        # the folder: only SYSTEM and Administrators (the task runs its script as SYSTEM); owner Administrators, nothing inherited
-        $null = New-Item -ItemType Directory -Path $dir -Force
-        $null = & icacls.exe $dir /setowner '*S-1-5-32-544'
-        if ($LASTEXITCODE -ne 0) { throw ('icacls /setowner on ' + $dir + ' failed (' + $LASTEXITCODE + ')') }
-        $null = & icacls.exe $dir /reset
-        $null = & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
-        if ($LASTEXITCODE -ne 0) { throw ('icacls on ' + $dir + ' failed (' + $LASTEXITCODE + ')') }
-        # this registration's own files, never rewritten: an earlier task keeps reading its own until it is gone
-        $rid = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-' + [string](Get-Random -Minimum 1000 -Maximum 9999)
-        $script = Join-Path $dir ('restart-task-' + $rid + '.ps1')
-        $json = Join-Path $dir ('restart-' + $rid + '.json')
-        Set-Content -Path $script -Value ([string]$cfg.task_script) -Encoding ASCII
-        $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
-                          comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc }
-        Set-Content -Path $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
-        $oldXml = ''
-        if ($ours.Count -gt 0) { $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath) }
-        $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $xml = New-SiteRestartTaskXml -StartUtc $atUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") -EndUtc $atUtc.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") `
-            -Command $ps -Arguments ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"') -Description ([string]$cfg.description)
-        try {
-            # -Force replaces our earlier task in one step: there is never a moment with both, or (before this) with none
-            $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath -Force
-            $info = Get-ScheduledTaskInfo -TaskName $prefix -TaskPath $tpath
-            $next = $info.NextRunTime
-            if ($null -eq $next -or (($next.ToUniversalTime() - $atUtc).TotalMinutes -gt 1) -or (($atUtc - $next.ToUniversalTime()).TotalMinutes -gt 1)) {
-                throw ('its next run (' + [string]$next + ') is not ' + $out.at_local)
+        if ($cfg.action -eq 'schedule' -and $out.restart) {
+            if ($atUtc -le (Get-Date).ToUniversalTime().AddSeconds(60)) {
+                throw ('the restart time ' + $out.at_local + ' has passed while the job ran: launch it again')
             }
-            $back = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
-            if ($back.collision -or $back.ours.Count -ne 1 -or -not ([string]$back.ours[0].description).Contains([string]$cfg.description)) {
-                throw 'it does not read back as ours'
+            if ($null -eq (Get-Command -Name Register-ScheduledTask -ErrorAction SilentlyContinue)) {
+                throw 'Register-ScheduledTask is not on this server (Windows Server 2012 or later has it)'
             }
-        }
-        catch {
-            $why = [string]$_.Exception.Message
-            $undo = ''
+            # this registration's own files, never rewritten: an earlier task keeps reading its own until it is replaced
+            $rid = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-' + [string](Get-Random -Minimum 1000 -Maximum 9999)
+            $script = Join-Path $dir ('restart-task-' + $rid + '.ps1')
+            $json = Join-Path $dir ('restart-' + $rid + '.json')
+            Set-Content -Path $script -Value ([string]$cfg.task_script) -Encoding ASCII
+            $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
+                              comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc }
+            Set-Content -Path $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
+            $oldXml = ''
+            if ($ours.Count -gt 0) { $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath) }
+            $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $xml = New-SiteRestartTaskXml -StartUtc $atUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") -EndUtc $atUtc.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") `
+                -Command $ps -Arguments ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"') -Description ([string]$cfg.description)
             try {
-                if ($oldXml) {
-                    $null = Register-ScheduledTask -Xml $oldXml -TaskName $prefix -TaskPath $tpath -Force
-                    $undo = 'rolled back: the earlier restart (' + [string]$ours[0].next_run + ') is scheduled again'
+                if ($ours.Count -gt 0) {
+                    # replace only the task verified as ours in this run, checked again right before (one step: never both, never none)
+                    $again = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
+                    if ($again.collision -or $again.ours.Count -ne 1 -or [string]$again.ours[0].id -ne [string]$ours[0].id) {
+                        throw 'the task changed while this job ran'
+                    }
+                    $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath -Force
                 }
                 else {
-                    if ($null -ne (Get-ScheduledTask -TaskPath $tpath -TaskName $prefix -ErrorAction SilentlyContinue)) {
-                        Unregister-ScheduledTask -TaskName $prefix -TaskPath $tpath -Confirm:$false
-                    }
-                    $undo = 'rolled back: no restart of ours is scheduled on this server'
+                    # none there: create only - a task of that name made meanwhile by anything else makes this fail, untouched
+                    $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath
                 }
-                foreach ($f in @($script, $json)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+                $info = Get-ScheduledTaskInfo -TaskName $prefix -TaskPath $tpath
+                $next = $info.NextRunTime
+                if ($null -eq $next -or (($next.ToUniversalTime() - $atUtc).TotalMinutes -gt 1) -or (($atUtc - $next.ToUniversalTime()).TotalMinutes -gt 1)) {
+                    throw ('its next run (' + [string]$next + ') is not ' + $out.at_local)
+                }
+                $back = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
+                if ($back.collision -or $back.ours.Count -ne 1 -or [string]$back.ours[0].id -ne $rid) { throw 'it does not read back as ours' }
             }
-            catch { $undo = 'the roll back failed too (' + [string]$_.Exception.Message + '): check Task Scheduler ' + $tpath + $prefix + ' by hand' }
-            throw ('the task could not be registered right (' + $why + ') - ' + $undo)
+            catch {
+                $why = [string]$_.Exception.Message
+                $undo = ''
+                try {
+                    # only what this run wrote is undone: the task there now must carry this run's registration id
+                    $cur = Find-SiteTask -Path $tpath -Name $prefix
+                    $mine = ($null -ne $cur) -and (Test-SiteOurTask -Task $cur -Dir $dir) -and ((Get-SiteRegistrationId -Task $cur) -eq $rid)
+                    if (-not $mine) {
+                        $undo = 'nothing this run registered is there: left as it is'
+                        if ($ours.Count -gt 0) { $undo += ' (the earlier restart, ' + [string]$ours[0].next_run + ', stays)' }
+                    }
+                    elseif ($oldXml) {
+                        $null = Register-ScheduledTask -Xml $oldXml -TaskName $prefix -TaskPath $tpath -Force
+                        $undo = 'rolled back: the earlier restart (' + [string]$ours[0].next_run + ') is scheduled again'
+                    }
+                    else {
+                        Unregister-ScheduledTask -TaskName $prefix -TaskPath $tpath -Confirm:$false
+                        $undo = 'rolled back: no restart of ours is scheduled on this server'
+                    }
+                    Remove-SiteRestartFiles -Dir $dir -Id $rid
+                }
+                catch { $undo = 'the roll back failed too (' + [string]$_.Exception.Message + '): check Task Scheduler ' + $tpath + $prefix + ' by hand' }
+                throw ('the task could not be registered right (' + $why + ') - ' + $undo)
+            }
+            if ($ours.Count -gt 0) { Remove-SiteRestartFiles -Dir $dir -Id ([string]$ours[0].id) }   # the replaced registration's only
+            $out.replaced = $ours
+            $out.scheduled = @{ path = $tpath; name = $prefix; next_run = $next.ToString('yyyy-MM-dd HH:mm'); id = $rid }
+            $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
         }
-        Remove-SiteRestartFiles -Dir $dir -Keep $rid          # the earlier registration's files, now that it is replaced
-        $out.replaced = $ours
-        $out.scheduled = @{ path = $tpath; name = $prefix; next_run = $next.ToString('yyyy-MM-dd HH:mm'); id = $rid }
-        $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
+        if ($cfg.action -eq 'cancel') {
+            $removed = @()
+            if ($ours.Count -gt 0) {
+                Unregister-ScheduledTask -TaskName $prefix -TaskPath $tpath -Confirm:$false
+                Remove-SiteRestartFiles -Dir $dir -Id ([string]$ours[0].id)
+                $removed = $ours
+            }
+            $out.removed = $removed
+            $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
+        }
     }
-    if ($cfg.action -eq 'cancel') {
-        $removed = @()
-        if ($ours.Count -gt 0) {
-            Unregister-ScheduledTask -TaskName $prefix -TaskPath $tpath -Confirm:$false
-            $removed = $ours
-        }
-        Remove-SiteRestartFiles -Dir $dir
-        $out.removed = $removed
-        $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
+    finally {
+        if ($lock -and (Test-Path -LiteralPath $lock)) { Remove-Item -LiteralPath $lock -Force }
     }
 }
 catch {

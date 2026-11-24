@@ -40,6 +40,7 @@
                   'code': win_restart_reason_code, 'delay': win_restart_delay_seconds,
                   'limit': ansible_limit | default('', true), 'target': target | default(''),
                   'excluded_in': ansible_play_hosts_all | select('in', groups['site_excluded'] | default([])) | list,
+                  'resolved': ansible_play_hosts_all, 'groups': groups,
                   'hosts': ansible_play_hosts_all | length, 'max_hosts': win_restart_max_hosts | int} | win_restart_check }}
 
         - name: Nothing is read or changed when the answers do not make sense
