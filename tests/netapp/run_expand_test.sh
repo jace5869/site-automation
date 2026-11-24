@@ -82,9 +82,12 @@ cl="\"ontap_clusters\": [\"$c0\"], \"ontap_expand_exclude\": [\"svm_backup:*\"],
 run "the list, a dry run (Check): says what it would write, writes nothing" ok ontap_volume_list.yml --check -e "{$cl}" \
     -- "NetApp volume list: 6 choices, 5 excluded" "6 choice(s) - would be updated (the question would be added)"
 check "  no survey written by the dry run" test ! -s "$work/survey.jsonl"
+run "the list (Check) with a cluster/ pattern by its address: every volume there left out with the pattern" ok ontap_volume_list.yml --check \
+    -e "{\"ontap_clusters\": [\"$c0\"], \"ontap_expand_exclude\": [\"http://127.0.0.1:*/*\"], \"ontap_expand_templates\": [\"NetApp - expand a volume\"]}" \
+    -- "NetApp volume list: 0 choices" "ontap_expand_exclude: http://127.0.0.1:*/*"
 run "the list: 6 choices (one per LUN), 5 excluded each with its reason, the question added single select" ok ontap_volume_list.yml -e "{$cl}" \
-    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware) - 10.0 GB, 12% free [LUN]" \
-       "vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free [LUN lun_a of 2]" "vol_ds03/lun_b" \
+    -- "NetApp volume list: 6 choices, 5 excluded" "vol_ds01 (svm_vmware) - LUN 9.0 GB, 10% free [LUN]" \
+       "vol_ds03/lun_a (svm_vmware) - LUN 900.0 GB, 21% free [LUN lun_a of 2]" "vol_ds03/lun_b (svm_vmware) - LUN 900.0 GB, 67% free" \
        "SVM root volume - always" "DP volume (a SnapMirror destination) - always" "offline - always" "FlexGroup - not yet" \
        "ontap_expand_exclude: svm_backup:*" "NetApp - expand a volume, question ontap_expand_volume: 6 choice(s) - updated (the question was added)"
 check "  the question: single select, required, 6 choices with their keys" "$py" -c 'import json, sys
@@ -93,6 +96,10 @@ sys.exit(not (q["type"] == "multiplechoice" and q["required"] and len(c) == 6 an
 check "  the list only read: no PATCH" test "$(patches)" = 0
 
 # ---- a Check run, then the change ------------------------------------------------------------------------------------
+check "  fullest first, by the LUN: one volume's two LUNs apart - lun_a (79 % written) before vol_home, lun_b (33 %) after it" "$py" -c 'import json, sys
+q = json.loads(sys.argv[1]); c = q["choices"] if isinstance(q["choices"], list) else q["choices"].split("\n")
+i = lambda p: [k for k, x in enumerate(c) if x.startswith(p)][0]
+sys.exit(not i("vol_ds03/lun_a ") < i("vol_home ") < i("vol_ds03/lun_b "))' "$(lastq)"
 ds01="$(pick vol_ds01)"
 run "a Check run: the plan only (10.0 GB -> 11.0 GB, the LUN 9.0 -> 10.0 GB), nothing changed" ok ontap_volume_expand.yml --check \
     -e "{$cl, \"ontap_expand_volume\": \"$ds01\"}" \
@@ -124,6 +131,9 @@ n=$(patches)
 bk="vol_bk01 (svm_backup, cluster1) - 4.00 TB [vol|$c0|svm_backup|vol_bk01||4398046511104||v-bk01]"
 run "an excluded volume named by hand: refused" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$bk\"}" \
     -- "vol_bk01 NOT grown - excluded: ontap_expand_exclude: svm_backup:*" "even when its name is typed by hand"
+run "a cluster/ pattern (its ONTAP name, any case): the volume refused" fail ontap_volume_expand.yml \
+    -e "{\"ontap_clusters\": [\"$c0\"], \"ontap_expand_exclude\": [\"CLUSTER1/svm1:*\"], \"ontap_expand_volume\": \"$home\"}" \
+    -- "vol_home NOT grown - excluded: ontap_expand_exclude: CLUSTER1/svm1:*"
 root="svm1_root [vol|$c0|svm1|svm1_root||1073741824||v-root]"
 run "an SVM root named by hand: refused whatever the settings" fail ontap_volume_expand.yml -e "{$cl, \"ontap_expand_volume\": \"$root\"}" \
     -- "svm1_root NOT grown - excluded: SVM root volume - always"
@@ -178,6 +188,29 @@ h2="vol_home (svm1, cluster1) [vol|http://127.0.0.1:$((port + 2))|svm1|vol_home|
 run "ONTAP's job fails: the step says so, the job fails" fail ontap_volume_expand.yml \
     -e "{\"ontap_clusters\": [\"http://127.0.0.1:$((port + 2))\"], \"ontap_expand_volume\": \"$h2\"}" \
     -- "FAILED at: grow the volume" "ONTAP's job failed: fake job"
+
+# ---- the cluster's name not read, with a cluster/ rule in ontap_expand_exclude (Codex 1.127.0 P1) ----------------------
+fresh 3 noname
+c3="http://127.0.0.1:$((port + 3))"
+h3="vol_home (svm1, cluster1) [vol|$c3|svm1|vol_home||1649267441664||v-home]"
+nn="cluster name not read - a cluster rule in ontap_expand_exclude can't be checked"
+run "the name not read, a cluster rule: the list keeps the survey as it was" fail ontap_volume_list.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"cluster9*/*\"], \"ontap_expand_templates\": [\"NetApp - expand a volume\"]}" \
+    -- "$nn" "Survey NOT updated"
+run "... and the expand job refuses, nothing changed" fail ontap_volume_expand.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"cluster9*/*\"], \"ontap_expand_volume\": \"$h3\"}" -- "$nn"
+check "  no PATCH" test "$(patches 3)" = 0
+run "the name not read, no cluster rule: the address stands in (a Check plan)" ok ontap_volume_expand.yml --check \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_exclude\": [\"svm_backup:*\"], \"ontap_expand_volume\": \"$h3\"}" -- "(nothing changed)"
+
+# ---- the portal's Check guard (ontap_expand_require_check, Codex 1.127.0) ---------------------------------------------------
+n=$(patches 3)
+run "the portal asked for Check, the job runs as Check: the plan" ok ontap_volume_expand.yml --check \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_volume\": \"$h3\", \"ontap_expand_require_check\": \"true\"}" -- "(nothing changed)"
+run "the portal asked for Check, the job runs for real: stopped before anything" fail ontap_volume_expand.yml \
+    -e "{\"ontap_clusters\": [\"$c3\"], \"ontap_expand_volume\": \"$h3\", \"ontap_expand_require_check\": \"true\"}" \
+    -- "asked for Check, but this job runs for real" "nothing was changed"
+check "  ... no PATCH" test "$(patches 3)" = "$n"
 
 echo
 [ $fails -eq 0 ] && echo "PASS - NetApp expand e2e" || echo "FAIL - $fails NetApp expand e2e check(s) failed"

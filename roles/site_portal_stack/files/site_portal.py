@@ -51,6 +51,7 @@ sys.path.insert(0, APP)
 import site_portal_filters as rules  # noqa: E402  the actions' loader and rules (the deploy checks with the same)
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
 import netmap_history  # noqa: E402
+import netapp_live  # noqa: E402  the NetApp page's reader (the refresh volume list job's runs in the report database)
 import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
 import site_festive  # noqa: E402  1.115.0: the Christmas theme (the same decor and files as the report website's)
 from site_time import local as in_zone  # noqa: E402
@@ -358,6 +359,10 @@ class Config(object):
             rdb = {}
         self.report_db = rdb if isinstance(rdb, dict) and rdb.get("host") and rdb.get("user") else {}
         self.ad = flag(g("PORTAL_AD", "1"))
+        # the NetApp page (/portal/netapp): NetApp - refresh volume list's runs from the report database; its tab only once there is one
+        self.netapp = flag(g("PORTAL_NETAPP", "1"))
+        self.netapp_old_minutes = max(15, min(10080, int(g("PORTAL_NETAPP_OLD_MINUTES", "60"))))
+        self.netapp_tab = False                  # set by NetappLive when the database has a run (the bar's tab)
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -884,7 +889,9 @@ class Aap(object):
             "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
                              and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
             "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
-            "approval": cfg.label_approval in labels or tname in cfg.approval_required}
+            "approval": cfg.label_approval in labels or tname in cfg.approval_required,
+            # a job template that asks its Job type at launch (Prompt on launch): the Run dialog offers Check and Run
+            "job_type": {"ask": typ == "job" and bool(r.get("ask_job_type_on_launch")), "default": "check" if str(r.get("job_type")) == "check" else "run"}}
         return TemplateRead(action=action, inventory=limit_inv, steps=steps)
 
     def _hide_steps(self, out, builtin, labelled_jobs, wf_steps, wf_unsure=()):
@@ -2299,7 +2306,7 @@ class Portal(object):
         expand = (lambda items: self.aap.expand(items, inv)) if inv else (self.aap.expand if self.cfg.inventory else None)
         return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, expand)
 
-    def launch(self, cn, ip, name, sent, sig=None):
+    def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None):
         """-> (HTTP code, answer). sig: the fingerprint of the template the form was drawn from (a found template): a different one is not started."""
         self.refresh()
         a = self.actions.get(name)
@@ -2318,6 +2325,15 @@ class Portal(object):
             return 409, {"error": "Not started: this job changed in AAP since the page was opened - open it again from the Actions page."}
         if a.get("started_by") and isinstance(sent, dict):      # the survey asks portal_requested_by: never typed - the card's name replaces it
             sent = dict((k, v) for k, v in sent.items() if k != "portal_requested_by")
+        if isinstance(sent, dict) and REQUIRE_CHECK_VAR in sent:   # the portal's own: never from the browser
+            sent = dict((k, v) for k, v in sent.items() if k != REQUIRE_CHECK_VAR)
+        if expand is not None:
+            # Codex 1.127.0: opened by Expand... - the volume picked must be one of the survey's choices now, before any default
+            var = a["vars"].get(expand) or {}
+            got = sent.get(expand) if isinstance(sent, dict) else None
+            if var.get("kind") != "choice" or not isinstance(got, str) or not got or got not in (var.get("values") or []):
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Expand: the choice is not in the survey now"})
+                return 400, {"error": "Not started: " + EXPAND_GONE + ".", "problems": {expand: "is not in the job's list now"}}
         values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
@@ -2325,13 +2341,25 @@ class Portal(object):
                                                                for k, v in sorted(problems.items())), "problems": problems}
         if not a.get("discovered") and str(values.get("report_job", "")).isdigit():         # 907, 0907 and 00907 are one job
             values = dict(values, report_job=str(int(values["report_job"])))
+        jt = None
+        if job_type is not None:
+            if job_type not in ("check", "run"):
+                return 400, {"error": "Not started: the Job type is Check or Run."}
+            info = a.get("job_type") or {}
+            if info.get("ask"):
+                jt = job_type
+            elif job_type == "check" and info.get("default") != "check":       # Check asked, and the template now runs for real
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Check asked; the template's Job type is fixed to Run"})
+                return 409, {"error": "Not started: " + CHECK_GONE + "."}
+        if expand is not None and job_type == "check" and REQUIRE_CHECK_VAR in a["vars"]:
+            values = dict(values, **{REQUIRE_CHECK_VAR: "true"})            # the playbook stops if it runs for real
         key = self.once_key(name, values)
         if key is None:
-            return self._launch(cn, ip, name, a, values)
+            return self._launch(cn, ip, name, a, values, jt)
         with self.key_lock(key):    # held from the running check until the launch is in the log: the next one sees it
-            return self._launch(cn, ip, name, a, values)
+            return self._launch(cn, ip, name, a, values, jt)
 
-    def _launch(self, cn, ip, name, a, values):
+    def _launch(self, cn, ip, name, a, values, job_type=None):
         busy = self.running(name, values)
         if busy:                    # before the hour's count: a run refused as running already uses no slot of it
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "running already: job %s" % busy["job_id"]})
@@ -2346,7 +2374,7 @@ class Portal(object):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "too many in an hour"})
                 return 429, {"error": "You started %d actions in the last hour (portal_launches_per_hour): wait a little." % len(mine)}
             self.recent[cn] = mine + [t]
-        code, out = self._start(cn, ip, name, a, values)
+        code, out = self._start(cn, ip, name, a, values, job_type)
         if code != 201:             # off, or AAP did not start it: the slot is given back
             self.give_back(cn, t)
         return code, out
@@ -2401,7 +2429,7 @@ class Portal(object):
             return "its approval mark changed"
         return ""
 
-    def _start(self, cn, ip, name, a, values):
+    def _start(self, cn, ip, name, a, values, job_type=None):
         if a.get("discovered"):
             why = self.same_template(a)
             if why:
@@ -2432,6 +2460,8 @@ class Portal(object):
                 if not a.get("discovered"):                        # a built-in's own variable (target) carries the same hosts
                     body["extra_vars"][a["limit_from"]] = ",".join(lim)
             body["limit"] = ",".join(lim) if isinstance(lim, list) else lim
+        if job_type:                    # the Run dialog's Job type (a template that asks it at launch)
+            body["job_type"] = job_type
         shown_values = rules.mask(a, values)
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
@@ -2441,8 +2471,16 @@ class Portal(object):
             return 502, {"error": "AAP did not start it (HTTP %s): %s." % (code, rules.launch_failure_reason(code))}
         jid = int(data.get("workflow_job") or data.get("job") or data.get("id"))
         ignored = data.get("ignored_fields") or {}
+        if job_type == "check" and "job_type" in ignored:
+            # the template stopped asking the Job type between the form and the launch: AAP runs it for real - cancelled at once
+            # (the expand playbook stops on its own before any change too: ontap_expand_require_check)
+            ccode, _cd = self.aap.call("POST", "jobs/%d/cancel/" % jid, {})
+            self.log.add({"event": "launch_cancelled", "user": cn, "ip": ip, "action": name, "job_id": jid, "http": ccode,
+                          "why": "Check asked; AAP ignored the Job type"})
+            return 409, {"error": "Not started as Check: AAP ignored the Job type (job %d cancelled at once) - %s." % (jid, CHECK_GONE),
+                         "job_id": jid}
         rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": shown_values,
-                            "limit": body.get("limit", ""), "job_id": jid, "kind": a["aap"]["type"],
+                            "limit": body.get("limit", ""), "job_id": jid, "kind": a["aap"]["type"], "job_type": job_type or "",
                             "ignored_fields": sorted(ignored) if ignored else []})
         out = {"job_id": jid, "url": "%sjobs/%d" % (self.cfg.path, jid), "at": rec["at"]}
         if ignored:
@@ -3252,7 +3290,8 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
                                            (("approvals",), "approvals", "Approvals"))
                   + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ())
-                  + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ()))
+                  + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ())
+                  + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ()))
     meta = '<meta name="portal-token" content="%s">' % esc(token) if token else ""
     meta += '<meta name="portal-base" content="%s">' % esc(cfg.path)
     if data is not None:
@@ -3555,10 +3594,43 @@ def details_page(cfg, portal, cn, name):
     return shell(cfg, "Details", body, cn, page="action")
 
 
+EXPAND_GONE = ("the volume picked is not in the job's list now (the refresh rewrote it) - close this and press Expand... again, "
+               "or pick it from the list")
+CHECK_GONE = ("this job can no longer be asked for Check (its Job type is fixed to Run): nothing is started - turn on Prompt "
+              "on launch for Job type on the template, then open it again")
+
+
+def job_type_html(a, query):
+    """The Run dialog's Job type -> (html, may start). A template that asks it at launch: Check or Run, the template's own by
+    default, or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
+    template that does not ask it: kept as a hidden field when Check is its fixed Job type, else refused (CHECK_GONE) - a
+    Check never turns into a real run. Any other template: ('', True)."""
+    jt = a.get("job_type") or {}
+    want = (query.get(NETAPP_JOB_TYPE) or [""])[-1] if isinstance(query.get(NETAPP_JOB_TYPE), list) else query.get(NETAPP_JOB_TYPE, "")
+    if not jt.get("ask"):
+        if want != "check":
+            return "", True
+        if jt.get("default") == "check":
+            return ('<input type="hidden" name="%s" value="check"><p class="sub">Job type: Check (the template\'s own).</p>' % NETAPP_JOB_TYPE), True
+        return '<p class="note bad" role="alert"><b>Not started.</b> %s.</p>' % esc(CHECK_GONE[0].upper() + CHECK_GONE[1:]), False
+    pick = want if want in ("check", "run") else jt.get("default", "run")
+    opts = (("check", "Check - the plan only, nothing is changed"), ("run", "Run - the job does its work"))
+    return ('<div class="field"><label id="l-jt">Job type</label><div class="multi" role="radiogroup" aria-labelledby="l-jt">%s</div>'
+            '<p class="why" id="p-jt"></p></div>'
+            % "".join('<label class="opt"><input type="radio" name="%s" value="%s"%s> %s</label>' % (NETAPP_JOB_TYPE, v, " checked" if v == pick else "", esc(t))
+                      for v, t in opts)), True
+
+
 def action_page(cfg, portal, cn, name, query, embed=False):
     a = portal.actions.get(name)
     if a is None:                                   # taken off just now (a refresh of the cards)
         return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
+    jt_html, jt_ok = job_type_html(a, query)
+    xq = query.get(NETAPP_EXPAND)
+    xq = (xq[-1] if isinstance(xq, list) and xq else xq) or ""
+    if xq and (a["vars"].get(xq) or {}).get("kind") == "choice":           # opened by Expand...: the launch must carry one of its choices
+        jt_html = '<input type="hidden" name="%s" value="%s">' % (NETAPP_EXPAND, esc(xq)) + jt_html
+    query = dict((k, v) for k, v in query.items() if k not in (NETAPP_JOB_TYPE, NETAPP_EXPAND, REQUIRE_CHECK_VAR))       # never a survey value
     sent = {k: (v if a["vars"].get(k, {}).get("kind") == "multichoice" else v[-1]) for k, v in query.items()
             if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
     allowed = rules.may_run(a, cn, cfg.requesters)
@@ -3567,6 +3639,8 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     _, off = portal.state(name, a) if allowed else (None, "")
     fields = []
     for vn, var in a["vars"].items():
+        if vn == REQUIRE_CHECK_VAR:                 # the portal's own (Expand's Check): never shown, never typed
+            continue
         v = sent.get(vn, "")
         if v in ("", None) and var.get("default") is not None:
             v = var["default"]
@@ -3627,7 +3701,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
              ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No", ""),
              ("Started by" if a.get("started_by") else "Started as", cn, " mono")]
     dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
-    can = allowed and not off and not busy
+    can = allowed and not off and not busy and jt_ok
     line = a.get("summary") or a.get("description") or ""
     if embed:                                           # 1.78.0: the Run dialog's content (the page's script puts it in a <dialog>)
         sub = "This form is made from the template's survey in AAP." if a.get("discovered") else line
@@ -3636,14 +3710,14 @@ def action_page(cfg, portal, cn, name, query, embed=False):
                 '<div class="btns"><button type="button" data-close>Cancel</button><button type="submit" class="pri" id="go"%s>Launch job</button>'
                 '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
                 % (esc(a["title"]), ('<p class="sub">%s</p>' % esc(sub)) if sub else "", esc(name), cfg.path, esc(name), esc(portal.token(cn)), esc(a.get("sig", "")),
-                   "".join(status), "".join(fields), icon("wait"), esc(cn), "" if can else " disabled"))
+                   "".join(status), "".join(fields) + jt_html, icon("wait"), esc(cn), "" if can else " disabled"))
     body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Confirm</span></p><h1>%s</h1>%s</div>%s'
             '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s"><input type="hidden" name="portal-sig" value="%s">%s'
             '<div class="btns"><button type="submit" class="pri" id="go"%s>Run</button><a class="btn" href="%s">Cancel</a>'
             '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
             '<div class="card panel"><h2>What happens</h2><dl class="def">%s</dl></div></div>'
             % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(line)) if line else "", "".join(status), esc(name), cfg.path, esc(name),
-               esc(portal.token(cn)), esc(a.get("sig", "")), "".join(fields) or '<p class="sub">This action takes no values.</p>', "" if can else " disabled", cfg.path, dl))
+               esc(portal.token(cn)), esc(a.get("sig", "")), ("".join(fields) or '<p class="sub">This action takes no values.</p>') + jt_html, "" if can else " disabled", cfg.path, dl))
     return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
 
 
@@ -5182,12 +5256,214 @@ class NetmapHistoryLive(ReportIndex):
         return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
 
 
+# ---- the NetApp page (/portal/netapp): NetApp - refresh volume list's runs in the report database ---------------------------
+NETAPP_STATIC = ("netapp-page.js", "netapp-page.css")
+NETAPP_TAB_EVERY = 300          # whether the database has a NetApp run (the bar's tab): asked this often
+NETAPP_JOB_TYPE = "portal-job-type"      # the Run dialog's Job type field (a template that asks it at launch): never a survey variable
+# Codex 1.127.0: a form opened by Expand... names the survey's volume question - its launch must carry one of that question's
+# choices now (never blank: AAP would put the survey's default, another volume, in its place)
+NETAPP_EXPAND = "portal-expand"
+# ... and its Check is said to the playbook too (the expand template's survey asks it; never shown, never typed): the
+# playbook stops before any change when it runs for real (a template turned to Run between the form and the launch)
+REQUIRE_CHECK_VAR = "ontap_expand_require_check"
+CHOICE_KEY_IDS = re.compile(r"\[vol\|([^|\]]+)\|([^|\]]+)\|([^|\]]+)\|([^|\]]*)\|")
+CHOICE_KEY_UUIDS = re.compile(r"\[vol\|[^|\]]+\|[^|\]]+\|[^|\]]+\|[^|\]]*\|\d+(?:\|(\d*))?(?:\|([A-Za-z0-9-]*))?(?:\|([A-Za-z0-9-]*))?\]\s*$")
+
+
+def choice_uuids(text):
+    """the volume's and the LUN's UUIDs in a choice's key ('' each when not there) - the same path made again has others"""
+    m = CHOICE_KEY_UUIDS.search(str(text or ""))
+    return (m.group(2) or "", m.group(3) or "") if m else ("", "")
+
+
+def choice_ids(text):
+    """A NetApp volume choice's key (site_ontap_expand: [vol|address|svm|volume|lun|...]) -> (address, svm, volume, lun) or None."""
+    m = CHOICE_KEY_IDS.search(str(text or ""))
+    return (m.group(1).lower(), m.group(2), m.group(3), m.group(4)) if m else None
+
+
+class NetappLive(object):
+    """The NetApp page's model, read from the report database (netapp_live.Database) at most every AD_POLL s while someone has
+    the page open; one read every viewer shares. The Expand button of each volume is worked out per person at each answer:
+    the expand template as the portal reads AAP now (its survey's current choices, the person's right to run it)."""
+
+    def __init__(self, cfg, log, portal=None, db=None):
+        self.cfg, self.log, self.portal = cfg, log, portal
+        self.db = db if db is not None else (netapp_live.Database(AdDb(cfg).connect) if cfg.report_db else None)
+        self.lock = threading.Condition()
+        self.reading, self.model, self.read_at, self.stale = False, None, 0.0, ""
+        self.tab_at, self.tab_thread = 0.0, None
+
+    # -- the bar's tab ------------------------------------------------------------------------------------------------------
+    def check_tab(self):
+        """Whether the database has a NetApp run: the bar shows the tab only then. A fault keeps what was known."""
+        if self.db is None:
+            self.cfg.netapp_tab = False
+            return False
+        try:
+            self.cfg.netapp_tab = bool(self.db.has_data())
+        except Exception as e:  # pylint: disable=broad-except
+            self.log.add({"event": "netapp", "tab": "not read", "why": clean(str(e), 200)})
+        self.tab_at = time.time()
+        return self.cfg.netapp_tab
+
+    def tab_soon(self):
+        if self.db is None or time.time() - self.tab_at < NETAPP_TAB_EVERY or (self.tab_thread and self.tab_thread.is_alive()):
+            return
+        self.tab_at = time.time()
+        self.tab_thread = threading.Thread(target=self.check_tab, name="netapp-tab", daemon=True)
+        self.tab_thread.start()
+
+    # -- the database ---------------------------------------------------------------------------------------------------------
+    def refresh(self):
+        try:
+            m = self.db.read()
+            stale = ""
+            if m.get("run"):
+                self.cfg.netapp_tab = True
+        except Exception as e:  # pylint: disable=broad-except
+            m, stale = None, netapp_live.DB_ERROR
+            self.log.add({"event": "netapp", "database": "not read", "why": clean(site_report_db.short_error(e) if site_report_db else str(e), 300)})
+        with self.lock:
+            if m is not None:
+                self.model, self.read_at = m, time.time()
+            self.stale, self.reading = stale, False
+            self.lock.notify_all()
+
+    def viewed(self):
+        with self.lock:
+            if self.db is not None and not self.reading and time.time() - self.read_at >= AD_POLL:
+                self.reading = True
+                threading.Thread(target=self.refresh, name="netapp", daemon=True).start()
+
+    # -- Expand... ------------------------------------------------------------------------------------------------------------
+    def expand(self, cn, run):
+        """The expand template as the portal has it for this person -> {on, why, name, q, values: {ids: text}, job_type}."""
+        tmpl = str(run.get("expand_template") or "NetApp - expand a volume")
+        q = str(run.get("expand_question") or "ontap_expand_volume")
+        out = {"on": False, "why": "", "template": tmpl, "name": "", "q": q, "values": {}, "job_type": False, "fixed_run": ""}
+        p = self.portal
+        if p is None:
+            out["why"] = "needs Execute on %s" % tmpl
+            return out
+        a = next((x for x in p.actions.values() if x.get("aap", {}).get("type") == "job" and
+                  (x["aap"].get("name") == tmpl or (str(tmpl).isdigit() and str(x.get("tid")) == str(tmpl)))), None)
+        found = getattr(p, "found", None) or {}
+        if a is None:
+            skipped = dict((str(t), str(w)) for t, w in found.get("skipped") or [] if not str(w).startswith("no label"))
+            if tmpl in skipped:
+                out["why"] = "the portal does not offer %s: %s" % (tmpl, skipped[tmpl])
+            elif tmpl in (found.get("no_execute") or []):
+                out["why"] = "needs Execute on %s" % tmpl
+            else:
+                out["why"] = "needs Execute on %s (and the portal label %s on it)" % (tmpl, self.cfg.label or "portal")
+            return out
+        if not rules.may_run(a, cn, self.cfg.requesters):
+            out["why"] = "you are not on the list of people who may run %s (portal_requesters)" % tmpl
+            return out
+        var = a["vars"].get(q)
+        if not var or var.get("kind") != "choice":
+            out["why"] = "the survey of %s has no single-select question %s" % (tmpl, q)
+            return out
+        jt = a.get("job_type") or {}
+        out.update(on=True, name=a["name"], job_type=bool(jt.get("ask")))
+        if not jt.get("ask") and jt.get("default") != "check":
+            # no Check to ask for: Expand would start the real change at once
+            out["fixed_run"] = "turn on Prompt on launch for Job type on %s" % tmpl
+        for t in var.get("values") or []:
+            k = choice_ids(t)
+            if k:
+                out["values"][k] = t
+        return out
+
+    def shown_model(self, m, cn):
+        run = dict(m["run"])
+        ex = self.expand(cn, run)
+        vols = []
+        for v in m.get("volumes") or []:
+            v = dict(v)
+            v["x"] = []
+            if v.get("offered") and ex["on"]:
+                ids = choice_ids(v.get("choice"))
+                now = ex["values"].get(ids) if ids else None
+                if now and choice_uuids(now) != choice_uuids(v.get("choice")):
+                    # the same path, another volume or LUN (made again since this run): never the new one's choice
+                    v["off"], v["dis"] = "the list changed - wait for the next refresh", True
+                    now = None
+                elif now and ex.get("fixed_run"):
+                    v["off"], v["dis"] = ex["fixed_run"], True
+                    now = None
+                if now:
+                    # every Expand asks Check: the dialog and the launch refuse when the template can no longer run as Check
+                    v["x"].append({"lun": v.get("lun", ""), "href": "%sactions/%s?%s" % (self.cfg.path, ex["name"], urllib.parse.urlencode(
+                        [(ex["q"], now), (NETAPP_JOB_TYPE, "check"), (NETAPP_EXPAND, ex["q"])]))})
+                if not v["x"] and not v.get("off"):
+                    v["off"] = "not in the job's current list - the portal reads AAP again within portal_discover_seconds"
+            elif v.get("offered"):
+                v["off"] = ex["why"]
+                v["dis"] = True
+            else:
+                v["off"] = "Not offered: " + (v.get("why") or "?")
+            v.pop("choice", None)
+            vols.append(v)
+        age = None
+        m_at = ad_when(run.get("read_at"))
+        if m_at:
+            age = int((time.time() - m_at) // 60)
+        run.update(as_of=shown(self.cfg, run.get("read_at")), age_min=age, old=age is not None and age > self.cfg.netapp_old_minutes,
+                   zone=self.cfg.tz_name or "UTC")
+        parts = {}
+        for k, body in (m.get("parts") or {}).items():
+            body = dict(body)
+            if k in ("ems", "snapmirror"):
+                key = "t" if k == "ems" else "last"
+                body["rows"] = [dict(r, shown=shown(self.cfg, r.get(key)) if r.get(key) else "") for r in body.get("rows") or []]
+            parts[k] = body
+        return {"run": run, "volumes": vols, "aggrs": m.get("aggrs") or [], "parts": parts, "left_out": m.get("left_out") or {},
+                "expand": {"on": ex["on"] and not ex["fixed_run"], "why": ex["why"] or ex["fixed_run"], "template": ex["template"], "job_type": ex["job_type"]}}
+
+    def answer(self, cn, etag_in=""):
+        with self.lock:
+            self.lock.wait_for(lambda: not self.reading, timeout=1)
+            m, stale, reading = self.model, self.stale, self.reading
+        out = {"poll": AD_POLL, "old_after": self.cfg.netapp_old_minutes}
+        if self.db is None:
+            out["message"] = netapp_live.NO_LOGIN
+        elif m is None:
+            out["message"] = stale or ("Reading the report database…" if reading or not self.read_at else netapp_live.DB_ERROR)
+            out["loading"] = not stale
+        elif m.get("empty"):
+            out["message"] = m["empty"]
+        else:
+            out["model"] = self.shown_model(m, cn)
+            out["stale"] = stale
+        body = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
+        tag = '"%s"' % hashlib.sha256(body.encode("utf-8")).hexdigest()[:20]
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+
+
+def netapp_page(cfg, cn, statics, token=""):
+    """/portal/netapp: the page's frame - static/netapp-page.js draws its parts from /api/netapp (no inline script or style);
+    Expand... opens the portal's own Run dialog (the <dialog> here) with the expand template's form."""
+    v = lambda n: statics.get(n, "")
+    body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span class="eyebrow">Storage</span></p><h1>NetApp</h1></div>'
+            '<div id="na" data-src="%sapi/netapp"><p class="note" id="na-wait">Reading the report database…</p></div>'
+            '<noscript><p class="note warn">This page draws its parts with a script: turn scripts on for this site.</p></noscript>'
+            '<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog>'
+            '<script src="%sstatic/netapp-page.js?v=%s" defer></script>' % (cfg.path, cfg.path, cfg.path, v("netapp-page.js")))
+    return shell(cfg, "NetApp", body, cn, token=token, page="netapp",
+                 head='<link rel="stylesheet" href="%sstatic/netapp-page.css?v=%s">' % (cfg.path, v("netapp-page.css")))
+
+
 def make_handler(cfg, portal, static_dir):
     live = NetLive(cfg, portal.log) if not cfg.netmap_why else None
     history = NetmapHistoryLive(cfg) if live else None
     adl = AdLive(cfg, portal.log, getattr(portal, "aap", None)) if cfg.ad else None      # 1.101.2: the live AD page
+    nal = NetappLive(cfg, portal.log, portal) if cfg.netapp else None                    # the NetApp page
+    if nal is not None:
+        nal.tab_soon()
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC:
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC:
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -5322,6 +5598,18 @@ def make_handler(cfg, portal, static_dir):
                                       "text/html; charset=utf-8")
                 adl.viewed()
                 return self._send(200, ad_page(cfg, cn, statics), "text/html; charset=utf-8")
+            # the NetApp page - the refresh volume list job's runs from the report database; Expand... needs AAP's actions
+            if path in ("/netapp", "/api/netapp"):
+                if not nal:
+                    return self._send(404, message_page(cfg, "NetApp off", "The NetApp page is off here (portal_netapp: false).", cn),
+                                      "text/html; charset=utf-8") if path == "/netapp" else self._send(404, {"error": "The NetApp page is off here (portal_netapp: false)."})
+                portal.refresh_soon()
+                nal.viewed()
+                nal.tab_soon()
+                if path == "/netapp":
+                    return self._send(200, netapp_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
+                code, body, etag = nal.answer(cn, (self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:
                     return self._send(404, {"error": "The live AD page is off here (portal_ad: false)."})
@@ -5335,6 +5623,8 @@ def make_handler(cfg, portal, static_dir):
                 reader.viewed()
                 code, body, etag = reader.answer((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            if nal is not None:
+                nal.tab_soon()                              # the bar's NetApp tab: whether the database has a run (asked every 5 min)
             portal.refresh_soon()                           # 1.78.0: the actions AAP offers (portal_discover_seconds; 1.79.9: read in the background)
             if path == "/":
                 return self._send(200, home_page(cfg, portal, cn, urllib.parse.parse_qs(u.query, max_num_fields=20)), "text/html; charset=utf-8")
@@ -5498,7 +5788,13 @@ def make_handler(cfg, portal, static_dir):
             for k, var in a["vars"].items():                  # a checkbox group with nothing ticked is not sent: that is an empty answer, as with scripts
                 if var["kind"] in ("multichoice", "hosts") and k not in sent:
                     sent[k] = []
-            code, out = portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1])
+            jt = (form.get(NETAPP_JOB_TYPE) or [None])[-1]           # the Job type, only when the form has one
+            xq = (form.get(NETAPP_EXPAND) or [None])[-1]              # opened by Expand...
+            if xq is not None and a["vars"].get(xq, {}).get("kind") == "choice" and xq not in form:
+                sent[xq] = ""                                          # a blank select is not sent: still an answer, refused below
+            kw = dict(expand=xq) if xq is not None else {}
+            code, out = (portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], jt, **kw) if jt is not None
+                         else portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], **kw))
             if code == 201:
                 return self._send(303, b"", "text/plain", [("Location", out["url"])])
             return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
@@ -5558,7 +5854,10 @@ def make_handler(cfg, portal, static_dir):
             if m_act:
                 sent = body.get("vars", {})
                 sig = body.get("sig")
-                code, out = portal.launch(cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
+                jt = body.get("job_type")
+                xq = body.get("expand")
+                args = (cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
+                code, out = portal.launch(*(args + ((jt,) if isinstance(jt, str) else ())), **({"expand": xq} if isinstance(xq, str) else {}))
                 return self._send(code, out)
             if m_dec.group(2) == "placement":
                 return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) == {"vms"} else None))

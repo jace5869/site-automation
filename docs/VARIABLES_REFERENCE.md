@@ -1484,7 +1484,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_expand_min_gb` | `1` | ... at least this many GB ... |
 | `ontap_expand_max_gb` | `512` | ... at most this many GB (a size typed in the launch's Size box is not held to this; the aggregate limit still is) |
 | `ontap_expand_aggr_max_pct` | `97` | the volume's aggregate must stay at or under this % used after the growth, or nothing is changed (the report says the largest size that fits) |
-| `ontap_expand_exclude` | `[]` | Volumes never offered and never grown, even named by hand: name patterns or svm:volume, * and ?, e.g. ["*_root", "vol0", "svm_backup:*"]. SVM and node roots, SnapMirror destinations, offline volumes and FlexGroups always are. |
+| `ontap_expand_exclude` | `[]` | Volumes never offered and never grown, even named by hand: name patterns, svm:volume or cluster/svm:volume, * and ?, any case, e.g. ["*_root", "vol0", "svm_backup:*", "cluster9*/*" (every volume on those clusters), "cluster9*/svm_a:*"]. The cluster part matches the ONTAP cluster name or its ontap_clusters address. SVM… (all of it: the role file) |
 | `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume (the only way so far) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 | `ontap_expand_incident` | `"off"` | off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one through the ServiceNow API credential when the run changes something, and resolve it with the result. |
@@ -1495,6 +1495,22 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_expand_volume` | (empty) | The launch's answers (the survey's questions; never set them in all.yml): the volume picked from the list (a choice NetApp - refresh volume list wrote; it ends with its key) |
 | `ontap_expand_size` | (empty) | the size to add, e.g. 150GB or 1TB; empty = the default growth (ontap_expand_pct) |
 | `ontap_expand_incident_number` | (empty) | an incident number, written in the volume's comment and the report |
+| `ontap_expand_require_check` | `false` | the site portal's Expand... sets it (a portal-only survey question): the job stops before any change unless it runs as Check |
+| `ontap_live_db` | `true` | ---- the site portal's NetApp page (/portal/netapp): what NetApp - refresh volume list keeps in the report database ---- Only with a "Report database" credential on that template (none = nothing here is used). docs/NETAPP.md, "The live page" keep each run of the list in the report database for the portal's NetApp page… (all of it: the role file) |
+| `ontap_live_db_create` | `true` | make its tables (ontap_live_*) on the first run; false = an admin makes them (docs/REPORT_DATABASE.md) |
+| `ontap_live_db_timeout` | `10` | seconds to wait for the report database's connection |
+| `ontap_live_db_keep_days` | `14` | delete the growth points older than this many days (0 = never); about 100 points a volume a day at a 15-minute schedule |
+| `ontap_live_db_keep_hours` | `48` | delete the list's runs older than this many hours (the newest is always kept) |
+| `ontap_live_health` | `true` | also read SnapMirror, the nodes and HA, the disks and the error events (GET only, the health report's queries) for the page |
+| `ontap_live_perf` | `true` | also read each volume's and LUN's latency, IOPS and throughput (ONTAP's latest sample; 2 GETs a cluster) for the page |
+| `ontap_live_perf_top` | `10` | the page lists the busiest this many by latency and this many by IOPS |
+| `ontap_perf_latency_warn_ms` | `10` | a volume or LUN this slow (ms) is amber on the page |
+| `ontap_perf_latency_crit_ms` | `20` | ... this slow is red |
+| `ontap_live_growth_days` | `7` | a volume's or aggregate's growth a day: the slope of its points of the last this-many days |
+| `ontap_live_growth_min_hours` | `6` | ... and only once its points span this many hours (3 points at least): a rate from 30 minutes is noise |
+| `ontap_live_days_warn` | `30` | full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber |
+| `ontap_live_days_crit` | `7` | ... within this many days: red |
+| `ontap_live_list_days` | `90` | the page lists the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all") |
 
 ## patch
 
@@ -2228,6 +2244,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ad_seconds` | `600` | the SolarWinds read: how often (120 at least); nothing is read while nobody has the page open |
 | `portal_ad_old_minutes` | `90` | the AD checks older than this are said to be old on the page |
 | `portal_ad_template` | (empty) | two AD templates (two forests): the ID of the one the page shows; "" = the newest run's |
+| `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume soonest full first with Expand... (NetApp - exp… (all of it: the role file) |
+| `portal_netapp_old_minutes` | `60` | a run older than this is said to be old on the page (the refresh runs every 15-30 min) |
 | `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
 | `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
 | `portal_report_db_port` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') \| default('3309', true) \| int }}"` | its port (the credential's) |

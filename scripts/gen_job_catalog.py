@@ -127,7 +127,11 @@ SURVEYS = {
         {"question_name": "Size to add (optional: empty = 10 % of the volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB",
          "variable": "ontap_expand_size", "type": "text", "max": 20, "required": False},
         {"question_name": "Incident number (optional: written in the volume's comment and the report)",
-         "variable": "ontap_expand_incident_number", "type": "text", "max": 40, "required": False}],
+         "variable": "ontap_expand_incident_number", "type": "text", "max": 40, "required": False},
+        # 1.127.0: the site portal's Expand... says its Check here too (the portal fills it, never shows it): the playbook
+        # stops before any change when it runs for real
+        {"question_name": "Portal only - leave empty (the portal's Check guard)", "variable": "ontap_expand_require_check",
+         "type": "text", "max": 5, "required": False}],
     "Windows health check": [   # docs/WINDOWS.md, Windows health check
         {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
          "choices": ["daily", "weekly", "all", "disk", "services", "performance", "time", "network", "eventlog", "security", "audit",

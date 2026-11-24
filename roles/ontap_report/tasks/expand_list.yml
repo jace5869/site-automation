@@ -51,7 +51,7 @@
       {%-   set d = t if t is mapping else {'template': t | string | trim} -%}
       {%-   set _ = out.append({'template': d.template | string, 'kind': d.kind | default('') | string, 'question': ontap_expand_question,
                                 'multiselect': false, 'add_question': 'Which volume to grow?', 'choices': _ol_choices.choices,
-                                'note': 'of ' ~ _ol_when ~ ': ' ~ _ol_choices.choices | length ~ ' volume(s) that may be grown, fullest first; '
+                                'note': 'of ' ~ _ol_when ~ ': ' ~ _ol_choices.choices | length ~ ' volume(s) that may be grown, VMware datastores first, then the rest; each least free first; '
                                         ~ ('VMware datastores named' if lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0 and not _ol_vc_error
                                            else 'VMware datastores not read - attach the VMware vCenter credential to this job'),
                                 'empty_choice': '(nothing to pick: no volume may be grown - list of ' ~ _ol_when ~ ')'}) -%}
@@ -83,6 +83,13 @@
   ansible.builtin.set_stats:
     data:
       ontap_volume_list: "{{ {'at': _ol_when, 'choices': _ol_choices.choices, 'excluded': _ol_list.excluded, 'clusters': _ol_list.clusters} }}"
+
+# The portal's NetApp page - this run in the report database, with the health parts (only with the credential)
+- name: NetApp | the portal's NetApp page (the report database)
+  ansible.builtin.include_tasks: live_db.yml
+  when:
+    - ontap_live_db | bool
+    - lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
 
 - name: NetApp | every cluster was read and every survey written
   ansible.builtin.assert:

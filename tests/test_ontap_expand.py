@@ -193,10 +193,72 @@ class Exclusions(unittest.TestCase):
         self.assertEqual(X.excluded(self.rec(svm={"name": "svm3"}, name="logs_1"), pats), "")
         self.assertEqual(X.excluded(self.rec(name="vol_ok"), pats), "")
 
+    def test_cluster_patterns(self):
+        cl = ("cluster9a", "cluster9a.example.mil")
+        r = self.rec(svm={"name": "svm_a"}, name="vol_ds01")
+        self.assertEqual(X.excluded(r, ["CLUSTER9*/*"], cl), "ontap_expand_exclude: CLUSTER9*/*")         # every volume there, any case
+        self.assertEqual(X.excluded(r, ["cluster9?/"], cl), "ontap_expand_exclude: cluster9?/")           # a bare cluster/ too
+        self.assertEqual(X.excluded(r, ["*.example.mil/svm_a:*"], cl), "ontap_expand_exclude: *.example.mil/svm_a:*")   # by address
+        self.assertEqual(X.excluded(r, ["cluster9*/svm_b:*"], cl), "")                                   # another SVM there
+        self.assertEqual(X.excluded(r, ["cluster1*/*"], cl), "")                                         # another cluster
+        self.assertEqual(X.excluded(r, ["cluster9*/*"]), "")                                             # the cluster not known
+        self.assertEqual(X.excluded(r, ["svm_a:*"], cl), "ontap_expand_exclude: svm_a:*")                # the old forms unchanged
+        self.assertEqual(X.excluded(r, ["vol_ds*"], cl), "ontap_expand_exclude: vol_ds*")
+        p = X.plan(vol(name="vol_ds01", svm="svm_a"), AGGR, 10 * GB, {"exclude": ["cluster9*/*"], "clusters": cl})
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("cluster9*/*", p["why"])
+        self.assertIn("cluster9*/*", X.recheck({"volume": "vol_ds01", "svm": "svm_a", "aggr": "aggr1"}, {"name": "vol_ds01", "svm": "svm_a"},
+                                               {}, ["cluster9*/*"], cl))
+
     def test_excluded_by_hand_is_refused(self):
         p = X.plan(vol(name="vol_bk01", svm="svm_backup"), AGGR, 10 * GB, {"exclude": ["svm_backup:*"]})
         self.assertEqual(p["status"], "refused")
         self.assertIn("svm_backup:*", p["why"])
+
+
+def volume_module():
+    """roles/ontap_report/library/site_ontap_volume.py with its module_utils as Ansible would give them"""
+    import importlib.util
+    import ansible.module_utils
+    import site_ontap
+    for n, m in (("site_ontap", site_ontap), ("site_ontap_expand", X)):
+        sys.modules["ansible.module_utils." + n] = m
+        setattr(ansible.module_utils, n, m)
+    spec = importlib.util.spec_from_file_location("site_ontap_volume", os.path.join(REPO, "roles", "ontap_report", "library", "site_ontap_volume.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+class ClusterNameNotRead(unittest.TestCase):
+    """Codex 1.127.0 P1: /api/cluster refused (403) while the storage reads work - the address is no stand-in for the name
+    when a cluster/ rule is set: that cluster's volumes are not offered, and the expand job refuses."""
+
+    def setUp(self):
+        self.V = volume_module()
+        V = self.V
+
+        class C(object):
+            address = "192.0.2.15"
+
+            def call(self, method, path, query=None, body=None):
+                raise V.Failed("HTTP 403: not authorized for that command")
+
+            def records(self, path, fields, **kw):
+                return []
+        self.c = C()
+
+    def test_no_cluster_rule_the_address_stands_in(self):
+        self.assertEqual(self.V.cluster_name(self.c, need=self.V.cluster_rules(["svm_backup:*", "vol0"])), "192.0.2.15")
+        self.assertEqual(self.V.list_cluster(self.c, {"exclude": ["svm_backup:*"]})[0], "192.0.2.15")
+
+    def test_a_cluster_rule_refuses(self):
+        self.assertTrue(self.V.cluster_rules(["cluster9*/*"]))
+        with self.assertRaises(self.V.Failed) as e:
+            self.V.list_cluster(self.c, {"exclude": ["cluster9*/*"]})
+        self.assertEqual(str(e.exception), "cluster name not read - a cluster rule in ontap_expand_exclude can't be checked")
+        with self.assertRaises(self.V.Failed):
+            self.V.cluster_name(self.c, need=True)
 
 
 class Naa(unittest.TestCase):
@@ -211,11 +273,11 @@ class Naa(unittest.TestCase):
 class Choices(unittest.TestCase):
     E = {"cluster": "cluster1", "address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03", "lun": "/vol/vol_ds03/lun_a",
          "luns": 2, "size": 2 * TB, "used": int(1.58 * TB), "aggr": "aggr1", "aggr_free": int(5.76 * TB), "datastore": "DS-SITEA-03A",
-         "lun_size": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"}
+         "lun_size": 900 * GB, "lun_used": 711 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"}
 
     def test_text_and_key(self):
         t = X.choice_text(self.E)
-        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - 2.00 TB, 21% free "
+        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware) - LUN 900.0 GB, 21% free "
                                      "[VMware datastore DS-SITEA-03A, LUN lun_a of 2] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
         self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
                                              "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
@@ -242,6 +304,43 @@ class Choices(unittest.TestCase):
         self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["b", "c", "a"])
         self.assertIn("[VMware datastore DS-B, NFS]", got[0])                    # its datastore follows it in the sort
         self.assertEqual(XF.ontap_expand_choices([a, b, c], [], 2)["more"], 1)
+
+    def test_fullest_first_by_the_lun_or_its_datastore(self):
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        nas = dict(self.E, lun="", luns=0, datastore="", volume="vol_nas", size=100 * GB, used=85 * GB, uuid="n")
+        thick = dict(self.E, luns=1, volume="vol_thick", size=100 * GB, used=99 * GB, lun_size=90 * GB, lun_used=30 * GB, uuid="t")
+        ds = dict(thick, volume="vol_ds", uuid="d")
+        got = XF.ontap_expand_choices([thick, nas, ds], [{}, {}, {"datastore": "DS9", "capacity": 89 * GB, "free": 4 * GB}])["choices"]
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["d", "n", "t"])        # the volume's own 99 % counts for nothing
+        self.assertTrue(got[0].startswith("vol_ds (svm_vmware) - LUN 89.0 GB, 4% free [VMware datastore DS9, LUN]"), got[0])
+        self.assertTrue(got[2].startswith("vol_thick (svm_vmware) - LUN 90.0 GB, 67% free [LUN]"), got[2])
+        # display only: the key keeps the listed volume and LUN sizes the expand job plans with
+        self.assertEqual((X.parse_choice(got[0])["listed"], X.parse_choice(got[0])["lun_listed"]), (100 * GB, 90 * GB))
+
+    def test_fullness(self):
+        e = {"lun": "/vol/v/l", "lun_size": 100 * GB, "lun_used": 82 * GB, "size": 110 * GB, "used": 108 * GB}
+        self.assertEqual(X.lun_fullness(e), (100 * GB, 82 * GB, "LUN"))
+        self.assertEqual(X.fullness_text(e), "LUN 82% written")
+        e2 = dict(e, ds_capacity=99 * GB, ds_free=int(19.8 * GB))
+        self.assertEqual(X.fullness_text(e2), "datastore 80% used")
+        self.assertEqual(X.fullness_text({"size": 100 * GB, "used": 50 * GB}), "volume 50% used")
+
+    def test_datastores_first_then_the_rest_each_least_free_first(self):
+        # (user 1.127.0) a VMware datastore's volume or LUN first, however full; then the rest; ties by name
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        nfs = dict(self.E, lun="", luns=0, datastore="", size=100 * GB, uuid="")
+        rows = [dict(nfs, volume="vol_full", used=97 * GB, uuid="full"),                        # 3 % free, no datastore
+                dict(nfs, volume="vol_ds_b", used=40 * GB, uuid="dsb"),                         # 60 % free, a datastore
+                dict(nfs, volume="vol_ds_a", used=40 * GB, uuid="dsa"),                         # the same, a name before
+                dict(nfs, volume="vol_ds_c", used=80 * GB, uuid="dsc"),                         # 20 % free, a datastore
+                dict(nfs, volume="vol_mid", used=50 * GB, uuid="mid")]
+        found = [{}, {"datastore": "DS-B"}, {"datastore": "DS-A"}, {"datastore": "DS-C"}, {}]
+        got = XF.ontap_expand_choices(rows, found)["choices"]
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["dsc", "dsa", "dsb", "full", "mid"])
+        got = XF.ontap_expand_choices(rows, [])["choices"]                                    # vCenter not read: one list
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["full", "dsc", "mid", "dsa", "dsb"])
 
     def test_plain_and_nfs(self):
         e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")
@@ -374,6 +473,24 @@ class Vcenter(unittest.TestCase):
                     resolve=lambda names: set(names) | {"192.0.2.21"})
         self.assertEqual(f["datastore"], "NFS-NAMED")
         self.assertEqual(self.found({"nfs_path": "/", "nfs_ips": ip}), {})
+
+    def test_the_datastore_space_on_the_map_only(self):
+        # Codex 1.127.0 P2: the grow path never reads summary for the space; the map does, and a fault there is {} (the LUN judges)
+        self.ds.summary.freeSpace = int(1.75 * GB)
+        seen, vmfs, nfs = V.scan(content(self.hosts, [self.ds, self.nfs]), "H", "D")
+        m = V.match({"naa": NAA}, seen, vmfs, nfs, with_space=True)
+        self.assertEqual((m["capacity"], m["free"]), (int(8.75 * GB), int(1.75 * GB)))
+        g = V.match({"naa": NAA}, seen, vmfs, nfs)
+        self.assertNotIn("capacity", g)
+
+        class Faulty(object):
+            name = "DS-SITEA-01"
+
+            @property
+            def summary(self):
+                raise RuntimeError("vmodl.fault.ManagedObjectNotFound")
+        self.assertEqual(V.space(Faulty()), {})
+        self.assertEqual(V.space(NS(summary=NS(capacity="n/a", freeSpace=1))), {})
 
     def test_grow_vmfs(self):
         dss = FakeDss(self.ds)

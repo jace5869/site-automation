@@ -342,6 +342,29 @@ job, a migration next week or a quota. Read the days to full as "at this rate", 
 the volume from a list, and may type a size and an incident number. **No approval:** whoever launches it decides.
 *NetApp - refresh volume list* (`playbooks/ontap_volume_list.yml`) writes that list on a schedule.
 
+### How full a volume is
+
+A volume that holds a LUN is always about as full as its LUN takes: a space-reserved (thick) LUN takes all of its size
+from the first day, whatever is written on it. So for a LUN the list and the portal's NetApp page show and sort by the
+**LUN**, never by its volume:
+
+| Volume | How full, in this order | Shown as |
+|---|---|---|
+| holds a LUN behind a VMware datastore, and vCenter was read | the datastore's own used space (vCenter: capacity and free space) | `datastore 82% used` |
+| holds a LUN (no datastore found, or no vCenter credential) | the LUN's blocks written (ONTAP `space.used` of the LUN) | `LUN 82% written` |
+| NFS, no LUN | the volume's used space | `volume 82% used` |
+
+- A LUN's blocks written only drop after the host frees them (UNMAP). The datastore's figure is the better one.
+- The list's choice shows the LUN's size and free space: *vol_ds01 (svm_vmware) - LUN 2.00 TB, 18% free [VMware
+  datastore DS01, LUN]*.
+- **The order** (the list and the portal's NetApp page): the volumes and LUNs on a VMware datastore first, then the rest;
+  each least free first, by the fullness above; ties by name. When vCenter was not read, no row counts as a datastore:
+  one list, least free first.
+- **Thick or thin.** ONTAP's `space.guarantee.requested` on the LUN: true is a space-reserved (thick) LUN, false thin.
+  The list reads it for the portal's NetApp page.
+- This is how the list **shows and sorts** a LUN. The choice's key at its end is unchanged (the volume's and the LUN's
+  sizes when listed): the expand job plans and grows exactly as before.
+
 ### What a run does
 
 1. Reads the picked volume **live**: its size, used space, aggregate and LUNs.
@@ -422,12 +445,77 @@ the volume from a list, and may type a size and an incident number. **No approva
 |---|---|---|
 | `ontap_expand_pct` / `_min_gb` / `_max_gb` | `10` / `1` / `512` | the default growth: this % of the volume, at least / at most this many GB |
 | `ontap_expand_aggr_max_pct` | `97` | the aggregate stays at or under this % used after the growth, or nothing is changed |
-| `ontap_expand_exclude` | `[]` | volumes never offered or grown: name patterns or `svm:volume` |
+| `ontap_expand_exclude` | `[]` | volumes never offered or grown: name patterns, `svm:volume` or `cluster/svm:volume` (below) |
 | `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume |
 | `ontap_expand_incident` / `_incident_group` | `off` / (none) | `create` = open an incident for a change, assigned to this group |
 | `ontap_expand_templates` / `ontap_expand_question` | the expand template / `ontap_expand_volume` | whose survey the list writes, and its question |
 | `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
+
+**`ontap_expand_exclude` patterns** (`*` and `?`, any case; the reason shown is the pattern):
+
+| Pattern | Leaves out |
+|---|---|
+| `vol_tmp*` | volumes named so, on every SVM and cluster |
+| `svm_backup:*` | every volume of SVM svm_backup |
+| `cluster9*/*` (or `cluster9*/`) | every volume on the clusters whose ONTAP name or `ontap_clusters` address matches |
+| `cluster9*/svm_a:*` | SVM svm_a, on those clusters only |
+
+With a cluster rule set, a cluster whose name cannot be read (`/api/cluster` refused) is not offered - the survey keeps
+its last list for it - and the expand job refuses it: "cluster name not read - a cluster rule in ontap_expand_exclude
+can't be checked".
+
+## The live page
+
+The site portal's **NetApp** page (`/portal/netapp`, [SITE_PORTAL.md](SITE_PORTAL.md)) shows what *NetApp - refresh
+volume list* read last, from the report database ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The NetApp page's runs*).
+GET only on NetApp; the page only reads the database.
+
+- **The live line:** as of when, the refresh's job. Older than `portal_netapp_old_minutes` (60): said, not "Live".
+- **At a glance:** clusters healthy, how many LUNs and volumes over `ontap_volume_warn_pct` / `ontap_volume_crit_pct`,
+  the soonest full, SnapMirror broken and lagging, disks failed and spares, ONTAP errors.
+- **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume,
+  VMware datastores first under their own heading, then "Other volumes and LUNs", each least free first: the VMware
+  datastore, the aggregate, how full and from where, free GB, growth a day, days until full - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
+  days until `ontap_expand_aggr_max_pct` (97 %).
+- **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
+  own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP
+  volume ..."). When the portal may not run the job, the button is off and says why ("needs Execute on NetApp - expand
+  a volume"). It is off too when the survey's choice now names another volume or LUN under the same path ("the list
+  changed - wait for the next refresh"), and when the template cannot be asked for Check ("turn on Prompt on launch for
+  Job type on NetApp - expand a volume").
+- **Guards on Expand…:** the launch must carry a volume the survey has now (a blank or old choice is refused before
+  AAP). Its Check also goes to the job as `ontap_expand_require_check` (a portal-only survey question, never shown in the
+  dialog): the playbook stops before anything when it runs for real. If AAP ignored the Job type, the portal cancels the
+  job at once.
+- **SnapMirror:** problems first; lagging is over 2x its schedule or over `ontap_snapmirror_lag_warn_hours`.
+- **Health:** nodes and HA (takeover possible), disks by node (failed, rebuilding, spares), ONTAP's error events of
+  `ontap_ems_hours`.
+- **Performance:** the busiest LUNs and volumes by latency or IOPS - ONTAP's latest sample (15 s) at the refresh, not an
+  average (an hour's average would be a GET per volume: not read).
+- Where vCenter was not read, the Datastore column says "not read - attach the VMware vCenter credential to NetApp -
+  refresh volume list".
+
+**Set it up.**
+
+1. Attach the **Report database** credential to *NetApp - refresh volume list* (the template setup job does it with
+   `report_db` in `aap_templates_credentials`). Schedule the refresh every 15 to 30 minutes.
+2. *Site portal - deploy* with the read-only `report_reader` login (as for the AD page). Run it once.
+3. The **NetApp** tab shows once the refresh has written a run.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_live_db` | `true` | keep each refresh in the report database (with the credential) |
+| `ontap_live_health` | `true` | also read SnapMirror, nodes and HA, disks and error events |
+| `ontap_live_perf` | `true` | also read each volume's and LUN's latest latency, IOPS and throughput (2 GETs a cluster) |
+| `ontap_live_perf_top` | `10` | the busiest this many by latency and by IOPS |
+| `ontap_perf_latency_warn_ms` / `_crit_ms` | `10` / `20` | amber / red latency |
+| `ontap_live_growth_days` / `ontap_live_growth_min_hours` | `7` / `6` | the growth: the slope of the points of these days, once they span these hours (3 points at least) |
+| `ontap_live_days_warn` / `_crit` | `30` / `7` | full (or at the aggregate limit) within these days: amber / red |
+| `ontap_live_list_days` | `90` | the runway lists first the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest) |
+| `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | delete older points / runs |
+| `portal_netapp` / `portal_netapp_old_minutes` | `true` / `60` | the portal's page on or off; a run older than this is said old |
+
 
 ## Settings
 

@@ -95,6 +95,10 @@ function actionPage() {
   if (f) initRun(f);
 }
 function initRun(f) {                  // the confirm page's form, or the Run dialog's (the same handler)
+  const go0 = $("go"), jts = qa(f, 'input[name="portal-job-type"]');
+  const label = () => { const c = jts.filter((x) => x.checked)[0]; if (go0 && c) go0.textContent = c.value === "check" ? "Launch as Check" : "Launch job"; };
+  jts.forEach((x) => x.addEventListener("change", label));
+  label();
   EventTarget.prototype.addEventListener.call(f, "submit", async (ev) => {          // a survey variable can be named like a form property: the form is read with the prototypes
     ev.preventDefault();
     const go = $("go");
@@ -102,18 +106,21 @@ function initRun(f) {                  // the confirm page's form, or the Run di
     const vars = Object.create(null);          // a survey variable can be called constructor or toString: it is data, never an inherited property
     for (const x of qa(f, "input[type=number]")) if (x.validity && x.validity.badInput) { $("state").textContent = "A number is not finished."; $("state").className = "state bad"; x.focus(); return; }
     for (const x of qa(f, "input, select, textarea")) {
-      if (!x.name || x.name === "portal-token" || x.name === "portal-sig" || x.disabled) continue;
+      if (!x.name || x.name === "portal-token" || x.name === "portal-sig" || x.name === "portal-job-type" || x.name === "portal-expand" || x.disabled) continue;
       if (x.type === "checkbox") { if (!vars[x.name]) vars[x.name] = []; if (x.checked) vars[x.name].push(x.value); }
       else if (x.dataset.pick) { if (!vars[x.name]) vars[x.name] = []; vars[x.name].push(x.value); }
       else vars[x.name] = x.value;
     }
     for (const b of qa(f, ".picker[data-on]")) { const n = b.dataset.picker; if (!vars[n]) vars[n] = []; }
-    for (const w of qa(f, ".field")) { w.classList.remove("bad"); w.querySelector(".why").textContent = ""; }
+    for (const w of qa(f, ".field")) { w.classList.remove("bad"); const y = w.querySelector(".why"); if (y) y.textContent = ""; }
     go.disabled = true;
     $("state").textContent = "Starting…";
     try {
       const sg = qa(f, 'input[name="portal-sig"]')[0];
-      const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined});
+      // the Job type: the one picked (a template that asks it at launch), or the Check the address asked of one fixed to Check
+      const jt = qa(f, 'input[name="portal-job-type"]:checked')[0] || qa(f, 'input[type="hidden"][name="portal-job-type"]')[0];
+      const xp = qa(f, 'input[type="hidden"][name="portal-expand"]')[0];          // opened by Expand...: the server checks its choice
+      const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined, job_type: jt ? jt.value : undefined, expand: xp ? xp.value : undefined});
       rememberRunning(r.job_id);
       $("state").textContent = "Started: job " + r.job_id + (r.warning ? ". " + r.warning : "") + ". Opening it…";
       location.assign(r.url);
@@ -121,7 +128,7 @@ function initRun(f) {                  // the confirm page's form, or the Run di
       const p = (e.body && e.body.problems) || {};
       for (const [k, why] of Object.entries(p)) {
         const x = qa(f, '[name="' + CSS.escape(k) + '"]')[0];
-        if (x) { const w = x.closest(".field"); w.classList.add("bad"); w.querySelector(".why").textContent = (w.querySelector("label").textContent + " " + why); }
+        if (x) { const w = x.closest(".field"); const y = w && w.querySelector(".why"); if (y) { w.classList.add("bad"); y.textContent = (w.querySelector("label").textContent + " " + why); } }
       }
       $("state").textContent = e.message;
       $("state").className = "state bad";

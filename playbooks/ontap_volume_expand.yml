@@ -13,6 +13,17 @@
   connection: local
   gather_facts: false
   tasks:
+    # 1.127.0: the site portal's Expand... asks Check (ontap_expand_require_check, its survey's hidden question): a run for
+    # real - the template turned to Run between the form and the launch - stops here, before anything is read or changed
+    - name: NetApp | the portal asked for Check
+      ansible.builtin.assert:
+        that: ansible_check_mode
+        fail_msg: >-
+          The site portal's Expand... asked for Check, but this job runs for real (its Job type is fixed to Run): nothing was
+          changed. Turn on Prompt on launch for Job type on NetApp - expand a volume, or launch it from AAP.
+        quiet: true
+      when: ontap_expand_require_check | default(false) | bool
+
     - name: NetApp - expand a volume
       ansible.builtin.include_role:
         name: ontap_report
