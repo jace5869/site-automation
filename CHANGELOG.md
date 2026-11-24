@@ -31,6 +31,18 @@ now takes a cluster too (`cluster/svm:volume`).
 - **Expand… guards:** the launch must carry a volume the survey has now (never blank); its Check also goes to the
   playbook (`ontap_expand_require_check`, a portal-only survey question), which stops before any change when the job
   runs for real; a Job type AAP ignored cancels the job at once.
+- **New: Windows - schedule a restart.** Pick the servers (the Limit, or the portal's Hosts box) and a 24-hour time in
+  the site's time zone (`report_time_zone`); a time that has passed means tomorrow, one less than 5 minutes away is
+  refused. Each server gets a one-time SYSTEM task for the same moment: `shutdown /r /t 60` with your reason (event
+  1074). "Only if a reboot is pending" checks component servicing, Windows Update, ConfigMgr and a rename, now and again
+  at the time. Check shows the plan per server. A server that is off at the time never restarts later; one restart per
+  server; a Limit from a file, or none, is refused.
+- **New: Windows - cancel a scheduled restart.** Removes only our restart tasks (exact folder, name and marks).
+- To set up the restart jobs: `report_time_zone` in all.yml; AAP - set up job templates with
+  `aap_templates_only: ["Windows - schedule a restart", "Windows - cancel a scheduled restart"]` and your Windows
+  credential (docs/WINDOWS.md, "Schedule a restart"). First use: one test server - Check, schedule 10 minutes out,
+  look in Task Scheduler, cancel, schedule again and let it fire.
+
 
 ## 1.116.6 — 2026-11-24
 
