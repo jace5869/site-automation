@@ -8,13 +8,15 @@ NetApp - expand a volume, turn on Prompt on launch for Job type, and give the po
 once (the expand survey gets a portal-only question, the Check guard). Optional: `ontap_expand_exclude`
 now takes a cluster too (`cluster/svm:volume`).
 
-- **NetApp page in the portal (`/portal/netapp`), read only.** Space runway (each LUN and volume, soonest full first,
+- **NetApp page in the portal (`/portal/netapp`), read only.** Space runway (each LUN and volume, VMware datastores first, each least free first,
   with a datastore search), aggregates with days to the 97 % limit, SnapMirror, health and performance. It reads the
   report database only; the tab shows once the refresh has written a run.
 - **Expand… opens the existing NetApp - expand a volume** in the Run dialog with that choice picked and Job type Check.
   It is off, with the reason, when the volume is not offered (for example `ontap_expand_exclude: <pattern>`), the
   portal may not run the job, the template cannot be asked for Check, or the list changed since. The expand job itself
   is unchanged.
+- **Order of the list and the page:** the volumes and LUNs on a VMware datastore first, then the rest; each least
+  free first (ties by name). vCenter not read: one list. The page heads the two groups.
 - **LUN volumes judged by their LUN:** the list and the page show and sort a LUN volume by its datastore's used space
   (vCenter), else the LUN's blocks written; NFS volumes by the volume. The choice's key is unchanged.
 - **The refresh keeps its runs in the report database** (`ontap_live_*` tables, made on the first run) with a growth a

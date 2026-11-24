@@ -356,7 +356,10 @@ from the first day, whatever is written on it. So for a LUN the list and the por
 
 - A LUN's blocks written only drop after the host frees them (UNMAP). The datastore's figure is the better one.
 - The list's choice shows the LUN's size and free space: *vol_ds01 (svm_vmware) - LUN 2.00 TB, 18% free [VMware
-  datastore DS01, LUN]*. The list is sorted by that, fullest first.
+  datastore DS01, LUN]*.
+- **The order** (the list and the portal's NetApp page): the volumes and LUNs on a VMware datastore first, then the rest;
+  each least free first, by the fullness above; ties by name. When vCenter was not read, no row counts as a datastore:
+  one list, least free first.
 - **Thick or thin.** ONTAP's `space.guarantee.requested` on the LUN: true is a space-reserved (thick) LUN, false thin.
   The list reads it for the portal's NetApp page.
 - This is how the list **shows and sorts** a LUN. The choice's key at its end is unchanged (the volume's and the LUN's
@@ -471,9 +474,9 @@ GET only on NetApp; the page only reads the database.
 - **The live line:** as of when, the refresh's job. Older than `portal_netapp_old_minutes` (60): said, not "Live".
 - **At a glance:** clusters healthy, how many LUNs and volumes over `ontap_volume_warn_pct` / `ontap_volume_crit_pct`,
   the soonest full, SnapMirror broken and lagging, disks failed and spares, ONTAP errors.
-- **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume, worst
-  and soonest full first: the VMware datastore, the aggregate, how full and from where, free GB, growth a day, days
-  until full - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
+- **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume,
+  VMware datastores first under their own heading, then "Other volumes and LUNs", each least free first: the VMware
+  datastore, the aggregate, how full and from where, free GB, growth a day, days until full - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
   days until `ontap_expand_aggr_max_pct` (97 %).
 - **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
   own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP

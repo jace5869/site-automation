@@ -51,3 +51,5 @@ td b.mono{white-space:nowrap}
 .nap-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .nap-q{font:inherit;font-size:13px;padding:5px 10px;border:1px solid var(--edge);border-radius:9px;background:var(--card);color:var(--ink);width:min(300px,60vw)}
 .nap-ds{font-weight:600}
+/* 1.127.0: the runway's group headings (VMware datastores, then the rest) */
+.nap-vols tr.nap-grp th{text-align:left;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--label);text-transform:none;padding:10px 12px 6px;background:var(--card-strong);border-bottom:1px solid var(--line)}

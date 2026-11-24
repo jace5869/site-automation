@@ -137,7 +137,9 @@ def model(run, vrows, arows, prow):
                      "full_text": "%s %d%% %s" % ((fsrc or "volume"), int(round(pct)), "written" if fsrc == "LUN" else "used"),
                      "g": _f(g), "days": _f(days), "rate_why": rwhy or "", "st": st or "ok", "offered": bool(int(offered or 0)) and bool(choice),
                      "why": why or "", "choice": choice or ""})
-    vols.sort(key=lambda v: (RANK.get(v["st"], 4), v["days"] if v["days"] is not None else 1e12, -v["pct"], v["name"]))
+    # (user 1.127.0) the ones on a VMware datastore first, then the rest; each least free first (the fullness of the list:
+    # datastore, else LUN written, else volume); ties by name
+    vols.sort(key=lambda v: (0 if v["ds"] else 1, -(float(v["used"]) / v["size"] if v["size"] else 0.0), v["name"]))
     aggrs = []
     for (addr, name, cl, node, size, used, g, dlim, dfull, rwhy, st) in arows:
         size, used = int(size or 0), int(used or 0)

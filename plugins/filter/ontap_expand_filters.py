@@ -214,9 +214,12 @@ def ontap_expand_choices(choices, found=None, limit=500):
     def full(e):
         size, used, _src = X.lun_fullness(e)
         return float(used) / float(size or 1)
-    # (user) the fullest first - a LUN volume by its LUN (or its datastore), never by the volume (X.lun_fullness); the limit
-    # keeps the fullest
-    order = sorted(range(len(choices)), key=lambda i: -full(choices[i]))
+    # (user 1.127.0) the ones on a VMware datastore first, then the rest; each least free first - a LUN volume by its LUN (or
+    # its datastore), never by the volume (X.lun_fullness); ties by name. vCenter not read: no datastore, one list. The limit
+    # keeps the first ones.
+    def name(e):
+        return e["volume"] + (("/" + e["lun"].rsplit("/", 1)[-1]) if e.get("lun") else "")
+    order = sorted(range(len(choices)), key=lambda i: (0 if choices[i].get("datastore") else 1, -full(choices[i]), name(choices[i])))
     choices = [choices[i] for i in order]
     found = [found[i] if i < len(found) else {} for i in order]
     out = []

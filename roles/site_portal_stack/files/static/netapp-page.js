@@ -203,7 +203,7 @@
     const vols = q ? all.filter((v) => (v.ds + " " + v.name + " " + v.svm + " " + v.aggr).toLowerCase().indexOf(q) >= 0) : showAll ? all : look;
     const vcWhy = !o.vmware ? "not read - attach the VMware vCenter credential to NetApp - refresh volume list"
       : o.vc_error ? "not read - vCenter: " + o.vc_error : "";
-    const rows = vols.map((v) => {
+    const row = (v) => {
       const days = v.days == null ? td("num wrap", el("span", "muted", v.g != null && v.g <= 0 ? "not filling" : v.rate_why || "-"))
         : td("num", el("span", daysCls(v.days, o), fmt(v.days)));
       return tr(v.st, [td("", chip(v.st)),
@@ -212,7 +212,13 @@
           : [el("span", "muted", vcWhy || "no datastore on it"), v.lun ? sub(v.thick ? "thick LUN" : "thin LUN") : null]),
         td("nap-wide mono", v.aggr),
         td("num", [fmt(v.pct, 1), sub(v.src)]), td("num", gb(v.free)), td("num", v.g == null ? "-" : (v.g > 0 ? "+" : "") + fmt(v.g, 1)), days, expandCell(v)]);
-    });
+    };
+    // VMware datastores first, then the rest (the reader's order); a thin heading over each group when both are there
+    const onDs = vols.filter((v) => v.ds), others = vols.filter((v) => !v.ds);
+    const grp = (t) => { const th = el("th", "", t); th.colSpan = 9; th.scope = "colgroup"; return el("tr", "nap-grp", th); };
+    const rows = onDs.length && others.length
+      ? [grp("VMware datastores (" + onDs.length + ")")].concat(onDs.map(row), [grp("Other volumes and LUNs (" + others.length + ")")], others.map(row))
+      : vols.map(row);
     const ex = m.expand;
     const lo = m.left_out || {};
     const more = (showAll ? "All " + all.length : look.length + " of " + all.length) + " LUNs and volumes" +
@@ -229,7 +235,7 @@
     search.type = "search"; search.id = "nap-q"; search.value = query; search.placeholder = "Datastore, volume, SVM or aggregate";
     search.setAttribute("aria-label", "Find a datastore, volume, SVM or aggregate");
     return sec("runway", "Space runway", need + " LUNs or volumes, " + needA + " aggregates need a look", [
-      el("div", "ctrl", [el("p", "h3", "LUNs and volumes, soonest full first"), el("div", "nap-tools", [search, toggle])]),
+      el("div", "ctrl", [el("p", "h3", "LUNs and volumes: VMware datastores first, each least free first"), el("div", "nap-tools", [search, toggle])]),
       table([["Now"], ["Volume / LUN"], ["Datastore", "nap-wide"], ["Aggregate", "nap-wide"], ["Used %", "num"], ["Free GB", "num"],
              ["Growth GB/day", "num"], ["Days until full", "num"], ["", "actcol"]], rows, "nap-vols"),
       el("p", "more-line", q ? vols.length + " of " + all.length + " match \u201c" + query.trim() + "\u201d." : more),

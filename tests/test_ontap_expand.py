@@ -326,6 +326,22 @@ class Choices(unittest.TestCase):
         self.assertEqual(X.fullness_text(e2), "datastore 80% used")
         self.assertEqual(X.fullness_text({"size": 100 * GB, "used": 50 * GB}), "volume 50% used")
 
+    def test_datastores_first_then_the_rest_each_least_free_first(self):
+        # (user 1.127.0) a VMware datastore's volume or LUN first, however full; then the rest; ties by name
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        nfs = dict(self.E, lun="", luns=0, datastore="", size=100 * GB, uuid="")
+        rows = [dict(nfs, volume="vol_full", used=97 * GB, uuid="full"),                        # 3 % free, no datastore
+                dict(nfs, volume="vol_ds_b", used=40 * GB, uuid="dsb"),                         # 60 % free, a datastore
+                dict(nfs, volume="vol_ds_a", used=40 * GB, uuid="dsa"),                         # the same, a name before
+                dict(nfs, volume="vol_ds_c", used=80 * GB, uuid="dsc"),                         # 20 % free, a datastore
+                dict(nfs, volume="vol_mid", used=50 * GB, uuid="mid")]
+        found = [{}, {"datastore": "DS-B"}, {"datastore": "DS-A"}, {"datastore": "DS-C"}, {}]
+        got = XF.ontap_expand_choices(rows, found)["choices"]
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["dsc", "dsa", "dsb", "full", "mid"])
+        got = XF.ontap_expand_choices(rows, [])["choices"]                                    # vCenter not read: one list
+        self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["full", "dsc", "mid", "dsa", "dsb"])
+
     def test_plain_and_nfs(self):
         e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")
         t = X.choice_text(e)

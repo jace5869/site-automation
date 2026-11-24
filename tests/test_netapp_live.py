@@ -430,6 +430,17 @@ def newest_texts():
 class Reader(unittest.TestCase):
     """netapp_live.Database: the newest run, a row per LUN and per NFS volume, worst first; the tab only with data."""
 
+    def test_datastores_first_then_the_rest_each_least_free_first(self):
+        m = nl.Database(lambda: fill(), mark="?").read()
+        vs = m["volumes"]
+        on = [bool(v["ds"]) for v in vs]
+        self.assertEqual(on, sorted(on, reverse=True), [(v["name"], v["ds"]) for v in vs])     # every datastore row before the rest
+        self.assertIn(False, on)
+        for grp in (True, False):
+            part = [v for v in vs if bool(v["ds"]) == grp]
+            keys = [(-float(v["used"]) / v["size"], v["name"]) for v in part]
+            self.assertEqual(keys, sorted(keys), grp)                                          # least free first, ties by name
+
     def test_model(self):
         m = nl.Database(lambda: fill(), mark="?").read()
         names = [v["name"] for v in m["volumes"]]
@@ -767,7 +778,7 @@ class Browser(unittest.TestCase):
 
     READ = ("var q=function(s){return [].map.call(document.querySelectorAll(s),function(x){return x.textContent.trim()})};"
             "r.h2=q('#na section.sec > h2');r.tiles=q('.nap-tiles .tile .k');r.expand=document.querySelectorAll('a[data-expand]').length;"
-            "r.off=q('.notoff');r.rows=document.querySelectorAll('.nap-vols tbody tr').length;"
+            "r.off=q('.notoff');r.grp=q('.nap-vols tr.nap-grp th');r.rows=document.querySelectorAll('.nap-vols tbody tr').length;"
             "r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;r.h=document.documentElement.scrollHeight;"
             "var i=document.getElementById('nap-q');i.value='SITEA-07';i.dispatchEvent(new Event('input',{bubbles:true}));"
             "r.found=q('.nap-vols tbody tr b.mono');")
@@ -787,6 +798,7 @@ class Browser(unittest.TestCase):
             self.assertTrue(any(x.startswith("Not offered: DP volume") for x in r["off"]), r["off"])
             self.assertEqual(r["side"], 0, w)
             self.assertEqual(r["found"], ["vol_ds07"])
+            self.assertEqual([x.split(" (")[0] for x in r["grp"]], ["VMware datastores", "Other volumes and LUNs"], w)
 
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")
