@@ -44,6 +44,29 @@ class Catalog(unittest.TestCase):
         names = [e["name"] for e in self.catalog()]
         self.assertIn("AAP - set up job templates", names)                       # it makes its own template too
 
+    def test_one_section_per_platform(self):
+        """Every job template and workflow of the catalog is in one of the twelve areas, by the portal's name rules (first match wins)."""
+        import yaml
+        with open(os.path.join(ROOT, "aap", "job_templates.yml")) as f:
+            doc = yaml.safe_load(f)
+        self.assertEqual(g.AREAS, ("Linux", "Windows", "Active Directory", "VMware", "Horizon", "NetApp", "Network", "STIG", "Certificates",
+                                   "Tickets & incidents", "ACT", "Admin"))
+        seen = set()
+        for kind in ("job_templates", "workflows"):
+            self.assertTrue(doc[kind])
+            for e in doc[kind]:
+                self.assertIn(e.get("area"), g.AREAS, "%s %s" % (kind, e["name"]))
+                self.assertEqual(e["area"], g.area_of(e["name"]), e["name"])
+                seen.add(e["area"])
+        self.assertEqual(seen, set(g.AREAS))                                         # none empty
+        area = dict((e["name"], e["area"]) for k in ("job_templates", "workflows") for e in doc[k])
+        for name, want in (("Active Directory health report", "Active Directory"), ("ACT - triage finding", "ACT"), ("NetApp - expand a volume", "NetApp"),
+                           ("VM - deploy from ServiceNow ticket", "VMware"), ("Horizon - user help", "Horizon"), ("AAP - set up job templates", "Admin"),
+                           ("fapolicyd denials", "Linux"), ("Service - restart", "Linux"), ("Windows certificate report", "Certificates"),
+                           ("Weekly compliance", "STIG"), ("Daily health", "Linux"), ("ServiceNow tickets", "Tickets & incidents"),
+                           ("Network map", "Network"), ("Windows health check", "Windows")):
+            self.assertEqual(area[name], want, name)
+
     def test_the_credential_wordings(self):
         cases = {"Machine, MariaDB monitor (optional)": (["machine"], ["mariadb"]),
                  "STIG Manager API (optional)": ([], ["stigman_api"]),
@@ -93,7 +116,7 @@ class Catalog(unittest.TestCase):
     def test_areas_and_portal(self):
         by = dict((e["name"], e) for e in self.catalog())
         self.assertEqual(by["STIG drift report"]["area"], "STIG")
-        self.assertEqual(by["Active Directory health report"]["area"], "Windows")         # not ACT
+        self.assertEqual(by["Active Directory health report"]["area"], "Active Directory")   # not ACT
         self.assertEqual(by["VM - restart"]["area"], "VMware")
         self.assertEqual(by["ACT - triage finding"].get("made_by"), "AAP - set up portal actions")
         self.assertTrue(by["STIG recheck"].get("portal"))

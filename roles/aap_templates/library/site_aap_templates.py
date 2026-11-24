@@ -51,6 +51,7 @@ RETURN = r'''
 results: {description: "Each template: {name, action (create|fix|right|differs|other name|skipped|left|missing|failed), diff ({field:
   [has, should be]}), why, labels (the portal labels it gets, or would)}.", type: list}
 problems: {description: "What stopped the job before any write: a name not found, AAP not reached.", type: list}
+stale_labels: {description: "Lines naming an old catalog area's portal-area label on a template, to remove by hand (never taken off).", type: list}
 '''
 
 import fnmatch
@@ -97,9 +98,28 @@ def off(text):
     return "\n".join(out) + "\n"
 
 
+# the areas the catalog gave before one section per platform: a portal-area: label of one of these that is not the entry's area
+# now is most likely this job's own old label - but AAP - set up portal actions (portal_publish_area) or a person may have put the
+# same text there, so it is never taken off: the job names it, to remove by hand
+OLD_CATALOG_AREAS = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT", "Linux", "Windows", "VMware", "Reports")
+
+
+def stale_area_labels(have, prefix, area):
+    """The labels of a template (names) that look like this job's old portal-area: label: prefix + an old catalog area that is not
+    its area now - sorted; none without a prefix or an area."""
+    if not prefix or not area:
+        return []
+    old = set(x.casefold() for x in OLD_CATALOG_AREAS)
+    return sorted(n for n in have if n.startswith(prefix) and n[len(prefix):].strip().casefold() in old
+                  and n[len(prefix):].strip().casefold() != str(area).strip().casefold())
+
+
 def areas_of(e):
-    """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames)."""
-    out = set([str(e.get("area") or "")])
+    """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames). Network is only
+    ever the Network EE's: the catalog's own Network area (Network map, SolarWinds, Cisco UCS on the default EE) is never skipped by it."""
+    # skip_areas: its area before one section per platform and its area now (a site's [Reports] still leaves Log analysis out)
+    out = set(str(x or "") for x in (e.get("skip_areas") or [])) | set([str(e.get("area") or "")])
+    out = set(x for x in out if x.casefold() != "network")
     if str(e.get("ee") or "") == "network":
         out.add("Network")
     return set(x.casefold() for x in out if x)
@@ -551,6 +571,7 @@ class Templates(object):
                                          "run this again" % (self.p["project"], ", ".join(gone)))
         # the labels: read now (their ids, each template's own) - only the writes are left for later (Codex)
         self.label_plan = {}
+        self.stale_labels = {}                   # name -> the lines naming its old portal-area: labels (never taken off)
         if (self.p["label_portal"] not in ("", "none") or to_label) and not self.problems:
             names = sorted(set(n for e in to_label for n in self.labels_for(e)))
             self.label_id = {}
@@ -566,6 +587,9 @@ class Templates(object):
                 missing = [n for n in self.labels_for(e) if n not in have]
                 if missing:
                     self.label_plan[e["name"]] = missing
+                stale = stale_area_labels(have, self.p["portal_label_area"], e.get("area"))
+                if stale:
+                    self.stale_labels[e["name"]] = ["stale portal-area label %s on %s - remove it by hand" % (n, e["name"]) for n in stale]
         return steps
 
     def step_why(self, t, e):
@@ -898,7 +922,8 @@ def main():
         if why:
             r["also"] = (r["also"] + "; " + why) if r.get("also") else why
     module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused,
-                     survey_adds=getattr(s, "survey_adds", {}))
+                     survey_adds=getattr(s, "survey_adds", {}),
+                     stale_labels=[x for _, lines in sorted((getattr(s, "stale_labels", None) or {}).items()) for x in lines])
 
 
 if __name__ == "__main__":

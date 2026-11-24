@@ -680,10 +680,39 @@ def mask(action, values):
 
 
 TITLE_MAX = 80
-# 1.78.4: a found template's area, in this order: its portal-area: label; the area its playbook has in the job-template catalog (aap/job_templates.yml); the site's own rules
-# (portal_area_rules: {match, area}, * and ? only, any case, the first that matches); these prefixes of the name; Other.
-BUILTIN_AREA_RULES = (("Linux - *", "Linux"), ("Windows - *", "Windows"), ("VMware - *", "VMware"), ("VM - *", "VMware"), ("ACT - *", "ACT"), ("STIG*", "STIG"),
-                      ("AAP - *", "Admin"), ("fapolicyd*", "fapolicyd"), ("* certificate*", "Certificates"))
+# 1.78.4: a found template's area, in this order: its portal-area: label; the area its playbook (a workflow: its name) has in the job-template catalog
+# (aap/job_templates.yml); the site's own rules (portal_area_rules: {match, area}, * and ? only, any case, the first that matches); these names; Other.
+# one section per platform - the catalog's areas come from the same rules (scripts/gen_job_catalog.py), in this order, the first match wins
+# (* any text, any case); "Linux": ["*"] is only the catalog's catch-all - a found template no rule names stays Other.
+AREA_RULES = (
+    ("Admin", ("AAP - *", "Site portal - deploy", "Report website*", "Workflow gate*")),
+    ("Tickets & incidents", ("ServiceNow*", "Site portal - open ticket", "Outage*", "SOP*")),
+    ("ACT", ("ACT - *", "ACT for *", "Apply approved ACT fix", "Fix with approval (ACT)")),
+    ("STIG", ("STIG*", "Windows STIG*", "Evaluate-STIG*", "POA&M*", "Checklists imported*", "Weekly compliance", "Windows weekly compliance",
+              "Security posture", "Tenable.sc*")),
+    ("Certificates", ("*certificate*", "*Certificate*", "PKI*", "*trust store*", "Trust store*")),
+    ("Active Directory", ("Active Directory*",)),
+    ("Windows", ("Windows*",)),
+    ("NetApp", ("NetApp*",)),
+    ("Horizon", ("Horizon*",)),
+    ("VMware", ("VM *", "VM - *", "VMware*", "ESXi*", "vCenter*")),
+    ("Network", ("Network*", "SolarWinds*", "Cisco*")),
+    ("Linux", ("Linux - *", "fapolicyd*", "*")),
+)
+AREA_CATCH_ALL = "*"
+# the sections of the Actions page in this order (empty ones hidden); any other area by name after them; Other last
+AREAS = ("Linux", "Windows", "Active Directory", "VMware", "Horizon", "NetApp", "Network", "STIG", "Certificates", "Tickets & incidents", "ACT", "Admin")
+# the name rules for a found template no label, catalog entry or site rule places: the rules above without the catalog's catch-all
+BUILTIN_AREA_RULES = tuple((m, a) for a, ms in AREA_RULES for m in ms if m != AREA_CATCH_ALL)
+
+
+def area_by_name(name, catch_all=False):
+    """The area AREA_RULES give a name ('' when none) - catch_all: the catalog's, where a name no rule names is Linux."""
+    for a, ms in AREA_RULES:
+        for m in ms:
+            if (m != AREA_CATCH_ALL or catch_all) and _glob(m, name):
+                return a
+    return ""
 
 
 def _glob(pat, name):
@@ -710,8 +739,9 @@ def site_portal_area_rules(rules):
     return {"rules": out, "problems": problems}
 
 
-def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None):
-    """-> (area, where it came from): 'label', 'playbook', 'your rule' or 'name'; ('', '') when none says. label_area: the text of a portal-area: label."""
+def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None, name_areas=None):
+    """-> (area, where it came from): 'label', 'playbook', 'catalog', 'your rule' or 'name'; ('', '') when none says. label_area: the text of a
+    portal-area: label; name_areas: {casefolded catalog name: area} - a workflow has no playbook, its catalog entry is found by its name."""
     label_area = " ".join(str(label_area or "").split())[:AREA_MAX]
     if label_area:
         return label_area, "label"
@@ -720,6 +750,9 @@ def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None):
     hit = pa.get(pb) or pa.get(pb.rsplit("/", 1)[-1] if pb else "") or (pa.get("playbooks/" + pb) if pb and "/" not in pb else "")
     if hit:
         return str(hit)[:AREA_MAX], "playbook"
+    hit = (name_areas or {}).get(" ".join(str(name or "").split()).casefold()) if not pb else ""
+    if hit:
+        return str(hit)[:AREA_MAX], "catalog"
     for m, a in rules or []:
         if _glob(m, name):
             return a[:AREA_MAX], "your rule"
@@ -727,6 +760,21 @@ def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None):
         if _glob(m, name):
             return a, "name"
     return "", ""
+
+
+def area_label_pick(labels, name="", playbook="", playbook_areas=None, name_areas=None):
+    """The area of several portal-area: labels (their text, sorted) a template carries: the one that is its area in the job catalog (an
+    old catalog area's label left beside the new one), else the first - '' when none."""
+    labels = [" ".join(str(x or "").split()) for x in labels or []]
+    labels = [x for x in labels if x]
+    if len(labels) > 1:
+        cat, src = area_for(name, playbook, "", playbook_areas, None, name_areas)
+        if src in ("playbook", "catalog"):
+            if any(x.casefold() == cat.casefold() for x in labels):
+                return cat                       # the catalog's spelling: one heading, never "linux" beside "Linux"
+    return labels[0] if labels else ""
+
+
 LOGO_MAX = 1024 * 1024
 _LOGO_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 

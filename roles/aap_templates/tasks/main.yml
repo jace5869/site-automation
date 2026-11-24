@@ -165,6 +165,13 @@
       {{ out or ([('only catalog templates not in AAP, not made - counted in short (aap_templates_create_missing: false)')]
                  if _at.results else ['nothing in the catalog matches aap_templates_only']) }}
 
+# an old catalog area's portal-area: label (before one section per platform) - never taken off: another job or a person may
+# have put the same label there; on its own lines, whatever else the run did
+- name: Job templates | old portal-area labels - remove them by hand
+  when: not aap_templates_describe_only | bool and _at.stale_labels | default([]) | length > 0
+  ansible.builtin.debug:
+    msg: "{{ _at.stale_labels }}"
+
 - name: Job templates | in short
   when: not aap_templates_describe_only | bool
   ansible.builtin.debug:
