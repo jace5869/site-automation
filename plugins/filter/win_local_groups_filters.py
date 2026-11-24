@@ -8,7 +8,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import csv
 import importlib.util
@@ -190,36 +190,51 @@ def _display_pct(count, total):
     return 100 if count == total else min(99, (200 * count + total) // (2 * total))
 
 
+def _threshold(value, default, setting):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return Decimal(default)
+    message = "%s must be a finite number between 0 and 100" % setting
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(message) from None
+    if not number.is_finite() or not 0 <= number <= 100:
+        raise ValueError(message)
+    return number
+
+
 def _prevalence(read, groups, baseline_pct, rare_pct):
-    baseline, rare = Decimal(str(baseline_pct)), Decimal(str(rare_pct))
-    if not (0 <= baseline <= 100 and 0 <= rare <= 100):
-        raise ValueError("Local groups percentage thresholds must be between 0 and 100")
-    # Count distinct servers per spelling as well as per case-insensitive member.
+    baseline = _threshold(baseline_pct, 90, "win_local_groups_baseline_pct")
+    rare = _threshold(rare_pct, 10, "win_local_groups_rare_pct")
+    # Count distinct servers per member identity and per candidate display name.
     observed = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
     sids = defaultdict(set)
-    representatives = {}
     for server in read:
         for group in server["groups"]:
             for member in group["members"]:
-                name = member["name"]
-                key = (group["key"], name.lower())
+                name = (member["source"] == "Unresolved", member["name"])
+                key = (group["key"], member["key"])
                 observed[key[0]][key[1]][name].add(server["host"])
                 sids[key].add(member["sid"])
-                representatives[key, name] = member
 
     total = len(read)
     prevalence = []
     for group in sorted(groups, key=lambda g: g["label"].lower() != "administrators"):
         rows = []
-        for folded, spellings in observed[group["key"]].items():
-            name = min(spellings, key=lambda n: (-len(spellings[n]), n))
+        for member_key, spellings in observed[group["key"]].items():
+            unresolved, name = min(spellings, key=lambda n: (n[0], -len(spellings[n]), n[1]))
             hosts = sorted(set().union(*spellings.values()))
             count = len(hosts)
-            key = (group["key"], folded)
-            entry = _entry({"member": representatives[key, name], "hosts": hosts})
+            member_sids = sids[group["key"], member_key]
+            shared_sid = next(iter(member_sids)) if len(member_sids) == 1 else ""
+            entry = shared_sid if unresolved else name
+            if entry.startswith(".\\"):
+                entry = "{computer}" + entry[1:]
             rows.append({"member": name, "count": count, "pct": _display_pct(count, total),
                          "hosts": hosts, "rare": count * 100 <= rare * total, "baseline": count * 100 >= baseline * total,
-                         "entry": literal_entry(entry, next(iter(sids[key])) if len(sids[key]) == 1 else "")})
+                         "entry": literal_entry(entry, shared_sid)})
         if rows:
             prevalence.append(dict(group, members=sorted(rows, key=lambda r: (-r["count"], r["member"].lower()))))
     return {"prevalence": prevalence, "baseline_pct": float(baseline) if baseline % 1 else int(baseline),
@@ -238,21 +253,22 @@ def win_local_groups_baseline(model, generated):
 def _baseline_yaml(model):
     entries = [r["entry"] for g in model["prevalence"] if g["label"].lower() == "administrators"
                for r in g["members"] if r["baseline"]]
-    values = {"win_local_groups_approved": {"groups": {"Administrators": [e for e in entries if e]}}}
+    value = {"groups": {"Administrators": [e for e in entries if e]}}
     # JSON flow syntax keeps even names containing quotes or newlines on one line in AAP.
-    note = "# Review the suggested Administrators before pasting either form into AAP.\n"
+    note = ""
     if "" in entries:
         note += "# Omitted entries containing template marks without a shared SID. Review the JSON.\n"
     block = ["win_local_groups_approved:", "  groups:", "    Administrators:"]
     block.extend("      - " + json.dumps(e, ensure_ascii=False) for e in entries if e)
     if not any(entries):
         block[-1] += " []"
-    return note, json.dumps(values, ensure_ascii=False), "\n".join(block)
+    flow = "win_local_groups_approved: " + json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return note, flow, "\n".join(block)
 
 
 def win_local_groups_baseline_snippet(model):
     note, flow, block = _baseline_yaml(model)
-    return note + flow + "\n---\n# Block form\n" + block + "\n"
+    return "# Review the suggested Administrators before pasting either form into AAP.\n" + note + flow + "\n---\n# Block form\n" + block + "\n"
 
 
 def _is_dc(role):
@@ -902,14 +918,18 @@ def win_local_groups_sheets(model):
     baseline = win_local_groups_baseline(model, "")
     rows = [[group, r["member"], r["count"], baseline["servers_answered"], r["pct"], baseline["threshold_pct"]]
             for group, members in baseline["groups"].items() for r in members]
+    columns = ["Group", "Member", "Servers", "Servers answered", "Percent", "Threshold (%)",
+               "Administrators (one-line YAML)", "Administrators (block YAML)"]
     if rows:
-        _, flow, block = _baseline_yaml(model)
+        note, flow, block = _baseline_yaml(model)
         # Excel truncates text after 32,767 UTF-16 units. Keep oversized snippets usable via the attachment.
         for snippet in (flow, block):
+            snippet = BAD_CHARS.sub("", snippet)
             rows[0].append(snippet if len(snippet.encode("utf-16-le")) <= 65534 else "See suggested-baseline.txt")
-    sheets.append({"name": "Suggested baseline", "columns": ["Group", "Member", "Servers", "Servers answered", "Percent",
-                                                            "Threshold (%)", "Administrators (one-line YAML)", "Administrators (block YAML)"],
-                   "rows": rows})
+        if note:
+            columns.append("Warning")
+            rows[0].append(note.strip().lstrip("# "))
+    sheets.append({"name": "Suggested baseline", "columns": columns, "rows": rows})
     return sheets
 
 

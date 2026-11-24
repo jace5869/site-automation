@@ -85,6 +85,71 @@ def test_overrides_and_no_answers():
 
 
 class Prevalence(unittest.TestCase):
+    def baseline_sheet(self, model):
+        return next(s for s in w.win_local_groups_sheets(model) if s["name"] == "Suggested baseline")
+
+    def test_one_line_yaml_in_block_mapping(self):
+        name = 'CORP\\Ops "A"\nB'
+        model = w.win_local_groups_model([host(1, [name])])
+        flow = self.baseline_sheet(model)["rows"][0][6]
+        value = {"groups": {"Administrators": [name]}}
+        self.assertEqual(flow, "win_local_groups_approved: " + json.dumps(value, separators=(",", ":")))
+        self.assertIn("\n" + flow + "\n---", w.win_local_groups_baseline_snippet(model))
+        self.assertEqual(yaml.safe_load(flow), {"win_local_groups_approved": value})
+        combined = yaml.safe_load("before: true\n" + flow + "\nafter: false\n")
+        self.assertEqual(combined, {"before": True, "win_local_groups_approved": value, "after": False})
+
+    def test_member_identity_and_display_name(self):
+        sid = "S-1-5-21-111"
+        hosts = []
+        names = [None] * 4 + ["Alpha", "Zulu", "Zulu", "Beta", "Beta"]
+        for i, name in enumerate(names):
+            server = host(i)
+            members = server["result"]["groups"][1]["members"]
+            members.append({"sid": sid, "name": name, "source": "Domain" if name else "Unresolved"})
+            if i == 0:
+                members.append({"sid": "S-1-5-21-222", "name": "Beta", "source": "Domain"})
+            hosts.append(server)
+        model = w.win_local_groups_model(hosts)
+        rows = model["prevalence"][0]["members"]
+        self.assertEqual([(r["member"], r["count"], r["baseline"]) for r in rows],
+                         [("Beta", 9, True), ("Beta", 1, False)])
+
+    def test_sheet_warns_about_yaml_omissions(self):
+        hosts = [host(1), host(2)]
+        for i, server in enumerate(hosts):
+            server["result"]["groups"][1]["members"].append({
+                "name": server["host"] + r"\{{svc}}", "source": "Local", "sid": "S-1-5-21-%d-1001" % i})
+        sheet = self.baseline_sheet(w.win_local_groups_model(hosts))
+        row, = sheet["rows"]
+        self.assertEqual(row[1], r".\{{svc}}")
+        for snippet in row[6:8]:
+            self.assertEqual(yaml.safe_load(snippet)["win_local_groups_approved"]["groups"]["Administrators"], [])
+        self.assertIn("Omitted entries containing template marks without a shared SID", row[sheet["columns"].index("Warning")])
+
+    def test_single_host_local_baseline_entry(self):
+        server = host(1)
+        server["result"]["groups"][1]["members"].append({"source": "Local", "name": r"SRV-APP01\Administrator"})
+        model = w.win_local_groups_model([server])
+        for form in yaml.safe_load_all(w.win_local_groups_baseline_snippet(model)):
+            self.assertEqual(form["win_local_groups_approved"]["groups"]["Administrators"], [r"{computer}\Administrator"])
+
+    def test_threshold_validation(self):
+        for setting, default in [("baseline_pct", 90), ("rare_pct", 10)]:
+            for value, expected in [(None, default), ("", default), ("  ", default), (0, 0), ("100", 100)]:
+                with self.subTest(setting=setting, value=value):
+                    self.assertEqual(w.win_local_groups_model([], **{setting: value})[setting], expected)
+            for value in (True, False, float("nan"), "sNaN", "Infinity", -1, 101, "90%"):
+                with self.subTest(setting=setting, value=value):
+                    with self.assertRaisesRegex(ValueError, setting + ".*between 0 and 100"):
+                        w.win_local_groups_model([], **{setting: value})
+
+    def test_sheet_strips_surrogates_before_sizing(self):
+        name = "Ops\ud800" + "\udfff" * 32768 + "😀"
+        sheet = self.baseline_sheet(w.win_local_groups_model([host(1, [name])]))
+        for snippet in sheet["rows"][0][6:8]:
+            self.assertEqual(yaml.safe_load(snippet)["win_local_groups_approved"]["groups"]["Administrators"], ["Ops😀"])
+
     def test_group_order_spelling_ties_and_nonresponders(self):
         for web in (True, False):
             with self.subTest(web=web):

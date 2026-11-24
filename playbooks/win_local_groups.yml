@@ -35,7 +35,7 @@
       ansible.builtin.set_fact:
         _wlg_model: >-
           {{ _wlg_hosts | win_local_groups_model(win_local_groups_usual | default('off'),
-                                                  win_local_groups_baseline_pct | default(90), win_local_groups_rare_pct | default(10)) }}
+                                                  win_local_groups_baseline_pct | default(none), win_local_groups_rare_pct | default(none)) }}
       vars:
         # every host that got past the OS check: read, not reached, or failed before its read
         _wlg_hosts: >-
