@@ -310,12 +310,14 @@ def ontap_live_payload(r):
                      "lun": e.get("lun") or "", "luns": int(e.get("luns") or 0), "size": int(e.get("size") or 0), "used": int(e.get("used") or 0),
                      "aggr": e.get("aggr") or "", "aggr_free": int(e.get("aggr_free") or 0), "datastore": ds, "ds_kind": f.get("kind") or "",
                      "full_size": int(fsize), "full_used": int(fused), "full_src": src, "thick": bool(e.get("lun_thick")),
+                     "uid": e.get("lun_uuid") or e.get("uuid") or "",
                      "offered": bool(t), "why": "" if t else "not in the survey's list (ontap_expand_max_choices)", "choice": t, "root": False})
     for x in lst.get("excluded") or []:
         vols.append({"address": x.get("address") or "", "cluster": x.get("cluster") or "", "svm": "" if x.get("svm") == "(node)" else x.get("svm") or "",
                      "volume": x.get("volume") or "", "lun": "", "luns": 0, "size": int(x.get("size") or 0), "used": int(x.get("used") or 0),
                      "aggr": x.get("aggr") or "", "aggr_free": int(x.get("aggr_free") or 0), "datastore": "", "ds_kind": "", "offered": False,
                      "full_size": int(x.get("size") or 0), "full_used": int(x.get("used") or 0), "full_src": "volume", "thick": False,
+                     "uid": x.get("uuid") or "",
                      "why": x.get("why") or "", "choice": "", "root": bool(x.get("root"))})
     aggrs = [{"address": a.get("address") or "", "cluster": a.get("cluster") or "", "name": a.get("name") or "", "node": a.get("node") or "",
               "size": int(a.get("size") or 0), "used": int(a.get("used") or 0)} for a in lst.get("aggregates") or []]

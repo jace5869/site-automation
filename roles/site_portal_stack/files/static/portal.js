@@ -112,7 +112,7 @@ function initRun(f) {                  // the confirm page's form, or the Run di
       else vars[x.name] = x.value;
     }
     for (const b of qa(f, ".picker[data-on]")) { const n = b.dataset.picker; if (!vars[n]) vars[n] = []; }
-    for (const w of qa(f, ".field")) { w.classList.remove("bad"); w.querySelector(".why").textContent = ""; }
+    for (const w of qa(f, ".field")) { w.classList.remove("bad"); const y = w.querySelector(".why"); if (y) y.textContent = ""; }
     go.disabled = true;
     $("state").textContent = "Starting…";
     try {
@@ -126,7 +126,7 @@ function initRun(f) {                  // the confirm page's form, or the Run di
       const p = (e.body && e.body.problems) || {};
       for (const [k, why] of Object.entries(p)) {
         const x = qa(f, '[name="' + CSS.escape(k) + '"]')[0];
-        if (x) { const w = x.closest(".field"); w.classList.add("bad"); w.querySelector(".why").textContent = (w.querySelector("label").textContent + " " + why); }
+        if (x) { const w = x.closest(".field"); const y = w && w.querySelector(".why"); if (y) { w.classList.add("bad"); y.textContent = (w.querySelector("label").textContent + " " + why); } }
       }
       $("state").textContent = e.message;
       $("state").className = "state bad";

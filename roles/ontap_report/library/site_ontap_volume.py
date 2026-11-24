@@ -64,7 +64,7 @@ from ansible.module_utils.site_ontap import Unreachable, error_text, explain, ki
 from ansible.module_utils import site_ontap_expand as X
 
 VOL_FIELDS = ("uuid,name,svm.name,aggregates.name,state,type,style,is_svm_root,space.size,space.used,space.available,"
-              "space.snapshot.reserve_percent,guarantee.type,nas.path,comment")
+              "space.snapshot.reserve_percent,space.snapshot.used,guarantee.type,nas.path,comment")
 AGGR_FIELDS = "uuid,name,space.block_storage.size,space.block_storage.used"
 LIST_AGGR_FIELDS = AGGR_FIELDS + ",node.name"     # the list's aggregates also name their node (the portal's NetApp page)
 # space.used: the blocks written (drops only after UNMAP); space.guarantee.requested: space-reserved (thick) or thin
@@ -168,6 +168,7 @@ def vol_in(rec):
             "used": gb_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
             "available": None if (rec.get("space") or {}).get("available") is None else gb_of(rec, "space", "available"),
             "snap_pct": float(((rec.get("space") or {}).get("snapshot") or {}).get("reserve_percent") or 0),
+            "snap_used": int(((rec.get("space") or {}).get("snapshot") or {}).get("used") or 0),
             "guarantee": (rec.get("guarantee") or {}).get("type") or "",
             "is_svm_root": rec.get("is_svm_root"), "aggregates": [a.get("name") for a in rec.get("aggregates") or []]}
 
@@ -293,12 +294,41 @@ def grow(c, p, key, opts, line, wait):
                   "result": why or "unchanged since the plan"})
     if why:
         return steps
+    if p.get("lun"):
+        # the volume's growth again from what is there now (free space, snapshots, the LUNs): a snapshot deleted since the
+        # plan may have made the room - never more than the plan's, and the aggregate asked again for it
+        luns = [x for x in c.records("/api/storage/luns", LUN_FIELDS, **{"svm.name": key["svm"], "location.volume.name": key["volume"]})
+                if ((x.get("location") or {}).get("volume") or {}).get("name") == key["volume"]]
+        mine = [x for x in luns if x.get("uuid") == p["lun_uuid"]]
+        if not mine:
+            steps[-1].update(ok=False, result="the LUN is gone since the plan - nothing was changed")
+            return steps
+        lnow = {"name": p["lun"]["name"], "size": gb_of(mine[0], "space", "size"), "thick": lun_thick(mine[0]),
+                "total": sum(gb_of(x, "space", "size") for x in luns)}
+        vt, how = X.volume_for_lun(now, lnow, p["growth"])
+        take = X.landing(now, lnow, vt - now["size"], p["growth"])
+        if vt - now["size"] > p.get("vol_growth", 0) + X.SLACK:
+            steps[-1].update(ok=False, result="the volume needs more than planned now (+%s, planned +%s) - nothing was changed; launch it again"
+                             % (X.human(vt - now["size"]), X.human(p.get("vol_growth", 0))))
+            return steps
+        if ag and not X.aggr_fits(aggr_in(ag[0])["size"], aggr_in(ag[0])["used"], p["max_pct"], take):
+            steps[-1].update(ok=False, result="%s has no room for it now - nothing was changed" % p["aggr"])
+            return steps
+        p.update(vol_growth=vt - now["size"], landing=take, vol_how=how if vt > now["size"] else "it has room for the LUN's growth already (%s)" % how)
     vg = p.get("vol_growth", p["growth"])
     p["target"] = now["size"] + vg                   # what the aggregate was checked for, on the size read just now
+    if vg > 0:
+        # never a size under the volume's own: autosize may have grown it since the read above - read it once more
+        cur = [v for v in c.records("/api/storage/volumes", VOL_FIELDS, uuid=p["volume_uuid"]) if v.get("uuid") == p["volume_uuid"]]
+        cur_size = vol_in(cur[0])["size"] if cur else 0
+        if cur_size >= p["target"] - X.SLACK:
+            vg = 0
+            p["vol_how"] = "it is %s already (grown since the plan, e.g. by autosize) - its size is not sent" % X.human(cur_size)
+            p["target"] = cur_size
     body = {"size": p["target"]} if vg > 0 else {}
     if line:
         body["comment"] = X.comment_with(vols[0].get("comment") or "", line)     # the comment as it is now, not as planned
-    if vg <= 0 and p.get("lun"):                      # a LUN's volume with room enough: only the comment (if any) changes
+    if vg <= 0:                                       # room enough (or grown since): only the comment (if any) changes
         ok, res = True, "Not needed - %s" % (p.get("vol_how") or "it has room for the LUN's growth")
         if body:
             try:
@@ -308,9 +338,9 @@ def grow(c, p, key, opts, line, wait):
                 ok, res = False, "Failed or not known: %s - the volume's comment; nothing else was changed" % e
         steps.append({"step": "Grow the volume", "exactly": "size %s stays%s" % (X.human(p["size"]), (", comment + \"%s\"" % line) if line else ""),
                       "ok": ok, "result": res})
-        if not ok:
+        if not ok or not p.get("lun"):
             return steps
-        return _grow_lun(c, p, key, wait, steps)
+        return _grow_lun(c, p, key, wait, steps, p["target"])
     try:
         bad = c.wait(c.call("PATCH", "/api/storage/volumes/" + p["volume_uuid"], body=body), wait)
         got = vol_in([v for v in c.records("/api/storage/volumes", VOL_FIELDS, uuid=p["volume_uuid"]) if v.get("uuid") == p["volume_uuid"]][0])["size"]
@@ -323,11 +353,12 @@ def grow(c, p, key, opts, line, wait):
         (", comment + \"%s\"" % line) if line else ""), "ok": ok, "result": res})
     if not ok or not p.get("lun"):
         return steps
-    return _grow_lun(c, p, key, wait, steps)
+    return _grow_lun(c, p, key, wait, steps, got)
 
 
-def _grow_lun(c, p, key, wait, steps):
-    """the LUN by the growth planned, read back -> steps"""
+def _grow_lun(c, p, key, wait, steps, vol_size=None):
+    """the LUN by the growth planned, read again right before (never a size under its own), read back -> steps. vol_size:
+    the volume's size as confirmed - the LUN's new size must fit it."""
     t = p["lun"]["target"]
     try:
         cur = [x for x in c.records("/api/storage/luns", LUN_FIELDS, uuid=p["lun_uuid"]) if x.get("uuid") == p["lun_uuid"]]
@@ -339,6 +370,9 @@ def _grow_lun(c, p, key, wait, steps):
         elif size <= 0 or abs(size - p["lun"]["size"]) > X.SLACK:
             ok, res = False, ("Stopped - the LUN is %s now, not %s as planned: the volume is grown, grow the LUN in ONTAP System Manager"
                               % (X.human(size) if size >= 0 else "gone", X.human(p["lun"]["size"])))
+        elif vol_size is not None and size + p["growth"] > vol_size + X.SLACK:
+            ok, res = False, ("Stopped - the LUN's new size %s would be over its volume's %s: grow the volume first, in ONTAP System Manager"
+                              % (X.human(size + p["growth"]), X.human(vol_size)))
         else:
             t = p["lun"]["target"] = size + p["growth"]
             bad = c.wait(c.call("PATCH", "/api/storage/luns/" + p["lun_uuid"], body={"space": {"size": t}}), wait)

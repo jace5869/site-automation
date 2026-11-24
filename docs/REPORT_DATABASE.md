@@ -1309,7 +1309,7 @@ aggregates, and the health parts.
 
 | | |
 |---|---|
-| What a run writes | one row in `ontap_live_run` (when, the job, its template, the clusters and what could not be read, the expand template and its question, the page's settings), a row per LUN and per volume in `ontap_live_volume` (sizes, how full and from which source - `datastore`, `LUN` or `volume` - thick or thin, the datastore, whether the expand job offers it and its survey choice, or why not; the growth, the days until full and the status, worked out by the writer), a row per aggregate in `ontap_live_aggr` (with the days until `ontap_expand_aggr_max_pct`), a point per LUN, volume and aggregate in `ontap_live_point`, and one JSON document per health part in `ontap_live_part` (`snapmirror`, `nodes`, `disks`, `ems`, `clusters`, `perf`) |
+| What a run writes | one row in `ontap_live_run` (when, the job, its template, the clusters and what could not be read, the expand template and its question, the page's settings), a row per LUN and per volume in `ontap_live_volume` (sizes, how full and from which source - `datastore`, `LUN` or `volume` - thick or thin, the datastore, whether the expand job offers it and its survey choice, or why not; the growth, the days until full and the status, worked out by the writer), a row per aggregate in `ontap_live_aggr` (with the days until `ontap_expand_aggr_max_pct`), a point per LUN, volume and aggregate in `ontap_live_point` (a history of its own per measurement source and UUID: vCenter lost or a LUN made again starts a new one), and one JSON document per health part in `ontap_live_part` (`snapmirror`, `nodes`, `disks`, `ems`, `clusters`, `perf`) |
 | Schema version | 1 (`schema_version` component `ontap_live`) |
 | How much | 500 LUNs and volumes every 15 minutes: about 48,000 points a day; runs are kept `ontap_live_db_keep_hours` (48), points `ontap_live_db_keep_days` (14) |
 | When the database is down | one warning in the job output; the survey is written as before, the job stays green. The portal shows the run before |
@@ -1372,6 +1372,7 @@ CREATE TABLE IF NOT EXISTS ontap_live_volume (
   full_used_b BIGINT NOT NULL DEFAULT 0,
   full_src VARCHAR(16) NOT NULL DEFAULT '',
   thick TINYINT NOT NULL DEFAULT 0,
+  pt_obj CHAR(40) NOT NULL DEFAULT '',
   growth_gb_day DOUBLE NULL,
   days_full DOUBLE NULL,
   rate_why VARCHAR(120) NOT NULL DEFAULT '',

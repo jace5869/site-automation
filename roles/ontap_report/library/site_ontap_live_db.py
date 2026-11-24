@@ -80,7 +80,7 @@ CREATE = (
     "aggr VARCHAR(191) NOT NULL DEFAULT '', aggr_free_b BIGINT NOT NULL DEFAULT 0, datastore VARCHAR(255) NOT NULL DEFAULT '', "
     "ds_kind VARCHAR(8) NOT NULL DEFAULT '', offered TINYINT NOT NULL DEFAULT 0, why VARCHAR(300) NOT NULL DEFAULT '', "
     "choice TEXT NULL, root TINYINT NOT NULL DEFAULT 0, full_size_b BIGINT NOT NULL DEFAULT 0, full_used_b BIGINT NOT NULL DEFAULT 0, "
-    "full_src VARCHAR(16) NOT NULL DEFAULT '', thick TINYINT NOT NULL DEFAULT 0, growth_gb_day DOUBLE NULL, days_full DOUBLE NULL, "
+    "full_src VARCHAR(16) NOT NULL DEFAULT '', thick TINYINT NOT NULL DEFAULT 0, pt_obj CHAR(40) NOT NULL DEFAULT '', growth_gb_day DOUBLE NULL, days_full DOUBLE NULL, "
     "rate_why VARCHAR(120) NOT NULL DEFAULT '', status VARCHAR(16) NOT NULL DEFAULT '', PRIMARY KEY (run_id, row_key)) " + db.TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS ontap_live_aggr (run_id BIGINT NOT NULL, address VARCHAR(191) NOT NULL, aggr VARCHAR(191) NOT NULL, "
     "cluster VARCHAR(191) NOT NULL DEFAULT '', node VARCHAR(191) NOT NULL DEFAULT '', size_b BIGINT NOT NULL DEFAULT 0, "
@@ -94,8 +94,8 @@ CREATE = (
 INSERT_RUN = ("INSERT INTO ontap_live_run (read_at, job, template_id, clusters, not_read, expand_template, expand_question, opts, volumes, offered) "
               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
 INSERT_VOL = ("INSERT INTO ontap_live_volume (run_id, row_key, address, cluster, svm, volume, lun, luns, size_b, used_b, aggr, aggr_free_b, "
-              "datastore, ds_kind, offered, why, choice, root, full_size_b, full_used_b, full_src, thick) "
-              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+              "datastore, ds_kind, offered, why, choice, root, full_size_b, full_used_b, full_src, thick, pt_obj) "
+              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
               "ON DUPLICATE KEY UPDATE used_b = VALUES(used_b)")
 INSERT_AGGR = ("INSERT INTO ontap_live_aggr (run_id, address, aggr, cluster, node, size_b, used_b) VALUES (%s, %s, %s, %s, %s, %s, %s) "
                "ON DUPLICATE KEY UPDATE used_b = VALUES(used_b)")
@@ -167,8 +167,10 @@ def schema(conn, create):
 
 
 def _vol_obj(v):
-    """a point's object: svm:volume, or svm:volume/lun path for a LUN (a LUN volume is judged by its LUN)"""
-    return "%s:%s%s" % (v.get("svm") or "", v.get("volume") or "", ("|" + v["lun"]) if v.get("lun") else "")
+    """a point's object: the row (svm, volume, LUN) with what it was measured by (datastore, LUN or volume) and its UUID -
+    a history of its own each: vCenter lost or back, or a LUN made again under the same path, starts a new one (never a
+    jump inside one, which would make a false rate)"""
+    return L.row_key(str(v.get("address") or "").lower(), v.get("svm"), v.get("volume"), v.get("lun"), v.get("full_src") or "volume", v.get("uid"))
 
 
 def write(conn, now, job, template_id, run, expand_template="", expand_question="", opts=None):
@@ -188,7 +190,7 @@ def write(conn, now, job, template_id, run, expand_template="", expand_question=
              int(v.get("used") or 0), str(v.get("aggr") or "")[:191], int(v.get("aggr_free") or 0), str(v.get("datastore") or "")[:255],
              str(v.get("ds_kind") or "")[:8], 1 if v.get("offered") else 0, str(v.get("why") or "")[:300], str(v.get("choice") or ""),
              1 if v.get("root") else 0, int(v.get("full_size") or v.get("size") or 0), int(v.get("full_used") if v.get("full_used") is not None else v.get("used") or 0),
-             str(v.get("full_src") or "volume")[:16], 1 if v.get("thick") else 0) for v in vols]
+             str(v.get("full_src") or "volume")[:16], 1 if v.get("thick") else 0, _vol_obj(v)) for v in vols]
     for i in range(0, len(rows), CHUNK):
         cur.executemany(INSERT_VOL, rows[i:i + CHUNK])
     arows = [(rid, str(a["address"])[:191], str(a["name"])[:191], str(a.get("cluster") or "")[:191], str(a.get("node") or "")[:191],
@@ -224,10 +226,10 @@ def rate_all(conn, now, rid, opts=None):
     cur.execute(SUMS, (at, at - int(float(o.get("growth_days", 7)) * 86400), at))
     sums = dict(((str(k), str(a), str(ob)), row) for (k, a, ob), row in ((x[:3], x[3:]) for x in cur.fetchall()))
     mp, mh = int(o.get("min_points", 3)), float(o.get("min_hours", 6))
-    cur.execute("SELECT row_key, address, svm, volume, lun, full_size_b, full_used_b FROM ontap_live_volume WHERE run_id = %s", (rid,))
+    cur.execute("SELECT row_key, address, pt_obj, full_size_b, full_used_b FROM ontap_live_volume WHERE run_id = %s", (rid,))
     vrows, rated = [], 0
-    for key, addr, svm, vol, lun, size, used in cur.fetchall():
-        s = sums.get(("volume", str(addr).lower(), _vol_obj({"svm": svm, "volume": vol, "lun": lun})))
+    for key, addr, obj, size, used in cur.fetchall():
+        s = sums.get(("volume", str(addr).lower(), str(obj)))
         g, why = L.rate(*s, min_points=mp, min_hours=mh) if s else (None, "no point yet")
         days = L.days_until(max(0, int(size) - int(used)), g) if g is not None else None
         rated += g is not None

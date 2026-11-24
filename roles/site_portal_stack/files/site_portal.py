@@ -3567,7 +3567,8 @@ def job_type_html(a, query):
     want = (query.get(NETAPP_JOB_TYPE) or [""])[-1] if isinstance(query.get(NETAPP_JOB_TYPE), list) else query.get(NETAPP_JOB_TYPE, "")
     pick = want if want in ("check", "run") else jt.get("default", "run")
     opts = (("check", "Check - the plan only, nothing is changed"), ("run", "Run - the job does its work"))
-    return ('<div class="field"><label id="l-jt">Job type</label><div class="multi" role="radiogroup" aria-labelledby="l-jt">%s</div></div>'
+    return ('<div class="field"><label id="l-jt">Job type</label><div class="multi" role="radiogroup" aria-labelledby="l-jt">%s</div>'
+            '<p class="why" id="p-jt"></p></div>'
             % "".join('<label class="opt"><input type="radio" name="%s" value="%s"%s> %s</label>' % (NETAPP_JOB_TYPE, v, " checked" if v == pick else "", esc(t))
                       for v, t in opts))
 
@@ -5206,6 +5207,13 @@ NETAPP_STATIC = ("netapp-page.js", "netapp-page.css")
 NETAPP_TAB_EVERY = 300          # whether the database has a NetApp run (the bar's tab): asked this often
 NETAPP_JOB_TYPE = "portal-job-type"      # the Run dialog's Job type field (a template that asks it at launch): never a survey variable
 CHOICE_KEY_IDS = re.compile(r"\[vol\|([^|\]]+)\|([^|\]]+)\|([^|\]]+)\|([^|\]]*)\|")
+CHOICE_KEY_UUIDS = re.compile(r"\[vol\|[^|\]]+\|[^|\]]+\|[^|\]]+\|[^|\]]*\|\d+(?:\|(\d*))?(?:\|([A-Za-z0-9-]*))?(?:\|([A-Za-z0-9-]*))?\]\s*$")
+
+
+def choice_uuids(text):
+    """the volume's and the LUN's UUIDs in a choice's key ('' each when not there) - the same path made again has others"""
+    m = CHOICE_KEY_UUIDS.search(str(text or ""))
+    return (m.group(2) or "", m.group(3) or "") if m else ("", "")
 
 
 def choice_ids(text):
@@ -5273,7 +5281,7 @@ class NetappLive(object):
         """The expand template as the portal has it for this person -> {on, why, name, q, values: {ids: text}, job_type}."""
         tmpl = str(run.get("expand_template") or "NetApp - expand a volume")
         q = str(run.get("expand_question") or "ontap_expand_volume")
-        out = {"on": False, "why": "", "template": tmpl, "name": "", "q": q, "values": {}, "job_type": False}
+        out = {"on": False, "why": "", "template": tmpl, "name": "", "q": q, "values": {}, "job_type": False, "fixed_run": ""}
         p = self.portal
         if p is None:
             out["why"] = "needs Execute on %s" % tmpl
@@ -5297,7 +5305,11 @@ class NetappLive(object):
         if not var or var.get("kind") != "choice":
             out["why"] = "the survey of %s has no single-select question %s" % (tmpl, q)
             return out
-        out.update(on=True, name=a["name"], job_type=bool((a.get("job_type") or {}).get("ask")))
+        jt = a.get("job_type") or {}
+        out.update(on=True, name=a["name"], job_type=bool(jt.get("ask")))
+        if not jt.get("ask") and jt.get("default") != "check":
+            # no Check to ask for: Expand would start the real change at once
+            out["fixed_run"] = "turn on Prompt on launch for Job type on %s" % tmpl
         for t in var.get("values") or []:
             k = choice_ids(t)
             if k:
@@ -5314,10 +5326,17 @@ class NetappLive(object):
             if v.get("offered") and ex["on"]:
                 ids = choice_ids(v.get("choice"))
                 now = ex["values"].get(ids) if ids else None
+                if now and choice_uuids(now) != choice_uuids(v.get("choice")):
+                    # the same path, another volume or LUN (made again since this run): never the new one's choice
+                    v["off"], v["dis"] = "the list changed - wait for the next refresh", True
+                    now = None
+                elif now and ex.get("fixed_run"):
+                    v["off"], v["dis"] = ex["fixed_run"], True
+                    now = None
                 if now:
                     v["x"].append({"lun": v.get("lun", ""), "href": "%sactions/%s?%s" % (self.cfg.path, ex["name"], urllib.parse.urlencode(
                         [(ex["q"], now)] + ([(NETAPP_JOB_TYPE, "check")] if ex["job_type"] else [])))})
-                if not v["x"]:
+                if not v["x"] and not v.get("off"):
                     v["off"] = "not in the job's current list - the portal reads AAP again within portal_discover_seconds"
             elif v.get("offered"):
                 v["off"] = ex["why"]
@@ -5340,7 +5359,7 @@ class NetappLive(object):
                 body["rows"] = [dict(r, shown=shown(self.cfg, r.get(key)) if r.get(key) else "") for r in body.get("rows") or []]
             parts[k] = body
         return {"run": run, "volumes": vols, "aggrs": m.get("aggrs") or [], "parts": parts, "left_out": m.get("left_out") or {},
-                "expand": {"on": ex["on"], "why": ex["why"], "template": ex["template"], "job_type": ex["job_type"]}}
+                "expand": {"on": ex["on"] and not ex["fixed_run"], "why": ex["why"] or ex["fixed_run"], "template": ex["template"], "job_type": ex["job_type"]}}
 
     def answer(self, cn, etag_in=""):
         with self.lock:

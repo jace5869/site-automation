@@ -372,11 +372,19 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    - then the volume's snapshot reserve on top (it is a % of the volume), and never smaller than the LUN.
    - **If the volume has the room already,** it is not grown; only the LUN is.
    - The plan says it plainly: *LUN 2.00 TB -> 2.20 TB; volume 2.10 TB -> 2.32 TB (thick LUN + 5 % snapshot reserve)*.
-4. Checks the aggregate against the **volume's** growth. After it the aggregate must stay **at or under 97 % used**
+4. Checks the aggregate against what really lands on it: the volume's growth on a volume with a volume guarantee; on
+   a thin volume (guarantee none) the growth of a space-reserved LUN; the guarantee not read: both. An aggregate already
+   over the limit refuses the run, even when the volume need not grow. After it the aggregate must stay **at or under 97 % used**
    (`ontap_expand_aggr_max_pct`). The growth counts as used, even on a thin volume. When it does not fit, nothing is
    changed. The report says the largest size that fits: *"Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB
    fits"* (for a LUN volume: the largest LUN growth whose volume growth fits).
-5. Reads the volume and the aggregate again, right before the change. If anything moved against the plan, it stops.
+5. Reads the volume, its LUNs and the aggregate again, right before the change, and works the volume's growth out again
+   from what is there (a snapshot deleted since may have made the room: then the volume is not grown). It stops if the
+   volume now needs more than planned, or anything else moved against the plan. Right before the volume's change it
+   reads the size once more: a size under the volume's own (autosize grew it) is never sent. The LUN's new size must fit
+   the volume's confirmed size.
+   - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
+     counts the spill at that size, once.
 6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the
    volume's comment (what was there is kept).
 7. **The LUN** grows by the growth, then is read back.
@@ -471,7 +479,9 @@ GET only on NetApp; the page only reads the database.
 - **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
   own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP
   volume ..."). When the portal may not run the job, the button is off and says why ("needs Execute on NetApp - expand
-  a volume").
+  a volume"). It is off too when the survey's choice now names another volume or LUN under the same path ("the list
+  changed - wait for the next refresh"), and when the template cannot be asked for Check ("turn on Prompt on launch for
+  Job type on NetApp - expand a volume").
 - **SnapMirror:** problems first; lagging is over 2x its schedule or over `ontap_snapmirror_lag_warn_hours`.
 - **Health:** nodes and HA (takeover possible), disks by node (failed, rebuilding, spares), ONTAP's error events of
   `ontap_ems_hours`.

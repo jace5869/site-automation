@@ -265,10 +265,25 @@ class Writer(unittest.TestCase):
         self.assertEqual(parts, ["clusters", "disks", "ems", "nodes", "perf", "snapmirror"])
         run = q("SELECT expand_template, expand_question, volumes, offered FROM ontap_live_run WHERE run_id = ?", rid)[0]
         self.assertEqual(run[:2], ("NetApp - expand a volume", "ontap_expand_volume"))
-        self.assertEqual(q("SELECT COUNT(*) FROM ontap_live_point WHERE kind = 'volume' AND obj = 'svm_a:vol_ds01|/vol/vol_ds01/lun1'")[0][0], 8)   # one a run, each LUN
+        obj = q("SELECT pt_obj FROM ontap_live_volume WHERE run_id = ? AND lun = '/vol/vol_ds01/lun1'", rid)[0][0]
+        self.assertEqual(q("SELECT COUNT(*) FROM ontap_live_point WHERE kind = 'volume' AND obj = ?", obj)[0][0], 8)   # one a run, each LUN
         src = dict(((r[0], r[1]), r[2]) for r in q("SELECT volume, lun, full_src FROM ontap_live_volume WHERE run_id = ?", rid))
         self.assertEqual((src[("vol_ds03", "/vol/vol_ds03/lun1")], src[("vol_new01", "/vol/vol_new01/lun1")], src[("vol_home", "")]),
                          ("datastore", "LUN", "volume"))
+
+    def test_p2_a_history_per_source_and_uuid(self):
+        """vCenter lost: the LUN's blocks written start a history of their own - no jump inside one, no false rate"""
+        db = fill(hours=(48, 24, 12, 6))
+        now = fx.at(0)
+        lst, found = fx.listed(0, new=False)
+        texts = ef.ontap_expand_choices(lst["choices"], found)["choices"]
+        p = lf.ontap_live_payload({"list": lst, "choices": texts, "found": [{}] * len(found), "opts": fx.OPTS})     # no vCenter
+        rid = ldb.write(db, now, 9200, 58, p, EXPAND, "ontap_expand_volume", fx.OPTS)[0]
+        ldb.rate_all(db, now, rid, fx.OPTS)
+        r = db.db.execute("SELECT full_src, growth_gb_day, rate_why FROM ontap_live_volume WHERE run_id = ? AND volume = 'vol_ds03'", (rid,)).fetchone()
+        self.assertEqual(r[0], "LUN")
+        self.assertIsNone(r[1])                                                      # a new history: one point, no rate
+        self.assertIn("(1 so far", r[2])
 
     def test_prune(self):
         db = fill()
@@ -391,6 +406,27 @@ class Expand(unittest.TestCase):
         self.assertEqual(v["x"], [])
         self.assertIn("not in the job's current list", v["off"])
 
+    def test_p1_the_same_path_made_again_is_not_offered(self):
+        texts = newest_texts()
+        again = [re.sub(r"\|([0-9a-f-]+)\]$", "|0000aaaa-0000-0000-0000-000000000000]", t) if "|vol_ds03|" in t else t for t in texts]
+        m = self.model(actions={"jt_58": expand_action(again)})
+        v = [x for x in m["volumes"] if x["name"] == "vol_ds03"][0]
+        self.assertEqual(v["x"], [])
+        self.assertTrue(v["dis"])
+        self.assertEqual(v["off"], "the list changed - wait for the next refresh")
+
+    def test_p2_a_template_fixed_to_run_has_no_expand(self):
+        m = self.model(actions={"jt_58": expand_action(newest_texts(), ask=False)})
+        v = [x for x in m["volumes"] if x["name"] == "vol_ds03"][0]
+        self.assertEqual(v["x"], [])
+        self.assertEqual(v["off"], "turn on Prompt on launch for Job type on NetApp - expand a volume")
+        self.assertFalse(m["expand"]["on"])
+        a = expand_action(newest_texts(), ask=False)
+        a["job_type"]["default"] = "check"                                         # fixed to Check: allowed, nothing to ask
+        v = [x for x in self.model(actions={"jt_58": a})["volumes"] if x["name"] == "vol_ds03"][0]
+        self.assertEqual(len(v["x"]), 1)
+        self.assertNotIn("portal-job-type", v["x"][0]["href"])
+
     def test_off_with_its_reason(self):
         m = self.model(found={"skipped": [], "no_execute": [EXPAND]})
         v = [x for x in m["volumes"] if x["name"] == "vol_ds03"][0]
@@ -400,7 +436,6 @@ class Expand(unittest.TestCase):
         self.assertIn("not on the list of people", m["expand"]["why"])
         m = self.model()
         self.assertIn("needs Execute on NetApp - expand a volume", m["expand"]["why"])
-        self.assertNotIn("check", json.dumps([x.get("x") for x in self.model(actions={"jt_58": expand_action(newest_texts(), ask=False)})["volumes"]]))
 
     def test_no_login_and_no_tables(self):
         tmp = tempfile.mkdtemp()
@@ -589,6 +624,50 @@ class Browser(unittest.TestCase):
             self.assertTrue(any(x.startswith("Not offered: DP volume") for x in r["off"]), r["off"])
             self.assertEqual(r["side"], 0, w)
             self.assertEqual(r["found"], ["vol_ds07"])
+
+
+@unittest.skipUnless(browser(), "no google-chrome or chromium")
+class DialogSubmit(unittest.TestCase):
+    """The Run dialog with the Job type, submitted in Chromium (portal.js initRun): Check and Run each reach the launch."""
+
+    def submit(self, pick):
+        texts = newest_texts()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        p = sp.Portal(cfg_for(tmp))
+        p.actions = {"jt_58": expand_action(texts)}
+        frag = sp.action_page(p.cfg, p, CN, "jt_58", {"ontap_expand_volume": [texts[0]], "portal-job-type": ["check"]}, embed=True)
+        html = sp.shell(p.cfg, "x", frag, CN, token="t1", page="x").replace("/portal/static/", "")
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for n in ("portal.css", "portal-theme.js", "portal.js"):
+            shutil.copy(os.path.join(FILES, "static", n), d)
+        open(os.path.join(d, "banner.css"), "w").close()
+        with open(os.path.join(d, "t.js"), "w") as fh:
+            fh.write("window.__sent=null;window.fetch=function(u,o){if(o&&o.method==='POST')window.__sent=JSON.parse(o.body);"
+                     "return Promise.resolve({ok:true,status:201,json:function(){return Promise.resolve({job_id:7,url:'#done'})}})};"
+                     "document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('run');initRun(f);"
+                     "var r=f.querySelector('input[name=\"portal-job-type\"][value=\"%s\"]');r.checked=true;r.dispatchEvent(new Event('change'));"
+                     "var label=document.getElementById('go').textContent;f.requestSubmit();"
+                     "setTimeout(function(){document.getElementById('res').textContent=JSON.stringify({sent:window.__sent,label:label,"
+                     "state:document.getElementById('state').textContent})},800)});" % pick)
+        html = html.replace('<script src="portal.js" defer></script>', '<script src="portal.js"></script><script src="t.js"></script>')
+        html = html.replace("</body>", '<pre id="res"></pre></body>', 1)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write(html)
+        out = run_page(os.path.join(d, "p.html"), 1280)
+        m = re.search(r'<pre id="res">(.*?)</pre>', out, re.S)
+        self.assertIsNotNone(m, out[-600:])
+        return json.loads(sp.html.unescape(m.group(1))), texts
+
+    def test_check_and_run_launch(self):
+        r, texts = self.submit("check")
+        self.assertEqual(r["sent"]["job_type"], "check", r)
+        self.assertEqual(r["sent"]["vars"], {"ontap_expand_volume": texts[0], "ontap_expand_size": ""})
+        self.assertEqual(r["label"], "Launch as Check")
+        r, _t = self.submit("run")
+        self.assertEqual(r["sent"]["job_type"], "run", r)
+        self.assertEqual(r["label"], "Launch job")
 
 
 if __name__ == "__main__":

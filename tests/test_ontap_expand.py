@@ -179,7 +179,7 @@ class LunPlans(unittest.TestCase):
     LUN = {"name": "/vol/vol_ds01/lun0", "size": 2 * TB, "used": int(1.64 * TB), "thick": True, "total": 2 * TB}
 
     def v(self, size, available, snap=5):
-        return vol(size, size - available, available=available, snap_pct=snap)
+        return vol(size, size - available, available=available, snap_pct=snap, guarantee="volume")
 
     def test_thick_with_snapshot_reserve(self):
         size = int(2.11 * TB)
@@ -213,8 +213,8 @@ class LunPlans(unittest.TestCase):
         aggr = {"name": "aggr1", "size": 10 * TB, "used": int(9.7 * TB) - 100 * GB}       # 100 GB under 97 %
         p = X.plan(self.v(size, avail), aggr, size, {}, lun=self.LUN, lun_listed=2 * TB)
         self.assertEqual(p["status"], "refused")
-        self.assertIn("on the LUN needs the volume +", p["why"])
-        self.assertIn(" would put aggr1 at ", p["why"])
+        self.assertIn("on the LUN takes ", p["why"])
+        self.assertIn(" from aggr1 (the volume +", p["why"])
         self.assertGreater(p["room"], 0)                                                   # the largest LUN growth that fits
         self.assertLessEqual(X.volume_for_lun(self.v(size, avail), self.LUN, p["room"])[0] - size, X.room(10 * TB, aggr["used"], 97))
         self.assertGreater(X.volume_for_lun(self.v(size, avail), self.LUN, p["room"] + X.MB)[0] - size, X.room(10 * TB, aggr["used"], 97))
@@ -235,6 +235,151 @@ class LunPlans(unittest.TestCase):
         e2 = dict(e, ds_capacity=99 * GB, ds_free=int(19.8 * GB))
         self.assertEqual(X.fullness_text(e2), "datastore 80% used")
         self.assertEqual(X.fullness_text({"size": 100 * GB, "used": 50 * GB}), "volume 50% used")
+
+
+class Review1124(unittest.TestCase):
+    """Codex's review of the LUN rule: the aggregate counted by what really lands on it (over the limit already: refused,
+    whatever the growth); the snapshots' spill counted once; the change re-read right before (autosize, a snapshot deleted)."""
+
+    def v(self, size, available, snap=0, snap_used=0, guarantee="volume"):
+        return vol(size, size - available, available=available, snap_pct=snap, snap_used=snap_used, guarantee=guarantee)
+
+    LUN = {"name": "/vol/v/l", "size": 2 * TB, "used": int(1.5 * TB), "thick": True, "total": 2 * TB}
+
+    def test_p1_an_aggregate_over_the_limit_refuses_even_with_room_in_the_volume(self):
+        over = {"name": "aggr1", "size": 10 * TB, "used": int(9.8 * TB)}                       # 98 %
+        p = X.plan(self.v(3 * TB, int(0.85 * TB)), over, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(p["vol_growth"], 0)
+        self.assertEqual(p["status"], "refused", p["why"])
+        self.assertIn("nothing fits", p["why"])
+        ok = X.plan(self.v(3 * TB, int(0.85 * TB)), AGGR, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)
+        self.assertEqual(ok["status"], "grow")
+        self.assertIn("got fuller", X.recheck(ok, self.v(3 * TB, int(0.85 * TB)), over))     # the re-check too, with nothing to take
+        nas = X.plan(vol(), {"name": "aggr1", "size": 100 * GB, "used": 98 * GB}, 10 * GB, {})
+        self.assertEqual(nas["status"], "refused")
+
+    def test_p1_a_thin_volume_counts_the_thick_luns_growth(self):
+        aggr = {"name": "aggr1", "size": 10 * TB, "used": int(9.7 * TB) - 100 * GB}            # 100 GB under 97 %
+        thin_vol = self.v(3 * TB, int(0.85 * TB), guarantee="none")
+        p = X.plan(thin_vol, aggr, 3 * TB, {}, lun=self.LUN, lun_listed=2 * TB)               # no volume growth, 204.8 GB reserved
+        self.assertEqual((p["vol_growth"], p["landing"]), (0, X.default_growth(2 * TB)))
+        self.assertEqual(p["status"], "refused")
+        thin_lun = X.plan(thin_vol, aggr, 3 * TB, {}, lun=dict(self.LUN, thick=False), lun_listed=2 * TB)
+        self.assertEqual(thin_lun["landing"], 0)
+        self.assertEqual(thin_lun["status"], "grow", thin_lun["why"])
+        self.assertEqual(X.landing({"guarantee": ""}, self.LUN, 5, 7), 12)                    # not read: the most it can be
+
+    def test_p2_the_spill_counted_once(self):
+        """70 GiB data, 30 GiB snapshots, 20 % reserve, 100 GiB full: +10 GiB needs 110 GiB, not 112.5"""
+        v = self.v(100 * GB, 0, snap=20, snap_used=30 * GB)
+        self.assertEqual(X.usable_used(v)[0], 70 * GB)
+        vt, _how = X.volume_for_lun(v, {"name": "l", "size": 60 * GB, "thick": True, "total": 60 * GB}, 10 * GB)
+        self.assertEqual(vt, 110 * GB)
+        self.assertEqual(X.size_for_usable(80 * GB, 20, 0), 100 * GB)                          # no snapshots: the reserve only
+        self.assertEqual(X.size_for_usable(80 * GB, 0, 5 * GB), 85 * GB)                       # no reserve: all of them spill
+
+
+def volume_module():
+    """roles/ontap_report/library/site_ontap_volume.py with its module_utils (ansible-core's, the repo's)"""
+    import importlib.util
+    import ansible.module_utils
+    import site_ontap
+    for n, m in (("site_ontap", site_ontap), ("site_ontap_expand", X)):
+        sys.modules["ansible.module_utils." + n] = m
+        setattr(ansible.module_utils, n, m)
+    spec = importlib.util.spec_from_file_location("site_ontap_volume_t", os.path.join(REPO, "roles", "ontap_report", "library", "site_ontap_volume.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class FakeCluster(object):
+    """A cluster for grow(): its volume (sizes that move on the reads given), its aggregate, its LUN; every PATCH kept."""
+
+    def __init__(self, vols, lun_size=2 * TB, avail=None, aggr_used=int(14 * TB)):
+        self.reads, self.vols, self.patches, self.lun_size = 0, list(vols), [], lun_size
+        self.avail = avail if avail is not None else [int(0.85 * TB)] * len(vols)
+        self.aggr_used = aggr_used
+
+    def vol(self):
+        i = min(self.reads, len(self.vols) - 1)
+        self.reads += 1
+        return {"uuid": "v1", "name": "vol_ds01", "svm": {"name": "svm1"}, "aggregates": [{"name": "aggr1"}], "state": "online", "type": "rw",
+                "style": "flexvol", "space": {"size": self.vols[i], "used": self.vols[i] - self.avail[i], "available": self.avail[i],
+                                              "snapshot": {"reserve_percent": 0, "used": 0}}, "guarantee": {"type": "volume"}, "comment": ""}
+
+    def records(self, path, fields, **q):
+        if path == "/api/storage/volumes":
+            return [self.vol()]
+        if path == "/api/storage/aggregates":
+            return [{"uuid": "a1", "name": "aggr1", "space": {"block_storage": {"size": 20 * TB, "used": self.aggr_used}}}]
+        return [{"uuid": "l1", "name": "/vol/vol_ds01/l", "location": {"volume": {"name": "vol_ds01"}},
+                 "space": {"size": self.lun_size, "used": TB, "guarantee": {"requested": True}}}]
+
+    def call(self, method, path, query=None, body=None):
+        self.patches.append((path, body))
+        if "luns" in path:
+            self.lun_size = body["space"]["size"]
+        elif "size" in body:
+            self.vols = [body["size"]]
+            self.reads = 0
+        return {}
+
+    def wait(self, answer, seconds):
+        return ""
+
+
+class Grow1124(unittest.TestCase):
+    """grow(): never a size under the volume's own (autosize grew it after the last read), the volume's growth worked out again
+    from what is there before the first write (a snapshot deleted made the room), the LUN's new size within its volume."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.V = volume_module()
+
+    def plan(self, size=3 * TB, avail=int(0.85 * TB), lun_size=2 * TB):
+        v = vol(size, size - avail, available=avail, snap_pct=0, guarantee="volume", name="vol_ds01", svm="svm1")
+        p = X.plan(v, AGGR, size, {}, lun={"name": "/vol/vol_ds01/l", "size": lun_size, "thick": True, "total": lun_size}, lun_listed=lun_size)
+        p.update(volume_uuid="v1", lun_uuid="l1")
+        return p
+
+    def test_p1_autosize_grew_it_after_the_last_read(self):
+        p = self.plan(avail=int(0.1 * TB))                       # thick: the volume must grow (+0.1 TB more than free)
+        self.assertGreater(p["vol_growth"], 0)
+        bigger = p["target"] + 50 * GB
+        c = FakeCluster([3 * TB, bigger], avail=[int(0.1 * TB), int(0.1 * TB) + 50 * GB + p["target"] - 3 * TB])
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        sizes = [b.get("size") for path, b in c.patches if "volumes" in path and b.get("size")]
+        self.assertEqual(sizes, [])                                                  # never a size under its own
+        self.assertTrue(all(s_["ok"] for s_ in steps), steps)
+        self.assertIn("its size is not sent", steps[1]["result"])
+        self.assertEqual(c.lun_size, 2 * TB + p["growth"])
+
+    def test_p2_a_snapshot_deleted_since_the_plan_leaves_the_volume_as_it_is(self):
+        p = self.plan(avail=int(0.1 * TB))
+        self.assertGreater(p["vol_growth"], 0)
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)])                             # room now
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual([b for path, b in c.patches if "volumes" in path], [])
+        self.assertEqual(c.lun_size, 2 * TB + p["growth"])
+        self.assertTrue(all(s_["ok"] for s_ in steps), steps)
+
+    def test_p2_needing_more_than_planned_stops(self):
+        p = self.plan()
+        self.assertEqual(p["vol_growth"], 0)
+        c = FakeCluster([3 * TB], avail=[10 * GB])                                   # the room went: more than planned
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertFalse(steps[0]["ok"])
+        self.assertIn("needs more than planned now", steps[0]["result"])
+        self.assertEqual(c.patches, [])
+
+    def test_p2_the_luns_size_within_its_volume(self):
+        p = self.plan()
+        c = FakeCluster([3 * TB])
+        steps = self.V._grow_lun(c, p, {"volume": "vol_ds01"}, 1, [], vol_size=2 * TB)
+        self.assertFalse(steps[-1]["ok"])
+        self.assertIn("would be over its volume", steps[-1]["result"])
+        self.assertEqual(c.patches, [])
 
 
 class Exclusions(unittest.TestCase):
