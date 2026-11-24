@@ -435,7 +435,7 @@
     svg.appendChild(s("rect", {x: 0, y: 1, width: 100, height: 8, rx: 1.5, "class": "trk"}));
     if (v != null) svg.appendChild(s("rect", {x: 0, y: 1, width: Math.max(0.5, Math.min(100, v)), height: 8, rx: 1.5, "class": "fl f-" + st}));
     [w, c].forEach(function (m) { if (m != null && m <= 100) svg.appendChild(s("line", {x1: m, x2: m, y1: 0, y2: 10, "class": "mk"})); });
-    return h("div", "vs", [svg, h("div", "ax", [h("span", "", ["0"]), w != null ? h("span", "", ["warning " + w]) : null, h("span", "", ["critical " + c]), h("span", "", ["100"])])]);
+    return h("div", "vs", [svg, h("div", "vax", [h("span", "", ["0"]), w != null ? h("span", "", ["warning " + w]) : null, h("span", "", ["critical " + c]), h("span", "", ["100"])])]);
   }
   function objList(names, max, kind) {
     max = max || 60;
@@ -1254,6 +1254,7 @@
   };
 
   // ================================================================ What the wall watches (every style): from the answer's own rules
+  function liveOntap() { return Object.keys(W.feeds).some(function (k) { return k.indexOf("ontap:") === 0; }); }
   function watchEl() {
     var hp = thr("high"), wrap = h("div", "wwatch");
     add(wrap, [h("p", "wlead", [h("b", "", ["Routine alarms and events never reach the wall"]), " (informational alarms, short spikes, snapshot age, tools out of date). Only the conditions below light an area. Freshness: each feed shows ",
@@ -1269,7 +1270,8 @@
         var tr = h("tr");
         if (i === 0) tr.appendChild(h("td", "ar", [a.name], {rowspan: ks.length}));
         add(tr, [h("td", "", [W.kinds[k].label]), h("td", "lv " + W.kinds[k].sev, [W.kinds[k].sev === "crit" ? "critical" : "warning"]),
-          h("td", "muted", [["aggrfull", "aggrwarn", "sm", "node", "voloff"].indexOf(k) >= 0 ? "NetApp run (report database)" : "vCenter, live"])]);
+          h("td", "muted", [k === "voloff" ? "ONTAP, live (the NetApp ONTAP credential)" : ["aggrfull", "aggrwarn", "sm", "node"].indexOf(k) >= 0 ?
+            (liveOntap() ? "ONTAP, live" : "NetApp - refresh volume list's run (report database)") : "vCenter, live"])]);
         if (i === 0) tr.appendChild(h("td", "no", [a.not_on_wall], {rowspan: ks.length}));
         body.appendChild(tr);
       });
@@ -1312,7 +1314,7 @@
         if (QS.get("kiosk") === "1") setKiosk(true, false);
       }
       render();
-      if (first && QS.get("open")) openDetail(QS.get("open"));
+      if (first && QS.get("open")) { if (QS.get("open") === "feedback") openFeedback(""); else openDetail(QS.get("open")); }
       window.scrollTo(0, keepScroll);
       root.setAttribute("data-ready", "1");
     }).catch(function (e) {

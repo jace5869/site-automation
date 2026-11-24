@@ -745,7 +745,7 @@ body.kiosk .appbar{display:none}
 .dsc .bad{color:var(--critical);font-weight:650}
 .dsc .vs{max-width:520px;margin-top:6px}
 .dsc .vsb{width:100%;height:12px;display:block;overflow:visible}
-.dsc .vs .ax{display:flex;justify-content:space-between;font:10.5px var(--mono);color:var(--muted);margin-top:3px}
+.dsc .vs .vax{display:flex;justify-content:space-between;font:10.5px var(--mono);color:var(--muted);margin-top:3px}
 .dsc .dtab{border-collapse:collapse;width:100%;font-size:13px}
 .dsc .dtab th{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label);text-align:left;padding:4px 8px;border-bottom:1px solid var(--edge)}
 .dsc .dtab td{padding:4px 8px;border-bottom:1px solid var(--line)}

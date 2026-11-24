@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.129.0 — 2026-11-24
+
+**To set up:** attach the site's existing **VMware vCenter** credential (the VMware jobs' account) and, for live storage,
+the **NetApp ONTAP** credential to *Site portal - deploy* (both optional there; no new account), keep its read-only
+**Report database** credential, run AAP - set up job templates if the template should list them, and run *Site portal -
+deploy*. The wall is on by default (`portal_wall: true`); its tab is named by `portal_wall_title` (default
+`outage_ops_center`, else "Ops center"). Thresholds (defaults fine for a first showing): `portal_wall_datastore_warn` /
+`_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90) and
+`portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
+`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15). Optional: `portal_wall_site_places` (the Map's dots),
+`portal_wall_site_pattern`, `portal_wall_enclave` (default `site_enclave`), `portal_wall_vcenter` / `portal_wall_ontap`
+(auto | true | false). Feedback: `portal_wall_feedback` (true), `portal_wall_feedback_groups` ([] = everyone who opens
+the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); the list is at `<portal>/wall/feedback`.
+
+- **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
+  default), Map - kept per viewer; `?style=`, `?area=`, `?kiosk=1`, Rotate (styles or areas, 30 / 60 / 120 s, pauses on
+  input, starts again after 60 s idle). VMware and Storage are on the wall; VDI, Active Directory, Outages & problems
+  and Network are grey tiles "Not on the wall yet".
+- **Every gauge, tile, counter, light and row opens a detail card:** what is wrong, since when and how long, the value
+  against its threshold, what it touches (the VMs and datastores on a host that is down), the source and its age, and
+  where to check it. A datastore opens its storage path (datastore, LUN / volume, aggregate). Critical is loud (red,
+  icon and word, first in the Now strip); OK stays quiet.
+- **VMware live:** hosts not responding or disconnected, a vCenter not answering or its login failed, hosts in
+  maintenance not listed as expected, datastores inaccessible or full, a host's or VM's CPU or memory at 90 % for 15 min
+  or longer (short spikes stay off), VMs with a red heartbeat, hosts up x / y, the busiest cluster's CPU and memory.
+- **The collector is read-only by construction:** one kept vCenter session (a new login only when the session is
+  gone), one property read a cycle, only read calls in the code (any other is refused before it is sent); ONTAP GET
+  only with `fields=`. On the first refused login a source stops and is tried again no sooner than 15 minutes (the
+  accounts are shared with the AAP jobs: a lockout would stop them too); one log line per episode; no overlapping
+  reads. The logins are podman secrets on the portal server (`site-portal-vcenter`, `site-portal-ontap`), as the LDAP
+  bind account.
+- **Freshness:** every source shows *as of*; LATE after 3 min, STALE after 10 min; stale is never green (a hollow grey
+  ?, "Not current", the last values grey). Storage from the NetApp run is as old as that run, and says so.
+- **What the wall watches** lists each wall condition with the thresholds in force. No "days until full" on the wall.
+- **Feedback** button on the wall (and "Feedback on this card"), kept on the portal server with the card name and the
+  time; the list for its readers at `/portal/wall/feedback` (area filter, CSV). Who may send and who may read: AD groups,
+  checked on the server (the button hidden and the send refused for others; the list 403).
+- docs/SITE_PORTAL.md, "The ops-center wall": the sources, the collector, the set-up, "Thresholds to confirm with each
+  team", "Wall feedback: how to open it and who sees it".
+
 ## 1.127.3 — 2026-11-24
 
 **To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**

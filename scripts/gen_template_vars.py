@@ -663,7 +663,8 @@ vmware_ask_image: aap.example.mil/site-ee-all:1
 vmware_ask_public_url: https://stigman.example.mil/ask/
 """),
     "site_portal_deploy.yml": ("Site portal - deploy", "Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), "
-                          "Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned)", "", """\
+                          "Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned), "
+                          "VMware vCenter (optional: the wall's live VMware read), NetApp ONTAP (optional: the wall's live storage read)", "", """\
 ## The podman network of STIG Manager's nginx container (docs/SITE_PORTAL.md, step 1: sudo podman ps): the portal joins
 ## it and sits behind that nginx at /portal/ - its mTLS (the card) says who it is; the job never changes STIG Manager
 portal_network: stigman
