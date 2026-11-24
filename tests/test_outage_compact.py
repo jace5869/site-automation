@@ -217,6 +217,88 @@ class FilesOnTheDatastore(unittest.TestCase):
         self.assertIn(line, str(handoff["blocks"]))
 
 
+class CodexReview(unittest.TestCase):
+    """The six P2s of the review of 1.116.6's first commit, each as the case it named."""
+
+    @staticmethod
+    def ev(t, typ, vc="vc", **fields):
+        return dict(time=t, type=typ, vcenter=vc, **fields)
+
+    def review(self, events, **opts):
+        return ot.outage_timeline(events, [], dict(dict(begin=100, end=2400, review=True), **opts))
+
+    @staticmethod
+    def lines(r):
+        return [(x["span"], x["text"] + ", ".join(x["names"]) + x["suffix"]) for x in r["draft"]["story"]["rows"]]
+
+    def test_1_a_pair_never_crosses_a_recovery(self):
+        loss, back = ("esx.problem.storage.apd.start", "esx.problem.vmfs.heartbeat.timedout"), \
+            ("esx.clear.storage.apd.exit", "esx.problem.vmfs.heartbeat.recovered")
+        events = [self.ev(t, typ, host="esx", datastore="ds") for t, types in ((600, loss), (620, back), (640, loss)) for typ in types]
+        r = self.review(events)
+        self.assertEqual(self.lines(r), [("00:10:00", "All paths down (APD) and datastore ds lost on 1 host: esx"),
+                                         ("00:10:20", "Datastore ds back on 1 host: esx"),
+                                         ("00:10:40", "All paths down (APD) and datastore ds lost on 1 host: esx")])
+        self.assertEqual([g["row"][0] for g in r["draft"]["groups"]], ["00:10:00", "00:10:20", "00:10:40"])
+
+    def test_2_a_loss_pairs_only_on_the_same_hosts(self):
+        from test_outage_timeline import watch_run
+        ds = dict(name="ds", moid="ds-1", vcenter="vc")
+        events = [self.ev(600, "esx.problem.storage.apd.start", host="h1", datastore="ds"),
+                  self.ev(600, "esx.problem.storage.apd.start", host="h2", message="Device naa.7"),
+                  self.ev(600, "HostConnectionLostEvent", host="h2"),
+                  self.ev(601, "esx.problem.vmfs.heartbeat.timedout", host="h1", datastore="ds")]
+        r = self.review(events, datastores=[ds], watch_runs=[watch_run(700, [dict(name="h2", moid="host-2")], [ds], "vc")])
+        text = " | ".join(line for _, line in self.lines(r))
+        self.assertNotIn("lost on 2 hosts", text)
+        self.assertIn("Storage paths down on 2 hosts: h1, h2", text)
+        self.assertIn("1 datastore not accessible: ds", text)
+
+    def test_3_an_earlier_finding_counts_only_inside_the_outage(self):
+        from test_outage_timeline import Review1162
+        from vmware_watch_filters import vm_watch_conditions
+        c = Review1162()
+        vm = dict(name="app", moid="vm-7")
+        store = dict(name=c.ds, moid="datastore-1", vcenter=c.vc, accessible=False, vms=[vm])
+        for at, counted in ((300, False), (1300, True)):
+            with self.subTest(at=at):
+                hung = dict(c.condition("hung", "app", "VM app is hung"), vm=dict(vm, datastores=[c.ds]))
+                r = self.review([c.event("esx.problem.storage.apd.start", 1200, host=c.host, datastore=c.ds)],
+                                watch_runs=[c.run_artifact(hung, at=at, finished=at + 10)], datastores=[store],
+                                triggers=vm_watch_conditions(dict(datastores=[store])), read_at=2300)
+                self.assertEqual(r["numbers"]["affected_vms"], 1 if counted else 0)
+                self.assertEqual(r["draft"]["files_lines"],
+                                 [] if counted else ["1 VM has files on %s (may have hung or failed): app" % c.ds])
+
+    def test_4_a_storage_alarm_the_other_way_keeps_its_row(self):
+        events, tickets, opts = shared_ds_outage()
+        red = next(e for e in events if e["type"] == "AlarmStatusChangedEvent" and e["host"] == HOSTS[0] and e["to"] == "red")
+        events.append(dict(red, key=99999, to="green", time=red["time"][:-3] + "30Z", **{"from": "red"}))   # 07:09:30
+        events.sort(key=lambda e: (e["time"], e["key"]))
+        rows = [g["row"] for g in ot.outage_timeline(events, tickets, dict(opts, low_seconds=10))["draft"]["groups"]]
+        self.assertNotIn("alarms yellow", str(rows))
+        self.assertTrue(rows[0][1].endswith("; alarms red (24 events)"))
+        self.assertEqual(rows[1][:2], ["07:09:30", "Alarm back to green: Cannot connect to storage"])
+
+    def test_5_redundancy_stays_when_the_paths_line_has_no_datastore(self):
+        from test_outage_timeline import watch_run
+        events = [self.ev(600, "esx.problem.storage.apd.start", host="h1", message="Device naa.9"),
+                  self.ev(600, "HostConnectionLostEvent", host="h1"),
+                  self.ev(600, "esx.problem.storage.redundancy.lost", host="h1", message="Lost path redundancy to storage device naa.9")]
+        r = self.review(events, watch_runs=[watch_run(700, [dict(name="h1", moid="host-1")], vc="vc")])
+        self.assertIn(("00:10:00", "Storage path redundancy lost on 1 host: h1"), self.lines(r))
+        self.assertIn(("00:10:00", "Storage paths down on 1 host: h1"), self.lines(r))
+
+    def test_6_cards_count_hosts_by_vcenter(self):
+        def seen(pairs):
+            r = self.review([self.ev(600 + i, "esx.problem.storage.apd.start", vc=vc, host=h, datastore="ds")
+                             for i, (vc, h) in enumerate(pairs)])
+            return next(c["seen_short"] for c in r["draft"]["patterns"] if c["title"].startswith("All paths down"))
+        self.assertEqual(seen([("vc1", "h1"), ("vc1", "h2"), ("vc1", "h3"), ("vc2", "h1")]), "ds (vc1), ds (vc2) and 4 hosts")
+        self.assertEqual(seen([("vc1", "h1"), ("vc2", "h1")]), "ds (vc1), ds (vc2) and h1 (vc1), h1 (vc2)")
+        self.assertEqual(seen([("vc1", "h1"), ("vc1", "h2")]), "ds and h1, h2")
+
+
 class Pages(unittest.TestCase):
     def test_the_aar_is_under_five_pages(self):
         import shutil

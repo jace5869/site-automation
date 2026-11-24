@@ -936,7 +936,7 @@ def _review_roots(opts, events, begin, end, read_in_window):
         return key
 
     runs = []
-    recorded_vms, recorded_members = set(), defaultdict(set)
+    recorded_vms, recorded_members, recorded_times = set(), defaultdict(set), defaultdict(set)
     for run in opts.get("watch_runs") or []:
         artifact = (run.get("artifacts") or {}).get("vm_watch") or {}
         when = _time(artifact.get("read_at") or run.get("finished"))
@@ -962,6 +962,7 @@ def _review_roots(opts, events, begin, end, read_in_window):
             elif c.get("object_type") == "vm" and c.get("kind") in DOWN_KIND:
                 identity = vc, name, _condition_moid(c)
                 recorded_vms.add(identity)
+                recorded_times[identity].add(when)
                 if c["kind"] == "lost":
                     vm_findings.append((identity, c.get("summary") or ""))
         # The compact lost-VM finding keeps its datastore list only in the summary.
@@ -1028,6 +1029,7 @@ def _review_roots(opts, events, begin, end, read_in_window):
         empty_read["ambiguous_host"] = True
     if empty_read and opts.get("events_not_read"):
         empty_read["events_not_read"] = True
+    opts["recorded_vm_times"] = recorded_times      # 1.116.6 (review): when the watch saw each VM down
     return list(roots.values()), empty_read, recorded_vms
 
 
@@ -1200,7 +1202,10 @@ def _review_inventory(opts, events):
         for fqdn in names_seen:
             host_aliases[vc, label(vc, "host", None, fqdn)].add(fqdn)
     recorded = {(vc, label(vc, "vm", moid, name)) for vc, name, moid in opts["recorded_vms"]}
-    return dict(opts, recorded_vms=recorded, host_aliases=host_aliases, triggers=triggers[:n], roots=triggers[n:], hosts=hosts)
+    recorded_times = defaultdict(set)
+    for (vc, name, moid), times in (opts.get("recorded_vm_times") or {}).items():
+        recorded_times[vc, label(vc, "vm", moid, name)].update(times)
+    return dict(opts, recorded_vms=recorded, recorded_vm_times=recorded_times, host_aliases=host_aliases, triggers=triggers[:n], roots=triggers[n:], hosts=hosts)
 
 
 def _scope(e):
@@ -1589,7 +1594,11 @@ def _root_history(events, opts):
     signalled = {(obj[0], obj[2]) for _, obj, _, _ in vm_chain}
     files_on = defaultdict(set)
     for key, objects in members.items():
-        if (key in signalled or key in watch_vms or key in opts["recorded_vms"]
+        # 1.116.6 (review): an earlier watch finding confirms the VM only when it falls in a lost datastore's outage
+        seen = (opts.get("recorded_vm_times") or {}).get(key)
+        recorded = key in opts["recorded_vms"] and (seen is None or any(
+            during(history.get(obj, ()), t) for obj in objects for t in seen))
+        if (key in signalled or key in watch_vms or recorded
                 or any(obj[1] != "datastore" for obj in objects)):
             continue
         for obj in objects:
@@ -2134,9 +2143,13 @@ def _paired_groups(groups):
         for back, (apd, heartbeat) in PAIRS.items():
             if i in used or a["type"] != apd or not a["hosts"]:
                 continue
+            def crossed(b):
+                start, stop = min(a["first"], b["first"]), max(a["last"], b["last"])
+                return any(o["vcenter"] == a["vcenter"] and o["type"] in PAIRS[not back] and start < o["first"] < stop
+                           for o in groups)
             j = next((j for j, b in enumerate(groups) if j not in used and j != i and b["type"] == heartbeat
                       and b["phase"] == a["phase"] and b["vcenter"] == a["vcenter"] and b["hosts"] == a["hosts"]
-                      and b["stores"] and abs(b["first"] - a["first"]) <= burst), None)
+                      and b["stores"] and abs(b["first"] - a["first"]) <= burst and not crossed(b)), None)
             if j is None:
                 continue
             used.update((i, j))
@@ -2149,6 +2162,8 @@ def _paired_groups(groups):
                 if not (f["hosts"] and f["hosts"] <= a["hosts"] and first <= f["first"] <= core_end + burst):
                     continue
                 alarm = f["type"] == "AlarmStatusChangedEvent" and STORAGE_ALARM.search(f["label"])
+                if alarm and (f["level"] == "ok") != back or alarm and f["level"] not in BAD + ("ok",):
+                    continue           # a storage alarm going the other way (or gray) keeps its own row
                 if f["type"] in FOLLOWERS[back] or alarm:
                     used.add(k)
                     members.append(f)
@@ -2319,19 +2334,39 @@ def _story(events, parts, incident, read, loc, card_matches):
 
     # 1.116.6: the same hosts' APD and datastore loss (or their return) in one burst are one line,
     # and the path redundancy those hosts lost (or got back) with it is part of that line.
+    turns = defaultdict(list)          # every storage change, by vCenter: a pair never crosses a change the other way
+    for g in groups:
+        if g["kind"] in STORAGE_KINDS:
+            turns[g["events"][0]["vcenter"]].extend((x["t"], g["back"]) for x in g["events"])
+
+    def unbroken(vc, back, a, b):
+        a, b = min(a, b), max(a, b)
+        return not any(a < t < b and direction != back for t, direction in turns[vc])
+
     def near(g, p, before=burst):
-        first = g["events"][0]["t"]
-        return (g["back"] == p["back"] and g["events"][0]["vcenter"] == p["events"][0]["vcenter"]
-                and p["events"][0]["t"] - before <= first <= p["last"] + burst)
+        first, vc = g["events"][0]["t"], p["events"][0]["vcenter"]
+        span = (min(first, p["events"][0]["t"]), max(g["last"], p["last"]))
+        return (g["back"] == p["back"] and g["events"][0]["vcenter"] == vc
+                and p["events"][0]["t"] - before <= first <= p["last"] + burst and unbroken(vc, p["back"], *span))
+
+    def hosts_of(g):
+        return {x["host"] for x in g["events"] if x.get("host") and not x["kind"].startswith("alarm:")}
     for p in path_groups:
         hosts = set(p["names"])
         for g in groups:
             if g.get("into") or g is p or not hosts:
                 continue
-            if g["kind"] == "datastore" and near(g, p) and g["names"] and \
-                    {x["host"] for x in g["events"] if x.get("host")} <= hosts:
+            # 1.116.6 (review): a loss pairs only on the same hosts, so a host with APD alone keeps its own paths line.
+            # A datastore's return is recorded once, at the end of its outage: it pairs with the hosts' paths back.
+            same = hosts_of(g) <= hosts if p["back"] else hosts_of(g) == hosts
+            if g["kind"] == "datastore" and near(g, p) and g["names"] and same:
                 g["into"], p["stores"] = p, p.get("stores", []) + [g]
-            elif g["kind"] == "redundancy" and near(g, p, datetime.timedelta(0)) and set(g["names"]) <= hosts:
+    for p in path_groups:
+        if not p.get("stores"):
+            continue                   # only a paired line prints the redundancy that came with it
+        for g in groups:
+            if not g.get("into") and g["kind"] == "redundancy" and near(g, p, datetime.timedelta(0)) and \
+                    set(g["names"]) <= set(p["names"]):
                 g["into"], p["redundancy"] = p, g
 
     reset_before = set()
@@ -2636,8 +2671,12 @@ def _pattern_cards(events, current, opts, read, loc, card_matches=None):
         # 1.116.6: the AAR's counted form ("ds_shared_01 and 14 hosts"); the names are in Order of events
         counted = []
         for key, word in (("datastore", "datastore"), ("host", "host"), ("vm", "VM")):
-            names = sorted({o[key] for o in seen_objects if o.get(key)})
-            if names:
+            pairs = sorted({(o.get("vcenter", ""), o[key]) for o in seen_objects if o.get(key)})
+            if pairs:
+                centers = defaultdict(set)
+                for vc, name in pairs:
+                    centers[name].add(vc)
+                names = ["%s (%s)" % (name, vc) if len(centers[name]) > 1 and vc else name for vc, name in pairs]
                 counted.append(", ".join(names) if len(names) <= 2 else _count(len(names), word))
         if live:
             counted.append(_count(len(live), "object") + " at the review")

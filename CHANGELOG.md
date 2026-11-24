@@ -25,6 +25,12 @@
   not accessible, so after a recovery the line reads *VMs on ds_shared_01: not read*. Same line in the tile, the
   page, the AAR and the handoff.
 
+Review fixes (Codex, six P2s): a pair never crosses a change the other way (lost, back, lost again are three lines);
+a loss pairs only on the same hosts (a host with APD alone stays on the paths line); a VM an earlier watch saw down
+counts only when that finding falls in the datastore's outage; a storage alarm going the other way keeps its own row
+in Appendix A; path redundancy stays on its own line when the paths line has no datastore; a card counts hosts per
+vCenter and names the vCenter when a name repeats.
+
 Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
 each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
 
