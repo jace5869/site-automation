@@ -31,7 +31,7 @@ except ImportError:
 IN_CHAIN = "1.2.840.113556.1.4.1941"               # LDAP_MATCHING_RULE_IN_CHAIN: a member of a member ... counts
 BIT_AND = "1.2.840.113556.1.4.803"                 # LDAP_MATCHING_RULE_BIT_AND
 DISABLED = 0x2                                     # userAccountControl ACCOUNTDISABLE
-ROLES = ("approvers", "requesters")
+ROLES = ("approvers", "requesters", "wall_feedback", "wall_readers")   # 1.129.0: the wall's Feedback button and list
 SECONDS, RETRY = 300, 60                           # read every 5 minutes; 60 s after a failure
 
 

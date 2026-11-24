@@ -226,7 +226,10 @@
 
 - name: Settings | the AD groups (portal_approver_groups, portal_requester_groups)
   ansible.builtin.set_fact:
-    _portal_ldap_on: "{{ (portal_approver_groups | default([], true) | length > 0) or (portal_requester_groups | default([], true) | length > 0) }}"
+    _portal_ldap_on: >-
+      {{ (portal_approver_groups | default([], true) | length > 0) or (portal_requester_groups | default([], true) | length > 0)
+         or (portal_wall | bool and portal_wall_feedback | bool and ((portal_wall_feedback_groups | default([], true) | length > 0)
+             or (portal_wall_feedback_readers | default([], true) | length > 0))) }}
     _portal_ldap_servers: >-
       {%- set out = [] -%}
       {%- for x in (portal_ldap_server | default('', true) | string).split(',') if x | trim | length > 0 -%}
@@ -241,6 +244,43 @@
     _portal_netmap: >-
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
+
+# 1.129.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
+# deploy has their credentials); the thresholds are checked here, the service checks them again
+- name: Settings | the ops-center wall (portal_wall_*)
+  ansible.builtin.set_fact:
+    _portal_wall_vc: >-
+      {{ portal_wall | bool and ((portal_wall_vcenter | string | lower in ['true', 'yes', 'on', '1'])
+         or (portal_wall_vcenter | string | lower == 'auto' and portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0
+             and ((portal_wall_vcenter_host | length > 0) or (portal_wall_vcenters | default([], true) | length > 0)))) }}
+    _portal_wall_ontap: >-
+      {{ portal_wall | bool and ((portal_wall_ontap | string | lower in ['true', 'yes', 'on', '1'])
+         or (portal_wall_ontap | string | lower == 'auto' and portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0
+             and portal_wall_ontap_clusters | default([], true) | length > 0)) }}
+
+- name: Settings | the ops-center wall's settings are usable
+  ansible.builtin.assert:
+    that:
+      - portal_wall_title | string | trim | length > 0 and portal_wall_title | string | length <= 40
+      - portal_wall_seconds | int >= 30 and portal_wall_seconds | int <= 3600
+      - portal_wall_auth_retry_minutes | int >= 5 and portal_wall_auth_retry_minutes | int <= 1440
+      - 0 < portal_wall_datastore_warn | float < portal_wall_datastore_crit | float <= 100
+      - 0 < portal_wall_aggr_warn | float < portal_wall_aggr_crit | float <= 100
+      - 0 < portal_wall_high_pct | float <= 100
+      - portal_wall_high_minutes | int >= 1 and portal_wall_high_minutes | int <= 240
+      - portal_wall_maintenance_expected is sequence and portal_wall_maintenance_expected is not string
+      - portal_wall_site_places is mapping
+      - portal_wall_feedback_groups is sequence and portal_wall_feedback_groups is not string
+      - portal_wall_feedback_readers is sequence and portal_wall_feedback_readers is not string
+      - not (_portal_wall_vc | bool) or (portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0)
+      - not (_portal_wall_vc | bool) or (portal_wall_vcenter_host | length > 0 or portal_wall_vcenters | default([], true) | length > 0)
+      - not (_portal_wall_ontap | bool) or (portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0 and portal_wall_ontap_clusters | length > 0)
+    fail_msg: >-
+      The wall's settings (docs/SITE_PORTAL.md, "The ops-center wall"): portal_wall_title 1 to 40 characters; portal_wall_seconds 30 to 3600;
+      portal_wall_auth_retry_minutes 5 to 1440; each warning under its critical, both 1 to 100; portal_wall_high_minutes 1 to 240; the lists
+      as lists and portal_wall_site_places a mapping; portal_wall_vcenter: true needs the "VMware vCenter" credential on this deploy (or
+      portal_wall_vcenter_host / _username / _password), portal_wall_ontap: true the "NetApp ONTAP" one and ontap_clusters - nothing was changed.
+    quiet: true
 
 - name: Settings | the live Network map has SolarWinds' address and login
   ansible.builtin.assert:
@@ -676,6 +716,68 @@
     msg: "podman secret create site-portal-ldap failed (rc {{ _portal_ldap_set.rc }}): {{ _portal_ldap_set.stderr | default('', true) | trim or 'no reason given' }}"
   when: _portal_ldap_set.rc | default(0) != 0
 
+# ---------------------------------------------------------------- 1.129.0: the wall's logins, podman secrets (as the LDAP bind account)
+# the site's existing "VMware vCenter" and "NetApp ONTAP" accounts as JSON, one secret each (site-portal-vcenter ->
+# PORTAL_WALL_VCENTER_LOGIN, site-portal-ontap -> PORTAL_WALL_ONTAP_LOGIN), the SHA-256 on a label; removed when off
+- name: Secret | the wall's logins - the values
+  ansible.builtin.set_fact:
+    _portal_wall_logins:
+      - name: site-portal-vcenter
+        on: "{{ _portal_wall_vc | bool }}"
+        value: >-
+          {{ {'user': portal_wall_vcenter_username, 'password': portal_wall_vcenter_password,
+              'hosts': ([portal_wall_vcenter_host] if portal_wall_vcenter_host | length > 0 else []) + (portal_wall_vcenters | default([], true) | list),
+              'verify': portal_wall_vcenter_validate_certs | bool} | to_json }}
+      - name: site-portal-ontap
+        on: "{{ _portal_wall_ontap | bool }}"
+        value: >-
+          {{ {'user': portal_wall_ontap_username, 'password': portal_wall_ontap_password, 'clusters': portal_wall_ontap_clusters | default([], true) | list,
+              'verify': portal_wall_ontap_validate_certs | bool} | to_json }}
+  no_log: true
+
+- name: Secret | the wall's logins - current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, "{{ item.name }}", --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  loop: "{{ _portal_wall_logins }}"
+  loop_control: {label: "{{ item.name }}"}
+  register: _portal_wall_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+  no_log: true
+
+- name: Secret | the wall's logins - the old value removed first (podman before 4.7), or the source turned off
+  ansible.builtin.command:
+    argv: [podman, secret, rm, "{{ item.item.name }}"]
+  loop: "{{ _portal_wall_state.results }}"
+  loop_control: {label: "{{ item.item.name }}"}
+  when: >-
+    item.rc == 0 and (not item.item.on | bool or
+    ((item.stdout | trim) != (item.item.value | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
+  changed_when: true
+  no_log: true
+
+- name: Secret | the wall's logins - create or replace
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'secret', 'create']
+         + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and item.rc == 0 else [])
+         + ['--label', 'site.sha256=' ~ (item.item.value | hash('sha256')), item.item.name, '-'] }}
+    stdin: "{{ item.item.value }}"
+    stdin_add_newline: false
+  loop: "{{ _portal_wall_state.results }}"
+  loop_control: {label: "{{ item.item.name }}"}
+  when: item.item.on | bool and (item.rc != 0 or (item.stdout | trim) != (item.item.value | hash('sha256')))
+  changed_when: true
+  failed_when: false                      # said by the next task, with podman's reason
+  no_log: true
+  register: _portal_wall_set
+
+- name: Secret | the wall's logins - podman made them
+  ansible.builtin.fail:
+    msg: "podman secret create for the wall failed: {{ _portal_wall_set.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | map(attribute='stderr') | join('; ') or 'no reason given' }}"
+  when: _portal_wall_set.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list | length > 0
+
 # ---------------------------------------------------------------- 1.101.2: the report database's read-only login, a podman secret
 # {host, port, database, user, password, tls, ca_pem} as JSON in one secret (site-portal-reportdb -> PORTAL_REPORT_DB), its
 # SHA-256 on a label as the others'. The live AD page reads the AD job's runs with it; the deploy never fails on it.
@@ -859,6 +961,26 @@
       PORTAL_AD_SECONDS: "{{ portal_ad_seconds | string }}"
       PORTAL_AD_OLD_MINUTES: "{{ portal_ad_old_minutes | string }}"
       PORTAL_AD_TEMPLATE: "{{ portal_ad_template | string }}"
+      # 1.129.0: the ops-center wall (its logins: the secrets site-portal-vcenter, site-portal-ontap)
+      PORTAL_WALL: "{{ '1' if portal_wall | bool else '0' }}"
+      PORTAL_WALL_TITLE: "{{ portal_wall_title | string | trim }}"
+      PORTAL_WALL_ENCLAVE: "{{ portal_wall_enclave | default('', true) | string | trim }}"
+      PORTAL_WALL_AUTH_RETRY_SECONDS: "{{ (portal_wall_auth_retry_minutes | int * 60) | string }}"
+      PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
+      PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
+      PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
+      PORTAL_WALL_OPTS:
+        seconds: "{{ portal_wall_seconds | int }}"
+        ds_warn: "{{ portal_wall_datastore_warn | float }}"
+        ds_crit: "{{ portal_wall_datastore_crit | float }}"
+        aggr_warn: "{{ portal_wall_aggr_warn | float }}"
+        aggr_crit: "{{ portal_wall_aggr_crit | float }}"
+        high_pct: "{{ portal_wall_high_pct | float }}"
+        high_minutes: "{{ portal_wall_high_minutes | int }}"
+        maintenance_expected: "{{ portal_wall_maintenance_expected | default([], true) }}"
+        vm_heartbeat: "{{ portal_wall_vm_heartbeat | bool }}"
+        site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"
+        site_places: "{{ portal_wall_site_places | default({}, true) }}"
       # the NetApp page (its runs from the report database; the tab only once there is one)
       PORTAL_NETAPP: "{{ '1' if portal_netapp | bool else '0' }}"
       PORTAL_NETAPP_OLD_MINUTES: "{{ portal_netapp_old_minutes | string }}"
@@ -1035,6 +1157,8 @@
     _portal_has_swis: "{{ _portal_netmap | bool }}"
     _portal_has_rdb: "{{ _portal_rdb | bool }}"
     _portal_has_ldap: "{{ _portal_ldap_on | bool }}"
+    _portal_has_wall_vc: "{{ _portal_wall_vc | bool }}"
+    _portal_has_wall_ontap: "{{ _portal_wall_ontap | bool }}"
   register: _portal_units
 
 - name: Units | an own nginx no longer wanted

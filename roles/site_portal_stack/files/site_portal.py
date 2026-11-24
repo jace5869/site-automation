@@ -318,9 +318,16 @@ class Config(object):
                           "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
         self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
         self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
-        self.ad_groups = (site_ad_groups.Groups({"approvers": self.approver_groups, "requesters": self.requester_groups}, self.ldap_opts,
+        # 1.129.0: the wall's Feedback - on/off, who sees and may use the button ([] = everyone who may open the wall), who may read
+        # the list ([] = the approvers); the same LDAP read as the approvers' groups
+        self.wall_feedback = flag(g("PORTAL_WALL_FEEDBACK", "1"))
+        self.wall_feedback_groups = names(g("PORTAL_WALL_FEEDBACK_GROUPS", "[]")) if self.wall_feedback else []
+        self.wall_feedback_readers = names(g("PORTAL_WALL_FEEDBACK_READERS", "[]")) if self.wall_feedback else []
+        self.ad_groups = (site_ad_groups.Groups({"approvers": self.approver_groups, "requesters": self.requester_groups,
+                                                 "wall_feedback": self.wall_feedback_groups, "wall_readers": self.wall_feedback_readers}, self.ldap_opts,
                                                 self.card_match, self.ad_groups_seconds)
-                          if site_ad_groups and (self.approver_groups or self.requester_groups) else None)
+                          if site_ad_groups and (self.approver_groups or self.requester_groups or self.wall_feedback_groups or self.wall_feedback_readers)
+                          else None)
         if site_ad_groups:
             self.approvers = site_ad_groups.People(self.approvers, "approvers", self.ad_groups)
             self.requesters = site_ad_groups.People(self.requesters, "requesters", self.ad_groups)
@@ -5537,8 +5544,11 @@ class WallLive(object):
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
                                     title=self.cfg.wall_title, nm_why=why)
 
-    def answer(self, etag_in=""):
+    def answer(self, etag_in="", cn=""):
         m = self.model()
+        m["me"] = {"feedback": wall_may_feedback(self.cfg, cn), "reader": wall_may_read_feedback(self.cfg, cn),
+                   "areas": [list(x) for x in FEEDBACK_AREAS], "max": FEEDBACK_MAX}
+        m["auth_retry"] = self.cfg.wall_auth_retry
         m["zone"] = self.cfg.tz_name or "UTC"
         m["poll"] = 30
         m["full"] = {"storage": (self.cfg.path + "netapp") if self.cfg.netapp else ""}
@@ -5546,6 +5556,115 @@ class WallLive(object):
         # the ETag leaves out "now" (it moves every second; the page works the ages out itself)
         tag = '"%s"' % hashlib.sha256(re.sub(r'^\{"now":[0-9.]+,', "{", body).encode("utf-8")).hexdigest()[:20]
         return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+
+
+FEEDBACK_AREAS = (("general", "The wall in general"), ("overview", "Overview"), ("storage", "Storage"), ("vmware", "VMware"), ("vdi", "VDI"),
+                  ("ad", "Active Directory"), ("tickets", "Outages & problems"), ("network", "Network"), ("styles", "Lights / Cockpit / Map"))
+FEEDBACK_MAX = 1000             # characters in one feedback
+FEEDBACK_KEEP = 5000            # the newest this many are kept
+
+
+def wall_may_feedback(cfg, cn):
+    """the Feedback button: on, and the person in portal_wall_feedback_groups (none set: everyone who may open the wall).
+    Fails closed: groups set but AD not read -> nobody."""
+    if not (cfg.wall and cfg.wall_feedback and cn):
+        return False
+    if not cfg.wall_feedback_groups:
+        return True
+    return bool(cfg.ad_groups is not None and cfg.ad_groups.has("wall_feedback", cn))
+
+
+def wall_may_read_feedback(cfg, cn):
+    """the feedback list: portal_wall_feedback_readers (none set: the approvers - portal_approvers and portal_approver_groups)"""
+    if not (cfg.wall and cfg.wall_feedback and cn):
+        return False
+    if cfg.wall_feedback_readers:
+        return bool(cfg.ad_groups is not None and cfg.ad_groups.has("wall_readers", cn))
+    return cn in cfg.approvers
+
+
+class WallFeedback(object):
+    """The wall's feedback, one JSON line each in PORTAL_DATA/wall-feedback.jsonl (the portal's own volume: the report database
+    login is read-only), the newest FEEDBACK_KEEP kept. Who: the card's CN, as every portal log line."""
+
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+
+    def add(self, cn, area, text, ref="", now=None):
+        """-> (code, answer)"""
+        area = str(area or "").strip()
+        text = str(text or "").strip()
+        ref = clean(str(ref or ""), 200)
+        if area not in dict(FEEDBACK_AREAS):
+            return 400, {"error": "Pick an area."}
+        if not text:
+            return 400, {"error": "Write what is good, missing or wrong."}
+        if len(text) > FEEDBACK_MAX:
+            return 400, {"error": "At most %d characters." % FEEDBACK_MAX}
+        row = {"at": int(now or time.time()), "user": cn, "area": area, "text": text, "ref": ref}
+        with self.lock:
+            rows = self.rows_locked()
+            rows.append(row)
+            rows = rows[-FEEDBACK_KEEP:]
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        return 201, {"ok": True}
+
+    def rows_locked(self):
+        out = []
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict):
+                        out.append(r)
+        except OSError:
+            pass
+        return out
+
+    def rows(self, area=""):
+        with self.lock:
+            rows = self.rows_locked()
+        rows = [r for r in rows if not area or r.get("area") == area]
+        return sorted(rows, key=lambda r: -int(r.get("at") or 0))
+
+    def csv(self, area=""):
+        import csv
+        import io
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["when (UTC)", "who", "area", "card", "feedback"])
+        for r in self.rows(area):
+            w.writerow([datetime.datetime.fromtimestamp(int(r.get("at") or 0), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        r.get("user", ""), r.get("area", ""), r.get("ref", ""), r.get("text", "")])
+        return buf.getvalue()
+
+
+def feedback_page(cfg, cn, fb, area=""):
+    """/portal/wall/feedback: the list, newest first, an area filter, the CSV - for the readers only"""
+    area = area if area in dict(FEEDBACK_AREAS) else ""
+    rows = fb.rows(area)
+    opts = "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == area else "", esc(t)) for k, t in (("", "All areas"),) + FEEDBACK_AREAS)
+    names = dict(FEEDBACK_AREAS)
+    trs = "".join('<tr><td class="mono">%s</td><td>%s</td><td>%s</td><td>%s</td><td class="fbt">%s</td></tr>'
+                  % (esc(in_zone(datetime.datetime.fromtimestamp(int(r.get("at") or 0), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), cfg.tz)),
+                     esc(r.get("user", "")), esc(names.get(r.get("area"), r.get("area", ""))), esc(r.get("ref", "")), esc(r.get("text", ""))) for r in rows)
+    body = ('<div class="hero"><p class="crumb"><a href="%swall">%s</a></p><h1>Wall feedback</h1>'
+            '<p class="sub">%d %s, newest first. Kept on the portal server; no email.</p></div>'
+            '<form class="fbf" method="get" action="%swall/feedback"><label>Area <select name="area">%s</select></label> '
+            '<button class="btn" type="submit">Show</button> <a class="btn" href="%swall/feedback.csv%s">Download CSV</a></form>'
+            '<div class="tablewrap"><table class="fbtab"><thead><tr><th>When</th><th>Who</th><th>Area</th><th>Card</th><th>Feedback</th></tr></thead>'
+            '<tbody>%s</tbody></table></div>'
+            % (cfg.path, esc(cfg.wall_title), len(rows), "entry" if len(rows) == 1 else "entries", cfg.path, opts, cfg.path,
+               ("?area=" + area) if area else "", trs or '<tr><td colspan="5">No feedback yet.</td></tr>'))
+    return shell(cfg, "Wall feedback", body, cn, page="wall-feedback")
 
 
 def wall_page(cfg, cn, statics, token=""):
@@ -5568,6 +5687,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     if nal is not None:
         nal.tab_soon()
     wall = wall if cfg.wall else None
+    feedback = WallFeedback(os.path.join(cfg.data, "wall-feedback.jsonl"))       # 1.129.0: the wall's feedback (the portal's own volume)
     if cfg.wall and wall is None:                                                         # 1.129.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
@@ -5718,6 +5838,21 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     return self._send(200, netapp_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 code, body, etag = nal.answer(cn, (self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            # 1.129.0: the wall's feedback list (its readers only) and its CSV
+            if path in ("/wall/feedback", "/wall/feedback.csv"):
+                if not wall or not cfg.wall_feedback:
+                    return self._send(404, message_page(cfg, "Feedback off", "The wall's feedback is off here (portal_wall_feedback: false).", cn),
+                                      "text/html; charset=utf-8")
+                if not wall_may_read_feedback(cfg, cn):
+                    portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not a feedback reader"})
+                    return self._send(403, message_page(cfg, "Not for you", "The wall's feedback is for the readers (portal_wall_feedback_readers).", cn, kind="bad"),
+                                      "text/html; charset=utf-8")
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                area = (q.get("area") or [""])[-1]
+                if path.endswith(".csv"):
+                    return self._send(200, feedback.csv(area if area in dict(FEEDBACK_AREAS) else "").encode("utf-8"), "text/csv; charset=utf-8",
+                                      [("Content-Disposition", 'attachment; filename="wall-feedback.csv"')])
+                return self._send(200, feedback_page(cfg, cn, feedback, area), "text/html; charset=utf-8")
             # 1.129.0: the ops-center wall
             if path in ("/wall", "/api/wall"):
                 if not wall:
@@ -5726,7 +5861,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 wall.viewed()
                 if path == "/wall":
                     return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
-                code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip())
+                code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip(), cn)
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:
@@ -5946,7 +6081,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 return self._refresh_post()
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
             m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny|placement)$", path)
-            if not m_act and not m_dec:
+            m_fb = path == "/api/wall/feedback"                 # 1.129.0: the wall's Feedback button
+            if not m_act and not m_dec and not m_fb:
                 return self._send(404, {"error": "not found"})
             cn = self._who(api=True)
             if not cn:
@@ -5969,6 +6105,14 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 return self._send(400, {"error": "Not JSON."})
             if not isinstance(body, dict):
                 return self._send(400, {"error": "Not a JSON object."})
+            if m_fb:
+                if not wall or not wall_may_feedback(cfg, cn):
+                    portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "may not give wall feedback"})
+                    return self._send(403, {"error": "Feedback is not open to you here (portal_wall_feedback_groups)."})
+                code, out = feedback.add(cn, body.get("area"), body.get("text"), body.get("ref"))
+                if code == 201:
+                    portal.log.add({"event": "wall_feedback", "user": cn, "area": str(body.get("area"))[:20]})
+                return self._send(code, out)
             if m_act:
                 sent = body.get("vars", {})
                 sig = body.get("sig")

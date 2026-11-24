@@ -2,7 +2,7 @@
 // draw it - Lights, Cockpit (the default), Map - with the style saved per viewer, ?style=, ?area=, ?kiosk=1, ?rotate=, ?every=.
 // Every gauge, tile, counter, light and row opens a detail card: what is wrong, since when, the value against its threshold, what it
 // touches, the source and its age, where to check it. Freshness: LATE (amber) after 3 min, STALE after 10 min; stale is never green.
-// No innerHTML, no inline style attributes (the page's CSP): the DOM is built node by node; the timeline sets CSSOM positions only.
+// No HTML strings, no inline style attributes (the page's CSP): the DOM is built node by node; the timeline sets CSSOM positions only.
 (function () {
   "use strict";
   var root = document.getElementById("wall");
@@ -251,6 +251,8 @@
           {type: "button", id: "rotBtn", "aria-haspopup": "true", "aria-expanded": "false", "aria-pressed": "false", title: "Rotate styles or areas on a wall screen (R)"}), rotPop], {id: "ddRot"}),
         h("span", "hsep hide-k"),
         h("span", "hclock", [""], {id: "clock"}),
+        h("button", "hbtn hide-k fbk", ["Feedback"], {type: "button", id: "fbBtn", title: "Tell the wall's team what is good, missing or wrong", hidden: true}),
+        h("a", "hbtn hide-k fbk", ["Feedback list"], {id: "fbList", href: "#", hidden: true}),
         h("button", "hbtn hide-k", ["Light"], {type: "button", id: "themeBtn", title: "Light or dark (T)"}),
         h("button", "hbtn hide-k", [icon([P("M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10", {"stroke-width": 1.6})], "0 0 16 16", "ic"), "Kiosk"], {type: "button", id: "kioskBtn", title: "Full screen, controls hidden (K)"}),
         h("button", "hbtn kexit", ["Exit kiosk (Esc)"], {type: "button", id: "kexit"})])])], {id: "hdr"});
@@ -290,6 +292,9 @@
     var dark = document.documentElement.getAttribute("data-theme") === "dark" || (!document.documentElement.getAttribute("data-theme") && matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
     $("#themeBtn").textContent = dark ? "Light" : "Dark";
     $("#karea").textContent = areaTitle(S.area) + " · " + STYLE_NAME[S.style];
+    var me = W.me || {};
+    if (me.feedback) $("#fbBtn").removeAttribute("hidden"); else $("#fbBtn").setAttribute("hidden", "");
+    if (me.reader) { $("#fbList").removeAttribute("hidden"); $("#fbList").setAttribute("href", SRC.replace(/api\/wall$/, "wall/feedback")); } else $("#fbList").setAttribute("hidden", "");
     tickClock();
     renderRot();
   }
@@ -309,7 +314,9 @@
     tip.classList.remove("on");
     renderHeader();
     RENDER[S.style](stage);
-    if (openRef) openDetail(openRef, true);
+    if (openRef && openRef !== "fb:") openDetail(openRef, true);
+    if (QS.get("check") === "1") setTimeout(function () {
+      root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth})); }, 300);
   }
   function setArea(id) { if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview"; S.area = id; S.site = ""; closePops(); closeDetail(); render(); }
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
@@ -353,6 +360,7 @@
       render();
     });
     $("#kioskBtn").addEventListener("click", function () { setKiosk(true, true); });
+    $("#fbBtn").addEventListener("click", function () { openFeedback(""); });
     $("#kexit").addEventListener("click", function () { setKiosk(false, true); });
     $("#rotOn").addEventListener("change", function () { ROT.on = this.checked; ROT.left = ROT.every; ROT.paused = false; renderRot(); });
     $("#rotEvery").addEventListener("change", function () { ROT.every = +this.value; ROT.left = ROT.every; renderRot(); });
@@ -374,6 +382,8 @@
       if (e.target === back) { closeDetail(); return; }
       var d = e.target.closest("[data-d]");
       if (d) { e.preventDefault(); openDetail(d.getAttribute("data-d")); return; }
+      var fb = e.target.closest("[data-fb]");
+      if (fb) { var p = fb.getAttribute("data-fb").split("|"), t = card.querySelector("h2"); openFeedback((t ? t.textContent : "") + " (" + p[0] + ")", p[1]); return; }
       if (e.target.closest(".x")) closeDetail();
     });
     document.addEventListener("keydown", function (e) {
@@ -450,8 +460,43 @@
   }
   function wordWd(st) { return h("span", "wd " + st, [icon(WORD_IC[st] || WORD_IC.off, "0 0 16 16"), WORD[st]]); }
   function dFoot(area, extra) {
-    var f = area ? fullLink(area) : null;
-    return h("div", "df", [f, extra || null, h("span", "lg", ["Esc closes · every number here is the wall's own read"])]);
+    var f = area ? fullLink(area) : null, fb = null;
+    if (W.me && W.me.feedback) fb = h("button", "fbon kxh", ["Feedback on this card"], {type: "button", "data-fb": openRef + "|" + (area || "general")});
+    return h("div", "df", [f, extra || null, fb, h("span", "lg", ["Esc closes · every number here is the wall's own read"])]);
+  }
+  // ---------------------------------------------------------------- Feedback: a short form, saved on the portal server
+  function token() { var m = document.querySelector('meta[name="portal-token"]'); return m ? m.getAttribute("content") : ""; }
+  function openFeedback(ref, area) {
+    var me = W.me || {};
+    if (!me.feedback) return;
+    if (!openRef) lastFocus = document.activeElement;
+    openRef = "fb:";
+    clear(card);
+    var sel = h("select", "", (me.areas || []).map(function (a) { return h("option", "", [a[1]], {value: a[0]}); }), {id: "fbArea"});
+    sel.value = area || (S.area === "watch" ? "general" : S.area);
+    if (sel.selectedIndex < 0) sel.value = "general";
+    var ta = h("textarea", "", null, {id: "fbText", rows: 6, maxlength: me.max || 1000, placeholder: "What is good, what is missing, what is wrong - one box is enough."});
+    var cnt = h("span", "fbn", ["0 / " + (me.max || 1000)]);
+    ta.addEventListener("input", function () { cnt.textContent = ta.value.length + " / " + (me.max || 1000); });
+    var msg = h("p", "fbmsg", [""], {role: "status"});
+    var send = h("button", "fbsend", ["Send"], {type: "submit"});
+    var form = h("form", "fbform", [h("label", "", ["Area ", sel]), ref ? h("p", "muted", ["About: " + ref]) : null,
+      h("label", "", ["Your feedback ", ta]), h("div", "fbrow", [cnt, send]), msg]);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      send.disabled = true;
+      msg.textContent = "Sending…";
+      fetch(SRC + "/feedback", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json", "X-Portal-Token": token()},
+        body: JSON.stringify({area: sel.value, text: ta.value, ref: ref || ""})}).then(function (r) {
+        return r.json().then(function (j) { return {ok: r.ok, j: j}; });
+      }).then(function (x) {
+        if (x.ok) { msg.textContent = "Thank you - saved."; ta.value = ""; setTimeout(closeDetail, 1200); }
+        else { msg.textContent = (x.j && x.j.error) || "Not saved."; send.disabled = false; }
+      }).catch(function () { msg.textContent = "Not saved: the portal did not answer."; send.disabled = false; });
+    });
+    add(card, [dHead("Feedback on the wall", null, ["saved on the portal server with your name and the time · no email"]), h("div", "dbody", [form])]);
+    back.classList.add("on");
+    ta.focus();
   }
   function condBody(c) {
     var k = W.kinds[c.kind] || {}, st = c.end != null ? "ok" : condStale(c) ? "stale" : c.sev, rows = [];

@@ -773,3 +773,15 @@ body.kiosk .dsc .fullp{display:none}
 .sL .feed li.crit{color:var(--critical);font-weight:650}
 .sK .ctr .fresh{display:block;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:1500px){.sL .ov.c3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sL .ov.c3 .feedt{grid-column:1 / -1;grid-row:auto}.sL .ov.c3 .offs{grid-column:1 / -1}.sL .offl{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Feedback */
+.hbtn.fbk[hidden]{display:none}
+a.hbtn{text-decoration:none}
+.dsc .fbform{display:flex;flex-direction:column;gap:12px;padding:10px 0}
+.dsc .fbform label{display:flex;flex-direction:column;gap:6px;font-weight:650;font-size:13px}
+.dsc .fbform select,.dsc .fbform textarea{font:14px/1.4 var(--sans);color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:8px;padding:8px 10px}
+.dsc .fbform textarea{resize:vertical;min-height:120px}
+.dsc .fbrow{display:flex;align-items:center;gap:12px}
+.dsc .fbn{color:var(--muted);font:12px var(--mono);margin-right:auto}
+.dsc .fbsend,.dsc .fbon{border:1px solid var(--accent);background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:7px 14px;font:600 13px/1 var(--sans);cursor:pointer}
+.dsc .fbmsg{margin:0;color:var(--muted);min-height:1.2em}
+body.kiosk .dsc .kxh{display:none}

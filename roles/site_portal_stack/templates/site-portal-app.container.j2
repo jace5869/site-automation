@@ -41,6 +41,14 @@ Secret=site-portal-swis,type=env,target=PORTAL_SWIS_LOGIN
 # 1.120.0: the AD groups' LDAP login ("LDAP Bind Account"), a podman secret too
 Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN
 {% endif %}
+{% if _portal_has_wall_vc | default(false) | bool %}
+# 1.129.0: the wall's vCenter login (the site's "VMware vCenter" account), a podman secret too
+Secret=site-portal-vcenter,type=env,target=PORTAL_WALL_VCENTER_LOGIN
+{% endif %}
+{% if _portal_has_wall_ontap | default(false) | bool %}
+# 1.129.0: the wall's ONTAP login (the site's "NetApp ONTAP" account), a podman secret too
+Secret=site-portal-ontap,type=env,target=PORTAL_WALL_ONTAP_LOGIN
+{% endif %}
 {% if _portal_has_rdb | default(false) | bool %}
 # 1.101.2: the report database's read-only login for the live AD page, a podman secret too
 Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB

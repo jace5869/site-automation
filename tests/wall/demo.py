@@ -118,7 +118,7 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None):
     tmp = tempfile.mkdtemp(prefix="wall-demo-")
     T = __import__("test_netapp_live")
     env = {"PORTAL_WALL_OPTS": json.dumps(dict(OPTS, **(opts or {}))), "PORTAL_WALL_TITLE": "Ops center", "PORTAL_WALL_ENCLAVE": "SITEA-UNCLASS",
-           "PORTAL_TIME_ZONE": "Europe/Berlin"}
+           "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_APPROVERS": json.dumps([CN])}
     cfg = T.cfg_for(tmp, **env)
     p = sp.Portal(cfg)
     p.aap.ready = ""
@@ -149,6 +149,24 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None):
             for k in ("Content-Type", "Content-Security-Policy", "ETag", "Cache-Control"):
                 if hd.get(k):
                     self.send_header(k, hd[k])
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def do_POST(self):
+            # as nginx over TLS would: the page's own origin (https) and its token go through
+            path = self.path[len("/portal"):] if self.path.startswith("/portal/") else self.path
+            n = int(self.headers.get("Content-Length") or 0)
+            host = inner.split("://", 1)[1]
+            req = urllib.request.Request(inner + path, data=self.rfile.read(n), method="POST", headers={
+                "X-SSL-Client-Verify": "SUCCESS", "X-SSL-Client-S-DN": DN, "Host": host, "Origin": "https://" + host,
+                "Content-Type": self.headers.get("Content-Type", ""), "X-Portal-Token": self.headers.get("X-Portal-Token", "")})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as f:
+                    code, body = f.status, f.read()
+            except urllib.error.HTTPError as e:
+                code, body = e.code, e.read()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
