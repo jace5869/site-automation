@@ -2385,6 +2385,7 @@ def _chart_view(events, related, affected, alarms, left, right, start, finish, s
                 m = marks[-1]
                 m["count"] += 1
                 m["tip"] += "\n" + line
+                m["evs"] += group
                 m["rel"] |= everything and about
                 if RANK[e["level"]] > RANK[m["level"]]:
                     m["level"] = e["level"]
@@ -2393,8 +2394,11 @@ def _chart_view(events, related, affected, alarms, left, right, start, finish, s
                 if label:
                     last_label = x
                 marks.append(dict(x=x, count=1, level=e["level"], rel=everything and about,
-                                  tip=_moment(t, loc)["tip"] + "\n" + line, label=label))
+                                  tip=_moment(t, loc)["tip"] + "\n" + line, label=label, evs=list(group)))
             last_region = region(t)
+        for m in marks:      # every event of the dot, by time, for its list on the website: [time, level, what happened, object]
+            m["evs"] = [[loc(x["t"]).strftime("%H:%M:%S"), x["level"], x["label"],
+                         _objects([x], "datastore", "host", "vm") or _objects([x], "where")] for x in sorted(m["evs"], key=lambda x: x["t"])]
         lanes.append(dict(key=lane, name=name, marks=marks, count=len(groups[lane])))
     if everything:
         marks = []

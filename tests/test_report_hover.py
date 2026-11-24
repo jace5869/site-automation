@@ -173,6 +173,26 @@ class Pages(unittest.TestCase):
         self.assertNotIn("setAttribute('on", js)
         self.assertIn("aria-describedby", js)
 
+    def test_the_review_charts_dots_carry_their_events_on_the_website_only(self):
+        """The outage review's chart: on the website (atlas, brief, ops) every dot has data-evs, the list site-report.js opens on a
+        click or Enter (the note under the chart says so); an email's chart (no script) has neither."""
+        timeline = tot.ot.outage_timeline(*tot.director_outage())
+        page = tot.ot.outage_timeline_doc(tot.WATCH, timeline, True, True)
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+            h = render(tpl, page)
+            chart = h.split('<div class="review-chart">')[1].split('<p class="tl-note">')[0]
+            dots = re.findall(r'<g class="mk [^"]*"[^>]*>', chart)
+            self.assertTrue(dots, tpl)
+            for g in dots:
+                evs = json.loads(re.search(r'data-evs="([^"]*)"', g).group(1).replace("&#34;", '"').replace("&quot;", '"').replace("&amp;", "&"))
+                self.assertTrue(evs and all(len(e) == 4 and re.match(r"\d\d:\d\d:\d\d$", e[0]) for e in evs), tpl)
+            self.assertIn("Click a mark, or press Enter on it, for the list of its events.", h, tpl)
+        for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+            h = render(tpl, page)
+            self.assertIn('class="mk ', h, tpl)
+            self.assertNotIn("data-evs", h, tpl)
+            self.assertNotIn("Click a mark", h, tpl)
+
 
 # ---- a real Chrome, driven over its DevTools protocol (a small WebSocket client: the standard library only) ----------
 class Cdp(object):
@@ -474,6 +494,130 @@ class RealChromeReview(RealChrome):
         self.assertTrue(tip)
         self.assertRegex(tip[0], r"Nov 2026, .* CET \(.* UTC\)")
         self.assertGreater(len(tip), 2)
+
+
+class RealChromeReviewDots(RealChromeReview):
+    """The outage review's chart in a real Chrome, the website's whole script (site_report.js and report_pop.js, motion on) under
+    script-src 'self' and style-src 'self': a dot of any colour opens on a click, Enter or Space a popover by it with every event it
+    stands for (time, level, what happened, object), its list scrolling inside it, the focus in it; Esc, Close or a click outside closes
+    it and the focus goes back to the dot; one open at a time; it stays inside the window at 1280 and 800 px, the page never scrolls
+    sideways; hover keeps the short tip; no style or script is blocked."""
+    test_print_chart_in_both_radio_states = test_story_and_group_tip = None
+    MOTION = "no-preference"
+    BOX = ("(() => {const b = document.querySelector('.mkp'); if (!b) return null; const r = b.getBoundingClientRect(), u = b.querySelector('.mkp-ev'), "
+           "de = document.documentElement; return {title: b.querySelector('h4').textContent, n: u.children.length, rows: [...u.children].map(li => "
+           "[li.children[0].textContent, li.children[1].textContent, li.children[2].firstChild.textContent, (li.querySelector('small') || {}).textContent || '']), box: [r.left, r.top, r.right, r.bottom], vw: de.clientWidth, vh: innerHeight, "
+           "scroll: u.scrollHeight > u.clientHeight && getComputedStyle(u).overflowY === 'auto', mh: parseFloat(getComputedStyle(b).maxHeight), "
+           "focus: b.contains(document.activeElement), side: b.classList.contains('mkp-side'), hscroll: de.scrollWidth > de.clientWidth, "
+           "shown: getComputedStyle(b).visibility === 'visible' && +getComputedStyle(b).opacity > 0.9, open: document.querySelectorAll('.mkp').length}})()")
+
+    @classmethod
+    def page(cls):
+        from test_report_web import rw
+        cls.script = rw.page_script(render(cls.TPL, cls.web()))           # the website's file: before its styles leave the page
+        return super().page()
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with open(os.path.join(cls.dir, "site-report.js"), "w") as f:
+            f.write(cls.script)
+        cls.c.call("Page.addScriptToEvaluateOnNewDocument", source="window.__csp = []; document.addEventListener('securitypolicyviolation', "
+                                                                  "e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));")
+
+    def load(self, w):
+        c = self.c
+        c.call("Emulation.setDeviceMetricsOverride", width=w, height=900, deviceScaleFactor=1, mobile=False)
+        c.call("Page.navigate", url="http://127.0.0.1:%d/page.html" % self.srv.server_address[1])
+        end = time.time() + 30
+        while not c.js("document.readyState === 'complete' && !!window.siteReport && !!document.querySelector('.mk[data-evs][role=button]')"):
+            self.assertLess(time.time(), end, "the page or its script did not load")
+            time.sleep(0.1)
+        c.js("document.querySelector('.review-chart').closest('details').open = true")
+
+    def biggest(self, view="out"):
+        sel = ".v-%s .mk[data-evs]" % view
+        i = self.c.js("(() => {const a = [...document.querySelectorAll(%s)], n = m => JSON.parse(m.dataset.evs).length; "
+                      "return a.indexOf(a.reduce((b, m) => n(m) > n(b) ? m : b))})()" % json.dumps(sel))
+        return sel, i
+
+    def click(self, x, y):
+        for t in ("mouseMoved", "mousePressed", "mouseReleased"):
+            self.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, button="left", clickCount=1, pointerType="mouse")
+        time.sleep(0.5)                                                  # past report_pop.js's fades
+
+    def test_9_a_click_opens_the_list_escape_closes_it(self):
+        for w in (1280, 800):
+            self.load(w)
+            sel, i = self.biggest()
+            evs = self.c.js("JSON.parse(document.querySelectorAll(%s)[%d].dataset.evs)" % (json.dumps(sel), i))
+            self.assertGreater(len(evs), 20)
+            x, y = self.at(sel, i)
+            self.c.mouse(5, 5)
+            self.c.mouse(x, y)                                           # hover: the short tip, as before
+            tip = self.c.js(TIP)
+            self.assertEqual(tip, self.c.js("document.querySelectorAll(%s)[%d].dataset.tip.split('\\n')" % (json.dumps(sel), i)))
+            self.click(x, y)
+            box = self.c.js(self.BOX)
+            self.assertIsNotNone(box, w)
+            self.assertIsNone(self.c.js(TIP), w)                          # the tip gave way
+            self.assertEqual(box["title"], "%s - %d events" % (evs[0][0], len(evs)))
+            self.assertEqual(box["n"], len(evs))
+            self.assertEqual(box["rows"][0], [evs[0][0], {"critical": "Critical"}.get(evs[0][1], box["rows"][0][1]), evs[0][2], evs[0][3]])
+            self.assertTrue(box["shown"] and box["scroll"] and box["focus"] and not box["hscroll"], (w, box))
+            self.assertLessEqual(box["mh"], 0.6 * box["vh"] + 1, w)
+            self.assertTrue(box["box"][0] >= 0 and box["box"][1] >= 0 and box["box"][2] <= box["vw"] and box["box"][3] <= box["vh"], (w, box))
+            self.c.key("Escape", "Escape", 27)
+            self.assertIsNone(self.c.js(self.BOX))
+            self.assertTrue(self.c.js("document.activeElement === document.querySelectorAll(%s)[%d]" % (json.dumps(sel), i)))
+            self.assertEqual(self.c.js("document.activeElement.getAttribute('aria-expanded')"), "false")
+        self.assertEqual(self.c.js("window.__csp"), [])
+
+    def test_a_enter_space_close_outside_and_one_at_a_time(self):
+        self.load(1280)
+        sel, i = self.biggest()
+        self.at(sel, i)
+        self.c.js("document.querySelectorAll(%s)[%d].focus()" % (json.dumps(sel), i))
+        self.c.key("Enter", "Enter", 13)
+        self.assertTrue(self.c.js(self.BOX)["focus"])
+        self.c.js("document.querySelector('.mkp-x').click()")              # Close
+        self.assertIsNone(self.c.js(self.BOX))
+        self.assertTrue(self.c.js("document.activeElement === document.querySelectorAll(%s)[%d]" % (json.dumps(sel), i)))
+        self.c.key(" ", "Space", 32)
+        self.assertIsNotNone(self.c.js(self.BOX))
+        # another dot, of another colour: the first one closes, one popover at a time
+        other = self.c.js("(() => {const a = [...document.querySelectorAll(%s)], m = a[%d]; return a.findIndex(o => o.getAttribute('class') !== m.getAttribute('class'))})()"
+                          % (json.dumps(sel), i))
+        self.assertGreaterEqual(other, 0)
+        x, y = self.at(sel, other)
+        self.click(x, y)
+        box = self.c.js(self.BOX)
+        self.assertEqual(box["open"], 1)
+        self.assertEqual(box["n"], self.c.js("JSON.parse(document.querySelectorAll(%s)[%d].dataset.evs).length" % (json.dumps(sel), other)))
+        self.assertEqual(self.c.js("[...document.querySelectorAll('.mk[aria-expanded=true]')].length"), 1)
+        self.click(5, 450)                                                # outside: closed
+        self.assertIsNone(self.c.js(self.BOX))
+        self.assertEqual(self.c.js("window.__csp"), [])
+
+    def test_b_no_room_above_or_below_a_side_panel(self):
+        self.load(1280)
+        self.c.call("Emulation.setDeviceMetricsOverride", width=1280, height=300, deviceScaleFactor=1, mobile=False)
+        sel, i = self.biggest()
+        x, y = self.at(sel, i)
+        self.click(x, y)
+        box = self.c.js(self.BOX)
+        self.assertTrue(box["side"] and box["scroll"] and not box["hscroll"], box)
+        self.assertTrue(box["box"][1] >= 0 and box["box"][3] <= box["vh"] and box["box"][2] <= box["vw"], box)
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(self.BOX))
+
+
+class RealChromeReviewDotsBrief(RealChromeReviewDots):
+    TPL = "report_brief.html.j2"
+
+
+class RealChromeReviewDotsOps(RealChromeReviewDots):
+    TPL = "report_ops.html.j2"
 
 
 @unittest.skipUnless(_browser(), "no headless browser here")

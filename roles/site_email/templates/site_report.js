@@ -890,6 +890,46 @@
         body.appendChild(ln)});
       tt.appendChild(body);if(pinned===el){body.tabIndex=0;body.setAttribute('aria-label','Events of this mark')}
       tt.hidden=false;place(x,y);if(pinned===el)body.focus()};
+    /* the outage review's chart (report_outage.html.j2): a dot (.mk with data-evs: [time, level, what happened, object] each) opens on a
+       click, Enter or Space as a list of every event it stands for - a popover by the dot, or a panel at the window's right side when there
+       is no room above or below it; the list scrolls inside it (at most 60% of the window). Close, Esc, a click outside it or Tab out of it
+       closes it and the focus goes back to the dot; one open at a time; the chart's Show switch or a folded section closes it. Hover keeps
+       the short tip. Placed by its left, top and max-height (the CSSOM: a strict style-src allows it) */
+    var dlBox=null,dlDot=null,DLW={critical:'Critical',warning:'Warning',low:'Low',info:'Note',ok:'Back to normal'};
+    var dlPlace=function(){if(!dlBox||!dlDot)return;var r=dlDot.getBoundingClientRect(),vw=document.documentElement.clientWidth,vh=window.innerHeight;
+      if((!r.width&&!r.height)||r.bottom<0||r.top>vh){dlClose();return}                                 /* its view switched, its section folded, scrolled away */
+      var w=Math.min(480,vw-16),below=vh-r.bottom-18,above=r.top-18,cap=Math.round(vh*.6),side=Math.max(below,above)<Math.min(cap,240);
+      dlBox.classList.toggle('mkp-side',side);dlBox.style.width=w+'px';
+      if(side){dlBox.style.maxHeight=(vh-16)+'px';dlBox.style.left=(vw-w-8)+'px';dlBox.style.top='8px';return}
+      var down=below>=above;dlBox.style.maxHeight=Math.min(cap,down?below:above)+'px';var h=dlBox.offsetHeight;
+      if(!down&&below>=h)down=true;
+      dlBox.style.left=Math.round(Math.min(Math.max(8,r.left+r.width/2-w/2),vw-w-8))+'px';
+      dlBox.style.top=Math.round(Math.min(Math.max(8,down?r.bottom+10:r.top-10-h),vh-h-8))+'px'};
+    var dlClose=function(back){var d=dlDot;if(dlBox&&dlBox.parentNode)dlBox.parentNode.removeChild(dlBox);dlBox=dlDot=null;
+      window.removeEventListener('scroll',dlPlace,true);window.removeEventListener('resize',dlPlace);
+      if(d){d.setAttribute('aria-expanded','false');if(back){d._quiet=1;d.focus({preventScroll:true})}}};
+    var dlOpen=function(el){if(dlDot===el){dlClose(true);return}dlClose();var ev;try{ev=JSON.parse(el.getAttribute('data-evs'))}catch(x){ev=null}
+      if(!ev||!ev.length)return;hide();var vr=el.getBoundingClientRect();if(vr.top<0||vr.bottom>window.innerHeight)el.scrollIntoView({block:'center',behavior:'instant'});dlDot=el;el.setAttribute('aria-expanded','true');
+      var b=dlBox=document.createElement('div');b.className='mkp';b.id='mkp-open';b.setAttribute('role','dialog');b.setAttribute('aria-labelledby','mkp-title');
+      var hd=document.createElement('div');hd.className='mkp-h';var h4=document.createElement('h4');h4.id='mkp-title';
+      h4.textContent=ev[0][0]+' - '+ev.length+(ev.length===1?' event':' events');hd.appendChild(h4);
+      var x=document.createElement('button');x.type='button';x.className='mkp-x';x.textContent='Close';x.addEventListener('click',function(){dlClose(true)});hd.appendChild(x);
+      var sub=document.createElement('div');sub.className='mkp-sub';var last=ev[ev.length-1][0],worst=ev.reduce(function(a,e){return (RANKS[e[1]]||0)>(RANKS[a]||0)?e[1]:a},ev[0][1]);
+      sub.textContent=(el.getAttribute('data-tip')||'').split('\n')[0]+(last!==ev[0][0]?' to '+last:'')+' \u00b7 the worst: '+(DLW[worst]||'Note');hd.appendChild(sub);b.appendChild(hd);
+      var ul=document.createElement('ul');ul.className='mkp-ev';ul.tabIndex=0;ul.setAttribute('aria-label','The events of this dot, by time');
+      ev.forEach(function(e){var li=document.createElement('li'),lv=DLW[e[1]]?e[1]:'info';
+        var t=document.createElement('span');t.className='mkp-t';t.textContent=e[0];li.appendChild(t);
+        var l=document.createElement('span');l.className='mkp-lv lv-'+lv;l.textContent=DLW[lv];li.appendChild(l);
+        var w=document.createElement('span');w.className='mkp-w';w.textContent=e[2];
+        if(e[3]){var o=document.createElement('small');o.textContent=e[3];w.appendChild(o)}li.appendChild(w);ul.appendChild(li)});
+      b.appendChild(ul);
+      b.addEventListener('keydown',function(k){if(k.key==='Escape'){k.preventDefault();k.stopPropagation();dlClose(true)}});
+      b.addEventListener('focusout',function(f){var to=f.relatedTarget;if(to&&dlBox&&!dlBox.contains(to)&&to!==dlDot)dlClose()});
+      document.body.appendChild(b);dlPlace();window.addEventListener('scroll',dlPlace,true);window.addEventListener('resize',dlPlace);
+      ul.focus({preventScroll:true})};
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&dlBox)dlClose(true)});
+    document.addEventListener('click',function(e){var t=e.target;if(!dlBox||dlBox.contains(t)||(t.closest&&t.closest('.mk[data-evs]')))return;dlClose()});
+    all('input[name=tlv]').forEach(function(i){i.addEventListener('change',function(){if(dlBox)dlClose()})});
     var keyed=function(el){try{return el.matches(':focus-visible')}catch(e){return true}};
     var bindTip=function(el){if(el._at)return;if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
       var ln=function(){return el.getAttribute('data-tip').split('\n')};
@@ -902,7 +942,10 @@
       el.addEventListener('focus',function(){if(el._quiet){el._quiet=0;return}if(keyed(el)&&!pinned)at()});
       el.addEventListener('blur',function(){if(owner===el&&!pinned)hide()});
       if(el._ev){el.setAttribute('aria-expanded','false');el.addEventListener('click',function(){otOpen(el)});
-        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();otOpen(el)}})}};
+        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();otOpen(el)}})}
+      else if(el.hasAttribute('data-evs')){el.setAttribute('role','button');el.setAttribute('aria-haspopup','dialog');el.setAttribute('aria-expanded','false');
+        el.addEventListener('click',function(){dlOpen(el)});
+        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();dlOpen(el)}})}};
     tips.forEach(bindTip);
     /* 1.90.1: a mark opened (a click, Enter, Space, a tap): its events under its lane, as an opened row of the pop look - the worst first
        picked, the facts of the picked one beside them (where, host, VM, cluster, vCenter, alarm, kind, about the outage, its place in the

@@ -1510,6 +1510,25 @@ class ReviewEmailAcceptance(unittest.TestCase):
         self.assertEqual((ticks[0]["x"], ticks[0]["date"], ticks[0]["clock"]), (0, "Fri 20 Nov", "20:00"))
         self.assertTrue(all(b["x"] - a["x"] >= 5 for a, b in zip(ticks, ticks[1:])))
 
+    def test_every_dot_lists_every_event_it_stands_for(self):
+        """A dot's list (evs: [time, level, what happened, object], by time) holds each event of each line of its tip: a line
+        "(x4)" is four events. The website opens it on a click (site-report.js); the noise lane's bars keep their tip."""
+        views = next(s["views"] for s in self.review["web_sections"] if s.get("kind") == "review_chart")
+        for view in views:
+            for lane in view["lanes"]:
+                for m in lane["marks"]:
+                    if lane["key"] == "noise":
+                        self.assertNotIn("evs", m)
+                        continue
+                    lines = m["tip"].split("\n")[1:]
+                    want = sum(int(re.search(r"\(x(\d+)\)", ln).group(1)) if re.search(r": .* \(x\d+\)", ln) else 1 for ln in lines)
+                    self.assertEqual(len(m["evs"]), want, (view["key"], lane["key"], m["tip"]))
+                    self.assertTrue(all(len(e) == 4 and e[1] in ot.WORD and e[2] for e in m["evs"]))
+                    self.assertEqual(m["evs"][0][0], lines[0][:8])                 # the first line's first event leads
+        big = max((m for v in views for lane in v["lanes"] for m in lane["marks"]), key=lambda m: len(m.get("evs", [])))
+        self.assertGreater(len(big["evs"]), 20)
+        self.assertEqual(big["evs"], sorted(big["evs"], key=lambda e: e[0]))
+
     def test_published_story_styles_in_all_themes(self):
         from html.parser import HTMLParser
         from pathlib import Path
