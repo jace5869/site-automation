@@ -1369,8 +1369,8 @@ outage. The job *VMware - VM placement snapshot* keeps that history here ([VM_OU
 
 | | |
 |---|---|
-| What a run writes | per vCenter, the VMs new or changed since the last run (`C`) and those gone (`G`); the first run of each day (UTC) writes every VM (`F`). One `vm_placement_run` row per run and vCenter |
-| A VM's row | its name, host, cluster, datastores (JSON list, from the VM's files) and power state, keyed by vCenter, VM ID (moref) and time |
+| What a run writes | per vCenter (the whole vCenter, each stamped with the end of its own read), the VMs new or changed since the last run (`C`) and those gone (`G`); the first run of each day (UTC) writes every VM (`F`). One `vm_placement_run` row per run and vCenter |
+| A VM's row | its name, host and the host's ID, cluster, datastores and their IDs (JSON lists, from the VM's files) and power state, keyed by vCenter, VM ID (moref) and time. A lost host or datastore is matched by its ID; by name only when the name means one object |
 | How much | about 150 bytes a row. 2,000 VMs: 2,000 rows a day plus the changes; 400 days: about 1 million rows |
 | What a run deletes | the rows older than `vm_placement_days` (400), from the oldest whole snapshot still inside them |
 | As of a time | the newest whole snapshot at or before it, with the changes after it up to that time |
@@ -1411,8 +1411,10 @@ CREATE TABLE IF NOT EXISTS vm_placement (
   kind CHAR(1) NOT NULL,
   name VARCHAR(255) NULL,
   host VARCHAR(255) NULL,
+  host_moid VARCHAR(64) NULL,
   cluster VARCHAR(255) NULL,
   datastores TEXT NULL,
+  datastore_moids TEXT NULL,
   power VARCHAR(32) NULL,
   PRIMARY KEY (vcenter, vm_moid, at),
   KEY vm_placement_at (vcenter, at)

@@ -18,9 +18,6 @@
 ## The outage review reads it back for the VMs on a lost datastore or host when the outage began.
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
-## only needed when the same VM name exists in two datacenters
-# vmware_datacenter: ""
-
 ## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 # vmware_validate_certs: true
 

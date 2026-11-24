@@ -23,11 +23,11 @@ CREATE = [
     "CREATE TABLE IF NOT EXISTS vm_placement_run (vcenter VARCHAR(255) NOT NULL, at DATETIME NOT NULL, whole TINYINT NOT NULL, "
     "vms INT NOT NULL, kept INT NOT NULL, job BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (vcenter, at)) " + TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS vm_placement (vcenter VARCHAR(255) NOT NULL, at DATETIME NOT NULL, vm_moid VARCHAR(64) NOT NULL, "
-    "kind CHAR(1) NOT NULL, name VARCHAR(255) NULL, host VARCHAR(255) NULL, cluster VARCHAR(255) NULL, datastores TEXT NULL, "
-    "power VARCHAR(32) NULL, PRIMARY KEY (vcenter, vm_moid, at), KEY vm_placement_at (vcenter, at)) " + TABLE_OPTS,
+    "kind CHAR(1) NOT NULL, name VARCHAR(255) NULL, host VARCHAR(255) NULL, host_moid VARCHAR(64) NULL, cluster VARCHAR(255) NULL, "
+    "datastores TEXT NULL, datastore_moids TEXT NULL, power VARCHAR(32) NULL, PRIMARY KEY (vcenter, vm_moid, at), KEY vm_placement_at (vcenter, at)) " + TABLE_OPTS,
 ]
 TABLES = ("vm_placement_run", "vm_placement")
-FIELDS = ("name", "host", "cluster", "datastores", "power")
+FIELDS = ("name", "host", "host_moid", "cluster", "datastores", "datastore_moids", "power")
 
 
 SCHEMA_VERSION_TABLE = ("CREATE TABLE IF NOT EXISTS schema_version (component VARCHAR(64) NOT NULL PRIMARY KEY, version INT NOT NULL, "
@@ -74,10 +74,13 @@ def _short(name):
 
 
 def norm(vm):
-    """A VM read from vCenter -> the fields kept (datastores sorted, as one JSON list)."""
+    """A VM read from vCenter -> the fields kept: the datastores' names and their IDs (MoIDs) as two JSON lists in the same
+    order, and the host's ID, so a name two hosts or datastores share is told apart (1.116.6 review)."""
+    ids = list(vm.get("datastore_moids") or [])
+    pairs = sorted({(str(d), str(ids[i]) if i < len(ids) else "") for i, d in enumerate(vm.get("datastores") or []) if d})
     return {"name": str(vm.get("name") or "")[:255], "host": str(vm.get("host") or "")[:255],
-            "cluster": str(vm.get("cluster") or "")[:255],
-            "datastores": json.dumps(sorted({str(d) for d in vm.get("datastores") or [] if d})),
+            "host_moid": str(vm.get("host_moid") or "")[:64], "cluster": str(vm.get("cluster") or "")[:255],
+            "datastores": json.dumps([n for n, _ in pairs]), "datastore_moids": json.dumps([m for _, m in pairs]),
             "power": str(vm.get("power") or "")[:32]}
 
 
@@ -126,17 +129,17 @@ def state_as_of(cur, vcenter, t):
     cur.execute("SELECT MAX(at) FROM vm_placement_run WHERE vcenter = %s AND at <= %s", (vcenter, t))
     r = cur.fetchone()
     as_of = r[0] if r and r[0] else base
-    cur.execute("SELECT at, vm_moid, kind, name, host, cluster, datastores, power FROM vm_placement "
+    cur.execute("SELECT at, vm_moid, kind, name, host, host_moid, cluster, datastores, datastore_moids, power FROM vm_placement "
                 "WHERE vcenter = %s AND at >= %s AND at <= %s ORDER BY at, vm_moid", (vcenter, base, t))
     state = {}
-    for at, moid, kind, name, host, cluster, stores, power in cur.fetchall():
+    for at, moid, kind, name, host, host_moid, cluster, stores, store_ids, power in cur.fetchall():
         if kind == "F" and at != base:
             continue
         if kind == "G":
             state.pop(moid, None)
         else:
-            state[moid] = {"name": name or "", "host": host or "", "cluster": cluster or "", "datastores": stores or "[]",
-                           "power": power or ""}
+            state[moid] = {"name": name or "", "host": host or "", "host_moid": host_moid or "", "cluster": cluster or "",
+                           "datastores": stores or "[]", "datastore_moids": store_ids or "[]", "power": power or ""}
     return as_of, state
 
 
@@ -155,8 +158,8 @@ def write(cur, vcenter, now, vms, job=0):
     full = need_full(cur, vcenter, now)
     previous = {} if full else state_as_of(cur, vcenter, now)[1]
     rows = plan(previous, now_vms, full)
-    cur.executemany("INSERT INTO vm_placement (vcenter, at, vm_moid, kind, name, host, cluster, datastores, power) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+    cur.executemany("INSERT INTO vm_placement (vcenter, at, vm_moid, kind, name, host, host_moid, cluster, datastores, "
+                    "datastore_moids, power) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [(vcenter, now, moid, kind) + tuple(vm[f] for f in FIELDS) for kind, moid, vm in rows])
     cur.execute("INSERT INTO vm_placement_run (vcenter, at, whole, vms, kept, job) VALUES (%s, %s, %s, %s, %s, %s)",
                 (vcenter, now, 1 if full else 0, len(now_vms), len(rows), int(job or 0)))
@@ -176,9 +179,29 @@ def prune(cur, now, days):
     return gone
 
 
+def _on(state, kind, name, moid):
+    """The VMs of a state on one host or datastore -> (vms, ambiguous). By its ID when given; else by its name (a host also
+    by its short name), only when that name means one object in this vCenter."""
+    vms, ids = [], set()
+    for vm_moid, f in state.items():
+        stores, store_ids = json.loads(f["datastores"] or "[]"), json.loads(f.get("datastore_moids") or "[]")
+        if kind == "datastore":
+            pairs = list(zip(stores, store_ids + [""] * (len(stores) - len(store_ids))))
+            hit = [m for n, m in pairs if (m == moid if moid else n == name)]
+        else:
+            same = f["host"] == name or _short(f["host"]) == _short(name)
+            hit = [f.get("host_moid", "")] if (f.get("host_moid") == moid if moid else same) else []
+        if hit:
+            ids.update(hit)
+            vms.append({"name": f["name"], "moid": vm_moid, "host": f["host"], "cluster": f["cluster"], "power": f["power"],
+                        "datastores": stores})
+    ambiguous = not moid and len(ids - {""}) > 1
+    return ([] if ambiguous else sorted(vms, key=lambda v: (v["name"], v["moid"]))), ambiguous
+
+
 def lookup(cur, items):
-    """For each {vcenter, kind: datastore | host, name, at}: the VMs on it as of at -> the item with as_of ('' = no
-    snapshot that old) and vms [{name, moid, host, cluster, power, datastores}]."""
+    """For each {vcenter, kind: datastore | host, name, moid, at}: the VMs on it as of at -> the item with as_of ('' = no
+    snapshot that old, or a name that means two objects) and vms [{name, moid, host, cluster, power, datastores}]."""
     cache, out = {}, []
     for item in items or []:
         t = stamp(item.get("at"))
@@ -189,12 +212,6 @@ def lookup(cur, items):
         if (vcenter, t) not in cache:
             cache[vcenter, t] = state_as_of(cur, vcenter, t)
         as_of, state = cache[vcenter, t]
-        vms = []
-        for moid, f in state.items():
-            stores = json.loads(f["datastores"] or "[]")
-            on = name in stores if kind == "datastore" else (f["host"] == name or _short(f["host"]) == _short(name))
-            if on:
-                vms.append({"name": f["name"], "moid": moid, "host": f["host"], "cluster": f["cluster"], "power": f["power"],
-                            "datastores": stores})
-        out.append(dict(item, as_of=iso(as_of), vms=sorted(vms, key=lambda v: (v["name"], v["moid"])), source="snapshot"))
+        vms, ambiguous = _on(state, kind, name, str(item.get("moid") or ""))
+        out.append(dict(item, as_of="" if ambiguous else iso(as_of), vms=vms, source="snapshot", ambiguous=ambiguous))
     return out

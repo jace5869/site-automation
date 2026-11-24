@@ -163,7 +163,8 @@ class Csv(unittest.TestCase):
         r = review()
         sheet = r["sheet"]
         self.assertEqual(sheet["columns"], ["#", "Time (Europe/Berlin, ISO)", "Level", "Kind", "Object", "Host", "Datastore", "VM",
-                                            "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Message"])
+                                            "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Cluster",
+                                            "From", "To", "Message"])
         rows = [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
         self.assertEqual(len(rows), 520)
         self.assertEqual(sum(row["Noise"] == "yes" for row in rows), 307)
@@ -184,7 +185,7 @@ class Csv(unittest.TestCase):
         import site_xlsx
         xml = site_xlsx.sheet_xml(sheet["columns"], sheet["rows"], name="Timeline")
         self.assertIn('<pane ySplit="1"', xml)               # the first row frozen
-        self.assertIn('<autoFilter ref="A1:O521"/>', xml)    # filters over all 15 columns
+        self.assertIn('<autoFilter ref="A1:R521"/>', xml)    # filters over all 18 columns
         self.assertIn("<cols>", xml)                         # columns fitted to their text
 
 

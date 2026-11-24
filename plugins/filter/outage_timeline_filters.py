@@ -1430,6 +1430,10 @@ def _vm_key(e):
     return (e["vcenter"], name) if name else None
 
 
+def _iso_utc(t):
+    return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if t else ""
+
+
 def _vms_with_events(raw, incident, alarms):
     """1.116.6: tier 2 of What it affected - the VMs whose own events (power, heartbeat, a VM alarm, lost access, HA) fall
     inside a root's loss and touch that root: its datastore, a host that lost it, or the lost host. Usage alarms and gray
@@ -2050,6 +2054,18 @@ def _review_parts(incident, opts, begin, end, stamp):
         events_rows = [[display(vc, vm), e["label"], stamp(e["t"]), display(obj[0], obj[2])]
                        for (vc, vm), (e, obj) in sorted(tier2.items(), key=lambda kv: (kv[1][0]["t"], kv[0][1]))]
     confirmed_vms |= set(tier2)
+    # 1.116.6 review: a VM in a higher tier is left out of the placement by its ID (MoID), its name only when no ID is known,
+    # so a confirmed web01 never hides another web01
+    confirmed_ids, confirmed_names = set(), set()
+    chain_ids = {(e["vcenter"], obj[2]): e.get("vm_moid") for e, obj, _, _ in incident["chain"] if obj[1] == "vm" and e.get("vm_moid")}
+    for vc, label in confirmed_vms:
+        tagged = re.search(r" \[([^\]]+)\]$", label)
+        moid = ((locations.get((vc, label)) or {}).get("moid") or (tagged.group(1) if tagged else "") or chain_ids.get((vc, label)) or
+                (tier2[vc, label][0].get("vm_moid") if (vc, label) in tier2 else ""))
+        if moid:
+            confirmed_ids.add((vc, moid))
+        else:
+            confirmed_names.add((vc, re.sub(r" \[[^\]]+\]$", "", label)))
 
     def power(v):
         return {"poweredOn": "on", "poweredOff": "off", "suspended": "suspended"}.get(v.get("power"), v.get("power") or "power not read")
@@ -2059,7 +2075,7 @@ def _review_parts(incident, opts, begin, end, stamp):
         pl = placed.get((vc, typ, name)) or placed.get((vc, typ, re.sub(r" \[[^\]]+\]$", "", name)))
         if not pl:
             continue
-        listed = [v for v in pl.get("vms") or [] if (vc, v.get("name")) not in confirmed_vms]
+        listed = [v for v in pl.get("vms") or [] if (vc, v.get("moid")) not in confirmed_ids and (vc, v.get("name")) not in confirmed_names]
         when = ("as of the review's read, %s" if pl.get("source") == "review" else "as of %s, the placement snapshot") % stamp(_time(pl["as_of"]))
         shown = _shown(["%s (%s, %s)" % (v["name"], _short(v.get("host")) or "host not read", power(v)) for v in listed])
         if typ == "datastore":
@@ -2084,6 +2100,11 @@ def _review_parts(incident, opts, begin, end, stamp):
         if names:
             files_lines.append("%s %s files on %s (may have hung or failed): %s" % (
                 _count(len(names), "VM"), "has" if len(names) == 1 else "have", display(vc, name), _shown(names)))
+            # 1.116.6 review: the workbook has every one of them, a row each
+            for n in names:
+                where = locations.get((vc, n)) or {}
+                files_rows.append([display(vc, name), "datastore", n, where.get("esxi_host") or "", "not read",
+                                   ", ".join(where.get("datastores") or [name]), _iso_utc(read), "the watch's read"])
         elif obj not in current and history.get(obj) and not incident["roots"].get(obj, {}).get("listed"):
             confirmed = any(key[0] == vc and name in ds for key, (_, ds) in vm_items.items() if key in affected)
             files_unread.append("%sVMs on %s: not read (the watch lists a datastore's VMs only while it is not accessible)." % (
@@ -3334,7 +3355,8 @@ def outage_timeline(events, tickets=None, opts=None):
         in_story = {n for row in story["rows"] for n in row.get("source_rows") or ()}
         in_noise = {e["source_row"] for e in noise if "source_row" in e}
         sheet["columns"] = ["#", "Time (%s, ISO)" % (o.get("time_zone") or "UTC"), "Level", "Kind", "Object", "Host", "Datastore", "VM",
-                            "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Message"]
+                            "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Cluster", "From", "To",
+                            "Message"]
         for n, e in enumerate(raw, 1):
             names = e.get("source_names", {})
             host, ds, vm = (names.get(k, e.get(k, "")) or "" for k in ("host", "datastore", "vm"))
@@ -3346,7 +3368,8 @@ def outage_timeline(events, tickets=None, opts=None):
                 names.get("entity", e.get("entity")) or names.get("where", e.get("where", ""))
             sheet["rows"].append([n, loc(e["t"]).replace(microsecond=0).isoformat(), WORD[e["level"]], kind, obj, host, ds, vm,
                                   e["label"], "yes" if n in in_story else "no", "yes" if n in in_noise else "no",
-                                  e["vcenter"], e["type"], e.get("key", ""), e.get("display_message", e.get("message", ""))])
+                                  e["vcenter"], e["type"], e.get("key", ""), names.get("cluster", e.get("cluster", "")) or "",
+                                  e.get("from", "") or "", e.get("to", "") or "", e.get("display_message", e.get("message", ""))])
     for n, e in enumerate([] if review else evs, 1):
         msg = e.get("display_message", e.get("message", ""))
         if not review and e.get("names"):

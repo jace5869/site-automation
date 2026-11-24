@@ -84,8 +84,13 @@ def at(day, hms):
     return dt.datetime(2026, 11, day, h, m, s)
 
 
-def vm(moid, name, host, stores, power="poweredOn", cluster="cluster1"):
-    return dict(moid=moid, name=name, host=host, cluster=cluster, datastores=stores, power=power)
+STORE_IDS = {"ds_shared_01": "datastore-11", "ds_local_02": "datastore-12", "ds": "datastore-1"}
+
+
+def vm(moid, name, host, stores, power="poweredOn", cluster="cluster1", host_moid=None):
+    """A VM as the snapshot reads it: its host's and datastores' IDs with their names."""
+    return dict(moid=moid, name=name, host=host, host_moid=host_moid or "host-" + host.split(".")[0], cluster=cluster,
+                datastores=stores, datastore_moids=[STORE_IDS.get(d, "datastore-" + d) for d in stores], power=power)
 
 
 VC = "vc01.example.mil"
@@ -136,8 +141,9 @@ class Writer(unittest.TestCase):
         vp.schema(cur, True)
         conn = types.SimpleNamespace(cursor=lambda: cur, commit=lambda: None)
         p = dict(create=True, keep_days=400, job=0)
-        runs, pruned, created = snap.keep(conn, [(VC, FIRST)], at(22, "06:00:00"), p, True)
-        self.assertEqual((runs, pruned, created), ([{"vcenter": VC, "vms": 3, "whole": True, "kept": 0}], 0, False))
+        runs, pruned, created = snap.keep(conn, [(VC, (at(22, "06:00:00"), FIRST))], at(22, "06:00:30"), p, True)
+        self.assertEqual((runs, pruned, created), ([{"vcenter": VC, "vms": 3, "whole": True, "kept": 0,
+                                                     "read_at": "2026-11-22T06:00:00Z"}], 0, False))
         cur.execute("SELECT COUNT(*) FROM vm_placement")
         self.assertEqual(cur.fetchone(), (0,))
 
@@ -154,7 +160,8 @@ class Writer(unittest.TestCase):
                  "host": {"host-1": (h1, {"name": "esx01.example.mil", "parent": cl})},
                  "vm": {"vm-1": (obj("vm-1"), {"name": "app01", "runtime.host": h1, "runtime.powerState": "poweredOn", "datastore": [d2, d1]}),
                         "vm-9": (obj("vm-9"), {"name": "tpl", "runtime.host": h1, "config.template": True, "datastore": [d1]})}}
-        self.assertEqual(snap.placements(props), [vm("vm-1", "app01", "esx01.example.mil", ["ds_local_02", "ds_shared_01"])])
+        self.assertEqual(snap.placements(props), [dict(vm("vm-1", "app01", "esx01.example.mil", ["ds_local_02", "ds_shared_01"],
+                                                         host_moid="host-1"), datastore_moids=["datastore-2", "datastore-1"])])
 
     def test_the_doc_has_the_statements(self):
         doc = open(os.path.join(REPO, "docs", "REPORT_DATABASE.md"), encoding="utf-8").read()
@@ -262,7 +269,8 @@ class PastReview(unittest.TestCase):
         c = Review1162()
         cur = FakeCursor()
         vp.schema(cur, True)
-        vp.write(cur, c.vc, dt.datetime(1970, 1, 1, 0, 1, 40), [vm("vm-1", "app01", c.host, ["ds"]), vm("vm-2", "app02", "esx9", ["ds"])])
+        vp.write(cur, c.vc, dt.datetime(1970, 1, 1, 0, 1, 40), [vm("vm-1", "app01", c.host, ["ds"], host_moid="host-1"),
+                                                               vm("vm-2", "app02", "esx9", ["ds"])])
         events = [c.event("HostConnectionLostEvent", 600, host=c.host), c.event("HostConnectedEvent", 1500, host=c.host)]
         opts = dict(begin=100, end=2400, review=True, watch_runs=[watch_run(990, [dict(name=c.host, moid="host-1")], vc=c.vc)])
         items = ot.outage_review_objects(events, opts)
@@ -337,6 +345,69 @@ class JobOutput(unittest.TestCase):
         tasks = open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "placement.yml")).read()
         self.assertIn("vm_placement_lines(ansible_check_mode)", tasks)
         self.assertNotIn(" for r in ", tasks)
+
+
+class CodexReview2(unittest.TestCase):
+    """The P2s of the review of 70148dee, each as the case it named (the fifth, every name in the AAR, is the user's +N more)."""
+
+    def test_1_each_vcenter_is_stamped_with_its_own_read(self):
+        cur = FakeCursor()
+        vp.schema(cur, True)
+        conn = types.SimpleNamespace(cursor=lambda: cur, commit=lambda: None)
+        reads = [(VC, (at(22, "06:00:00"), FIRST)), ("vc02.example.mil", (at(22, "06:04:30"), FIRST[:1]))]
+        runs, _, _ = snap.keep(conn, reads, at(22, "06:05:00"), dict(create=True, keep_days=400, job=0), False)
+        self.assertEqual([r["read_at"] for r in runs], ["2026-11-22T06:00:00Z", "2026-11-22T06:04:30Z"])
+        cur.execute("SELECT vcenter, at FROM vm_placement_run ORDER BY vcenter")
+        self.assertEqual(cur.fetchall(), [(VC, at(22, "06:00:00")), ("vc02.example.mil", at(22, "06:04:30"))])
+
+    def test_2_hosts_and_datastores_by_their_ids(self):
+        cur = FakeCursor()
+        vp.schema(cur, True)
+        vms = [vm("vm-1", "app01", "esx01.a.example.mil", ["ds01"], host_moid="host-1"),
+               vm("vm-2", "app02", "esx01.b.example.mil", ["ds01"], host_moid="host-2"),
+               dict(vm("vm-3", "app03", "esx01.b.example.mil", ["ds01"], host_moid="host-2"), datastore_moids=["datastore-99"])]
+        vp.write(cur, VC, at(22, "06:00:00"), vms)
+        when = "2026-11-22T07:00:00Z"
+        host, = vp.lookup(cur, [dict(vcenter=VC, kind="host", name="esx01.a.example.mil", moid="host-1", at=when)])
+        self.assertEqual([v["name"] for v in host["vms"]], ["app01"])
+        short, = vp.lookup(cur, [dict(vcenter=VC, kind="host", name="esx01", at=when)])
+        self.assertEqual((short["as_of"], short["vms"], short["ambiguous"]), ("", [], True))       # two hosts: not guessed
+        store, = vp.lookup(cur, [dict(vcenter=VC, kind="datastore", name="ds01", moid="datastore-99", at=when)])
+        self.assertEqual([v["name"] for v in store["vms"]], ["app03"])
+        by_name, = vp.lookup(cur, [dict(vcenter=VC, kind="datastore", name="ds01", at=when)])
+        self.assertTrue(by_name["ambiguous"])
+
+    def test_3_a_confirmed_namesake_hides_only_itself(self):
+        events, tickets, opts = tc.shared_ds_outage()
+        events.append(dict(events[0], key=88889, time="2026-11-23T06:09:00Z", type="VmDasBeingResetEvent", host=tc.HOSTS[0],
+                           vm="web01", vm_moid="vm-501", datastore=tc.DS, message="web01 is reset by vSphere HA"))
+        cur = FakeCursor()
+        vp.schema(cur, True)
+        vp.write(cur, tc.VC, at(23, "06:00:00"), [vm("vm-501", "web01", tc.HOSTS[0], [tc.DS]), vm("vm-502", "web01", tc.HOSTS[1], [tc.DS])])
+        r = ot.outage_timeline(events, tickets, dict(opts, placements=vp.lookup(cur, ot.outage_review_objects(events, opts))))
+        self.assertIn("web01", str(r["draft"]["affected"]))
+        self.assertTrue(r["draft"]["files_lines"][0].startswith("1 VM had files on ds_shared_01"), r["draft"]["files_lines"])
+        self.assertIn("web01 (esx02, on)", r["draft"]["files_lines"][0])
+
+    def test_4_the_history_always_reads_the_whole_vcenter(self):
+        import inspect
+        self.assertEqual(list(inspect.signature(snap.placements).parameters), ["props"])
+        self.assertNotIn("datacenter", open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "placement.yml")).read())
+
+    def test_6_every_watch_member_is_a_workbook_row(self):
+        members = ["sitea-vm%02d" % i for i in range(1, 13)]
+        r = tc.review(still_down=True, members=members)
+        self.assertTrue(r["draft"]["files_lines"][0].endswith("+4 more"))
+        sheet = next(x for x in r["sheets"] if x["name"] == "VMs on lost objects")
+        self.assertEqual([row[2] for row in sheet["rows"]], members)
+        self.assertEqual(sheet["rows"][0][7], "the watch's read")
+
+    def test_7_the_csv_keeps_cluster_and_the_alarm_colours(self):
+        sheet = tc.review()["sheet"]
+        rows = [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
+        self.assertEqual(sheet["columns"][-4:], ["Cluster", "From", "To", "Message"])
+        red = next(row for row in rows if row["What happened"] == "Alarm red: Cannot connect to storage")
+        self.assertEqual((red["Cluster"], red["From"], red["To"]), (tc.CL, "green", "red"))
 
 
 class Catalog(unittest.TestCase):

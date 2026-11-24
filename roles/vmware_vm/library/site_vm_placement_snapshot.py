@@ -29,7 +29,6 @@ options:
   create: {description: Make the tables when they are not there., type: bool, default: true}
   keep_days: {description: Delete rows older than this many days (0 = never)., type: int, default: 400}
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
-  datacenter: {description: Only this datacenter's VMs., type: str, default: ''}
   vcenters: {description: More vCenters to read besides the credential's (same account)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   timeout: {description: Seconds to wait for vCenter., type: int, default: 60}
@@ -73,56 +72,55 @@ def _props(content, objtype, paths):
         view.Destroy()
 
 
-def _datacenter(obj):
-    x = getattr(obj, "parent", None)
-    while x is not None and not isinstance(x, vim.Datacenter):
-        x = getattr(x, "parent", None)
-    return x.name if x is not None else ""
-
-
-def placements(props, datacenter=""):
-    """[{moid, name, host, cluster, datastores, power}] from the property reads {kind: {moid: (obj, props)}}; the hosts'
-    datacenter filters (datacenter set) - pure, so a test hands it stand-ins."""
+def placements(props):
+    """[{moid, name, host, host_moid, cluster, datastores, datastore_moids, power}] from the property reads
+    {kind: {moid: (obj, props)}} - the whole vCenter, always (a datacenter filter would mark the others' VMs gone);
+    pure, so a test hands it stand-ins."""
     clusters = {m: pr.get("name", "") for m, (_, pr) in props["cluster"].items()}
     stores = {m: pr.get("name", "") for m, (_, pr) in props["datastore"].items()}
-    hosts = {}
-    for m, (o, pr) in props["host"].items():
-        hosts[m] = (pr.get("name", ""), clusters.get(getattr(pr.get("parent"), "_moId", ""), ""), props.get("dc", {}).get(m, ""))
+    hosts = {m: (pr.get("name", ""), clusters.get(getattr(pr.get("parent"), "_moId", ""), "")) for m, (_, pr) in props["host"].items()}
     out = []
     for m, (_, pr) in props["vm"].items():
         if pr.get("config.template"):
             continue
-        host, cluster, dc = hosts.get(getattr(pr.get("runtime.host"), "_moId", ""), ("", "", ""))
-        if datacenter and dc and dc != datacenter:
-            continue
-        out.append({"moid": m, "name": pr.get("name", ""), "host": host, "cluster": cluster, "power": str(pr.get("runtime.powerState") or ""),
-                    "datastores": sorted({stores.get(getattr(d, "_moId", ""), "") for d in pr.get("datastore") or []} - {""})})
+        host_moid = getattr(pr.get("runtime.host"), "_moId", "")
+        host, cluster = hosts.get(host_moid, ("", ""))
+        pairs = sorted({(stores.get(getattr(d, "_moId", ""), ""), getattr(d, "_moId", "")) for d in pr.get("datastore") or []}
+                       - {("", "")})
+        out.append({"moid": m, "name": pr.get("name", ""), "host": host, "host_moid": host_moid, "cluster": cluster,
+                    "power": str(pr.get("runtime.powerState") or ""),
+                    "datastores": [n for n, _ in pairs], "datastore_moids": [i for _, i in pairs]})
     return sorted(out, key=lambda v: (v["name"], v["moid"]))
 
 
-def _read(content, datacenter):
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
+def _read(content):
+    """(when this vCenter's read ended, its placements): each vCenter is stamped with its own read (1.116.6 review)."""
     props = {"cluster": _props(content, vim.ClusterComputeResource, ["name"]), "datastore": _props(content, vim.Datastore, ["name"]),
              "host": _props(content, vim.HostSystem, ["name", "parent"]),
              "vm": _props(content, vim.VirtualMachine, ["name", "runtime.host", "runtime.powerState", "datastore", "config.template"])}
-    if datacenter:
-        props["dc"] = {m: _datacenter(o) for m, (o, _) in props["host"].items()}
-    return placements(props, datacenter)
+    return _now(), placements(props)
 
 
 def keep(conn, reads, now, p, check_mode):
-    """Write each vCenter's run (not in check mode) -> (runs, pruned, created)."""
+    """Write each vCenter's run at its own read time (not in check mode) -> (runs, pruned, created). reads: [(vcenter,
+    (read_at, vms))]; now: the job's time, for the pruning."""
     cur = conn.cursor()
     there, created = vp.schema(cur, p["create"] and not check_mode)
     if not there:
         raise RuntimeError("the tables vm_placement and vm_placement_run are not there%s - make them once, docs/REPORT_DATABASE.md"
                            % (" (check mode: nothing made)" if check_mode and p["create"] else " (vm_placement_db_create: false)"))
     runs = []
-    for vcenter, vms in reads:
+    for vcenter, (read_at, vms) in reads:
         if check_mode:
-            runs.append({"vcenter": vcenter, "vms": len(vms), "whole": vp.need_full(cur, vcenter, now), "kept": 0})
+            runs.append({"vcenter": vcenter, "vms": len(vms), "whole": vp.need_full(cur, vcenter, read_at), "kept": 0,
+                         "read_at": vp.iso(read_at)})
             continue
-        whole, kept = vp.write(cur, vcenter, now, vms, p["job"])
-        runs.append({"vcenter": vcenter, "vms": len(vms), "whole": whole, "kept": kept})
+        whole, kept = vp.write(cur, vcenter, read_at, vms, p["job"])
+        runs.append({"vcenter": vcenter, "vms": len(vms), "whole": whole, "kept": kept, "read_at": vp.iso(read_at)})
     pruned = 0 if check_mode else vp.prune(cur, now, p["keep_days"])
     if not check_mode:
         conn.commit()
@@ -132,26 +130,26 @@ def keep(conn, reads, now, p, check_mode):
 def main():
     module = AnsibleModule(
         argument_spec=dict(db.ARGS, create=dict(type="bool", default=True), keep_days=dict(type="int", default=400),
-                           job=dict(type="int", default=0), datacenter=dict(type="str", default=""),
+                           job=dict(type="int", default=0),
                            vcenters=dict(type="list", elements="str", default=[]), validate_certs=dict(type="bool", default=True),
                            timeout=dict(type="int", default=60)),
         supports_check_mode=True)
     p = module.params
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
-    done, statuses = each_vcenter(module, lambda si, content, name: _read(content, p["datacenter"]), p["vcenters"],
+    now = _now()
+    done, statuses = each_vcenter(module, lambda si, content, name: _read(content), p["vcenters"],
                                   p["validate_certs"], "the VMs' placement", p["timeout"])
     where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
-    res = dict(changed=False, ok=False, error="", read_at=vp.iso(now), runs=[{"vcenter": n, "vms": len(v), "whole": False, "kept": 0}
-               for n, v in done], pruned=0, created=False, vcenters=statuses, where=where)
+    res = dict(changed=False, ok=False, error="", read_at=vp.iso(now), runs=[{"vcenter": n, "vms": len(v[1]), "whole": False, "kept": 0,
+               "read_at": vp.iso(v[0])} for n, v in done], pruned=0, created=False, vcenters=statuses, where=where)
     if not db.HAS_PYMYSQL:
         res["error"] = db.NO_PYMYSQL
     else:
         conn = None
         try:
             conn, _ = db.connect(p)
-            res["runs"], res["pruned"], res["created"] = keep(conn, done, now, p, module.check_mode)
+            res["runs"], res["pruned"], res["created"] = keep(conn, done, _now(), p, module.check_mode)
             res["ok"] = True
             res["changed"] = not module.check_mode and bool(sum(r["kept"] for r in res["runs"]) or res["pruned"] or res["created"])
         except Exception as e:      # noqa: BLE001 - unreachable, refused, a grant missing: one line, the next run tries again

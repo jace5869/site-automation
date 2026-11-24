@@ -2064,7 +2064,8 @@ class Outputs(unittest.TestCase):
         self.assertEqual(s["name"], "Timeline")
         # 1.116.6: one time column (the zone's, ISO), short columns, in the story / noise, the message last
         self.assertEqual(s["columns"], ["#", "Time (Europe/Berlin, ISO)", "Level", "Kind", "Object", "Host", "Datastore", "VM",
-                                        "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Message"])
+                                        "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Cluster",
+                                        "From", "To", "Message"])
         rows = cells(s)
         self.assertEqual(len(rows), 33)
         first = rows[0]

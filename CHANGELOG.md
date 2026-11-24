@@ -54,8 +54,16 @@ The note for no confirmed VM reads *No VM confirmed down: the watch and HA recor
 
 **The CSV and the workbook's Timeline read in Excel.** The same rows, nothing dropped, in short columns: one time
 column (the report's zone, ISO), Level, Kind (host, datastore, vm, alarm, ticket, note), Object, Host, Datastore, VM,
-What happened, In the story (yes / no), Noise (yes / no), vCenter, Event type, Event key, and the full Message last.
+What happened, In the story (yes / no), Noise (yes / no), vCenter, Event type, Event key, Cluster, From, To (an
+alarm's colours), and the full Message last.
 The workbook keeps its frozen first row, filters and fitted columns. The scheduled watch's sheet is unchanged.
+
+Review fixes (Codex, second review): each vCenter's placement is stamped with the end of its own read; the history keeps
+the host's and datastores' IDs and matches a lost one by ID (by name only when the name means one object); a confirmed
+VM hides only itself from the placement list, by ID; the snapshot always reads the whole vCenter (a datacenter filter
+would mark the others' VMs gone); the workbook lists every VM the watch named on a lost datastore; the CSV keeps
+Cluster and an alarm's From and To. Proven on MySQL 8.4 and vcsim: two runs with a change, a day's roll-over, pruning,
+the review's read as of a past time (the reader account), the vCenter fallback, on ansible-core 2.16 and 2.22.
 
 Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
 each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).

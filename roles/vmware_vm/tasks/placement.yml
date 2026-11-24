@@ -25,7 +25,6 @@
     create: "{{ vm_placement_db_create | bool }}"
     keep_days: "{{ vm_placement_days | int }}"
     job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
-    datacenter: "{{ vmware_datacenter | default('', true) }}"
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
   register: _vm_place
