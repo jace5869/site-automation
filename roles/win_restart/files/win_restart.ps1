@@ -208,7 +208,9 @@ function Assert-SiteRestartPath {
         $null = New-Item -Path $Dir -ItemType Directory -ErrorAction Stop
         Assert-SiteRestartItem $Dir -Directory
     }
-    if ($belowRoot) { Assert-SiteRestartAcl $Dir }
+    # Program Files itself too: a weakened root would let its children be renamed or swapped
+    $isRoot = $Dir.TrimEnd($sep).Equals($env:ProgramFiles.TrimEnd($sep), [StringComparison]::OrdinalIgnoreCase)
+    if ($belowRoot -or $isRoot) { Assert-SiteRestartAcl $Dir }
 }
 
 function Assert-SiteRestartAcl {
