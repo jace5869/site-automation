@@ -786,6 +786,40 @@ def answer_for(test, **kw):
     return json.loads(n.answer(CN)[1])
 
 
+class Sites(unittest.TestCase):
+    """1.127.2: the site filter - ontap_live_site_pattern's first group on the cluster's name, then the SVM's; auto: a
+    4-letter, 2-digit prefix; shown from two sites."""
+
+    def m(self, pattern="", clusters=("sita01-c1", "sitb02-c1")):
+        vols = [{"c": clusters[0], "svm": "svm_a"}, {"c": clusters[0], "svm": "svm_b"}, {"c": clusters[1], "svm": "svm_c"}, {"c": "other", "svm": "sitc03_svm"}]
+        return nl.add_sites({"run": {"opts": {"site_pattern": pattern}}, "volumes": vols, "aggrs": [{"c": clusters[1]}],
+                             "parts": {"snapmirror": {"rows": [{"dc": clusters[1], "dst": "svm_c:v"}]}, "nodes": {"rows": [{"cluster": clusters[0]}]},
+                                       "clusters": {"rows": [{"name": clusters[0]}]}}})
+
+    def test_auto_on_the_cluster_then_the_svm(self):
+        m = self.m()
+        self.assertEqual([v["site"] for v in m["volumes"]], ["SITA01", "SITA01", "SITB02", "SITC03"])
+        self.assertEqual(m["sites"], [{"site": "SITA01", "n": 2}, {"site": "SITB02", "n": 1}, {"site": "SITC03", "n": 1}])
+        self.assertEqual((m["aggrs"][0]["site"], m["parts"]["snapmirror"]["rows"][0]["site"], m["parts"]["nodes"]["rows"][0]["site"],
+                          m["parts"]["clusters"]["rows"][0]["site"]), ("SITB02", "SITB02", "SITA01", "SITA01"))
+
+    def test_a_pattern_of_its_own_and_one_site_shows_no_filter(self):
+        m = self.m(r"^cl-([a-z]+)-", ("cl-north-01", "cl-south-01"))
+        self.assertEqual([x["site"] for x in m["sites"]], ["NORTH", "SOUTH"])
+        self.assertEqual(self.m(clusters=("sita01-c1", "sita01-c2"))["sites"][:1], [{"site": "SITA01", "n": 3}])
+        one = nl.add_sites({"run": {"opts": {}}, "volumes": [{"c": "sita01-c1", "svm": "s"}], "aggrs": [], "parts": {}})
+        self.assertEqual(one["sites"], [])                                                   # one site: no filter
+        self.assertEqual(self.m("([bad")["sites"], [])                                       # not a regex: no filter
+        self.assertEqual(self.m("^site")["sites"], [])                                       # no group: no filter
+
+
+def site_answer(test):
+    """the page's answer with the fixture's clusters named like sites (sita01, sitb02)"""
+    a = json.loads(json.dumps(answer_for(test)).replace("cluster1", "sita01").replace("cluster2", "sitb02"))
+    nl.add_sites(a["model"])
+    return a
+
+
 @unittest.skipUnless(browser(), "no google-chrome or chromium")
 class Browser(unittest.TestCase):
     """netapp-page.js in the portal's shell: every part drawn, Expand... buttons, the datastore search, no sideways scroll."""
@@ -796,6 +830,39 @@ class Browser(unittest.TestCase):
             "r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;r.h=document.documentElement.scrollHeight;"
             "var i=document.getElementById('nap-q');i.value='SITEA-07';i.dispatchEvent(new Event('input',{bubbles:true}));"
             "r.found=q('.nap-vols tbody tr b.mono');")
+
+    def test_the_site_filter(self):
+        a = site_answer(self)
+        self.assertEqual([x["site"] for x in a["model"]["sites"]], ["SITA01", "SITB02"])
+        js = ("r.btn=[].map.call(document.querySelectorAll('.nap-sites button'),function(b){return b.textContent+'|'+b.getAttribute('aria-pressed')});"
+              "document.querySelector('.nap-sites button[data-site=\"SITB02\"]').click();"
+              "r.url=location.search;r.names=[].map.call(document.querySelectorAll('.nap-vols tbody tr b.mono'),function(x){return x.textContent});"
+              "r.aggr=[].map.call(document.querySelectorAll('#runway table:not(.nap-vols) tbody tr b.mono'),function(x){return x.textContent});"
+              "r.tiles=[].map.call(document.querySelectorAll('.nap-tiles .tile .n'),function(x){return x.textContent});"
+              "r.sel=getComputedStyle(document.getElementById('nap-site')).display;r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;")
+        b_ = [v["name"] for v in a["model"]["volumes"] if v["site"] == "SITB02"]
+        for w in (1280, 800):
+            out = run_page(page_files(self, a, width=w, js=js), w)
+            r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
+            self.assertNotIn("err", r)
+            self.assertEqual(r["btn"][0].split("|"), ["All (%d)" % len(a["model"]["volumes"]), "true"])
+            self.assertTrue(r["url"].endswith("site=SITB02"), r["url"])
+            self.assertTrue(r["names"] and set(r["names"]) <= set(b_), (r["names"], b_))      # the runway: that site's only
+            self.assertTrue(r["aggr"] and all("c2" in x for x in r["aggr"]), r["aggr"])       # the aggregates follow it
+            self.assertEqual(r["sel"] == "none", w == 1280, (w, r["sel"]))                     # buttons at 1280, a select at 800 px
+            self.assertEqual(r["side"], 0, w)
+
+    def test_no_days_until_full_and_the_least_free_tile(self):
+        js = ("r.th=[].map.call(document.querySelectorAll('.nap-vols thead th'),function(x){return x.textContent});"
+              "r.k=[].map.call(document.querySelectorAll('.nap-tiles .tile .k'),function(x){return x.textContent});"
+              "var d=document.querySelector('.nap-vols .nap-ds');r.ws=getComputedStyle(d).whiteSpace;r.title=d.title;r.txt=d.textContent;")
+        out = run_page(page_files(self, answer_for(self), js=js), 1280)
+        r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
+        self.assertNotIn("Days until full", r["th"])
+        self.assertIn("Growth GB/day", r["th"])
+        self.assertIn("Least free", r["k"])
+        self.assertNotIn("Soonest full", r["k"])
+        self.assertEqual((r["ws"], r["title"]), ("nowrap", r["txt"]))                         # the datastore on one line, its name on hover
 
     def test_page(self):
         a = answer_for(self)

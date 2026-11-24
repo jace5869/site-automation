@@ -146,4 +146,54 @@ def model(run, vrows, arows, prow):
     for name, body in prow:
         if name in PARTS:
             parts[name] = _json(body, {})
-    return {"run": run, "volumes": vols, "aggrs": aggrs, "parts": parts, "left_out": {"roots": roots, "small": small}}
+    return add_sites({"run": run, "volumes": vols, "aggrs": aggrs, "parts": parts, "left_out": {"roots": roots, "small": small}})
+
+
+AUTO_SITE = r"^([A-Za-z]{4}[0-9]{2})"       # ontap_live_site_pattern '' (auto): a site code as the cluster's (or SVM's) prefix
+
+
+def site_rule(pattern):
+    """ontap_live_site_pattern -> a compiled regex (its first group is the site), or None when it is not one"""
+    try:
+        rx = re.compile(str(pattern or "").strip() or AUTO_SITE)
+    except re.error:
+        return None
+    return rx if rx.groups >= 1 else None
+
+
+def site_of(rx, cluster, svm=""):
+    """the site of a row: the pattern's first group on the cluster's name, else on the SVM's; '' when neither has one"""
+    for name in (cluster, svm):
+        m = rx.search(str(name or "")) if rx is not None else None
+        if m and m.group(1):
+            return m.group(1).upper()
+    return ""
+
+
+def add_sites(m):
+    """1.127.2: each row's site (ontap_live_site_pattern on its cluster, then its SVM) and m["sites"]: [{site, n}] - the
+    volumes and LUNs of each - only when there are two or more (one site: no filter to show)."""
+    rx = site_rule((m["run"].get("opts") or {}).get("site_pattern"))
+    for v in m["volumes"]:
+        v["site"] = site_of(rx, v.get("c"), v.get("svm"))
+    for a in m["aggrs"]:
+        a["site"] = site_of(rx, a.get("c"))
+    for name, body in (m.get("parts") or {}).items():
+        for r in (body.get("rows") or []) if isinstance(body, dict) else []:
+            if not isinstance(r, dict):
+                continue
+            if name == "clusters":
+                r["site"] = site_of(rx, r.get("name"))
+            elif name == "snapmirror":
+                r["site"] = site_of(rx, r.get("dc"), str(r.get("dst") or "").split(":", 1)[0])
+            else:
+                r["site"] = site_of(rx, r.get("cluster"), r.get("svm"))
+    n = {}
+    for v in m["volumes"]:
+        if v["site"]:
+            n[v["site"]] = n.get(v["site"], 0) + 1
+    for a in m["aggrs"]:
+        if a["site"]:
+            n.setdefault(a["site"], 0)
+    m["sites"] = [{"site": k, "n": n[k]} for k in sorted(n)] if len(n) >= 2 else []
+    return m

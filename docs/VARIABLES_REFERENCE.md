@@ -1511,6 +1511,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_live_days_warn` | `30` | full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber |
 | `ontap_live_days_crit` | `7` | ... within this many days: red |
 | `ontap_live_list_days` | `90` | the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all") |
+| `ontap_live_site_pattern` | (empty) | The page's site filter (1.127.2): a regular expression whose first group is the site, tried on the cluster's name, then the SVM's; "" = a 4-letter, 2-digit prefix (^([A-Za-z]{4}[0-9]{2})). The filter shows when it finds 2 sites or more. |
 
 ## patch
 

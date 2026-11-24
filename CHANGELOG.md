@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.127.2 — 2026-11-24
+
+**To set up:** run Site portal - deploy. Optional: `ontap_live_site_pattern` on NetApp - refresh volume list when the
+sites are not a 4-letter, 2-digit prefix of the cluster names.
+
+- **NetApp page: a site filter.** One button per site (a list at 800 px) above At a glance; every part follows it, the
+  tiles too; `?site=` links a view. The site comes from the cluster's name, else the SVM's (`ontap_live_site_pattern`,
+  empty = a 4-letter, 2-digit prefix); shown from two sites.
+- The datastore name stays on one line in the runway (a long one ends in …, the whole name on hover).
+- The runway has no "Days until full" column any more (growth GB/day stays); the "Soonest full" tile is now "Least
+  free" (its % free). The aggregates keep "Days until 97 %".
+
 ## 1.127.1 — 2026-11-24
 
 **To set up:** run Site portal - deploy; the next refresh fills the datastores.

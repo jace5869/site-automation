@@ -471,12 +471,16 @@ The site portal's **NetApp** page (`/portal/netapp`, [SITE_PORTAL.md](SITE_PORTA
 volume list* read last, from the report database ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The NetApp page's runs*).
 GET only on NetApp; the page only reads the database.
 
+- **Site** (1.127.2): one button per site (All, SITA01 (6), ...), a list at 800 px; every part of the page follows it,
+  the At a glance tiles too. `?site=SITA01` links a view. The site is the first group of `ontap_live_site_pattern` on the
+  cluster's name, else the SVM's; empty (the default) takes a 4-letter, 2-digit prefix. Shown from two sites.
 - **The live line:** as of when, the refresh's job. Older than `portal_netapp_old_minutes` (60): said, not "Live".
 - **At a glance:** clusters healthy, how many LUNs and volumes over `ontap_volume_warn_pct` / `ontap_volume_crit_pct`,
-  the soonest full, SnapMirror broken and lagging, disks failed and spares, ONTAP errors.
+  the least free (its % free), SnapMirror broken and lagging, disks failed and spares, ONTAP errors.
 - **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume,
   VMware datastores first under their own heading, then "Other volumes and LUNs", each least free first: the VMware
-  datastore, the aggregate, how full and from where, free GB, growth a day, days until full - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
+  datastore (on one line; a long name ends in … with the whole name on hover), the aggregate, how full and from where,
+  free GB, growth a day - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
   days until `ontap_expand_aggr_max_pct` (97 %).
 - **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
   own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP
@@ -514,6 +518,7 @@ GET only on NetApp; the page only reads the database.
 | `ontap_live_days_warn` / `_crit` | `30` / `7` | full (or at the aggregate limit) within these days: amber / red |
 | `ontap_live_list_days` | `90` | the runway's short view: every VMware datastore, plus the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest; every volume and LUN however small - `ontap_volume_min_gb` is the health report's) |
 | `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | delete older points / runs |
+| `ontap_live_site_pattern` | (empty) | the site filter: a regular expression, its first group the site, on the cluster's name then the SVM's; empty = `^([A-Za-z]{4}[0-9]{2})` |
 | `portal_netapp` / `portal_netapp_old_minutes` | `true` / `60` | the portal's page on or off; a run older than this is said old |
 
 

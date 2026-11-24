@@ -13,6 +13,8 @@
                 warn: [["path", {d: "M8 3.2v5.6M8 11.6v.4"}]], skip: [["circle", {cx: 8, cy: 8, r: 5.4}], ["path", {d: "M5.6 8h4.8"}]]};
   const KIND = {ok: "ok", critical: "bad", warning: "warn", unknown: "skip"};
   let etag = "", timer = 0, showAll = false, perfBy = "lat", last = null, query = "";
+  // 1.127.2: the site filter (?site= links a view); "" = every site
+  let site = (new URLSearchParams(location.search).get("site") || "").toUpperCase();
 
   function el(tag, cls, kids) {
     const e = document.createElement(tag);
@@ -79,7 +81,7 @@
     const vols = m.volumes || [];
     const warn = vols.filter((v) => v.pct >= (o.volume_warn_pct || 85));
     const crit = vols.filter((v) => v.pct >= (o.volume_crit_pct || 90));
-    const soon = vols.filter((v) => v.days != null).sort((a, b) => a.days - b.days)[0];
+    const least = vols.slice().sort((a, b) => (b.pct - a.pct) || (a.name < b.name ? -1 : 1))[0];
     const t = [];
     const cl = (P.clusters || {}).rows;
     if (cl) {
@@ -94,8 +96,10 @@
                 "of " + vols.length + " LUNs and volumes"));
     t.push(tile("How full over " + fmt(o.volume_crit_pct || 90) + " %", [el("span", "big", String(crit.length)), chip(crit.length ? "critical" : "ok")],
                 crit.slice(0, 3).map((v) => v.name).join(", ") + (crit.length > 3 ? " …" : "")));
-    t.push(tile("Soonest full", soon ? [el("span", "big", fmt(soon.days) + (Math.round(soon.days) === 1 ? " day" : " days")), chip(daysCls(soon.days, o) ? soon.st : "ok")] :
-                [el("span", "big", "-")], soon ? soon.name + (soon.ds ? " (" + soon.ds + ")" : "") + ", +" + fmt(soon.g, 1) + " GB a day" : "no growth rate yet"));
+    // 1.127.2 (user): the least free one, not the days until full
+    t.push(tile("Least free", least ? [el("span", "big", fmt(Math.max(0, 100 - Math.min(100, least.pct)), 1) + " % free"),
+                chip(least.pct >= (o.volume_crit_pct || 90) ? "critical" : least.pct >= (o.volume_warn_pct || 85) ? "warning" : "ok")] : [el("span", "big", "-")],
+                least ? least.name + (least.ds ? " (" + least.ds + ")" : "") + ", " + gb(least.free) + " GB free" : "nothing read"));
     const sm = P.snapmirror;
     if (sm) {
       const b = sm.rows.filter((x) => x.st === "critical")[0], w = sm.rows.filter((x) => x.st === "warning")[0];
@@ -173,11 +177,14 @@
       openExpand(a, v || {});
       return;
     }
+    const st = ev.target.closest && ev.target.closest("button[data-site]");
+    if (st) { pickSite(st.getAttribute("data-site")); return; }
     const s = ev.target.closest && ev.target.closest("button[data-all]");
     if (s) { showAll = !showAll; draw(); return; }
     const p = ev.target.closest && ev.target.closest("button[data-by]");
     if (p) { perfBy = p.getAttribute("data-by"); draw(); }
   });
+  root.addEventListener("change", (ev) => { if (ev.target.id === "nap-site") pickSite(ev.target.value); });
   root.addEventListener("input", (ev) => {
     if (ev.target.id !== "nap-q") return;
     query = ev.target.value;
@@ -204,18 +211,19 @@
     const vcWhy = !o.vmware ? "not read - attach the VMware vCenter credential to NetApp - refresh volume list"
       : o.vc_error ? "not read - vCenter: " + o.vc_error : "";
     const row = (v) => {
-      const days = v.days == null ? td("num wrap", el("span", "muted", v.g != null && v.g <= 0 ? "not filling" : v.rate_why || "-"))
-        : td("num", el("span", daysCls(v.days, o), fmt(v.days)));
+      const ds = (n) => { const x = el("span", "nap-ds", n); x.title = n; return x; };          // one line; the full name on hover
       return tr(v.st, [td("", chip(v.st)),
         td("", [el("b", "mono", v.name), sub(v.svm + " · " + v.c), sub((v.ds ? v.ds : "no datastore") + " · " + v.aggr, "nap-narrow")]),
-        td("nap-wide", v.ds ? [el("span", "nap-ds", v.ds), sub(v.kind + (v.lun ? (v.thick ? ", thick LUN" : ", thin LUN") : ""))]
+        td("nap-wide nap-dscol", v.ds ? [ds(v.ds), sub(v.kind + (v.lun ? (v.thick ? ", thick LUN" : ", thin LUN") : ""))]
           : [el("span", "muted", vcWhy || "no datastore on it"), v.lun ? sub(v.thick ? "thick LUN" : "thin LUN") : null]),
         td("nap-wide mono", v.aggr),
-        (() => { const c = td("num", [fmt(Math.min(100, v.pct), 1), sub(v.src)]); if (v.pct > 100) c.title = fmt(v.pct, 1) + " % (more written than its size: ONTAP counts its metadata)"; return c; })(), td("num", gb(v.free)), td("num", v.g == null ? "-" : (v.g > 0 ? "+" : "") + fmt(v.g, 1)), days, expandCell(v)]);
+        (() => { const c = td("num", [fmt(Math.min(100, v.pct), 1), sub(v.src)]); if (v.pct > 100) c.title = fmt(v.pct, 1) + " % (more written than its size: ONTAP counts its metadata)"; return c; })(), td("num", gb(v.free)),
+        (() => { const c = td("num", v.g == null ? el("span", "muted", "-") : (v.g > 0 ? "+" : "") + fmt(v.g, 1)); if (v.g == null && v.rate_why) c.title = v.rate_why; return c; })(),
+        expandCell(v)]);
     };
     // VMware datastores first, then the rest (the reader's order); a thin heading over each group when both are there
     const onDs = vols.filter((v) => v.ds), others = vols.filter((v) => !v.ds);
-    const grp = (t) => { const th = el("th", "", t); th.colSpan = 9; th.scope = "colgroup"; return el("tr", "nap-grp", th); };
+    const grp = (t) => { const th = el("th", "", t); th.colSpan = 8; th.scope = "colgroup"; return el("tr", "nap-grp", th); };
     const rows = onDs.length && others.length
       ? [grp("VMware datastores (" + onDs.length + ")")].concat(onDs.map(row), [grp("Other volumes and LUNs (" + others.length + ")")], others.map(row))
       : vols.map(row);
@@ -237,7 +245,7 @@
     return sec("runway", "Space runway", need + " LUNs or volumes, " + needA + " aggregates need a look", [
       el("div", "ctrl", [el("p", "h3", "LUNs and volumes: VMware datastores first, each least free first"), el("div", "nap-tools", [search, toggle])]),
       table([["Now"], ["Volume / LUN"], ["Datastore", "nap-wide"], ["Aggregate", "nap-wide"], ["Used %", "num"], ["Free GB", "num"],
-             ["Growth GB/day", "num"], ["Days until full", "num"], ["", "actcol"]], rows, "nap-vols"),
+             ["Growth GB/day", "num"], ["", "actcol"]], rows, "nap-vols"),
       el("p", "more-line", q ? vols.length + " of " + all.length + " match \u201c" + query.trim() + "\u201d." : more),
       vcWhy ? el("p", "more-line nap-nr", "Datastores " + vcWhy + ".") : null,
       el("p", "more-line", "A volume that holds a LUN is judged by its LUN: the datastore's own used space when vCenter was read, else the LUN's blocks written. " +
@@ -315,6 +323,45 @@
       notRead(pf.errors)]);
   }
 
+  // ---- the site filter (1.127.2): every part follows it, the tiles too
+  function bySite(m) {
+    if (!site || !(m.sites || []).some((x) => x.site === site)) return m;
+    const on = (r) => r.site === site;
+    const P = {};
+    Object.keys(m.parts || {}).forEach((k) => {
+      const b = m.parts[k], rows = (b.rows || []).filter(on), c = Object.assign({}, b.counts || {});
+      if (k === "snapmirror") Object.assign(c, {all: rows.length, broken: rows.filter((r) => /broken/i.test(r.state || "") || r.st === "critical").length,
+                                                lagging: rows.filter((r) => r.st === "warning").length});
+      if (k === "disks") Object.assign(c, {failed: rows.reduce((n, r) => n + (r.failed || 0), 0), spares: rows.reduce((n, r) => n + (r.spares || 0), 0), nodes: rows.length});
+      if (k === "nodes") Object.assign(c, {all: rows.length, down: rows.filter((r) => r.state !== "up").length});
+      if (k === "ems") Object.assign(c, {events: rows.reduce((n, r) => n + (r.n || 1), 0), kinds: new Set(rows.map((r) => r.ev)).size});
+      if (k === "perf") c.all = rows.length;
+      P[k] = Object.assign({}, b, {rows: rows, counts: c});
+    });
+    return Object.assign({}, m, {volumes: (m.volumes || []).filter(on), aggrs: (m.aggrs || []).filter(on), parts: P});
+  }
+  function siteBar(m) {
+    const ss = m.sites || [];
+    if (!ss.length) return null;
+    const all = (m.volumes || []).length;
+    const opts = [["", "All (" + all + ")"]].concat(ss.map((x) => [x.site, x.site + " (" + x.n + ")"]));
+    const seg = el("div", "seg2 nap-sites-b", opts.map((x) => {
+      const b = el("button", "", x[1]); b.type = "button"; b.setAttribute("data-site", x[0]); b.setAttribute("aria-pressed", String(site === x[0])); return b;
+    }));
+    seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Site");
+    const sel = el("select", "nap-q nap-sites-s", opts.map((x) => { const o = el("option", "", x[1]); o.value = x[0]; o.selected = site === x[0]; return o; }));
+    sel.id = "nap-site"; sel.setAttribute("aria-label", "Site");
+    return el("div", "ctrl nap-sites", [el("p", "h3", "Site"), seg, sel,
+      el("span", "more-line nap-sites-n", "Every part of the page follows it. The cluster's (or SVM's) name gives the site (ontap_live_site_pattern).")]);
+  }
+  function pickSite(v) {
+    site = v || "";
+    const u = new URL(location.href);
+    if (site) u.searchParams.set("site", site); else u.searchParams.delete("site");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    draw();
+  }
+
   function draw() {
     const d = last;
     if (!d) return;
@@ -322,8 +369,10 @@
     if (!d.model) {
       kids.push(el("p", "note" + (d.loading ? "" : " warn"), d.message || "Nothing to show."));
     } else {
-      const m = d.model;
+      const m0 = d.model, m = bySite(m0);
       kids.push(live(m, d.stale));
+      const sb = siteBar(m0);
+      if (sb) kids.push(sb);
       if ((m.run.not_read || []).length) kids.push(el("p", "note warn", "Not read by the refresh: " + m.run.not_read.join("; ")));
       kids.push(glance(m), runway(m), snapmirror(m), health(m), perf(m));
       kids.push(el("p", "adp-foot", "Read from the report database (the refresh job's newest run, times in " + m.run.zone + "). GET only on NetApp; Expand… only opens the existing job."));

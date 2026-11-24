@@ -966,7 +966,7 @@ Two AD templates (two forests): `portal_ad_template` is the one the page shows; 
 ## The NetApp page
 
 The portal's **NetApp** page (`/portal/netapp`) shows *NetApp - refresh volume list*'s newest run from the report
-database: At a glance, the Space runway (each LUN and volume soonest full first, its VMware datastore, a search box,
+database: At a glance, the Space runway (each LUN and volume, VMware datastores first, each least free first, its VMware datastore, a search box,
 and **Expand…**), the aggregates, SnapMirror, health and performance. [NETAPP.md](NETAPP.md), *The live page*, has
 what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md), *The NetApp page's runs*, the tables.
 

@@ -33,7 +33,7 @@
           'ems_hours': ontap_ems_hours | float, 'ems_ignore': ontap_ems_ignore | default([], true),
           'ems_ignore_ldap': ontap_ems_ignore_ldap | string, 'lat_warn_ms': ontap_perf_latency_warn_ms | float,
           'lat_crit_ms': ontap_perf_latency_crit_ms | float, 'perf_top': ontap_live_perf_top | int,
-          'health': ontap_live_health | bool, 'perf': ontap_live_perf | bool,
+          'health': ontap_live_health | bool, 'perf': ontap_live_perf | bool, 'site_pattern': ontap_live_site_pattern | default('', true) | string,
           'vmware': lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0, 'vc_error': _ol_vc_error} }}
 
 - name: NetApp | keep this run for the portal's NetApp page (ontap_live_db)
