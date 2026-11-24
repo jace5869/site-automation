@@ -143,8 +143,12 @@ warning*. Read only, on the AAP side - nothing is written to SolarWinds or to th
 3. **The AD monitors (SAM):** SolarWinds' AD application templates on the DC; a component that is not up is named, with its
    status, value and message (on the website: open the row; in the email and the workbook: the table *From SolarWinds: AD
    monitors not up*). An Orion without SAM: the column is left out and the text says so.
+   A component disabled in SolarWinds (its message or status text *Disabled*) is not a problem: it is left out of the
+   count and said once at the end, e.g. *28 of 28 up · 15 disabled in SolarWinds* (1.116.5).
 4. **Last down:** SolarWinds' node-down events of `ad_solarwinds_days` (from the snapshot only - read live, it says *not
    read live*).
+   A down under 1 minute is SolarWinds' polling blip, not an outage: *blip TIME, under 1 min*, with no mark; a down of
+   1 minute or more in the window is shown before it (1.116.5).
 5. **Never the job's result:** the section does not change the report's critical and warning counts, its status, its
    headline (the first number tile stays AD's) or `ad_report_fail`; a read that fails is one line under *Not read*, in
    fixed words (never a database's user or host).

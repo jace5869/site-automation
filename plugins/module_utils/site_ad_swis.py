@@ -9,7 +9,7 @@ read(dcs, opts, conn=None, swdb=None, client=None) -> {
   ok, source ("db-snapshot" | "swis-live" | ""), read_at (UTC "YYYY-MM-DD HH:MM"), age_min, interval_min, stale, why: [...],
   sam (False: no SAM on this Orion), sam_why, events (bool: the last downs were read),
   dcs: [{dc, ip, matched ("name" | "ip" | ""), status, status_text, last_poll, cpu, mem, apps: {...}, alerts: [...],
-         last_down: {at, minutes, ongoing} | None}]}
+         last_down: {at, minutes, ongoing, blip (1.116.5: a down under 1 min, given only when the window has no longer one)} | None}]}
 dcs: [{dc, ip}]; opts: max_age (min), days (last down window), now (test: "YYYY-MM-DDTHH:MM:SSZ")."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -99,22 +99,46 @@ def _now(opts):
     return _utc(opts.get("now")) or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
+DISABLED_CODE = 27                                       # Orion.StatusInfo's Disabled
+
+
+def disabled(c):
+    """1.116.5: a SAM component (or application) switched off in SolarWinds: Orion's Disabled status, or SolarWinds' own
+    word "Disabled" as its message or status text (SAM gives such a component the Unknown status). Never a problem."""
+    try:
+        if int(c.get("status_code")) == DISABLED_CODE:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return any(str(c.get(k) or "").strip().lower() == "disabled" for k in ("message", "status_text"))
+
+
 def summarize_apps(apps):
-    """apps_for's list for one node -> {total, down, warning, unknown, names (not up, worst first), not_up: [...], text, status}."""
+    """apps_for's list for one node -> {total, down, warning, unknown, disabled, names (not up, worst first), not_up: [...],
+    text, status}. 1.116.5: a component disabled in SolarWinds is not counted (not in total, not_up or the status); the
+    text says how many once, at its end."""
     total = sum(int(a.get("components") or 0) for a in apps)
-    not_up = []
+    not_up, off = [], 0
     for a in apps:
-        for c in a.get("components_not_up") or []:
-            not_up.append(dict(c, app=a.get("app") or ""))
-        if not (a.get("components_not_up") or []) and a.get("status") in (sw.DOWN, sw.WARNING, sw.UNKNOWN) and not a.get("components"):
-            not_up.append({"name": a.get("app") or "", "app": a.get("app") or "", "status": a.get("status"), "value": "",
-                           "message": a.get("status_text") or ""})
+        raw = a.get("components_not_up") or []
+        for c in raw:
+            if disabled(c):
+                off += 1
+            else:
+                not_up.append(dict(c, app=a.get("app") or ""))
+        if not raw and a.get("status") in (sw.DOWN, sw.WARNING, sw.UNKNOWN) and not a.get("components"):
+            if disabled(a):
+                off += 1
+            else:
+                not_up.append({"name": a.get("app") or "", "app": a.get("app") or "", "status": a.get("status"), "value": "",
+                               "message": a.get("status_text") or ""})
     not_up.sort(key=lambda c: (sw.RANK.get(c.get("status"), 2), str(c.get("name") or "").lower()))
     cnt = dict((k, sum(1 for c in not_up if c.get("status") == k)) for k in (sw.DOWN, sw.WARNING, sw.UNKNOWN))
-    total = max(total, len(not_up))
+    total = max(total - off, len(not_up), 0)
     if not apps:
-        return {"total": 0, "down": 0, "warning": 0, "unknown": 0, "not_up": [], "status": "", "text": "no AD template"}
+        return {"total": 0, "down": 0, "warning": 0, "unknown": 0, "disabled": 0, "not_up": [], "status": "", "text": "no AD template"}
     names = [c.get("name") or "" for c in not_up]
+    note = " · %d disabled in SolarWinds" % off if off else ""
 
     def some(k, word):
         sel = [c.get("name") or "" for c in not_up if c.get("status") == k]
@@ -127,23 +151,34 @@ def summarize_apps(apps):
         text, st = "%d of %d unknown" % (total, total), sw.UNKNOWN
     elif cnt[sw.UNKNOWN]:
         text, st = some(sw.UNKNOWN, "unknown"), sw.UNKNOWN
+    elif not total and off:                              # every monitor switched off: nothing up, nothing wrong
+        text, st, note = "all %d disabled in SolarWinds" % off, "", ""
     else:
         text, st = "%d of %d up" % (total, total), sw.UP
-    return {"total": total, "down": cnt[sw.DOWN], "warning": cnt[sw.WARNING], "unknown": cnt[sw.UNKNOWN], "names": names,
-            "not_up": not_up, "status": st, "text": text}
+    return {"total": total, "down": cnt[sw.DOWN], "warning": cnt[sw.WARNING], "unknown": cnt[sw.UNKNOWN], "disabled": off,
+            "names": names, "not_up": not_up, "status": st, "text": text + note}
 
 
 def last_down(events, now, days):
-    """A node's events (oldest first: event_time, event_type) -> its newest down in the window and how long it lasted."""
+    """A node's events (oldest first: event_time, event_type) -> its newest down in the window and how long it lasted.
+    1.116.5: a down under 1 minute (SolarWinds' polling blip) is not an outage: the newest down of 1 minute or more is
+    given; only when there is none, the newest blip ({..., "blip": True})."""
     evs = sorted((e for e in events if _utc(e.get("event_time"))), key=lambda e: _utc(e["event_time"]))
     start = now - datetime.timedelta(days=days)
     downs = [e for e in evs if int(e.get("event_type") or 0) == EVENT_DOWN and _utc(e["event_time"]) >= start]
     if not downs:
         return None
-    at = _utc(downs[-1]["event_time"])
-    ups = [e for e in evs if int(e.get("event_type") or 0) == EVENT_UP and _utc(e["event_time"]) > at]
-    end = _utc(ups[0]["event_time"]) if ups else now
-    return {"at": _hm(at), "minutes": max(0, int((end - at).total_seconds() // 60)), "ongoing": not ups}
+    blip = None
+    for d in reversed(downs):
+        at = _utc(d["event_time"])
+        ups = [e for e in evs if int(e.get("event_type") or 0) == EVENT_UP and _utc(e["event_time"]) > at]
+        end = _utc(ups[0]["event_time"]) if ups else now
+        rec = {"at": _hm(at), "minutes": max(0, int((end - at).total_seconds() // 60)), "ongoing": not ups}
+        if rec["ongoing"] or rec["minutes"] >= 1:
+            return rec
+        if blip is None:
+            blip = dict(rec, blip=True)
+    return blip
 
 
 def _full(x):

@@ -538,5 +538,117 @@ class KnownD1012(unittest.TestCase):
         self.assertEqual([d["dc"] for d in got], ["dc01", "dc02"])
 
 
+
+def _comp(i, name, status="Unknown", code=0, message="", status_text="Unknown"):
+    return {"component_id": i, "name": name, "kind": "", "status": status, "status_code": code, "status_text": status_text,
+            "value": None, "message": message}
+
+
+def _dc_res(apps, last_down):
+    """One matched, up DC as site_ad_swis gives it, for the view."""
+    return {"asked": True, "ok": True, "source": "db-snapshot", "read_at": "2026-11-23 10:30", "age_min": 5, "sam": True, "events": True,
+            "dcs": [{"dc": "DC01", "ip": "", "matched": "name", "status": "Up", "status_text": "", "last_poll": "2026-11-23 10:29",
+                     "cpu": 10, "mem": 40, "apps": apps, "alerts": [], "last_down": last_down, "node_id": 11, "ifaces": []}]}
+
+
+class Disabled1165(unittest.TestCase):
+    """1.116.5: SAM components disabled in SolarWinds (Unknown, message or status text "Disabled") are not problems."""
+
+    def apps(self, extra=()):
+        off = [_comp(100 + k, "Security monitor %02d" % k, message=[" Disabled", "DISABLED ", "disabled"][k % 3]) for k in range(14)]
+        off.append(_comp(200, "Windows Update service check", status_text=" disabled "))        # said in the status text only
+        return [{"app": "Active Directory 2016 Domain Controller Security", "status": "Unknown", "status_text": "Unknown",
+                 "components": 33, "components_not_up": off[:12] + list(extra)},
+                {"app": "Windows Update Monitoring", "status": "Unknown", "status_text": "Unknown", "components": 10,
+                 "components_not_up": off[12:]}]
+
+    def test_disabled_are_not_counted(self):
+        s = ad.summarize_apps(self.apps())
+        self.assertEqual((s["total"], s["unknown"], s["disabled"], s["not_up"], s["status"]), (28, 0, 15, [], sw.UP))
+        self.assertEqual(s["text"], "28 of 28 up · 15 disabled in SolarWinds")
+
+    def test_a_real_unknown_still_counts(self):
+        s = ad.summarize_apps(self.apps([_comp(300, "Kerberos port", message="no answer")]))
+        self.assertEqual((s["total"], s["unknown"], s["disabled"], s["status"]), (28, 1, 15, sw.UNKNOWN))           # the 43 components count it already
+        self.assertEqual(s["text"], "1 of 28 unknown: Kerberos port · 15 disabled in SolarWinds")
+        self.assertEqual([c["name"] for c in s["not_up"]], ["Kerberos port"])
+
+    def test_a_message_that_only_mentions_disabled_is_a_finding(self):
+        s = ad.summarize_apps([{"app": "AD", "status": "Down", "components": 2,
+                                "components_not_up": [_comp(1, "Update service", "Down", 2, "the service is disabled", "Down")]}])
+        self.assertEqual((s["down"], s["disabled"], s["status"]), (1, 0, sw.DOWN))
+
+    def test_orions_disabled_status_code(self):
+        s = ad.summarize_apps([{"app": "AD", "status": "Up", "components": 3,
+                                "components_not_up": [_comp(1, "Old check", "Unknown", ad.DISABLED_CODE, "", "")]}])
+        self.assertEqual(s["text"], "2 of 2 up · 1 disabled in SolarWinds")
+
+    def test_all_disabled(self):
+        s = ad.summarize_apps([{"app": "AD", "status": "Unknown", "components": 2,
+                                "components_not_up": [_comp(1, "a", message="Disabled"), _comp(2, "b", message="Disabled")]},
+                               {"app": "WU", "status": "Unknown", "status_text": "Disabled", "components": None, "components_not_up": []}])
+        self.assertEqual((s["text"], s["status"], s["total"], s["disabled"]), ("all 3 disabled in SolarWinds", "", 0, 3))
+
+    def test_the_view_shows_no_mark_and_no_flat_rows(self):
+        v = af.ad_swis_view(_dc_res(ad.summarize_apps(self.apps()), None), {}, {"now": "2026-11-23T10:35:00Z"})
+        s = v["section"]
+        j = s["columns"].index("AD monitors (SAM)")
+        self.assertEqual(s["rows"][0][j], "28 of 28 up · 15 disabled in SolarWinds")
+        self.assertEqual(s["cell_status"][0][j], "")
+        self.assertEqual((s["row_status"][0], v["flat"], v["tile"]["value"]), ("", None, 0))
+        self.assertFalse(any(d.get("title") == "AD monitors (SAM) not up" for d in s["details"][0]))
+
+    def test_snapshot_and_live_paths_give_the_same_summary(self):
+        import site_swis_db as sd
+        comps = [{"component_id": 1, "app_id": 5, "name": "Security monitor", "kind": "", "status": 0, "status_text": "Unknown",
+                  "value": None, "message": "Disabled"},
+                 {"component_id": 2, "app_id": 5, "name": "User Account: Password was changed", "kind": "", "status": 0,
+                  "status_text": "Unknown", "value": None, "message": "no events read"}]
+        snap = {"raw": {"url": "https://orion.example.mil", "nodes": [{"id": 11, "name": "dc01"}]},
+                "extra": {"app": [{"app_id": 5, "node_id": 11, "name": "Active Directory 2016 Domain Controller Security", "status": 0,
+                                   "status_text": "Unknown", "components": 4, "components_not_up": 2}], "component": comps}}
+        rows = sd.to_rows(snap, 3)
+        stored = [dict(zip(sd.COLS["sw_component"], r)) for r in rows["sw_component"]]
+        self.assertEqual([(c["name"], c["message"]) for c in stored],
+                         [("Security monitor", "Disabled"), ("User Account: Password was changed", "no events read")])
+        apps = [dict(zip(sd.COLS["sw_app"], r)) for r in rows["sw_app"]]
+        for out in (sd._apps_out({11: []}, apps, stored), sd._apps_out({11: []}, apps, comps)):      # the DB path, the live path
+            s = ad.summarize_apps(out[11])
+            self.assertEqual(s["text"], "1 of 3 unknown: User Account: Password was changed · 1 disabled in SolarWinds")
+
+
+class Blip1165(unittest.TestCase):
+    """1.116.5: a down under 1 minute is a polling blip, not an outage."""
+    NOW = t("2026-11-23 10:30")
+
+    def test_a_blip(self):
+        evs = [{"event_time": "2026-11-23 10:15:05", "event_type": 1}, {"event_time": "2026-11-23 10:15:40", "event_type": 5}]
+        self.assertEqual(ad.last_down(evs, self.NOW, 30), {"at": "2026-11-23 10:15", "minutes": 0, "ongoing": False, "blip": True})
+
+    def test_a_real_down_before_a_blip_is_the_last_down(self):
+        evs = [{"event_time": "2026-11-20 08:00:00", "event_type": 1}, {"event_time": "2026-11-20 08:42:00", "event_type": 5},
+               {"event_time": "2026-11-23 10:15:05", "event_type": 1}, {"event_time": "2026-11-23 10:15:40", "event_type": 5}]
+        self.assertEqual(ad.last_down(evs, self.NOW, 30), {"at": "2026-11-20 08:00", "minutes": 42, "ongoing": False})
+
+    def test_an_ongoing_down_of_seconds_is_no_blip(self):
+        evs = [{"event_time": "2026-11-23 10:29:50", "event_type": 1}]
+        self.assertEqual(ad.last_down(evs, self.NOW, 30), {"at": "2026-11-23 10:29", "minutes": 0, "ongoing": True})
+
+    def view(self, ld):
+        v = af.ad_swis_view(_dc_res(None, ld), {}, {"now": "2026-11-23T10:30:00Z", "time_zone": "Europe/Berlin"})
+        s = v["section"]
+        j = s["columns"].index("Last down (30 days)")
+        return s["rows"][0][j], s["cell_status"][0][j], s["rows"][0][s["columns"].index("What it means")], s["row_status"][0]
+
+    def test_the_view_mutes_a_blip(self):
+        cell, st, means, row = self.view({"at": "2026-11-23 10:15", "minutes": 0, "ongoing": False, "blip": True})
+        self.assertEqual((cell, st, row), ("blip 2026-11-23 11:15 CET, under 1 min", "", ""))
+        self.assertNotIn("outage", means)
+
+    def test_one_minute_keeps_the_warning(self):
+        cell, st, means, row = self.view({"at": "2026-11-23 10:15", "minutes": 1, "ongoing": False})
+        self.assertEqual((cell, st, row), ("2026-11-23 11:15 CET, for 1 min", "warning", "warning"))
+        self.assertIn("back after an outage of 1 min", means)
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -94,7 +94,7 @@ def _meaning(d, probs, cpu_warn, mem_warn, now):
     if busy:
         out.append("Busy: %s near full" % " and ".join(busy))
     ld = d.get("last_down")
-    if ld and not ld.get("ongoing") and d.get("status") != "Down":
+    if ld and not ld.get("ongoing") and not ld.get("blip") and d.get("status") != "Down":   # 1.116.5: a blip is no outage
         at = _utc(ld.get("at"))
         if at and (now - at).total_seconds() < 86400 * 2:
             out.append("back after an outage of %s" % _dur(ld.get("minutes")))
@@ -180,6 +180,8 @@ def _view(res, ad, opts=None):
             ld_cell = "-"
         elif ld.get("ongoing"):
             ld_cell, stc["Last down (%d days)" % days] = "now, for %s" % _dur(ld.get("minutes")), "critical"
+        elif ld.get("blip"):                                 # 1.116.5: under 1 min - SolarWinds' polling, not an outage: no mark
+            ld_cell = "blip %s, under 1 min" % (_tm.local(ld.get("at") + " UTC", tz) if tz else ld.get("at") + " UTC")
         elif ld.get("open"):                                 # a Node Down with no Node Up after it, but the node is up now
             ld_cell = "%s (its end not in SolarWinds' events)" % (_tm.local(ld.get("at") + " UTC", tz) if tz else ld.get("at") + " UTC")
         else:

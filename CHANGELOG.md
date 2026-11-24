@@ -20,6 +20,15 @@ NetApp - refresh volume list.
   can be written to in it: /run/netns/netns-..."). Those are namespace handles with no data to write, as /proc and
   /sys are. They are no longer a reason to refuse, so those rules are tried and drafted.
 - Tests: tests/test_aap_templates_cred_orgs.py, tests/test_ontap_expand.py, tests/test_stig_answer_keys.py.
+## 1.116.5 — 2026-11-24
+
+**To set up:** nothing.
+
+- AD report, From SolarWinds: SAM monitors disabled in SolarWinds were counted as unknown, with a warning on every DC.
+  They are no longer a problem. The column says them once, e.g. "28 of 28 up · 15 disabled in SolarWinds".
+- A down under 1 minute showed as an outage of 0 min, with a warning. It is a polling blip: the cell says
+  "blip TIME, under 1 min" with no mark, and What it means says nothing about an outage.
+  A down of 1 minute or more in the window is shown before a newer blip. Longer downs are shown as before.
 
 ## 1.116.4 — 2026-11-24
 
