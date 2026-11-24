@@ -60,7 +60,7 @@ class NotAllowed(Exception):
 
 
 def account(user):
-    """Codex 1.129.0: one account, whatever it is called - DOMAIN\\user, user@domain.mil and USER are one (the vCenter and the ONTAP
+    """Codex 1.129.0: one account, whatever it is called - DOMAIN\\user, user@corp.example.mil and USER are one (the vCenter and the ONTAP
     credential may name the same AD account): the collector's back-off key. Two accounts of one name in two domains share a
     back-off: more careful, never less."""
     u = str(user or "").strip().lower()
