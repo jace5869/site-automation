@@ -146,6 +146,9 @@ tests/test_incident_docs.py and tests/test_watch_frozen.py.
   choices); an e2e against a fake ONTAP that takes changes, a fake AAP and a fake ServiceNow, on ansible-core 2.16
   and 2.21. The vCenter side (rescan, VMFS expand, NFS refresh) is tested with fake vSphere objects: vcsim has no
   NetApp LUN or VMFS extent and does not offer the expand calls.
+- VM deploy (1.117.0): on ansible-core 2.16, when no AAP credential was attached, the change's note left out
+  "The approval workflow could not start" and the hint to check `vm_deploy_approval_workflow`. The note is complete
+  again. Nothing was built either way, and the job still failed.
 
 ## 1.117.0 — 2026-11-23
 
