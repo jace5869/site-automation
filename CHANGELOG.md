@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.127.3 — 2026-11-24
+
+**To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**
+(aap/credential_types/solarwinds_manage.yml; an account that may unmanage nodes), attach it to *Windows - schedule a
+restart* only, and run AAP - set up job templates for that template. Without it the restart works as before and says
+"SolarWinds: no credential - node stays managed".
+
+- **Windows - schedule a restart: the SolarWinds node is unmanaged for the restart.** From 5 minutes before the restart
+  to 10 minutes after (`win_restart_solarwinds_before_minutes`, `win_restart_solarwinds_minutes`), one Unmanage call per
+  server; SolarWinds manages it again by itself at the end. Check shows each server's window. The restart tasks are made
+  first, SolarWinds after them within win_restart_solarwinds_budget_seconds (120); one run at a time (Concurrent jobs off).
+- Only when the node has no unmanage window now; any existing window (a person's or an earlier run's) is left as it is,
+  with a warning. The job never calls Remanage: a reschedule or a cancel leaves the window to end by itself (re-manage
+  by hand in SolarWinds if needed).
+- The node is matched by name only (a unique full or short name; never by IP), and read again right before the write.
+  Not found, two matches or an IP-only match: a warning on the row, and the restart still goes ahead.
+- The manage login comes only from the new credential type (`SOLARWINDS_MANAGE_*`); the read-only SolarWinds credential
+  is never used for a write.
+
+
 ## 1.127.2 — 2026-11-24
 
 **To set up:** run Site portal - deploy. Optional: `ontap_live_site_pattern` on NetApp - refresh volume list when the
