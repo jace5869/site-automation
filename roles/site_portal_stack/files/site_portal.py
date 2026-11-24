@@ -1310,6 +1310,9 @@ class Aap(object):
             got = {"hosts": hosts, "groups": groups, "bad": bad, "truncated": trunc, "at": time.time(),
                    "gids": dict((str(g.get("name")), int(g["id"])) for g in grows)}
             got["win"] = self._windows_of(iid, rows, grows, hosts, groups)          # 1.130.0: None = no rule (every host is listed)
+            if got["win"]:                                                           # each group by its Windows hosts, once per read
+                got["win_groups"] = dict((g, [h for h in m if h in got["win"]]) for g, m in groups.items())
+                got["win_groups"] = dict((g, m) for g, m in got["win_groups"].items() if m)
             with self.lock:
                 self.listings[key] = got
             return got
@@ -1441,6 +1444,7 @@ class Aap(object):
         return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False, step_ids(rows)
 
     GROUP_LIST_MAX = 500           # 1.130.0: the picker's group drop-down lists this many groups at most (by name)
+    GROUPS_SHOWN = 50              # 1.130.0: the groups the list itself shows at most (the hosts follow them)
 
     def inventory_items(self, text="", limit=200, iid=None, os_="", group="", with_groups=False):
         """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}.
@@ -1457,9 +1461,8 @@ class Aap(object):
             note = ("The Windows filter is not set (portal_windows_hosts_from): every host is listed. The job skips hosts that are not Windows."
                     if not self.cfg.windows_from else
                     "The Windows filter (portal_windows_hosts_from) matches no host of this inventory: every host is listed. The job skips hosts that are not Windows.")
-        hosts = [h for h in inv["hosts"] if win is None or h in win]
-        groups = dict((g, [h for h in m if win is None or h in win]) for g, m in inv["groups"].items())
-        groups = dict((g, m) for g, m in groups.items() if m or win is None)
+        hosts = inv["hosts"] if win is None else [h for h in inv["hosts"] if h in win]
+        groups = inv["groups"] if win is None else (inv.get("win_groups") or {})
         grp = str(group or "")[:200]
         if grp:
             if grp not in groups:
@@ -1468,7 +1471,10 @@ class Aap(object):
         else:
             rows = [(h, "host", 1) for h in hosts] + [(g, "group", len(m)) for g, m in groups.items()]
         rows = sorted((r for r in rows if t in r[0].lower()), key=lambda r: (r[1] != "group", r[0].lower()))       # groups first, then hosts
-        out = {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows),
+        # a synced inventory may have hundreds of groups: the list shows GROUPS_SHOWN of them, the rest of its rows are hosts (the
+        # Group drop-down and the search reach every group)
+        shown = [r for r in rows if r[1] == "group"][:self.GROUPS_SHOWN] + [r for r in rows if r[1] != "group"]
+        out = {"items": [{"name": n, "kind": k, "count": c} for n, k, c in shown[:limit]], "matches": len(rows),
                "total": len(hosts) + (0 if grp else len(groups)), "truncated": bool(inv["truncated"]),
                "hosts": sum(1 for r in rows if r[1] == "host"), "groups_n": sum(1 for r in rows if r[1] == "group")}
         if grp:
@@ -2575,7 +2581,7 @@ class Portal(object):
             return None, why or "could not be looked up in the inventory just now - try again"
         cap = int(a["vars"][a["limit_from"]].get("max") or self.cfg.action_max_hosts)
         if not hosts:
-            return None, "stands for no host: the groups are empty"
+            return None, ("stands for no Windows host (portal_windows_hosts_from)" if a.get("os") == "windows" else "stands for no host: the groups are empty")
         if len(hosts) > cap:
             return None, "takes %d hosts at most (that is %d)" % (cap, len(hosts))
         return hosts, ""

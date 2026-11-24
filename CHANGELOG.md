@@ -2,10 +2,19 @@
 
 ## 1.130.0 — 2026-11-25
 
-**To set up:** run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
+**To set up:** (1) run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
 `portal_limit_max_playbooks` need no change when your Windows hosts are in a group whose name has *windows* in it, or have
-`ansible_connection: winrm` in AAP). Then run **AAP - set up job templates** with `aap_templates_label_portal: portal-actions`
-(or `all`) so the Windows reports get the label `portal` and their `portal-area:` label. Nothing else.
+`ansible_connection: winrm` in AAP's inventory). (2) Put the Windows reports on the portal - label and Execute for the portal's
+account - with **AAP - set up portal actions**, Check first, then Run, with these lines in all.yml (your template names, if
+yours differ):
+
+```yaml
+portal_publish_templates: ["Windows connection test", "Windows health check", "Windows troubleshoot",
+                           "Windows - local group members", "Windows certificate report", "Windows - trust store report",
+                           "Windows STIG drift report", "Windows - schedule a restart", "Windows - cancel a scheduled restart"]
+```
+
+Each template needs Limit **Prompt on launch** and its inventory set (the Windows inventory). The cards appear within a minute.
 
 - **Windows jobs pick many servers in the site portal, like the Linux ones.** The Hosts box of a Windows job takes several
   servers, a whole inventory group, or some servers of a group; one pick set is one job (the Limit is the hosts, counted

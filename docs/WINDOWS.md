@@ -181,8 +181,10 @@ For all of these, use: **Inventory** `Windows servers`, **Project** `site-automa
 from step 2, **Credentials** `Windows (WinRM)`, **Limit** empty with **Prompt on launch** ticked.
 Leave **Variables** empty: with no `target`, they run on every server in the inventory.
 
-**From the site portal (1.130.0).** Run **AAP - set up job templates** with `aap_templates_label_portal: portal-actions` (or
-`all`): the Windows reports whose servers are the Limit get the portal's label and show under **Windows** (STIG drift under
+**From the site portal (1.130.0).** List them in `portal_publish_templates` and run **AAP - set up portal actions** (Check
+first): it gives each the label `portal` and the portal's account Execute (docs/SITE_PORTAL.md, "Add your jobs in bulk").
+`aap_templates_label_portal: portal-actions` on **AAP - set up job templates** labels them too, but gives no Execute. The
+Windows reports whose servers are the Limit then show under **Windows** (STIG drift under
 **STIG**, the certificate and trust store reports under **Certificates**) with a Hosts box - several servers, a whole group or
 some servers of a group, one job for all of them, Windows hosts only (docs/SITE_PORTAL.md, "Windows jobs"). They are:
 *Windows connection test*, *Windows health check*, *Windows troubleshoot*, *Windows - local group members*, *Windows certificate

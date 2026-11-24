@@ -203,6 +203,22 @@ class Live(unittest.TestCase):
         self.assertEqual(got["group"]["count"], 2)
         self.assertEqual(len(got["groups"]), 3)
 
+    def test_h_many_groups_leave_room_for_hosts(self):
+        keep = sp.Aap.GROUPS_SHOWN
+        sp.Aap.GROUPS_SHOWN = 1
+        try:
+            r = self.items(os_="windows")
+            self.assertEqual([i["kind"] for i in r["items"]], ["group", "host", "host", "host"])
+            self.assertEqual((r["matches"], r["groups_n"], r["hosts"]), (6, 3, 3))           # the true totals
+        finally:
+            sp.Aap.GROUPS_SHOWN = keep
+
+    def test_i_a_group_without_windows_hosts(self):
+        a = self.act("Windows - schedule a restart")
+        sent = {"portal_limit": ["linux"], "win_restart_time": "22:30", "win_restart_reason": "Monthly patches"}
+        code, out = self.portal.launch("DOE.JANE.Q.1234567890", "192.0.2.5", a["name"], sent, a["sig"])
+        self.assertEqual(code, 400, out)
+
     def test_g_no_filter_says_so(self):
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM="{}"))
         r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
