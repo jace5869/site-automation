@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.126.0 — 2026-11-24
+
+**To set up:** run Site portal - deploy (the Actions sections, the Christmas theme on the portal). Optional: attach the
+VMware vCenter credential to NetApp - refresh volume list, so each volume names its VMware datastore.
+
+- **Actions page: one section per platform.** Linux, Windows, Active Directory, VMware, Horizon, NetApp, Network, STIG,
+  Certificates, Tickets & incidents, ACT, Admin, then Other. Every job template and workflow in the catalog has an area
+  from one set of name rules; workflows get theirs too. fapolicyd and Disk & services moved into Linux. A template with
+  several portal-area labels shows under the one that matches the catalog. AAP - set up job templates lists old
+  portal-area labels to remove by hand (it never removes one). Old area names in `aap_templates_rename_skip_areas` keep
+  working. The portal deploy reads `aap_templates_catalog` when it is set.
+- **NetApp volume list:** fullest first. A volume on a VMware datastore says so first in its choice ("VMware datastore
+  DS01, LUN"). The list's note says whether vCenter was read; without the vCenter credential no datastore is named.
+- **Outage review chart:** click a dot of any colour, or press Enter on it, for a scrollable list of every event it
+  stands for (time, level, what happened, object). Escape, Close or a click outside closes it. Website looks only.
+- **Christmas theme:** Santa's sleigh (Rudolph in front) flies along the string of lights now and then, and a small
+  snowman stands by the title of report and portal pages (not the index). Motion off or less motion parks the sleigh;
+  `report_motion: off` works quoted or not, on the index too. New `report_theme_season_sleigh` and a Sleigh switch in
+  the Festive panel. 8bit leaves both out; print hides both.
+- Fixed: under 1200 px the snow still fell over the page's edge; it is off there now, as documented.
+
 ## 1.118.8 — 2026-11-24
 
 **To set up:** the limit needs to know when the last email went. Best: attach the "Red Hat Ansible Automation
