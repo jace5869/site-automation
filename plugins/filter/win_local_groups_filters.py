@@ -7,6 +7,9 @@ report's sections (Unusual members, By server, By member, Not read), the page's 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+from collections import defaultdict
+from decimal import Decimal
+
 import csv
 import importlib.util
 import io
@@ -113,7 +116,7 @@ def _gkey(sid, name):
     return "gx" + str(name).lower().encode("utf-8").hex()
 
 
-def win_local_groups_model(hosts, usual="off"):
+def win_local_groups_model(hosts, usual="off", baseline_pct=90, rare_pct=10):
     """hosts: [{host, result (the parsed script output, {} when none), unreached (why, when it was not reached)}] ->
     the model: servers read and not, each group's members on each server, each (member, group)'s servers, the usual ones.
     usual: off (the default: no member is called unusual), auto (on 80% or more of the servers that have the group), or a
@@ -178,7 +181,78 @@ def win_local_groups_model(hosts, usual="off"):
     shown = dict((h, _short(h) if shorts.count(_short(h)) == 1 else h) for h in [s["host"] for s in read] + [u["host"] for u in unread])
     model = {"shown": shown, "read": read, "unread": unread, "groups": [{"key": k, "label": labels[k], "servers": len(have[k])} for k in order],
              "pairs": pairs, "usual_pct": pct, "total": len(read) + len(unread)}
+    model.update(_prevalence(read, model["groups"], baseline_pct, rare_pct))
     return model
+
+
+def _display_pct(count, total):
+    """Round half up, reserving 100 for unanimous membership."""
+    return 100 if count == total else min(99, (200 * count + total) // (2 * total))
+
+
+def _prevalence(read, groups, baseline_pct, rare_pct):
+    baseline, rare = Decimal(str(baseline_pct)), Decimal(str(rare_pct))
+    if not (0 <= baseline <= 100 and 0 <= rare <= 100):
+        raise ValueError("Local groups percentage thresholds must be between 0 and 100")
+    # Count distinct servers per spelling as well as per case-insensitive member.
+    observed = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    sids = defaultdict(set)
+    representatives = {}
+    for server in read:
+        for group in server["groups"]:
+            for member in group["members"]:
+                name = member["name"]
+                key = (group["key"], name.lower())
+                observed[key[0]][key[1]][name].add(server["host"])
+                sids[key].add(member["sid"])
+                representatives[key, name] = member
+
+    total = len(read)
+    prevalence = []
+    for group in sorted(groups, key=lambda g: g["label"].lower() != "administrators"):
+        rows = []
+        for folded, spellings in observed[group["key"]].items():
+            name = min(spellings, key=lambda n: (-len(spellings[n]), n))
+            hosts = sorted(set().union(*spellings.values()))
+            count = len(hosts)
+            key = (group["key"], folded)
+            entry = _entry({"member": representatives[key, name], "hosts": hosts})
+            rows.append({"member": name, "count": count, "pct": _display_pct(count, total),
+                         "hosts": hosts, "rare": count * 100 <= rare * total, "baseline": count * 100 >= baseline * total,
+                         "entry": literal_entry(entry, next(iter(sids[key])) if len(sids[key]) == 1 else "")})
+        if rows:
+            prevalence.append(dict(group, members=sorted(rows, key=lambda r: (-r["count"], r["member"].lower()))))
+    return {"prevalence": prevalence, "baseline_pct": float(baseline) if baseline % 1 else int(baseline),
+            "rare_pct": float(rare) if rare % 1 else int(rare)}
+
+
+def win_local_groups_baseline(model, generated):
+    groups = {}
+    for group in model["prevalence"]:
+        rows = [{k: row[k] for k in ("member", "count", "pct")} for row in group["members"] if row["baseline"]]
+        if rows:
+            groups[group["label"]] = rows
+    return {"generated": generated, "servers_answered": len(model["read"]), "threshold_pct": model["baseline_pct"], "groups": groups}
+
+
+def _baseline_yaml(model):
+    entries = [r["entry"] for g in model["prevalence"] if g["label"].lower() == "administrators"
+               for r in g["members"] if r["baseline"]]
+    values = {"win_local_groups_approved": {"groups": {"Administrators": [e for e in entries if e]}}}
+    # JSON flow syntax keeps even names containing quotes or newlines on one line in AAP.
+    note = "# Review the suggested Administrators before pasting either form into AAP.\n"
+    if "" in entries:
+        note += "# Omitted entries containing template marks without a shared SID. Review the JSON.\n"
+    block = ["win_local_groups_approved:", "  groups:", "    Administrators:"]
+    block.extend("      - " + json.dumps(e, ensure_ascii=False) for e in entries if e)
+    if not any(entries):
+        block[-1] += " []"
+    return note, json.dumps(values, ensure_ascii=False), "\n".join(block)
+
+
+def win_local_groups_baseline_snippet(model):
+    note, flow, block = _baseline_yaml(model)
+    return note + flow + "\n---\n# Block form\n" + block + "\n"
 
 
 def _is_dc(role):
@@ -296,8 +370,7 @@ def _tag(gkeys, names, sel=None):
 
 
 def win_local_groups_sections(model, web=True, rules=None):
-    """The report's own sections (findings_report's extra): Unusual members (top, with the tiles and the headline), By
-    server, By member, Not read. web=False: the email's (By server and By member as their first rows, the page has all)."""
+    """The summary, prevalence tables and inventory. The email previews By server and By member."""
     read, unread, pairs = model["read"], model["unread"], model["pairs"]
     akey = _gkey(ADMINS, "")
     adm = [p for p in pairs.values() if p["group"] == akey]
@@ -305,26 +378,26 @@ def win_local_groups_sections(model, web=True, rules=None):
     bad_local = [p for p in local_adm if p["local_admin"]]
     unusual = [p for p in pairs.values() if p["unusual"] or p["local_admin"]]
     unusual.sort(key=lambda p: (not p["local_admin"], p["group"] != akey, len(p["hosts"]), p["member"]["name"].lower()))
+    rare_count = sum(r["rare"] for g in model["prevalence"] for r in g["members"])
     boxes = [{"label": "Servers read", "value": "%d of %d" % (len(read), model["total"]), "status": "warning" if unread else "ok",
               "note": "the groups' members read"},
              {"label": "In Administrators", "value": len(adm), "note": "members, over all servers"},
              {"label": "Local accounts in Administrators", "value": len(local_adm), "status": "warning" if bad_local else "ok",
               "note": ("%d enabled, not built-in" % len(bad_local)) if bad_local else "none enabled but the built-in"},
-             {"label": "Unusual members", "value": len([p for p in pairs.values() if p["unusual"]]),
-              "status": "low" if any(p["unusual"] for p in pairs.values()) else "ok",
-              "note": ("on fewer than %d%% of the servers" % model["usual_pct"]) if model["usual_pct"] is not None else "off (win_local_groups_usual)"},
+             {"label": "Unusual members", "value": rare_count, "status": "low" if rare_count else "ok",
+              "note": "on <= %s %% of answering servers" % model["rare_pct"]},
              {"label": "Servers not read", "value": len(unread), "status": "warning" if unread else "ok", "note": "see Not read"}]
     head = []
     if bad_local:
         head.append("%d enabled local account%s in Administrators" % (len(bad_local), "" if len(bad_local) == 1 else "s"))
     nu = len([p for p in pairs.values() if p["unusual"]])
-    if nu:
-        head.append("%d unusual member%s" % (nu, "" if nu == 1 else "s"))
+    if rare_count or nu:
+        head.append("unusual members found")
     if unread:
         head.append("%d server%s not read" % (len(unread), "" if len(unread) == 1 else "s"))
-    top = {"title": "Unusual members", "top": True, "start_here": [], "summary_only": True, "boxes": boxes,
+    top = {"title": "At a glance", "top": True, "start_here": [], "summary_only": True, "boxes": boxes,
            "headline": ", ".join(head) if head else "%d server%s read, nothing unusual" % (len(read), "" if len(read) == 1 else "s"),
-           "headline_status": "warning" if bad_local or unread else ("low" if nu else "ok")}
+           "headline_status": "warning" if bad_local or unread else ("low" if rare_count or nu else "ok")}
     if unusual:
         top.update({"status": "warning" if bad_local else "low",
                     "text": "Worst first: an enabled local account in Administrators, then members found on few of the servers.",
@@ -333,12 +406,32 @@ def win_local_groups_sections(model, web=True, rules=None):
                               ", ".join(_shown(model, h) for h in sorted(p["admin_hosts"] if p["local_admin"] else p["hosts"]))] for p in unusual],
                     "row_status": ["warning" if p["local_admin"] else "low" for p in unusual],
                     "row_tags": [_tag([p["group"]], [p["member"]["name"]]) for p in unusual]})
-    elif model["usual_pct"] is None:
-        top["lines"] = ["No enabled local account but the built-in is in Administrators. Members on few of the servers are not "
-                        "looked for (win_local_groups_usual: off)."]
-    else:
-        top["lines"] = ["Every member is on most of the servers, and no enabled local account but the built-in is in Administrators."]
+    baseline = win_local_groups_baseline(model, "")["groups"]
+    coverage = "Prevalence is out of %d that answered" % len(read)
+    coverage += "; %d did not answer" % len(unread)
+    if unread:
+        coverage += ": " + ", ".join(sorted(_shown(model, u["host"]) for u in unread))
+    members = sum(map(len, baseline.values()))
+    top["lines"] = ["Suggested baseline: %d member%s in %d group%s (>= %s %%)" %
+                    (members, "" if members == 1 else "s", len(baseline), "" if len(baseline) == 1 else "s",
+                     model["baseline_pct"]), coverage]
     secs = [top]
+    common, rare_rows, common_tags, rare_tags = [], [], [], []
+    for group in model["prevalence"]:
+        for r in group["members"]:
+            row = [group["label"], r["member"], "in %d of %d servers (%d %%)" % (r["count"], len(read), r["pct"])]
+            tag = _tag([group["key"]], [r["member"]])
+            common.append(row)
+            common_tags.append(tag)
+            if r["rare"]:
+                rare_rows.append(row + [", ".join(_shown(model, h) for h in r["hosts"])])
+                rare_tags.append(tag)
+    if rare_rows:
+        secs.append({"title": "Unusual members", "columns": ["Group", "Member", "Prevalence", "On"],
+                     "rows": rare_rows, "row_tags": rare_tags})
+    if common:
+        secs.append({"title": "Most common members", "columns": ["Group", "Member", "Prevalence"],
+                     "rows": common, "row_tags": common_tags})
     # By server: one row per server, group and member (the Group and Member filters hide rows)
     rows, tags, rstat = [], [], []
     for s in sorted(read, key=lambda x: x["host"]):
@@ -371,7 +464,8 @@ def win_local_groups_sections(model, web=True, rules=None):
         by_server["select_export"] = dict(SELECT_BASE, check=check_parts(rules))
     elif len(rows) > 40:
         by_server["text"] = "The first 40 rows: every row is on the report website and in the workbook (%d)." % len(rows)
-    secs.append(by_server)
+    if rows:
+        secs.append(by_server)
     # By member: who is in which group where
     plist = sorted(pairs.values(), key=lambda p: (p["group"] != akey, p["member"]["name"].lower(), p["label"]))
     mrows = [[p["member"]["name"], p["label"], _kind(p["member"]), "%d of %d" % (len(p["hosts"]), p["of"]),
@@ -384,7 +478,8 @@ def win_local_groups_sections(model, web=True, rules=None):
         by_member["row_tags"] = [_tag([p["group"]], [p["member"]["name"]], _sel("", p)) for p in plist]
     elif len(mrows) > 40:
         by_member["text"] = "The first 40 rows: every row is on the report website and in the workbook (%d)." % len(mrows)
-    secs.append(by_member)
+    if mrows:
+        secs.append(by_member)
     if unread:
         secs.append({"title": "Not read", "status": "warning", "columns": ["Server", "Why"], "kinds": ["wrap", "wrap"],
                      "rows": [[u["host"], u["why"]] for u in sorted(unread, key=lambda u: u["host"])]})
@@ -804,6 +899,17 @@ def win_local_groups_sheets(model):
     sheets.insert(0, {"name": "Approved list", "columns": ["Group", "Entry", "Approve", "Servers", "Kind"],
                       "rows": [[g, x["entry"], "yes" if x["approve"] else "", x["note"], x["kind"]] for g in ap for x in ap[g]]
                       + [[g, "(no member on any server)", "", "", ""] for g in ap if not ap[g]]})
+    baseline = win_local_groups_baseline(model, "")
+    rows = [[group, r["member"], r["count"], baseline["servers_answered"], r["pct"], baseline["threshold_pct"]]
+            for group, members in baseline["groups"].items() for r in members]
+    if rows:
+        _, flow, block = _baseline_yaml(model)
+        # Excel truncates text after 32,767 UTF-16 units. Keep oversized snippets usable via the attachment.
+        for snippet in (flow, block):
+            rows[0].append(snippet if len(snippet.encode("utf-16-le")) <= 65534 else "See suggested-baseline.txt")
+    sheets.append({"name": "Suggested baseline", "columns": ["Group", "Member", "Servers", "Servers answered", "Percent",
+                                                            "Threshold (%)", "Administrators (one-line YAML)", "Administrators (block YAML)"],
+                   "rows": rows})
     return sheets
 
 
@@ -819,7 +925,8 @@ def _find_member(model, row):
 
 class FilterModule(object):
     def filters(self):
-        return {"win_local_groups_parse": win_local_groups_parse, "win_local_groups_model": win_local_groups_model,
+        return {"win_local_groups_baseline": win_local_groups_baseline, "win_local_groups_baseline_snippet": win_local_groups_baseline_snippet,
+                "win_local_groups_parse": win_local_groups_parse, "win_local_groups_model": win_local_groups_model,
                 "win_local_groups_findings": win_local_groups_findings, "win_local_groups_sections": win_local_groups_sections,
                 "win_local_groups_facets": win_local_groups_facets, "win_local_groups_sheets": win_local_groups_sheets,
                 "win_local_groups_rows": win_local_groups_rows, "win_local_groups_csv": win_local_groups_csv,

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.130.0 (part: local groups)
+
+To set up: nothing (optional: win_local_groups_baseline_pct, win_local_groups_rare_pct)
+
+- Windows local groups ranks members by prevalence across answering servers and lists the servers with rare members.
+- The email and website include a suggested baseline in JSON and an AAP snippet for the Administrators membership
+  check. The workbook includes a Suggested baseline sheet.
+
 ## 1.127.3 — 2026-11-24
 
 **To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**
