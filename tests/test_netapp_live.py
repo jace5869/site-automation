@@ -587,7 +587,8 @@ class RunDialog(unittest.TestCase):
         self.assertNotIn('value="run" checked', h)
         self.assertNotIn("is required", h)
         h = sp.action_page(p.cfg, p, CN, "jt_58", {}, embed=True)
-        self.assertIn('value="run" checked', h)                                  # the template's own Job type otherwise
+        self.assertIn('value="check" checked', h)                                # 1.130.0: Check otherwise too (Run on purpose)
+        self.assertNotIn('value="run" checked', h)
         p.actions["jt_58"]["job_type"] = {"ask": False, "default": "run"}
         self.assertNotIn("portal-job-type", sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True))
 
