@@ -51,8 +51,9 @@ design (docs/NETAPP.md, Limits).
 - SnapMirror: a lag not known no longer reads "0.0x the schedule".
 - NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
 - Windows - schedule a restart (review of 1.127.x):
-  - Windows restart scripts now inherit the protections of `Program Files\site-automation\restart`. The job checks for reparse points and unsafe write grants before writing or registering a script. The job refuses `win_restart_dir` outside a subdirectory of `$env:ProgramFiles` or `$env:SystemRoot`. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
-  - A later queued AAP job can wait for the current run. Target exclusions work with colon-separated patterns. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+  - `win_restart_dir` must be a subdirectory of Program Files (`$env:ProgramFiles`). Before writing files and before registering a restart, the job checks ownership and write permissions on each directory below Program Files and on the task files. It refuses reparse points, including dangling links, and square brackets in the configured subdirectory path. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
+  - A later queued AAP job can wait for the current run. Targets and exclusions follow Ansible's comma and colon splitting rules, including exclusions and intersections after a regex. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+  - The controller and the Windows task clean and cap shutdown comments at 500 characters and validate planned shutdown reason codes (`p:<major>:<minor>`).
   - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
   - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
   - A wildcard, regex or slice in the Limit that would select the whole inventory (all) is refused.

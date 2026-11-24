@@ -124,7 +124,7 @@ function Read-SiteRestartAt {
     try { Assert-SiteRestartPath $Dir }
     catch [System.Management.Automation.ItemNotFoundException] { return '' }
     $f = Join-Path $Dir ('restart-' + $Id + '.json')
-    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    if ($null -eq (Get-SiteRestartItemIfPresent $f)) { return '' }
     Assert-SiteRestartItem $f
     try {
         $value = (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).at_utc
@@ -140,7 +140,7 @@ function Remove-SiteRestartFiles {
     catch [System.Management.Automation.ItemNotFoundException] { return }
     foreach ($n in @(('restart-task-' + $Id + '.ps1'), ('restart-' + $Id + '.json'))) {
         $f = Join-Path $Dir $n
-        if (Test-Path -LiteralPath $f) {
+        if ($null -ne (Get-SiteRestartItemIfPresent $f)) {
             Assert-SiteRestartItem $f
             Remove-Item -LiteralPath $f
         }
@@ -157,6 +157,14 @@ function Complete-SiteRestartCleanup {
     Remove-SiteRestartFiles -Dir $ProtectedDir -Id $Registration.id
 }
 
+function Get-SiteRestartItemIfPresent {
+    param([string]$Path)
+    # Only a missing entry is optional. A dangling link is an item, and an unreadable entry stops the job.
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue -ErrorVariable lookupError
+    if ($lookupError -and $lookupError[0].CategoryInfo.Category -ne 'ObjectNotFound') { throw $lookupError[0] }
+    return $item
+}
+
 function Assert-SiteRestartItem {
     param([string]$Path, [switch]$Directory)
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
@@ -166,26 +174,25 @@ function Assert-SiteRestartItem {
 
 function Resolve-SiteRestartDir {
     param([string]$Dir)
-    # Expand only these two literal prefixes in a setting received as JSON.
+    # Expand the literal ProgramFiles prefix in a setting received as JSON.
     $sep = [IO.Path]::DirectorySeparatorChar
     $dir = $Dir.Replace('\', $sep).Replace('/', $sep).TrimEnd($sep)
-    foreach ($name in @('ProgramFiles', 'SystemRoot')) {
-        $root = if ($name -eq 'ProgramFiles') { $env:ProgramFiles } else { $env:SystemRoot }
-        if (-not $root) { continue }
-        foreach ($prefix in @(('$env:' + $name), $root.TrimEnd($sep))) {
-            if (-not $dir.StartsWith($prefix + $sep, [StringComparison]::OrdinalIgnoreCase)) { continue }
-            $relative = $dir.Substring($prefix.Length + 1)
-            foreach ($part in $relative.Split($sep)) {
-                if (-not $part -or $part -match '[. ]$|[\x00-\x1f<>:"|?*]|^(?:CON|PRN|AUX|NUL|(?:LPT|COM)[0-9\u00b9\u00b2\u00b3])(?:\.|$)') {
-                    throw "Invalid path segment in win_restart_dir: '$part'"
-                }
+    if (-not $env:ProgramFiles) { throw 'Cannot resolve win_restart_dir without ProgramFiles' }
+    $root = $env:ProgramFiles.TrimEnd($sep)
+    foreach ($prefix in @('$env:ProgramFiles', $root)) {
+        if (-not $dir.StartsWith($prefix + $sep, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $relative = $dir.Substring($prefix.Length + 1)
+        foreach ($part in $relative.Split($sep)) {
+            if (-not $part -or $part -match '[. ]$|[\x00-\x1f<>:"|?*]|^(?:CON|PRN|AUX|NUL|(?:LPT|COM)[0-9\u00b9\u00b2\u00b3])(?:\.|$)') {
+                throw "Invalid path segment in win_restart_dir: '$part'"
             }
-            $path = Join-Path $root $relative
-            if ($path -match '%[^%]+%') { throw 'win_restart_dir cannot contain a variable that Task Scheduler would expand' }
-            return $path
         }
+        $path = Join-Path $root $relative
+        if ($path -match '[\[\]]') { throw 'win_restart_dir cannot contain square brackets' }
+        if ($path -match '%[^%]+%') { throw 'win_restart_dir cannot contain a variable that Task Scheduler would expand' }
+        return $path
     }
-    throw 'win_restart_dir must be a directory beneath Program Files ($env:ProgramFiles) or Windows ($env:SystemRoot)'
+    throw 'win_restart_dir must be a directory beneath Program Files ($env:ProgramFiles)'
 }
 
 function Assert-SiteRestartPath {
@@ -193,12 +200,15 @@ function Assert-SiteRestartPath {
     param([string]$Dir, [switch]$Create)
     $parent = Split-Path -Parent $Dir
     if ($parent) { Assert-SiteRestartPath $parent -Create:$Create }
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $belowRoot = $Dir.StartsWith($env:ProgramFiles.TrimEnd($sep) + $sep, [StringComparison]::OrdinalIgnoreCase)
     try { Assert-SiteRestartItem $Dir -Directory }
     catch [System.Management.Automation.ItemNotFoundException] {
-        if (-not $Create) { throw }
+        if (-not $Create -or -not $belowRoot) { throw }
         $null = New-Item -Path $Dir -ItemType Directory -ErrorAction Stop
         Assert-SiteRestartItem $Dir -Directory
     }
+    if ($belowRoot) { Assert-SiteRestartAcl $Dir }
 }
 
 function Assert-SiteRestartAcl {
@@ -207,11 +217,13 @@ function Assert-SiteRestartAcl {
     $sddl = (Get-Acl -LiteralPath $Path -ErrorAction Stop).Sddl
     $sd = Invoke-CimMethod -ClassName Win32_SecurityDescriptorHelper -MethodName SDDLToWin32SD -Arguments @{ SDDL = $sddl } -ErrorAction Stop
     if ($sd.ReturnValue -ne 0 -or $null -eq $sd.Descriptor.DACL) { throw "Cannot read DACL on $Path" }
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if ($sd.Descriptor.Owner.SIDString -notin $trusted) { throw "Untrusted owner on $Path" }
     foreach ($ace in $sd.Descriptor.DACL) {
         if ($ace.AceType -eq 1) { continue }  # deny
         $sid = $ace.Trustee.SIDString
         if ($ace.AceType -ne 0 -or -not $sid -or $null -eq $ace.AccessMask) { throw "Unrecognized ACE on $Path" }
-        if ($sid -in @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')) { continue }
+        if ($sid -in $trusted) { continue }
         if ($sid -eq 'S-1-3-0' -and ($ace.AceFlags -band 8)) { continue }  # CREATOR OWNER, inherit-only
         # Only read, execute, synchronize and generic read/execute may be granted to other trustees.
         if ($ace.AccessMask -band 0x5fedff56) { throw "Unsafe permissions on $Path (write or control granted to $sid)" }
@@ -221,7 +233,6 @@ function Assert-SiteRestartAcl {
 function Assert-SiteRestartLocation {
     param([string]$Dir, [string[]]$Files, [switch]$Create)
     Assert-SiteRestartPath $Dir -Create:$Create
-    Assert-SiteRestartAcl $Dir
     foreach ($file in $Files) {
         Assert-SiteRestartItem $file
         Assert-SiteRestartAcl $file
@@ -232,9 +243,10 @@ function Enter-SiteRestartLock {
     # one schedule or cancel at a time on a server: restart.lock in our folder; one older than 10 minutes is left over
     param([string]$Dir)
     $lock = Join-Path $Dir 'restart.lock'
-    if (Test-Path -LiteralPath $lock) {
+    $item = Get-SiteRestartItemIfPresent $lock
+    if ($null -ne $item) {
         Assert-SiteRestartItem $lock
-        if ((Get-Item -LiteralPath $lock).LastWriteTime -lt (Get-Date).AddMinutes(-10)) { Remove-Item -LiteralPath $lock -Force }
+        if ($item.LastWriteTime -lt (Get-Date).AddMinutes(-10)) { Remove-Item -LiteralPath $lock -Force }
         else { throw ('another schedule or cancel of a restart is running on this server (' + $lock + '): launch it again in a few minutes') }
     }
     try { $null = New-Item -ItemType File -Path $lock -ErrorAction Stop }
@@ -296,7 +308,10 @@ try {
                 throw 'Register-ScheduledTask is not on this server (Windows Server 2012 or later has it)'
             }
             $log = Join-Path $dir 'restart.log'
-            if (Test-Path -LiteralPath $log) { Assert-SiteRestartItem $log; Assert-SiteRestartAcl $log }
+            if ($null -ne (Get-SiteRestartItemIfPresent $log)) {
+                Assert-SiteRestartItem $log
+                Assert-SiteRestartAcl $log
+            }
             # this registration's own files, never rewritten: an earlier task keeps reading its own until it is replaced
             $rid = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss', [Globalization.CultureInfo]::InvariantCulture) + '-' + [string](Get-Random -Minimum 1000 -Maximum 9999)
             $script = Join-Path $dir ('restart-task-' + $rid + '.ps1')
@@ -390,6 +405,7 @@ try {
     }
     finally {
         if ($lock) {
+            Assert-SiteRestartPath $dir
             Assert-SiteRestartItem $lock
             Remove-Item -LiteralPath $lock -Force
         }
