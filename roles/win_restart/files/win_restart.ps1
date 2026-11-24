@@ -114,19 +114,20 @@ function Get-SiteRestartTask {
 }
 
 function Read-SiteRestartRecord {
-    # the SolarWinds window this registration asked for (its settings file: node_id, from, until), or $null
+    # the SolarWinds window this registration wrote and read back (restart-<id>.solarwinds.json: node_id, orion, rid, from,
+    # until as SWIS returned them), or $null - only a window the job itself wrote is ever recorded
     param([string]$Dir, [string]$Id)
     if (-not $Id) { return $null }
-    $f = Join-Path $Dir ('restart-' + $Id + '.json')
+    $f = Join-Path $Dir ('restart-' + $Id + '.solarwinds.json')
     if (-not (Test-Path -LiteralPath $f)) { return $null }
-    try { return (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).solarwinds } catch { return $null }
+    try { return (Get-Content -LiteralPath $f -Raw) } catch { return $null }
 }
 
 function Remove-SiteRestartFiles {
     # one registration's script and settings in our folder (restart.log and every other registration's stay)
     param([string]$Dir, [string]$Id)
     if (-not $Id) { return }
-    foreach ($n in @(('restart-task-' + $Id + '.ps1'), ('restart-' + $Id + '.json'))) {
+    foreach ($n in @(('restart-task-' + $Id + '.ps1'), ('restart-' + $Id + '.json'), ('restart-' + $Id + '.solarwinds.json'))) {
         $f = Join-Path $Dir $n
         if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
     }
@@ -184,7 +185,7 @@ try {
     $dir = [string]$cfg.dir
     $tpath = [string]$cfg.task_path
     $lock = ''
-    if ($cfg.action -in @('schedule', 'cancel')) {
+    if ($cfg.action -in @('schedule', 'cancel', 'record')) {
         Initialize-SiteRestartDir -Dir $dir
         $lock = Enter-SiteRestartLock -Dir $dir
     }
@@ -213,7 +214,7 @@ try {
             Set-Content -Path $script -Value ([string]$cfg.task_script) -Encoding ASCII
             $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
                               comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc;
-                              id = $rid; solarwinds = $cfg.solarwinds }
+                              id = $rid }
             Set-Content -Path $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
             $oldXml = ''
             if ($ours.Count -gt 0) { $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath) }
@@ -269,6 +270,14 @@ try {
             $out.replaced = $ours
             $out.scheduled = @{ path = $tpath; name = $prefix; next_run = $next.ToString('yyyy-MM-dd HH:mm'); id = $rid }
             $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
+        }
+        if ($cfg.action -eq 'record') {
+            # after a confirmed Unmanage: what makes that window ours, beside this registration's settings (only while the task
+            # there is still that registration)
+            $rid = [string]$cfg.record_rid
+            if ($ours.Count -ne 1 -or [string]$ours[0].id -ne $rid -or -not $rid) { throw ('the task is not registration ' + $rid + ' any more: not recorded') }
+            Set-Content -Path (Join-Path $dir ('restart-' + $rid + '.solarwinds.json')) -Value ([string]$cfg.record_json) -Encoding ASCII
+            $out.recorded = $rid
         }
         if ($cfg.action -eq 'cancel') {
             $removed = @()

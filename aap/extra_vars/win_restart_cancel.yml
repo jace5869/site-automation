@@ -56,8 +56,9 @@
 
 ## SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a
 ## window around the restart; SolarWinds manages it again by itself at the window's end. auto = when
-## the template has a SolarWinds credential of the kind solarwinds_manage (an account that may
-## manage nodes); none: "no credential - node stays managed". false = never.
+## the template has a "SolarWinds (manage nodes)" credential
+## (aap/credential_types/solarwinds_manage.yml, kind solarwinds_manage); none: "no credential - node
+## stays managed". false = never.
 # win_restart_solarwinds: auto
 
 ## Seconds to wait for SolarWinds' answer to one call.

@@ -101,9 +101,6 @@
         name: win_restart
       vars:
         _wr_action: "{{ 'plan' if ansible_check_mode else 'schedule' }}"
-        _wr_solarwinds: >-
-          {{ ((_wr_swfind.found | default({}))[inventory_hostname] | default({}))
-             | win_restart_swis_record(_wr_swfind.window | default({})) }}
       when: site_host_unreached | default('') | length == 0
 
     - name: SolarWinds - unmanage the node of each restart scheduled (Check - what it would do)
@@ -127,6 +124,18 @@
       when:
         - _wr_swfind is not skipped
         - _wr_swfind.skipped_why | default('') | length == 0
+
+    - name: SolarWinds - record each window this job wrote, beside its restart task's settings (what makes it ours)
+      ansible.builtin.include_role:
+        name: win_restart
+      vars:
+        _wr_action: record
+        _wr_record: "{{ (_wr_swrun.result | default({}))[inventory_hostname].record | default({}) }}"
+        _wr_result_var: _wr_record_result
+      when:
+        - not ansible_check_mode
+        - _wr_swrun is defined and _wr_swrun is not skipped
+        - ((_wr_swrun.result | default({}))[inventory_hostname].record | default({})) | length > 0
 
   post_tasks:
     - name: Every server, as one model
@@ -154,7 +163,8 @@
         _wr_swmap: >-
           {%- set hs = [] -%}
           {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
-          {%-   set _ = hs.append({'host': h, 'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%-   set _ = hs.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
+                                   'record_result': hostvars[h]._wr_record_result | default({})}) -%}
           {%- endfor -%}
           {{ hs | win_restart_swis_map(_wr_swrun.result | default({}), _wr_sw_state) }}
       run_once: true

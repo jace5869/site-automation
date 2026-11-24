@@ -1,10 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """Windows - schedule a restart / cancel a scheduled restart: each server's SolarWinds node (plugins/module_utils/
-site_win_restart_swis.py). On the AAP side, with a "SolarWinds" credential of the kind solarwinds_manage (SOLARWINDS_URL,
-_USERNAME, _PASSWORD; an account that may manage nodes).
+site_win_restart_swis.py). On the AAP side, with a "SolarWinds (manage nodes)" credential (aap/credential_types/solarwinds_manage.yml:
+SOLARWINDS_MANAGE_URL, _USERNAME, _PASSWORD, _VERIFY, _CA_PATH; an account that may manage nodes). The read-only
+credential's SOLARWINDS_* are never used here, not even to read.
   action find: the node of each host (read only) -> {found: {host: {node, how, why}}, window}
-  action run:  items [{host, op: schedule | remove, node_id, why, window, earlier}] -> {result: {host: {text, level, done}}}
+  action run:  items [{host, op: schedule | remove, node_id, rid, why, window, earlier}] -> {result: {host: {text, level, done,
+               record, times}}} - record: what makes the window ours (written beside the task's settings by the next step)
                - Check (or check: true): what it would do, nothing invoked
 No credential: {skipped: why} - never a failure. A SolarWinds error is each server's warning, never the job's failure."""
 from __future__ import absolute_import, division, print_function
@@ -25,11 +27,12 @@ except ImportError:
 
 def client(p):
     env = os.environ
-    user, password, url = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", ""), (env.get("SOLARWINDS_URL") or "").strip()
+    user, password = env.get("SOLARWINDS_MANAGE_USERNAME", ""), env.get("SOLARWINDS_MANAGE_PASSWORD", "")
+    url = (env.get("SOLARWINDS_MANAGE_URL") or "").strip()
     if not (user and password and url):
         return None, "no credential"
-    verify = str(env.get("SOLARWINDS_VERIFY", "true")).strip().lower() not in ("0", "false", "no", "off")
-    ca = (env.get("SOLARWINDS_CA_PATH") or "").strip()
+    verify = str(env.get("SOLARWINDS_MANAGE_VERIFY", "true")).strip().lower() not in ("0", "false", "no", "off")
+    ca = (env.get("SOLARWINDS_MANAGE_CA_PATH") or "").strip()
     try:
         return rs.Manager(url, user, password, verify=verify, ca_path=ca if ca and os.path.isfile(ca) else "", timeout=p["timeout"]), ""
     except sw.SwisError as e:

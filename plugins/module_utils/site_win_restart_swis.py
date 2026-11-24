@@ -12,12 +12,15 @@ Samples/Go/UnmanageNode/main.go: "N:%d", nowUTC, laterUTC, false); Orion.Nodes' 
 properties UnManaged (Boolean), UnManageFrom and UnManageUntil (DateTime) in the SWIS schema
 (solarwinds.github.io/OrionSDK/schema/Orion.Nodes.html). Times are sent as YYYY-MM-DDTHH:MM:SSZ.
 
-Read only otherwise: the nodes are found with one SWQL SELECT per server (Caption, DNS, IPAddress) and matched with the
-rules every SolarWinds reader here uses (plugins/module_utils/site_host_swis.py match: full name, then a not-shared IP,
-then a short name that does not clash) - not found or more than one: never unmanaged.
+Read only otherwise: the nodes are found with one SWQL SELECT per server (Caption, DNS, IPAddress) and matched by name
+only (plugins/module_utils/site_host_swis.py match without its IP stage: the full name, then a short name that does not
+clash) - not found, more than one, or only an IP: never unmanaged.
 
-Ours: the window this job asked for is kept in the restart task's settings file (node id, from, until, registration id).
-A node whose window is not that one (a person's) is left as it is. Standard library only."""
+Ours: only a window this job wrote. After its Unmanage the node is read back and what SWIS returned (both ends, as SWIS
+gives them) is recorded with the registration id and the Orion server (restart-<id>.solarwinds.json beside the task's
+settings). Ours later = the same node on the same server with both ends exactly that. Anything else is left as it is.
+Writes take the "SolarWinds (manage nodes)" credential's own variables (SOLARWINDS_MANAGE_*), never the read-only
+credential's SOLARWINDS_*. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -174,10 +177,12 @@ def _node(row):
 
 
 def find(client, hosts):
-    """hosts: [{host, fqdn, ip}] -> {host: {node: {...} or None, why}}: one SELECT per server for its candidates, then the
-    shared match rules over all of them (a node two servers could be is neither's)."""
+    """hosts: [{host, fqdn, ip}] -> {host: {node: {...} or None, why}}. For a write, by NAME only: the full name, else a short
+    name no other node or server shares (site_host_swis.match without its IP stage) - an IP is never enough (a cluster
+    address can be secondary on the target and primary on another node). Only an IP matched: said, never unmanaged."""
     hs = hsw._hosts(hosts)
     nodes = {}
+    by_ip = {}
     for h in hs:
         full, short, ip = h["fqdn"], h["short"], h["ip"]
         q = ("SELECT %s FROM Orion.Nodes WHERE Caption = @short OR DNS = @short OR Caption LIKE @shortdot OR DNS LIKE @shortdot"
@@ -192,33 +197,48 @@ def find(client, hosts):
         for row in client.query(q, params):
             n = _node(row)
             nodes[n["node_id"]] = n
-    got = hsw.match(hs, list(nodes.values()))
+            if ip and hsw._ip(n["ip"]) == hsw._ip(ip):
+                by_ip.setdefault(h["host"], []).append(n)
+    got = hsw.match(hs, list(nodes.values()), allow_ip=False)
     out = {}
     for i, h in enumerate(hs):
         node, how, why = got.get(i, (None, "", ""))
-        out[h["host"]] = {"node": node, "how": how, "why": why or ("no SolarWinds node named %s or with its IP" % h["short"])}
+        if node is None and not why and by_ip.get(h["host"]):
+            why = "matched by IP only (%s) - not unmanaged" % ", ".join("%s N:%d" % (n["name"], n["node_id"]) for n in by_ip[h["host"]])
+        out[h["host"]] = {"node": node, "how": how, "why": why or ("no SolarWinds node named %s" % h["short"])}
     return out
 
 
-def plan(node, win, earlier, now, check, tz=None, why=""):
+def mine(node, record, orion):
+    """Is the node's window the one this job wrote and read back (the record: node_id, orion, rid, from, until - SWIS's own
+    values, as it returned them)? Both ends equal exactly, on the same Orion server; nothing else is ours."""
+    if not record or not record.get("rid") or int(record.get("node_id") or 0) != int(node.get("node_id") or -1):
+        return False
+    if sw.base_url(str(record.get("orion") or "x")) != orion:
+        return False
+    return str(node.get("from") or "") == str(record.get("from") or "") and str(node.get("until") or "") == str(record.get("until") or "")
+
+
+def plan(node, win, earlier, now, check, tz=None, why="", orion=""):
     """One server whose restart is scheduled: what is done to its node -> {op: unmanage | replace | none, text, level}.
-    earlier: our window of the replaced registration ({node_id, from, until}) or {}."""
+    earlier: the record of the replaced registration (what our Unmanage wrote and read back) or {}."""
     if node is None:
-        return {"op": "none", "level": "warning", "text": "SolarWinds: node not found (%s) - not unmanaged" % (why or "no match")}
+        return {"op": "none", "level": "warning", "text": "SolarWinds: node not found (%s) - not unmanaged" % (why or "no match")
+                if "matched by IP only" not in (why or "") else "SolarWinds: %s" % why}
     tag = "node %s (N:%d)" % (node["name"], node["node_id"])
     verb = "would be unmanaged" if check else "unmanaged"
     if active(node, now, tz):
-        own = (same(node_window(node), earlier, tz) if earlier and int(earlier.get("node_id") or 0) == node["node_id"] else "")
-        if not own:
+        if not mine(node, earlier, orion):
             return {"op": "none", "level": "warning",
                     "text": "SolarWinds: %s is unmanaged by someone else (%s) - left as it is, not unmanaged by this job" % (tag, shown_raw(node_window(node)))}
-        return {"op": "replace", "level": "ok", "times": own,
-                "text": "SolarWinds: %s %s %s (our earlier window %s replaced)" % (tag, verb, shown(win, tz), shown(earlier, tz))}
+        return {"op": "replace", "level": "ok",
+                "text": "SolarWinds: %s %s %s (our earlier window %s replaced)" % (tag, verb, shown(win, tz), shown_raw(node_window(node)))}
     return {"op": "unmanage", "level": "ok", "text": "SolarWinds: %s %s %s" % (tag, verb, shown(win, tz))}
 
 
-def plan_remanage(node, earlier, now, check, tz=None):
-    """A restart of ours taken away (cancel, or a skip): its node managed again only when its window is still ours."""
+def plan_remanage(node, earlier, now, check, tz=None, orion=""):
+    """A restart of ours taken away (cancel, or a skip): its node managed again only when its window is still exactly the
+    one we wrote."""
     if not earlier or not earlier.get("node_id"):
         return {"op": "none", "level": "info", "text": ""}
     if node is None:
@@ -226,45 +246,58 @@ def plan_remanage(node, earlier, now, check, tz=None):
     tag = "node %s (N:%d)" % (node["name"], node["node_id"])
     if not active(node, now, tz):
         return {"op": "none", "level": "info", "text": "SolarWinds: %s is managed - nothing to do" % tag}
-    own = same(node_window(node), earlier, tz)
-    if not own:
+    if not mine(node, earlier, orion):
         return {"op": "none", "level": "warning",
-                "text": "SolarWinds: %s has another unmanage window (%s), not ours (%s) - left as it is" % (tag, shown_raw(node_window(node)), shown(earlier, tz))}
-    return {"op": "remanage", "level": "ok", "times": own, "text": "SolarWinds: %s %s" % (tag, "would be managed again" if check else "managed again")}
+                "text": "SolarWinds: %s has an unmanage window (%s) that is not the one this job wrote - left as it is" % (tag, shown_raw(node_window(node)))}
+    return {"op": "remanage", "level": "ok", "text": "SolarWinds: %s %s" % (tag, "would be managed again" if check else "managed again")}
 
 
-def by_id(client, ids):
-    """The nodes of these ids, read now: {id: node}."""
-    out = {}
-    for nid in sorted(set(int(x) for x in ids if x)):
-        for row in client.query("SELECT %s FROM Orion.Nodes WHERE NodeID = @id" % FIELDS, {"id": nid}):
-            n = _node(row)
-            out[n["node_id"]] = n
-    return out
+def by_id(client, nid):
+    """One node, read now, or None."""
+    for row in client.query("SELECT %s FROM Orion.Nodes WHERE NodeID = @id" % FIELDS, {"id": int(nid)}):
+        return _node(row)
+    return None
 
 
 def run(client, items, now, check, tz=None):
-    """items: [{host, op: schedule | remove, node_id, window, earlier}] -> {host: {text, level, done}}. The node is read
-    again right before; each call's failure is that server's warning, never the job's failure."""
-    nodes = by_id(client, [i.get("node_id") for i in items] + [(i.get("earlier") or {}).get("node_id") for i in items])
+    """items: [{host, op: schedule | remove, node_id, rid, why, window, earlier}] -> {host: {text, level, done, record, times}}.
+    Each node is read right before its own call (never from a snapshot taken for all of them). An Unmanage is read back:
+    what SWIS returned is the record that makes the window ours (with the registration id and the Orion server); SWIS's
+    time convention (UTC or local) is told from that first read-back only. Each call's failure is that server's warning."""
+    orion = sw.base_url(client.url)
     out = {}
     for it in items:
+        res = {"text": "", "level": "info", "done": False, "record": {}, "times": ""}
         try:
             if it["op"] == "schedule":
-                n = nodes.get(int(it.get("node_id") or 0))
-                p = plan(n, it["window"], it.get("earlier") or {}, now, check, tz, it.get("why", ""))
+                n = by_id(client, it["node_id"]) if it.get("node_id") else None
+                p = plan(n, it["window"], it.get("earlier") or {}, now, check, tz, it.get("why", ""), orion)
+                res.update(text=p["text"], level=p["level"])
                 if not check and p["op"] in ("replace", "unmanage"):
                     if p["op"] == "replace":
+                        n2 = by_id(client, n["node_id"])           # again, right before: changed meanwhile = not ours any more
+                        if n2 is None or not mine(n2, it.get("earlier") or {}, orion):
+                            raise sw.SwisError("its window changed while this job ran - left as it is", "changed")
                         client.invoke("Remanage", ["N:%d" % n["node_id"]])
                     client.invoke("Unmanage", ["N:%d" % n["node_id"], it["window"]["from"], it["window"]["until"], False])
+                    back = by_id(client, n["node_id"]) or {}
+                    how = same({"from": back.get("from"), "until": back.get("until")}, it["window"], tz)
+                    if not how:
+                        res.update(level="warning", text=res["text"] + " - but SolarWinds shows another window after it (%s): not recorded as ours"
+                                   % shown_raw(back))
+                    else:
+                        res.update(done=True, times=how, record={"node_id": n["node_id"], "orion": orion, "rid": str(it.get("rid") or ""),
+                                                                 "from": back["from"], "until": back["until"]})
             else:
                 e = it.get("earlier") or {}
-                n = nodes.get(int(e.get("node_id") or 0))
-                p = plan_remanage(n, e, now, check, tz)
+                n = by_id(client, e["node_id"]) if e.get("node_id") else None      # read right before its own call
+                p = plan_remanage(n, e, now, check, tz, orion)
+                res.update(text=p["text"], level=p["level"])
                 if not check and p["op"] == "remanage":
                     client.invoke("Remanage", ["N:%d" % n["node_id"]])
-            out[it["host"]] = {"text": p["text"], "level": p["level"], "done": p["op"] != "none" and not check, "times": p.get("times", "")}
+                    res["done"] = True
         except sw.SwisError as e:
-            out[it["host"]] = {"text": "SolarWinds: %s failed (%s) - the restart stays as it is" % (
-                "unmanage" if it["op"] == "schedule" else "manage again", e), "level": "warning", "done": False}
+            res.update(level="warning", done=False, record={}, text="SolarWinds: %s failed (%s) - the restart stays as it is" % (
+                "unmanage" if it["op"] == "schedule" else "manage again", e))
+        out[it["host"]] = res
     return out
