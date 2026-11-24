@@ -107,6 +107,8 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Trust store report | `playbooks/trust_report.yml` | Report | [TRUST_STORES.md](TRUST_STORES.md#set-it-up) |
 | Windows - trust store report | `playbooks/win_trust_report.yml` | Report | [TRUST_STORES.md](TRUST_STORES.md#set-it-up) |
 | Windows - local group members | `playbooks/win_local_groups.yml` | Report | [WINDOWS.md](WINDOWS.md#local-group-members) |
+| Windows - schedule a restart | `playbooks/win_restart_schedule.yml` | On demand (Check first = the plan) | [WINDOWS.md](WINDOWS.md#schedule-a-restart) |
+| Windows - cancel a scheduled restart | `playbooks/win_restart_cancel.yml` | On demand (Check first = what it removes) | [WINDOWS.md](WINDOWS.md#schedule-a-restart) |
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | Report | [TRUST_STORES.md](TRUST_STORES.md#vmware) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | Report | [VMWARE.md](VMWARE.md#set-it-up-2) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | Watch | [VMWARE.md](VMWARE.md#certificates-of-vcenter-and-the-esxi-hosts-incidents-and-csrs-weekly) |

@@ -24,6 +24,7 @@ also in Constrained Language Mode (see step 5).
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center offers (ConfigMgr); restart only with `automatic_restarts: yes`; prove the server is back |
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | Evaluate-STIG on the servers, each STIG's checklist against STIG Manager (read-only) and the earlier scans ([STIG_DRIFT.md](STIG_DRIFT.md#windows-servers)) |
 | Windows STIG recheck | `playbooks/win_stig_recheck.yml` | only the rules STIG Manager has Open or Not Reviewed, checked again by Evaluate-STIG (-SelectVuln), and what to update in STIG Manager ([STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck)) |
+| Windows - schedule a restart / cancel a scheduled restart | `playbooks/win_restart_schedule.yml`, `win_restart_cancel.yml` | restart the servers you pick at a 24-hour time in the site's time zone, optionally only where a reboot is pending; or take that restart back ([below](#schedule-a-restart)) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | put ACT on the servers in `C:\ProgramData\act`, locked down and unblocked; keep it current |
 | ServiceNow tickets, POA&M status | the ones you have | unchanged: they take the Windows results the same way |
 
@@ -557,6 +558,84 @@ The job judges nothing. To check the servers against an approved list:
   hand, by GPO or by SCCM.
 
 Domain groups are listed as members, not expanded (next).
+
+## Schedule a restart
+
+Two jobs. **Windows - schedule a restart** (`playbooks/win_restart_schedule.yml`) restarts the servers you pick at a
+time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_cancel.yml`) takes it back.
+
+### Set it up
+
+1. Set the site's time zone once in all.yml: `report_time_zone: America/New_York` (a name as `timedatectl
+   list-timezones` prints it; `UTC` is allowed). Without it the job refuses. `win_restart_time_zone` in a template's
+   Variables beats it.
+2. Run **AAP - set up job templates** with these Variables:
+
+   ```yaml
+   aap_templates_only: ["Windows - schedule a restart", "Windows - cancel a scheduled restart"]
+   aap_templates_credentials: {machine_windows: "<your Windows Machine credential>"}
+   aap_templates_label_portal: portal-actions
+   ```
+
+   It makes both templates with the Windows credential, the Windows execution environment, Limit and Job type
+   prompted, and the survey. `portal-actions` labels them for the site portal: they show under **Windows** on the
+   Actions page, with a Hosts box for the servers.
+3. Set the templates' inventory to your Windows inventory.
+4. Optional: `report_email_to` and `report_web_dest` on the template, for the report email and page.
+
+### Run it
+
+1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit is refused;
+   at most `win_restart_max_hosts` (50) servers.
+2. Answer the survey:
+
+   | Question | Example | Notes |
+   |---|---|---|
+   | Restart time | `22:30` | 24-hour `HH:MM` in the site's time zone. A time today that has passed means tomorrow. A time less than 5 minutes away is refused |
+   | Only if a reboot is pending? | `no` | `yes`: only servers with a reboot pending; checked now and again at the restart time |
+   | Reason | `Monthly patches` | required: the shutdown comment (System event 1074) and the report |
+   | Change or incident number | `CHG0012345` | optional: put in front of the comment |
+
+3. Job type **Check** first: the plan. Per server: reboot pending (yes/no) and why, last boot, and "would restart at
+   ..." in the site's zone and the server's own. Nothing changes. The plan is in the job output (and on the portal's job
+   page); the report email and page come with Run.
+4. Launch it again as **Run**. Each server gets a one-time scheduled task. The report lists them.
+
+The site portal always launches Run: from the portal the restart is scheduled at once (never the restart itself). For the
+plan first, launch it in AAP with Job type Check. Changed your mind: the cancel job below.
+
+Success looks like: `SRV-APP01: SCHEDULED - at Tue 2026-11-24 22:30 EST (server: 2026-11-24 22:30 UTC-05:00 ...)`.
+
+What the job does on each server:
+
+- Registers the task `\site-automation\site-automation restart` (SYSTEM) for that moment. The moment is fixed in UTC,
+  so a server in another time zone restarts at the same moment.
+- At that time the task runs `shutdown /r /t 60 /d p:0:0 /c "<change>: <reason> (site-automation, AAP job N)"`.
+  Logged-on users get 60 seconds' warning (`win_restart_delay_seconds`).
+- With "only if pending" it checks again first. Nothing pending any more: no restart; a line in `restart.log` and the
+  Application log (source `site-automation`, event 101).
+- One restart of ours per server: a new run replaces the earlier task (the report says "replaces ...").
+- A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
+- The task's script and settings are in `win_restart_dir` (`C:\ProgramData\site-automation\restart`), readable by
+  SYSTEM and Administrators only.
+- It never restarts a server right away.
+
+A reboot is pending when any of these says so (the same as the patching check):
+
+- Component servicing (`...\Component Based Servicing\RebootPending`)
+- Windows Update (`...\WindowsUpdate\Auto Update\RebootRequired`)
+- The ConfigMgr client, when it is installed (read only)
+- A computer rename that waits for a restart
+- Pending file rename operations: shown, but counted only with `win_restart_count_file_renames: true` (some software
+  sets them all the time)
+
+### Cancel it
+
+Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our tasks; Run removes them. Only
+tasks whose name starts with `win_restart_task_name` are touched. A restart already counting down is not stopped: run
+`shutdown /a` on the server within the 60 seconds.
+
+All settings: [win_restart](VARIABLES_REFERENCE.md#win_restart).
 
 ## If something goes wrong
 

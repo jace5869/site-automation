@@ -1565,6 +1565,72 @@ job_templates:
         files and a PowerShell check
       supports: Run constraint=Read-only (nothing on a server changes; it judges nothing); email/website if set; Check = same
         read
+  - name: Windows - schedule a restart
+    playbook: playbooks/win_restart_schedule.yml
+    credentials: [machine_windows]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: windows
+    variables_file: aap/extra_vars/win_restart_schedule.yml
+    area: Windows
+    ask_job_type: true
+    portal: true
+    survey:
+      - question_name: Restart time (24-hour HH:MM)
+        variable: win_restart_time
+        type: text
+        min: 3
+        max: 5
+        required: true
+        question_description: In the site's time zone (report_time_zone), e.g. 22:30. A time today that has passed means tomorrow.
+      - question_name: Only if a reboot is pending?
+        variable: win_restart_only_if_pending
+        type: multiplechoice
+        choices:
+          - 'no'
+          - 'yes'
+        default: 'no'
+        required: false
+        question_description: 'yes: only servers with a reboot pending - checked now and again at the restart time.'
+      - question_name: Reason
+        variable: win_restart_reason
+        type: text
+        max: 200
+        required: true
+        question_description: Goes into the shutdown comment (System event 1074) and the report.
+      - question_name: Change or incident number (optional)
+        variable: win_restart_change
+        type: text
+        max: 40
+        required: false
+    description:
+      does: Schedules a one-time restart of the picked Windows servers at a 24-hour time in the site's time zone; optionally
+        only where a reboot is pending.
+      targets: Windows hosts of the Limit (required) over WinRM (Windows Machine credential, an administrator)
+      produces: 'A plan (Check: pending reboot and why, last boot, the restart time) or the result; report email and website
+        page; artifact win_restart'
+      supports: 'Run constraint=Changes target hosts: one scheduled task per server (replaces ours); never restarts right
+        away; email/website if set; Check = plan'
+  - name: Windows - cancel a scheduled restart
+    playbook: playbooks/win_restart_cancel.yml
+    credentials: [machine_windows]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: windows
+    variables_file: aap/extra_vars/win_restart_cancel.yml
+    area: Windows
+    ask_job_type: true
+    portal: true
+    description:
+      does: Removes the restart tasks that Windows - schedule a restart registered on the picked servers (only ours, by name).
+      targets: Windows hosts of the Limit (required) over WinRM (Windows Machine credential, an administrator)
+      produces: 'What was removed (Check: what would be); report email and website page when set; artifact win_restart_cancel'
+      supports: 'Run constraint=Changes target hosts: removes only our restart tasks and files; writes email/website if set;
+        Check = list only'
   - name: VMware - trust store report
     playbook: playbooks/vmware_trust_report.yml
     credentials: [vmware]
