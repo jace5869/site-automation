@@ -217,7 +217,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_publish_organization` | (empty) | an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any |
 | `portal_publish_max` | `50` | the most one pattern may match |
 | `portal_unpublish_templates` | `[]` | Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape. |
-| `portal_setup_never_published` | `["Windows - trust store report"]` | 1.130.0: never on the portal (exact names, any case): never published by a pattern, and the label is taken off one that has it. Windows - trust store report removes certificates when check_trust_remove is true. |
+| `portal_setup_never_published` | `["Windows - trust store report"]` | 1.129.0: never on the portal (exact names, any case): never published by a pattern, and the label is taken off one that has it. Windows - trust store report removes certificates when check_trust_remove is true. |
 
 ## aap_template_audit
 
@@ -1481,16 +1481,16 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_capacity_db_timeout` | `10` | seconds to wait for the report database's connection |
 | `ontap_capacity_db_keep_days` | `800` | delete the database's points older than this many days (0 = never) |
 | `ontap_capacity_fail` | `false` | true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows |
-| `ontap_expand_pct` | `10` | ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ---- The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs. the default growth: this % of the volume's size ... |
+| `ontap_expand_pct` | `10` | ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ---- The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs. the default growth: this % of the LUN's size (a LUN volum… (all of it: the role file) |
 | `ontap_expand_min_gb` | `1` | ... at least this many GB ... |
 | `ontap_expand_max_gb` | `512` | ... at most this many GB (a size typed in the launch's Size box is not held to this; the aggregate limit still is) |
 | `ontap_expand_aggr_max_pct` | `97` | the volume's aggregate must stay at or under this % used after the growth, or nothing is changed (the report says the largest size that fits) |
 | `ontap_expand_exclude` | `[]` | Volumes never offered and never grown, even named by hand: name patterns, svm:volume or cluster/svm:volume, * and ?, any case, e.g. ["*_root", "vol0", "svm_backup:*", "cluster9*/*" (every volume on those clusters), "cluster9*/svm_a:*"]. The cluster part matches the ONTAP cluster name or its ontap_clusters address. SVM… (all of it: the role file) |
-| `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume (the only way so far) |
+| `ontap_expand_lun` | `same` | a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the only way so far) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 | `ontap_expand_incident` | `"off"` | off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one through the ServiceNow API credential when the run changes something, and resolve it with the result. |
 | `ontap_expand_incident_group` | (empty) | the assignment group of the incident ontap_expand_incident: create opens - must be set for create |
-| `ontap_expand_templates` | `["NetApp - expand a volume"]` | the templates (names or IDs; or {template, kind}) whose survey the volume list writes |
+| `ontap_expand_templates` | `["NetApp - expand a volume"]` | the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand asks AAP about the runs of each (one at a time) |
 | `ontap_expand_question` | `ontap_expand_volume` | the variable of the survey question the volume list writes (added, single select, when the survey lacks it) |
 | `ontap_expand_max_choices` | `500` | the most volumes the list offers (the report says how many more) |
 | `ontap_expand_volume` | (empty) | The launch's answers (the survey's questions; never set them in all.yml): the volume picked from the list (a choice NetApp - refresh volume list wrote; it ends with its key) |
@@ -1509,7 +1509,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_perf_latency_crit_ms` | `20` | ... this slow is red |
 | `ontap_live_growth_days` | `7` | a volume's or aggregate's growth a day: the slope of its points of the last this-many days |
 | `ontap_live_growth_min_hours` | `6` | ... and only once its points span this many hours (3 points at least): a rate from 30 minutes is noise |
-| `ontap_live_days_warn` | `30` | full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber |
+| `ontap_live_days_warn` | `30` | a volume full within this many days: amber (an aggregate's status is its used % only, ontap_aggr_warn_pct / _crit_pct) |
 | `ontap_live_days_crit` | `7` | ... within this many days: red |
 | `ontap_live_list_days` | `90` | the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all") |
 | `ontap_live_site_pattern` | (empty) | The page's site filter (1.127.2): a regular expression whose first group is the site, tried on the cluster's name, then the SVM's; "" = a 4-letter, 2-digit prefix (^([A-Za-z]{4}[0-9]{2})). The filter shows when it finds 2 sites or more. |
@@ -2215,8 +2215,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_approval_required` | `[]` | template names that are marked "approval" without the label |
 | `portal_inventories_max` | `10` | 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason |
 | `portal_limit_max` | `50` | a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500) |
-| `portal_windows_hosts_from` | `groups: ["*windows*"] vars: ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansi…` | 1.130.0: the picker of a Windows job (a found template whose playbook is playbooks/win_*.yml, or a workflow named "Windows ...") lists only the inventory's Windows hosts, and a group there stands for its Windows hosts. A host is Windows when it is in a group whose name matches one of groups (globs, any case), or when… (all of it: the role file) |
-| `portal_limit_max_playbooks` | `win_restart_schedule.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts \| d…` | 1.130.0: a playbook's own cap of hosts in one run (its file name): the picker and the launch use it when it is lower than portal_limit_max. var: the template's Variables may set it (then that value counts), max: else this. Windows - schedule a restart and cancel: win_restart_max_hosts (50). |
+| `portal_windows_hosts_from` | `groups: ["*windows*"] vars: ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansi…` | 1.129.0: the picker of a Windows job (a found template whose playbook is playbooks/win_*.yml, or a workflow named "Windows ...") lists only the inventory's Windows hosts, and a group there stands for its Windows hosts. A host is Windows when it is in a group whose name matches one of groups (globs, any case), or when… (all of it: the role file) |
+| `portal_limit_max_playbooks` | `win_restart_schedule.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts \| d…` | 1.129.0: a playbook's own cap of hosts in one run (its file name): the picker and the launch use it when it is lower than portal_limit_max. var: the template's Variables may set it (then that value counts), max: else this. Windows - schedule a restart and cancel: win_restart_max_hosts (50). |
 | `portal_finding_playbooks` | (worked out by the role; see its file) | the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from) |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |
 | `portal_aap_url` | (worked out by the role; see its file) | ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the portal's own account) ------ |
@@ -2248,7 +2248,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ad_seconds` | `600` | the SolarWinds read: how often (120 at least); nothing is read while nobody has the page open |
 | `portal_ad_old_minutes` | `90` | the AD checks older than this are said to be old on the page |
 | `portal_ad_template` | (empty) | two AD templates (two forests): the ID of the one the page shows; "" = the newest run's |
-| `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume soonest full first with Expand... (NetApp - exp… (all of it: the role file) |
+| `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume, VMware datastores first, each least free first… (all of it: the role file) |
 | `portal_netapp_old_minutes` | `60` | a run older than this is said to be old on the page (the refresh runs every 15-30 min) |
 | `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
 | `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
@@ -3221,7 +3221,7 @@ File: `roles/win_restart/defaults/main.yml`
 | `win_restart_reason_code` | `"p:0:0"` | The shutdown reason code (shutdown /d): p:0:0 = Other (Planned). p:4:1 = Application: Maintenance (Planned). |
 | `win_restart_task_path` | `"\\site-automation\\"` | The scheduled task's folder in Task Scheduler. |
 | `win_restart_task_name` | `"site-automation restart"` | The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made. |
-| `win_restart_dir` | `'C:\ProgramData\site-automation\restart'` | Where the task's script and its settings live on each server (only SYSTEM and Administrators may change it). |
+| `win_restart_dir` | `'$env:ProgramFiles\site-automation\restart'` | The task directory must be a subdirectory of Program Files with a trusted owner and ACL. |
 | `win_restart_solarwinds` | `auto` | SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a window around the restart; SolarWinds manages it again by itself at the window's end. auto = when the template has a "SolarWinds (manage nodes)" credential (aap/credential_types/solarwinds_manage.yml, kind solarwinds_mana… (all of it: the role file) |
 | `win_restart_solarwinds_before_minutes` | `5` | The window: this many minutes before the restart time ... |
 | `win_restart_solarwinds_minutes` | `10` | ... to this many minutes after it. |

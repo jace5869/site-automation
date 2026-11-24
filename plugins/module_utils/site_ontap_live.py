@@ -75,8 +75,7 @@ def volume_status(used_pct, days, o):
                  days_level(days, float(o.get("days_warn", 30)), float(o.get("days_crit", 7))))
 
 
-def aggr_status(used_pct, days_limit, o):
-    """An aggregate's state now: its used % (ontap_aggr_warn_pct, ontap_aggr_crit_pct) and its days until the expand job's
-    limit (ontap_expand_aggr_max_pct) - against the same day settings as a volume."""
-    return worst(level(used_pct, float(o.get("aggr_warn_pct", 85)), float(o.get("aggr_crit_pct", 90))),
-                 days_level(days_limit, float(o.get("days_warn", 30)), float(o.get("days_crit", 7))))
+def aggr_status(used_pct, o):
+    """An aggregate's state now: its used % only (ontap_aggr_warn_pct, ontap_aggr_crit_pct). 1.128.0 (user): the days until
+    the expand job's limit were always a guess - still worked out and kept (days_limit), never a status on the page."""
+    return level(used_pct, float(o.get("aggr_warn_pct", 85)), float(o.get("aggr_crit_pct", 90)))

@@ -154,11 +154,11 @@ class Patterns(unittest.TestCase):
         self.assertEqual(s.problems, [])
 
     def test_never_published_is_skipped_and_its_label_taken_off(self):
-        """1.130.0: Windows - trust store report (it removes certificates when check_trust_remove is true) is never published by
+        """1.129.0: Windows - trust store report (it removes certificates when check_trust_remove is true) is never published by
         a pattern, and a site that published it earlier gets the label taken off by the next run."""
         trust = "Windows - trust store report"
         api = FakeApi([trust, "Windows health check"])
-        setup(api, publish=["Windows *"])                                    # before 1.130.0: a pattern labelled it
+        setup(api, publish=["Windows *"])                                    # before 1.129.0: a pattern labelled it
         self.assertEqual(api.labels_of(trust), ["portal"])
         s = setup(api, publish=["Windows *"], never=[trust])
         self.assertEqual(api.labels_of(trust), [])

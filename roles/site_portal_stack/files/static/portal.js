@@ -366,7 +366,7 @@ function hostPickers() {
     if (!sel || box.dataset.on) continue;
     box.dataset.on = "1";
     const field = box.dataset.picker, cap = parseInt(box.dataset.max, 10) || 50, src = box.dataset.src, setting = box.dataset.setting || "portal_action_max_hosts";
-    // name -> {c: the hosts it stands for, m: its hosts when known (a host; a group opened in the Group drop-down)} - 1.130.0: the
+    // name -> {c: the hosts it stands for, m: its hosts when known (a host; a group opened in the Group drop-down)} - 1.129.0: the
     // count is the distinct union of the known ones (a host inside a picked group is not counted twice); the server counts again
     const picked = new Map();
     for (const o of sel.selectedOptions) { const m = /\((\d+) hosts?\)$/.exec(o.textContent); picked.set(o.value, m ? {c: parseInt(m[1], 10), m: null} : {c: 1, m: [o.value]}); }
@@ -375,7 +375,7 @@ function hostPickers() {
     for (const x of box.querySelectorAll(".help")) x.hidden = true;
     const chips = el("div", "pk-chips"), q = el("input", "pk-q"), list = el("ul", "pk-list"), foot = el("p", "pk-foot muted-line");
     const all = el("button", "btn pk-all", "Select all shown"), note = el("span", "muted-line pk-note"), hid = el("div", "pk-hidden");
-    // 1.130.0: the group drop-down - all, or one group of the inventory: its hosts, to pick the whole group or some of them
+    // 1.129.0: the group drop-down - all, or one group of the inventory: its hosts, to pick the whole group or some of them
     const gsel = el("select", "pk-group"), gwrap = el("div", "pk-gbar"), glab = el("label", "pk-glab", "Group");
     gsel.id = "pk-g-" + field; glab.htmlFor = gsel.id;
     gsel.append(new Option("All hosts and groups", ""));
@@ -461,7 +461,7 @@ function hostPickers() {
       if (picked.has(r.name)) picked.delete(r.name); else if (fits(r)) picked.set(r.name, entry(r));
       sync(); draw();
     }
-    function clear(text) {                          // 1.130.0: nothing of the last answer stays pickable while the next one is asked
+    function clear(text) {                          // 1.129.0: nothing of the last answer stays pickable while the next one is asked
       rows = []; gInfo = null; matches = 0; on = 0;
       list.replaceChildren(el("li", "pk-empty", text));
       all.disabled = true;

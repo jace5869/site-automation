@@ -140,7 +140,7 @@ def names(v):
     return [x.strip() for x in re.split(r"[,\n]", t) if x.strip()]
 
 
-# ---- 1.130.0: Windows hosts in the picker of a Windows job, and a playbook's own cap of hosts --------------------------------
+# ---- 1.129.0: Windows hosts in the picker of a Windows job, and a playbook's own cap of hosts --------------------------------
 def _json_setting(v, default):
     if isinstance(v, type(default)):
         return v
@@ -279,7 +279,7 @@ def windows_hosts(win_rules, script):
 
 
 def action_os(playbook, name):
-    """1.130.0: 'windows' for a Windows job (its playbook is playbooks/win_*.yml, or a workflow named Windows ...), else ''."""
+    """1.129.0: 'windows' for a Windows job (its playbook is playbooks/win_*.yml, or a workflow named Windows ...), else ''."""
     pb = os.path.basename(str(playbook or ""))
     if pb.startswith("win_"):
         return "windows"
@@ -410,7 +410,7 @@ class Config(object):
         except ValueError:
             tj = {}
         self.titles = rules.site_portal_titles(tj if isinstance(tj, dict) else {})["titles"]
-        # 1.130.0: which hosts are Windows (the picker of a Windows job lists only those) and a playbook's own cap of hosts
+        # 1.129.0: which hosts are Windows (the picker of a Windows job lists only those) and a playbook's own cap of hosts
         self.windows_from = windows_rules(g("PORTAL_WINDOWS_HOSTS_FROM", "{}"))
         self.limit_max_playbooks = playbook_caps(g("PORTAL_LIMIT_MAX_PLAYBOOKS", "{}"))
         self.approval_required = names(g("PORTAL_APPROVAL_REQUIRED", "[]"))
@@ -940,7 +940,7 @@ class Aap(object):
                 continue
             action = dict(result.action, last=(row.get("summary_fields") or {}).get("last_job") or {})
             if iid is not None:
-                own = action.get("cap")                    # 1.130.0: the playbook's own cap, when lower than portal_limit_max
+                own = action.get("cap")                    # 1.129.0: the playbook's own cap, when lower than portal_limit_max
                 cap, setting = (own[0], own[1]) if own and own[0] < cfg.limit_max else (cfg.limit_max, "portal_limit_max")
                 hosts = {"kind": "hosts", "label": "Hosts", "required": True, "default": None, "max": cap, "setting": setting,
                          "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cap)}
@@ -1004,7 +1004,7 @@ class Aap(object):
             return TemplateRead(skipped="marked for approval, but a job template starts at once: use a workflow with an approval step")
         limit = bool(r.get("ask_limit_on_launch"))
         own_cap = self._playbook_cap(r) if typ == "job" else None
-        if own_cap and not limit:                   # 1.130.0 (Codex): its hosts could not be counted against the cap
+        if own_cap and not limit:                   # 1.129.0 (Codex): its hosts could not be counted against the cap
             return TemplateRead(skipped="its playbook takes at most %d hosts (%s), but its Limit is not asked at launch: tick Prompt on "
                                         "launch next to Limit, so the portal counts the hosts" % (own_cap[0], own_cap[1]))
         limit_inv = None
@@ -1047,12 +1047,12 @@ class Aap(object):
             "approval": cfg.label_approval in labels or tname in cfg.approval_required,
             # a job template that asks its Job type at launch (Prompt on launch): the Run dialog offers Check and Run
             "job_type": {"ask": typ == "job" and bool(r.get("ask_job_type_on_launch")), "default": "check" if str(r.get("job_type")) == "check" else "run"},
-            # 1.130.0: a Windows job's picker lists Windows hosts only; a playbook with its own cap of hosts (portal_limit_max_playbooks)
+            # 1.129.0: a Windows job's picker lists Windows hosts only; a playbook with its own cap of hosts (portal_limit_max_playbooks)
             "os": action_os(r.get("playbook") if typ == "job" else "", tname), "cap": own_cap}
         return TemplateRead(action=action, inventory=limit_inv, steps=steps)
 
     def _playbook_cap(self, r):
-        """1.130.0: the hosts a template's playbook takes at most (portal_limit_max_playbooks): its var in the template's Variables
+        """1.129.0: the hosts a template's playbook takes at most (portal_limit_max_playbooks): its var in the template's Variables
         when set (win_restart_max_hosts), else the setting's max -> [cap, the setting that says it]; None when the playbook has no cap of its own."""
         c = self.cfg.limit_max_playbooks.get(os.path.basename(str(r.get("playbook") or "")))
         if not c:
@@ -1349,13 +1349,13 @@ class Aap(object):
                     bad.add(str(g.get("name")))
                     continue
                 groups[str(g.get("name"))] = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
-            # 1.130.0: a group past GROUPS_MAX keeps its name (the list, the drop-down, the search); its hosts are read when it is
+            # 1.129.0: a group past GROUPS_MAX keeps its name (the list, the drop-down, the search); its hosts are read when it is
             # picked or opened (_members)
             lazy = dict((str(g.get("name")), int(g["id"])) for g in grows[self.GROUPS_MAX:] if g.get("name"))
             trunc = trunc or bool(bad)
             got = {"hosts": hosts, "groups": groups, "bad": bad, "lazy": lazy, "truncated": trunc, "at": time.time(),
                    "gids": dict((str(g.get("name")), int(g["id"])) for g in grows)}
-            got["win"], got["win_error"] = self.classify(iid)                     # 1.130.0: None = no rule, or not read (win_error)
+            got["win"], got["win_error"] = self.classify(iid)                     # 1.129.0: None = no rule, or not read (win_error)
             if got["win"]:                                                           # each group by its Windows hosts, once per read
                 got["win_groups"] = dict((g, [h for h in m if h in got["win"]]) for g, m in groups.items())
                 got["win_groups"] = dict((g, m) for g, m in got["win_groups"].items() if m)
@@ -1366,7 +1366,7 @@ class Aap(object):
             lock.release()
 
     def classify(self, iid):
-        """1.130.0: the Windows hosts of an inventory by portal_windows_hosts_from, read now -> (set, '') or (None, '') when the setting is
+        """1.129.0: the Windows hosts of an inventory by portal_windows_hosts_from, read now -> (set, '') or (None, '') when the setting is
         empty, or (None, why) when AAP did not answer: never taken for "no filter". One call: the inventory as Ansible reads it
         (inventories/<id>/script/), so the variables follow Ansible's order (all, parent groups, child groups, the host)."""
         if not self.cfg.windows_from:
@@ -1402,7 +1402,7 @@ class Aap(object):
     AMBIGUOUS = "is both a host's and a group's name in the inventory - a Limit cannot tell them apart: rename one, or pick the hosts another way"
 
     def _members(self, inv, name):
-        """A group's hosts from a listing - 1.130.0: a group past GROUPS_MAX (inv['lazy']) is read now, on demand, and kept with the listing."""
+        """A group's hosts from a listing - 1.129.0: a group past GROUPS_MAX (inv['lazy']) is read now, on demand, and kept with the listing."""
         if name in inv["groups"]:
             return inv["groups"][name]
         gid = (inv.get("lazy") or {}).get(name)
@@ -1419,7 +1419,7 @@ class Aap(object):
 
     def expand(self, items, iid=None, os_=""):
         """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
-        portal_inventory (or of the inventory iid, 1.78.4): a free-typed name is refused. 1.130.0: os_ windows - a group stands for its
+        portal_inventory (or of the inventory iid, 1.78.4): a free-typed name is refused. 1.129.0: os_ windows - a group stands for its
         Windows hosts only, and a host must be one (when portal_windows_hosts_from finds any in the inventory); a name that is a host's
         and a group's is refused."""
         inv = self.inventory_listing(iid=iid)
@@ -1459,7 +1459,7 @@ class Aap(object):
 
     def expand_now(self, items, iid=None, os_=""):
         """Like expand, but asks AAP now - the groups (names and members) and each host - and trusts no kept list: the launch's final expansion.
-        Every name that will be sent is checked against the current group names too. 1.130.0: a name that is a host's and a group's is
+        Every name that will be sent is checked against the current group names too. 1.129.0: a name that is a host's and a group's is
         refused; os_ windows - which hosts are Windows is read now too (classify): a group stands for its Windows hosts, a host must be
         one, and when that read fails the launch is refused (never "no filter")."""
         iid = self._inventory_id() if iid is None else iid
@@ -1470,7 +1470,7 @@ class Aap(object):
             win, why = self.classify(iid)
             if why:
                 return None, why
-            if win is not None and not win:         # 1.130.0: a rule that matches nothing never means "every host"
+            if win is not None and not win:         # 1.129.0: a rule that matches nothing never means "every host"
                 return None, self.NO_WINDOWS
         grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
         if gwhy:
@@ -1534,13 +1534,13 @@ class Aap(object):
                 sorted(r.get("always_nodes") or []), r.get("limit"), r.get("extra_data"), r.get("all_parents_must_converge")] for r in rows]
         return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False, step_ids(rows)
 
-    GROUP_LIST_MAX = 5000          # 1.130.0: the picker's group drop-down lists this many groups at most (by name)
-    GROUPS_SHOWN = 50              # 1.130.0: the groups the list itself shows at most (the hosts follow them)
-    LAZY_READ = 10                 # 1.130.0: groups past GROUPS_MAX read on demand for one answer of the list, at most
+    GROUP_LIST_MAX = 5000          # 1.129.0: the picker's group drop-down lists this many groups at most (by name)
+    GROUPS_SHOWN = 50              # 1.129.0: the groups the list itself shows at most (the hosts follow them)
+    LAZY_READ = 10                 # 1.129.0: groups past GROUPS_MAX read on demand for one answer of the list, at most
 
     def inventory_items(self, text="", limit=200, iid=None, os_="", group="", with_groups=False):
         """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}.
-        1.130.0: os_ windows - only the Windows hosts (portal_windows_hosts_from), a group counted by them, one with none left out; group -
+        1.129.0: os_ windows - only the Windows hosts (portal_windows_hosts_from), a group counted by them, one with none left out; group -
         only the hosts of that group (to pick some of them); with_groups - also groups: [{name, count}] for the group drop-down (count
         None: a group past GROUPS_MAX not read yet). A name that is a host's and a group's is ambiguous: listed, never pickable."""
         inv = self.inventory_listing(iid=iid)
@@ -1554,7 +1554,7 @@ class Aap(object):
                     "os_note": "Which hosts are Windows could not be read just now - try again in a minute."}
         if os_ == "windows" and win is None:
             note = "The Windows filter is off (portal_windows_hosts_from: {}): every host is listed. The job skips hosts that are not Windows."
-        elif os_ == "windows" and not win:          # 1.130.0: a rule that matches nothing lists nothing (never every host)
+        elif os_ == "windows" and not win:          # 1.129.0: a rule that matches nothing lists nothing (never every host)
             return {"items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
                     "os_note": "No host matches the Windows rule (portal_windows_hosts_from) - set it to your inventory's Windows group or variable."}
         lazy = inv.get("lazy") or {}
@@ -2360,7 +2360,7 @@ class Portal(object):
                 except OSError:
                     self.catalog_file = None
                     return
-            # 1.130.0: schema 4 - a playbook's own cap and the Windows rule are part of the saved forms (a tightened cap never
+            # 1.129.0: schema 4 - a playbook's own cap and the Windows rule are part of the saved forms (a tightened cap never
             # comes back from an older catalog)
             scope = [4, cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
@@ -2608,7 +2608,7 @@ class Portal(object):
     def check(self, name, sent, a=None):
         a = a or self.actions[name]
         inv = a.get("limit_inv")                        # 1.78.4: a found template's Limit is checked against its own inventory
-        os_ = a.get("os") or ""                         # 1.130.0: a Windows job's group stands for its Windows hosts
+        os_ = a.get("os") or ""                         # 1.129.0: a Windows job's group stands for its Windows hosts
         expand = (lambda items: self.aap.expand(items, inv, os_)) if inv else ((lambda items: self.aap.expand(items, None, os_)) if self.cfg.inventory else None)
         return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, expand)
 
@@ -2640,6 +2640,14 @@ class Portal(object):
             if var.get("kind") != "choice" or not isinstance(got, str) or not got or got not in (var.get("values") or []):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Expand: the choice is not in the survey now"})
                 return 400, {"error": "Not started: " + EXPAND_GONE + ".", "problems": {expand: "is not in the job's list now"}}
+            # Neon 1.127.x P1: an Expand launch always says its Job type - Check only when the template can run as Check (it
+            # asks the Job type, or Check is its own), Run only when it asks it (picked in the dialog). No Job type, or a
+            # template fixed to Run: refused - the template's own type would change the volume for real.
+            info = a.get("job_type") or {}
+            if not ((job_type == "check" and (info.get("ask") or info.get("default") == "check")) or (job_type == "run" and info.get("ask"))):
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name,
+                              "why": "Expand: Job type %s, the template's %s" % (job_type or "not given", "asked" if info.get("ask") else "fixed to " + str(info.get("default") or "run"))})
+                return 409, {"error": "Not started: " + CHECK_GONE + "."}
         values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
@@ -3908,7 +3916,7 @@ CHECK_GONE = ("this job can no longer be asked for Check (its Job type is fixed 
 
 def job_type_html(a, query):
     """The Run dialog's Job type -> (html, may start). A template that asks it at launch: Check or Run, Check by default
-    (1.130.0), or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
+    (1.129.0), or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
     template that does not ask it: kept as a hidden field when Check is its fixed Job type, else refused (CHECK_GONE) - a
     Check never turns into a real run. Any other template: ('', True)."""
     jt = a.get("job_type") or {}
@@ -3919,7 +3927,7 @@ def job_type_html(a, query):
         if jt.get("default") == "check":
             return ('<input type="hidden" name="%s" value="check"><p class="sub">Job type: Check (the template\'s own).</p>' % NETAPP_JOB_TYPE), True
         return '<p class="note bad" role="alert"><b>Not started.</b> %s.</p>' % esc(CHECK_GONE[0].upper() + CHECK_GONE[1:]), False
-    # 1.130.0: a template that asks its Job type is one whose guide says Check first (the restart, its cancel, a patch, a load):
+    # 1.129.0: a template that asks its Job type is one whose guide says Check first (the restart, its cancel, a patch, a load):
     # the form starts on Check, and Run is picked on purpose
     pick = want if want in ("check", "run") else "check"
     opts = (("check", "Check - the plan only, nothing is changed"), ("run", "Run - the job does its work"))
@@ -4037,7 +4045,7 @@ PICK_SHOWN = 200                                    # the list shows this many m
 def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts", inv=None, inv_name="", allowed=True, os_=""):
     """1.78.0: the one host picker - a searchable list of portal_inventory's hosts and groups, to tick one or many. Without scripts it is
     this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list.
-    1.130.0: groups and hosts in two parts of the list (optgroups); os_ windows - a Windows job's: Windows hosts only (portal_windows_hosts_from),
+    1.129.0: groups and hosts in two parts of the list (optgroups); os_ windows - a Windows job's: Windows hosts only (portal_windows_hosts_from),
     else one muted line says the filter is not set; portal.js adds the group drop-down (a group's hosts, to pick the group or some of them)."""
     iid, inv = inv, ({"items": [], "matches": 0, "error": "You may not run this action, so its hosts are not listed."} if not allowed else
                      portal.aap.inventory_items("", PICK_SHOWN, iid=inv, os_=os_) if inv else
@@ -4045,7 +4053,7 @@ def picker_html(portal, field, selected, cap, label_id="", described="", setting
     chosen = set(selected)
 
     def opt(i):
-        if i.get("ambiguous"):                  # 1.130.0: a host's and a group's name - a Limit cannot tell them apart
+        if i.get("ambiguous"):                  # 1.129.0: a host's and a group's name - a Limit cannot tell them apart
             return '<option value="%s" disabled>%s (also a %s name - cannot be picked)</option>' % (
                 esc(i["name"]), esc(i["name"]), "host's" if i["kind"] == "group" else "group's")
         label = i["name"] if i["kind"] == "host" else ("%s (hosts counted when picked)" % i["name"] if i["count"] is None else
@@ -5744,7 +5752,9 @@ class NetappLive(object):
                 key = "t" if k == "ems" else "last"
                 body["rows"] = [dict(r, shown=shown(self.cfg, r.get(key)) if r.get(key) else "") for r in body.get("rows") or []]
             parts[k] = body
+        # Neon 1.127.x P1: the site filter's list goes to the page too (without it the bar never showed, ?site= was ignored)
         return {"run": run, "volumes": vols, "aggrs": m.get("aggrs") or [], "parts": parts, "left_out": m.get("left_out") or {},
+                "sites": m.get("sites") or [],
                 "expand": {"on": ex["on"] and not ex["fixed_run"], "why": ex["why"] or ex["fixed_run"], "template": ex["template"], "job_type": ex["job_type"]}}
 
     def answer(self, cn, etag_in=""):
@@ -6031,7 +6041,7 @@ def make_handler(cfg, portal, static_dir):
                 qq = urllib.parse.parse_qs(u.query)
                 qs = qq.get("q", [""])[-1]
                 inv = qq.get("inv", [""])[-1]             # 1.78.4: or of the inventory a found template's Limit is checked against (only one some action uses)
-                # 1.130.0: os=windows (a Windows job's picker), group= (that group's hosts only), groups=1 (the group drop-down's list)
+                # 1.129.0: os=windows (a Windows job's picker), group= (that group's hosts only), groups=1 (the group drop-down's list)
                 more = {"os_": "windows" if qq.get("os", [""])[-1] == "windows" else "", "group": qq.get("group", [""])[-1][:200],
                         "with_groups": qq.get("groups", [""])[-1] == "1"}
                 if inv:

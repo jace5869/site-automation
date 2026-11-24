@@ -38,7 +38,7 @@ fake_aap.add_template("workflow_job_templates", "Rotate the service account pass
                        {"variable": "notes", "question_name": "Notes", "type": "textarea", "required": False, "question_description": "Free text, kept in the ticket.", "max": 600}],
                       description="Changes the account's password on every host of the group and records the ticket.")
 fake_aap.seed_reports()                      # 1.75.3: report jobs 9001 and 9002, for the pick pages
-if os.environ.get("PORTAL_DEMO_WINDOWS"):     # 1.130.0: a synced inventory with Windows and Linux hosts in groups, and the restart template
+if os.environ.get("PORTAL_DEMO_WINDOWS"):     # 1.129.0: a synced inventory with Windows and Linux hosts in groups, and the restart template
     _h = ["srv-app%02d.corp.example.mil" % n for n in range(1, 41)] + ["srv-sql%02d.corp.example.mil" % n for n in range(1, 13)] + \
          ["srv-dc%02d.corp.example.mil" % n for n in range(1, 5)] + ["lnx-web%02d.corp.example.mil" % n for n in range(1, 21)]
     fake_aap.STATE["inventories"].append({"id": 71, "name": "Synced hosts", "hosts": _h, "host_vars": {h: "ansible_connection: winrm" for h in _h if h.startswith("srv-")},

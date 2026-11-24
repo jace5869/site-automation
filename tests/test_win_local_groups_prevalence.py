@@ -119,7 +119,7 @@ class Prevalence(unittest.TestCase):
         return list(yaml.safe_load_all(w.win_local_groups_baseline_snippet(model)))[0]["win_local_groups_approved"]["groups"]["Administrators"]
 
     def test_unresolved_on_some_servers_exports_the_sid(self):
-        """1.130.0 (Codex): one server names the SID CORP\\Ops, two cannot - 3 of 3, and the check must accept all three."""
+        """1.129.0 (Codex): one server names the SID CORP\\Ops, two cannot - 3 of 3, and the check must accept all three."""
         sid = "S-1-5-21-555-1105"
         hosts = []
         for i, name in enumerate(["CORP\\Ops", None, None]):
@@ -132,7 +132,7 @@ class Prevalence(unittest.TestCase):
         self.assertEqual(self.admins_entries(model), [sid])
 
     def test_well_known_principals_across_languages(self):
-        """1.130.0 (Codex): Authenticated Users (S-1-5-11) on an English and a German server is one member, 2 of 2, its SID exported."""
+        """1.129.0 (Codex): Authenticated Users (S-1-5-11) on an English and a German server is one member, 2 of 2, its SID exported."""
         hosts = []
         for i, name in enumerate(["NT AUTHORITY\\Authenticated Users", "NT-AUTORIT\u00c4T\\Authentifizierte Benutzer"]):
             server = host(i + 1)

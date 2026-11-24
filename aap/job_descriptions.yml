@@ -756,7 +756,7 @@ templates:
     produces: "The Volume list in the survey of ontap_expand_templates, the excluded volumes with their reason; a report on the website; artifact."
     supports: "Run constraint=Reads only (no hosts); writes AAP (that template's survey) and the report website when set; Check = dry run"
   "NetApp - expand a volume":
-    does: "Grows the NetApp volume picked in its survey (10 %, 1-512 GB, or the size typed), its LUN, and the VMware datastore on it; no approval."
+    does: "Grows the NetApp LUN or NFS volume picked (10 %, 1-512 GB, or typed), its volume only as needed, and the VMware datastore on it; no approval."
     targets: "One ONTAP volume via REST API (NetApp ONTAP credential with write); vCenter via its API (optional); ServiceNow (optional). No Limit."
     produces: "A plan (Check) or result report: email and report website, each step's result; the incident number in the volume's comment."
     supports: "Run constraint=Changes NetApp (grows one volume and LUN, never shrinks; aggregate stays at or under 97 %); vCenter datastore; Check = plan"

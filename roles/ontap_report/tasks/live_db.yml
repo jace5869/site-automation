@@ -55,7 +55,8 @@
           'collected': _ol_live_read if _ol_live_read is defined and _ol_live_read is not skipped else {},
           'health': ontap_live_health | bool, 'perf': ontap_live_perf | bool, 'opts': _ol_live_opts} | ontap_live_payload }}
     expand_template: >-
-      {%- set t = (ontap_expand_templates | first) if ontap_expand_templates is not string else ontap_expand_templates -%}
+      {#- Neon 1.127.x P2: no expand template ([]): '' - never a failed task -#}
+      {%- set t = ontap_expand_templates if ontap_expand_templates is string else ((ontap_expand_templates | first) if ontap_expand_templates | default([], true) | length > 0 else '') -%}
       {{ (t.template if t is mapping else t) | string }}
     expand_question: "{{ ontap_expand_question }}"
     opts: "{{ _ol_live_opts }}"

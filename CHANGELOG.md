@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.130.0 — 2026-11-25
+## 1.129.0 — 2026-11-25
 
 **To set up:** (1) run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
 `portal_limit_max_playbooks` need no change when your Windows hosts are in a group whose name has *windows* in it, or have
@@ -40,10 +40,6 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   rare members (under `win_local_groups_rare_pct`, 10 %) are listed. Members at or over `win_local_groups_baseline_pct` (90 %)
   form a suggested baseline: JSON and a pasteable snippet for the Administrators membership check, on the email and the
   website, and a *Suggested baseline* sheet in the workbook.
-- **Fix (every playbook since 1.67.0): a left-out host could still run when `target` held a comma.** `target: A,B` with `A` in
-  `site_exclude_hosts` made `A,B:!site_excluded`, and Ansible splits at the commas first - `A` ran. The exclusion is now a
-  term of its own when `target` has a comma (`A,B,!site_excluded`), and stays `:!site_excluded` otherwise (`x:&y` keeps
-  working). The built-in multi-host STIG recheck (target = the hosts) was affected.
 - Which hosts are Windows is read as Ansible reads the inventory (a child group over its parent, the host over both) and
   again when the job starts; a failed read refuses the launch. A name that is a host's and a group's is refused. Past 400
   groups, a group's hosts are read when it is opened. *Windows - trust store report* is not published to the portal (it
@@ -53,6 +49,65 @@ Each template needs Limit **Prompt on launch** and its inventory set (the Window
   another language, is exported by its SID; well-known principals (S-1-5-11, BUILTIN) are one member in every language.
 - Not in this release: the Windows jobs that change servers (patch, certificate install and restore, CSRs, ACT install) stay in
   their workflows with an approval, not labelled for the portal.
+
+## 1.128.0 — 2026-11-25
+
+**To set up:** run AAP - set up job templates for NetApp - expand a volume (its Size question's wording, and
+Concurrent jobs off), then NetApp - refresh volume list once, and Site portal - deploy. The ONTAP credential of the
+expand job needs a role that may modify volumes and LUNs (as before). Optional: a Red Hat Ansible Automation Platform
+credential on NetApp - expand a volume, so each run checks that no other run of it is going.
+
+- **NetApp - expand a volume: a LUN volume is grown by its LUN.** The default growth is 10 % of the LUN (1-512 GB) or
+  the size typed; the volume grows only as much as the bigger LUN needs (a thick LUN: its data + the growth; a thin
+  one: its headroom kept; the snapshot reserve and the snapshots' spill on top) - not at all when it has the room.
+  The aggregate is checked against what really lands on it (the volume's space guarantee, a thick LUN's growth); the
+  largest LUN growth that fits is said.
+- **Autosize is never changed.** A volume with autosize grow_shrink is refused (in the plan and right before the
+  change). A new size over the autosize maximum ONTAP reports is refused too, whatever the mode (ONTAP would reset the
+  maximum with the size): grow it by hand or raise the maximum first.
+- **Everything the plan stood on is read again right before each change:** the volume (size, autosize, guarantee, its
+  aggregate and that aggregate's room), the LUN (its size, its space reservation, that it is still in the same volume
+  by UUID), and the volume's name, SVM and `ontap_expand_exclude` on that last read (the comment-only write too).
+  Anything moved: nothing is sent. Every size sent is capped at the plan's own (exact bytes); the volume first, then the
+  LUN; a snapshot deleted meanwhile sends a smaller size or none, never more; a volume that needs more now stops the
+  run before any change. The comment written is the last read's, with the line added.
+- **One run at a time:** the expand template is made with Concurrent jobs off, and with an AAP credential each run asks
+  AAP right before the change about every template in `ontap_expand_templates` (and a workflow there) and its own
+  (another run going, or queued before it: nothing is changed; no credential: "not checked" in the report).
+- **The report says what was read back** after each change, per volume and LUN; "not known - check System Manager"
+  when a change was sent and nothing was verified, "(not changed)" when nothing was sent - never the planned size.
+- NetApp live page: the aggregates' days-until columns removed - still in the health report. An aggregate's status
+  there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
+  aggregates are listed by status, then fullest first; the "need a look" count follows.
+
+**Windows - to set up:** nothing to change. New restarts put their script in `C:\Program Files\site-automation\restart`. Restarts scheduled by 1.127.x are found and removed by cancel or a new schedule; afterwards delete the old folder `C:\ProgramData\site-automation\restart` by hand.
+
+**Known limits:** ONTAP's REST API takes a volume's (and a LUN's) size, not "this much more". Between the job's last
+read and ONTAP's change (well under a second), a person in System Manager or ONTAP's autosize could still grow the
+volume; the job's size then sets it back to the job's size and the report shows the size read back. Not fixed, by
+design (docs/NETAPP.md, Limits).
+
+**Fixed (review of 1.127.x)**
+
+- NetApp page: the site filter never showed (the page's answer left the sites out), and `?site=` did nothing.
+- NetApp page: Expand… on a template fixed to Run could still start a real run (the dialog turned Launch back on, and
+  a launch without a Job type was taken). The portal now refuses an Expand launch unless it says Check (the template
+  can run as Check) or Run (the template asks the Job type); the dialog keeps the portal's own "off".
+- SnapMirror: a schedule read without its interval or cron counted as "every minute" (healthy relationships showed as
+  lagging); now not known.
+- Disks: a rebuild on partitioned (ADP) disks shows as a warning, not ok.
+- Performance: each LUN shows its own datastore (two LUNs of one volume on two datastores); the cluster names stay when
+  `ontap_live_health` is off.
+- SnapMirror: a lag not known no longer reads "0.0x the schedule".
+- NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
+- Windows - schedule a restart (review of 1.127.x):
+  - `win_restart_dir` must be a subdirectory of Program Files (`$env:ProgramFiles`). Before writing files and before registering a restart, the job checks ownership and write permissions on each directory below Program Files and on the task files. It refuses reparse points, including dangling links, and square brackets in the configured subdirectory path. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
+  - A later queued AAP job can wait for the current run. Targets and exclusions follow Ansible's comma and colon splitting rules, including exclusions and intersections after a regex. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+  - The controller and the Windows task clean and cap shutdown comments at 500 characters and validate planned shutdown reason codes (`p:<major>:<minor>`).
+  - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
+  - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
+  - A wildcard, regex or slice in the Limit that would select the whole inventory (all) is refused.
+- **Excluded servers (since 1.67.0):** a target of several servers separated by commas (A,B) plus `site_exclude_hosts` could still reach an excluded server (`A,B:!site_excluded` keeps A). The exclusion is now its own term (`A,B,!site_excluded`) in every playbook.
 
 ## 1.127.3 — 2026-11-24
 

@@ -1594,7 +1594,7 @@ class Found(unittest.TestCase):
 
     def test_20_the_list(self):
         r = self.portal.aap.inventory_items("")
-        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],             # 1.130.0: the groups first, then the hosts (the list's two parts)
+        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],             # 1.129.0: the groups first, then the hosts (the list's two parts)
                          [("failing", "group", 1), ("web_servers", "group", 2), ("fail01.example.mil", "host", 1), ("web01.example.mil", "host", 1),
                           ("web03.example.mil", "host", 1)])
         self.assertEqual((r["groups_n"], r["hosts"]), (2, 3))
@@ -3323,7 +3323,7 @@ class Speed1990(unittest.TestCase):
         self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
 
     def test_a_changed_cap_or_windows_rule_drops_the_saved_catalog(self):
-        """1.130.0 (Codex): a tightened playbook cap (or another Windows rule) never comes back from the saved catalog."""
+        """1.129.0 (Codex): a tightened playbook cap (or another Windows rule) never comes back from the saved catalog."""
         portal = sp.Portal(self.cfg, aap=self.aap)
         portal.refresh()
         self.assertTrue(sp.Portal(self.cfg, aap=self.aap).restored)

@@ -822,8 +822,8 @@
       PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
       PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
       PORTAL_INVENTORIES_MAX: "{{ portal_inventories_max }}"
-      PORTAL_WINDOWS_HOSTS_FROM: "{{ portal_windows_hosts_from | default({}, true) | to_json }}"          # 1.130.0
-      PORTAL_LIMIT_MAX_PLAYBOOKS: "{{ portal_limit_max_playbooks | default({}, true) | to_json }}"        # 1.130.0
+      PORTAL_WINDOWS_HOSTS_FROM: "{{ portal_windows_hosts_from | default({}, true) | to_json }}"          # 1.129.0
+      PORTAL_LIMIT_MAX_PLAYBOOKS: "{{ portal_limit_max_playbooks | default({}, true) | to_json }}"        # 1.129.0
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"

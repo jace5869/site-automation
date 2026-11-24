@@ -109,7 +109,7 @@ class EveryPlaybook(unittest.TestCase):
         self.assertTrue(all(t.get("run_once") for t in tasks))
 
     def test_a_target_with_commas_still_leaves_hosts_out(self):
-        """1.130.0 (Codex): target A,B with A left out - the exclusion is a term of its own (A,B,!site_excluded); with ':'
+        """1.128.0 (Codex): target A,B with A left out - the exclusion is a term of its own (A,B,!site_excluded); with ':'
         Ansible split at the commas first and A ran. Without a comma (x:&y) ':' stays. Runs ansible-playbook (2.16 too:
         ANSIBLE_PLAYBOOK)."""
         import shutil

@@ -79,7 +79,7 @@ def row_of(t):
             "ask_limit_on_launch": t["ask_limit_on_launch"], "ask_variables_on_launch": t["ask_variables_on_launch"],
             "inventory": t.get("inventory", 3), "playbook": t.get("playbook", "a.yml"), "ask_inventory_on_launch": bool(t.get("ask_inventory")),
             "job_slice_count": t.get("slices", 1),
-            "extra_vars": t.get("extra_vars", ""), "ask_job_type_on_launch": bool(t.get("ask_job_type")), "job_type": "run",      # 1.130.0
+            "extra_vars": t.get("extra_vars", ""), "ask_job_type_on_launch": bool(t.get("ask_job_type")), "job_type": "run",      # 1.129.0
             "summary_fields": {"labels": {"count": len(labs), "results": labs[:10]}}}
 
 
@@ -381,7 +381,7 @@ class H(BaseHTTPRequestHandler):
                 out["defaults"] = {"credentials": [{"id": 9, "name": t["password_credential"], "passwords_needed": ["ssh_password"]}]}
             return self._send(200, out)
         ms = re.match(r"^inventories/(\d+)/script/$", p)
-        if ms:                                                           # 1.130.0: the inventory as Ansible reads it (the Windows rule)
+        if ms:                                                           # 1.129.0: the inventory as Ansible reads it (the Windows rule)
             inv = next((i for i in STATE["inventories"] if i["id"] == int(ms.group(1))), None)
             if not inv or inv.get("script_fail"):
                 return self._send(503 if inv else 404, {"detail": "not now"})
@@ -407,13 +407,13 @@ class H(BaseHTTPRequestHandler):
             if q.get("name") or q.get("name__icontains"):
                 rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
                 return self._send(200, {"count": len(rows), "results": rows})
-            hv = inv.get("host_vars") or {}                              # 1.130.0: a host's Variables (JSON or YAML text), as a dynamic source sets them
+            hv = inv.get("host_vars") or {}                              # 1.129.0: a host's Variables (JSON or YAML text), as a dynamic source sets them
             return self._paged_list(q, "inventories/%s/hosts/" % m.group(1), [{"id": 1000 + n, "name": h, "variables": hv.get(h, "")} for n, h in enumerate(sorted(inv["hosts"]))])
         m = re.match(r"^inventories/(\d+)/groups/$", p)
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"groups": {}})
             base = 2000 if inv is STATE["inventories"][0] else 2000 + int(inv.get("id", 0)) * 100               # a group id is its inventory's, so two inventories can have groups
-            gvars = inv.get("group_vars") or {}                          # 1.130.0: a group's Variables
+            gvars = inv.get("group_vars") or {}                          # 1.129.0: a group's Variables
             rows = [{"id": base + n, "name": g, "variables": gvars.get(g, "")} for n, g in enumerate(sorted(inv.get("groups", {})))]
             if q.get("name"):
                 rows = [r for r in rows if r["name"] == q["name"]]

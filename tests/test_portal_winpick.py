@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.130.0: Windows jobs pick many servers in the site portal - the picker of a Windows job lists the Windows hosts only
+"""1.129.0: Windows jobs pick many servers in the site portal - the picker of a Windows job lists the Windows hosts only
 (portal_windows_hosts_from: a group's name, a host's, group's or the inventory's Variables), the picker's group drop-down
 (a group's hosts, to pick the group or some of them), and a playbook's own cap (portal_limit_max_playbooks). Test data only.
   python tests/test_portal_winpick.py"""
@@ -79,7 +79,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(sp.windows_hosts(sp.windows_rules({"vars": {"config.guestId": ["*windows*"]}}), doc), {"a"})
 
     def test_a_child_group_beats_its_parent(self):
-        """1.130.0 (Codex): parent says winrm, child says ssh - the child's host is not Windows (Ansible's order: all, parent,
+        """1.129.0 (Codex): parent says winrm, child says ssh - the child's host is not Windows (Ansible's order: all, parent,
         child, host); same depth: the later name wins."""
         vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
         inv = {"hosts": ["lin01", "win01"], "groups": {"servers": ["lin01", "win01"], "linux_kids": ["lin01"]},
@@ -218,7 +218,7 @@ class Live(unittest.TestCase):
         self.assertIn('<optgroup label="Hosts (3)">', page)
         self.assertNotIn("lin01", page)
         self.assertIn("Windows hosts only", page)
-        # 1.130.0: a template that asks its Job type starts on Check; Run is picked on purpose
+        # 1.129.0: a template that asks its Job type starts on Check; Run is picked on purpose
         self.assertIn('value="check" checked>', page)
         self.assertNotIn('value="run" checked>', page)
         lg = sp.action_page(self.portal.cfg, self.portal, "DOE.JANE.Q.1234567890", self.act("Windows - local group members")["name"], {})
@@ -247,7 +247,7 @@ class Live(unittest.TestCase):
         self.assertEqual(code, 400, out)
 
     def test_j_a_host_synced_after_the_list_is_classified_at_launch(self):
-        """1.130.0 (Codex): a Linux host added to a picked group after the picker read the inventory never reaches the Limit;
+        """1.129.0 (Codex): a Linux host added to a picked group after the picker read the inventory never reaches the Limit;
         a Windows one added the same way does."""
         a = self.act("Windows - schedule a restart")
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
@@ -269,7 +269,7 @@ class Live(unittest.TestCase):
             inv["host_vars"].pop("lnx-new.corp.example.mil")
 
     def test_k_a_failed_windows_read_refuses_the_launch(self):
-        """1.130.0 (Codex): AAP not answering which hosts are Windows is never "no filter": the list says so, the launch is refused."""
+        """1.129.0 (Codex): AAP not answering which hosts are Windows is never "no filter": the list says so, the launch is refused."""
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
         p = self.make(self.env)
         inv["script_fail"] = True
@@ -283,7 +283,7 @@ class Live(unittest.TestCase):
             inv.pop("script_fail")
 
     def test_l_a_name_that_is_a_host_and_a_group(self):
-        """1.130.0 (Codex): host "pool" in dept, and a group "pool" with another host - "pool" is never sent."""
+        """1.129.0 (Codex): host "pool" in dept, and a group "pool" with another host - "pool" is never sent."""
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
         inv["hosts"].append("pool")
         inv["host_vars"]["pool"] = "ansible_connection: winrm"
@@ -305,7 +305,7 @@ class Live(unittest.TestCase):
             inv["groups"].pop("pool")
 
     def test_m_groups_past_the_read_limit(self):
-        """1.130.0 (Codex): past GROUPS_MAX a group keeps its name (drop-down, search) and its hosts are read when it is opened or picked."""
+        """1.129.0 (Codex): past GROUPS_MAX a group keeps its name (drop-down, search) and its hosts are read when it is opened or picked."""
         keep = sp.Aap.GROUPS_MAX
         sp.Aap.GROUPS_MAX = 1
         try:
@@ -337,7 +337,7 @@ class Live(unittest.TestCase):
         self.assertTrue(cat["Windows - local group members"].get("portal"))
 
     def test_g_only_an_empty_rule_turns_the_filter_off(self):
-        """1.130.0 (Codex verify): portal_windows_hosts_from: {} lists every host; a rule that matches nothing lists nothing and
+        """1.129.0 (Codex verify): portal_windows_hosts_from: {} lists every host; a rule that matches nothing lists nothing and
         refuses the launch - never every host."""
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM="{}"))
         r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
@@ -352,7 +352,7 @@ class Live(unittest.TestCase):
         self.assertIn("no host matches the Windows rule", p.aap.expand_now(["all_app"], INV, "windows")[1])
 
     def test_p_a_sync_that_drops_the_last_windows_match_refuses_the_launch(self):
-        """1.130.0 (Codex verify): picked while Windows hosts matched; at launch none does - refused, never the Linux members."""
+        """1.129.0 (Codex verify): picked while Windows hosts matched; at launch none does - refused, never the Linux members."""
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM=json.dumps({"groups": ["windows_servers"]})))
         self.assertEqual(p.aap.expand(["all_app"], INV, "windows"), (["srv-app02.corp.example.mil"], ""))
@@ -365,14 +365,14 @@ class Live(unittest.TestCase):
             inv["groups"]["windows_servers"] = keep
 
     def test_q_an_empty_answer_is_a_failed_read(self):
-        """1.130.0 (Codex verify): an empty or odd 200 is not an inventory - refused, never "no Windows host"."""
+        """1.129.0 (Codex verify): an empty or odd 200 is not an inventory - refused, never "no Windows host"."""
         from unittest import mock
         for doc in ({}, {"all": {}}, {"_meta": {}}, {"_meta": {"hostvars": []}, "all": {}}, []):
             with mock.patch.object(self.portal.aap, "call", return_value=(200, doc)):
                 self.assertEqual(self.portal.aap.classify(INV), (None, "could not check which hosts are Windows just now - try again"), doc)
 
     def test_r_group_priority_between_depth_and_name(self):
-        """1.130.0 (Codex verify): siblings - a higher ansible_group_priority wins over a later name (Ansible's sort_groups)."""
+        """1.129.0 (Codex verify): siblings - a higher ansible_group_priority wins over a later name (Ansible's sort_groups)."""
         vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
         inv = {"hosts": ["h1"], "groups": {"a_win": ["h1"], "b_lin": ["h1"]},
                "group_vars": {"a_win": "ansible_connection: winrm\nansible_group_priority: 10", "b_lin": "ansible_connection: ssh"}}

@@ -11,8 +11,13 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import fnmatch
+import functools
 import json
 import re
+
+from ansible.module_utils.common.text.converters import to_text
+from ansible.parsing.utils.addresses import parse_address
 
 try:
     import zoneinfo
@@ -24,7 +29,7 @@ U = datetime.timezone.utc
 UTC_NAMES = ("UTC", "Z", "ETC/UTC", "GMT")
 TIME = re.compile(r"^([01]?\d|2[0-3]):?([0-5]\d)$")
 CHANGE = re.compile(r"^[A-Za-z0-9_-]{0,40}$")
-CODE = re.compile(r"^[pu]:\d{1,3}:\d{1,5}$")
+CODE = re.compile(r"p:[0-9]{1,3}:[0-9]{1,5}")
 COMMENT_MAX = 500                                     # shutdown /c takes 512 characters
 NOTE = ("How it works: each server gets a one-time scheduled task (SYSTEM) for this moment in its own time zone. At that "
         "time it runs shutdown /r with the reason as comment (System event 1074). With \"only if pending\" it checks again "
@@ -123,15 +128,24 @@ def win_restart_when(text, zone="", min_lead=5, now=None):
     return out
 
 
+def _clean_comment(value):
+    text = str(value or "").replace('"', "").replace("'", "")
+    return " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text).split())
+
+
 def win_restart_comment(reason, change="", job=""):
-    """The shutdown comment and the task's description: '<change>: <reason> (site-automation, AAP job N)' - one line, no
-    double quote (shutdown's /c), at most 500 characters."""
-    def clean(s):
-        return " ".join(str(s or "").replace('"', "'").split())
-    tail = " (site-automation%s)" % ((", AAP job %s" % clean(job)) if clean(job) else "")
-    head = ("%s: " % clean(change).upper()) if clean(change) else ""
-    body = clean(reason)[:COMMENT_MAX - len(head) - len(tail)]
-    return head + body + tail
+    """Build a single native argument, keeping the task's registration marker when truncating."""
+    body = _clean_comment(reason) or "Scheduled restart"
+    change = _clean_comment(change).upper()
+    if change:
+        body = "%s: %s" % (change, body)
+    tail = "(site-automation"
+    job = _clean_comment(job)
+    if job:
+        tail += ", AAP job " + job
+    tail = tail[:COMMENT_MAX - 1].rstrip() + ")"
+    body = body[:max(0, COMMENT_MAX - len(tail) - 1)].rstrip()
+    return (body + " " + tail).strip()
 
 
 def win_restart_parse(stdout_lines):
@@ -175,7 +189,7 @@ def win_restart_model(hosts, opts=None):
         r = h.get("result") or {}
         row = {"host": str(h.get("host")), "status": "", "level": "info", "pending": "", "why": "", "up": _uptime(r),
                "at_local": r.get("at_local", ""), "ours": _list(r.get("ours")), "replaced": _list(r.get("replaced")),
-               "removed": _list(r.get("removed")), "error": "", "swis": h.get("swis") or {}}
+               "removed": _list(r.get("removed")), "cleanup_note": r.get("cleanup_note", ""), "error": "", "swis": h.get("swis") or {}}
         if h.get("unreached"):
             row.update(status="not reached", level="critical", error=str(h["unreached"])[:300])
             rows.append(row)
@@ -251,7 +265,7 @@ def win_restart_doc(model, when):
     title += "".join(", %d %s" % (c, w) for c, w in ((skipped, "skipped"), (bad, "failed or not reached")) if c)
     if check:
         title += " (nothing changed)"
-    sw_warn = any(x["swis"].get("level") == "warning" for x in rows)
+    sw_warn = o.get("swis_state") == "error" or any(x["swis"].get("level") == "warning" for x in rows)
     status = "critical" if bad else ("warning" if sw_warn else ("ok" if sched or not check else "info"))
     summary = [{"label": "Servers", "value": n, "status": "info", "note": "the Limit"},
                {"label": "Would restart" if check else "Scheduled", "value": sched, "status": "warning" if check and sched else ("ok" if sched else "info"),
@@ -284,6 +298,8 @@ def win_restart_doc(model, when):
             r += "; the earlier restart at %s was removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["removed"])
         elif x["status"] == "skipped" and x["ours"] and check:
             r += "; the earlier restart at %s would be removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["ours"])
+        if x["cleanup_note"]:
+            r += " - " + x["cleanup_note"]
         res.append(r)
     sw_on = any(x["swis"].get("text") for x in rows)
     table = {"title": "Servers", "columns": ["Server", "Reboot pending", "Why", "Up since", "Restart at (server time)", "Result"],
@@ -353,9 +369,12 @@ def win_restart_cancel_doc(model):
     for x in rows:
         tasks = (x["removed"] if x["status"] == "removed" else x["ours"]) or [{}]
         for t in tasks:
+            result = x["status"] + ((": " + x["error"]) if x["error"] else "")
+            if x["cleanup_note"]:
+                result += " - " + x["cleanup_note"]
             trs.append([_short(x["host"]), ("%s%s" % (t.get("path", ""), t.get("name", ""))) if t else "-",
                         (t.get("next_run") or t.get("start") or "-") if t else "-", t.get("description", "-") if t else "-",
-                        x["status"] + ((": " + x["error"]) if x["error"] else "")])
+                        result])
             cs.append(["", "", "", "", _cell(x["status"])])
     summary = [{"label": "Servers", "value": len(rows), "status": "info", "note": "the Limit"},
                {"label": "Would be cancelled" if check else "Cancelled", "value": done, "status": "ok" if done else "info",
@@ -416,6 +435,8 @@ def win_restart_log(model, when=None):
             bits.append("removed " + _task_line(t))
         if x["status"] == "would remove":
             bits.append("; ".join(_task_line(t) for t in x["ours"]))
+        if x["cleanup_note"]:
+            bits.append(x["cleanup_note"])
         out.append("%s: %s" % (_short(x["host"]), " - ".join(bits)))
     o = model.get("opts") or {}
     if o.get("swis_note"):
@@ -427,15 +448,30 @@ def win_restart_log(model, when=None):
     return out or ["No server in this run."]
 
 
+GROUP_SLICE = re.compile(r"(.+)\[(-?\d+|(?=:))(?:[:-](-?\d+|))?\]")
+RESERVED_GROUPS = ("all", "ungrouped")
+
+
+def _split_host_pattern(pattern):
+    """Follow ansible.inventory.manager.split_host_pattern, including its legacy colon syntax."""
+    if isinstance(pattern, list):
+        return [part for item in pattern for part in _split_host_pattern(item)]
+    if not isinstance(pattern, str):
+        pattern = to_text(pattern, errors="surrogate_or_strict")
+    if "," in pattern:
+        parts = pattern.split(",")
+    else:
+        try:
+            parse_address(pattern, allow_ranges=True)
+        except Exception:
+            parts = re.findall(r"(?:[^\s:\[\]]|\[[^\]]*\])+", pattern)
+        else:
+            parts = [pattern]
+    return [part.strip() for part in parts if part.strip()]
+
+
 def _terms(text):
-    """A host pattern -> its picking terms: split at , and : (not inside a [range]), without the exclusions (!x) and the
-    narrowing ones (&x)."""
-    out = []
-    for t in re.split(r"[,:](?![^\[]*\])", str(text or "")):
-        t = t.strip()
-        if t and not t.startswith(("!", "&")):
-            out.append(t)
-    return out
+    return [term for term in _split_host_pattern(text or "") if not term.startswith(("!", "&"))]
 
 
 def win_restart_selector(limit="", target=""):
@@ -448,51 +484,94 @@ def win_restart_selector(limit="", target=""):
     return []
 
 
-def _match(host, term):
-    """A host against an Ansible host pattern term: * and ?, and a range web[01:03] (web01, web02, web03)."""
+@functools.lru_cache(maxsize=128)
+def _host_matcher(term):
+    """Compile a selector once, bounding inventory range expansion before building the regex."""
+    if term.startswith("~"):
+        try:
+            return re.compile(term[1:]).search
+        except (re.error, OverflowError) as exc:
+            raise ValueError("invalid Limit regex %s (%s)" % (term, exc)) from exc
+    term = term.lower()
     out, i = "", 0
-    for m in re.finditer(r"\[(\d+):(\d+)\]|\[([a-z]):([a-z])\]", term):
+    for m in re.finditer(r"\[([0-9]+):([0-9]+)\]|\[([a-z]):([a-z])\]", term):
         out += _glob(term[i:m.start()])
         if m.group(1) is not None:
-            a, b, w = int(m.group(1)), int(m.group(2)), len(m.group(1))
-            out += "(?:%s)" % "|".join("%0*d" % (w, n) for n in range(a, b + 1))
+            start, end = m.group(1, 2)
+            if max(len(start), len(end)) > 16:
+                raise ValueError("host range %s has an oversized endpoint" % m.group())
+            a, b = int(start), int(end)
+            if b < a:
+                raise ValueError("reversed host range %s" % m.group())
+            if b - a >= 1000:
+                raise ValueError("host range %s exceeds 1000 entries" % m.group())
+            out += "(?:%s)" % "|".join("%0*d" % (len(start), n) for n in range(a, b + 1))
         else:
+            if m.group(4) < m.group(3):
+                raise ValueError("reversed host range %s" % m.group())
             out += "[%s-%s]" % (m.group(3), m.group(4))
         i = m.end()
-    out += _glob(term[i:])
-    return re.fullmatch(out, host) is not None
+    return re.compile(out + _glob(term[i:]), re.IGNORECASE).fullmatch
+
+
+def _match(host, term):
+    match = _host_matcher(term)
+    return bool(match(host) or match(host.split(".")[0]))
 
 
 def _glob(text):
     return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in text)
 
 
+def _group_pattern(term):
+    if term.startswith("~"):
+        return _host_matcher(term), None
+    sub = GROUP_SLICE.fullmatch(term)
+    pattern = sub[1] if sub else term
+    return lambda group: fnmatch.fnmatchcase(group, pattern), sub
+
+
+def _assert_picked_group(term, match):
+    for group in RESERVED_GROUPS:
+        if match(group):
+            raise ValueError("Limit term %r matches the reserved inventory group %r: pick named servers or a specific group" %
+                             (term, group))
+
+
 def win_restart_unnamed(hosts, terms, groups=None):
     """The hosts of the run that no picked term names: a host name (any case; a short name too), a pattern of them (* ? [..]),
     or an inventory group the host is in. [] when every one was picked."""
     groups = groups or {}
-    out = []
-    for h in hosts or []:
-        h_ = str(h).lower()
-        ok = False
-        for t in terms or []:
-            tl = t.lower().lstrip("~")
-            if t in groups and h in (groups.get(t) or []):
-                ok = True
-            elif tl in (h_, h_.split(".")[0]) or any(_match(x, tl) for x in (h_, h_.split(".")[0])):
-                ok = True
-            if ok:
-                break
-        if not ok:
-            out.append(str(h))
-    return out
+    hosts = list(hosts or [])
+    named = set()
+    for term in terms or []:
+        match, sub = _group_pattern(term)
+        _assert_picked_group(term, match)
+        matching = [g for g in groups if match(g)]
+        members = list(dict.fromkeys(h for g in matching for h in groups[g]))
+        if matching and sub:
+            start = int(sub[2] or 0)
+            if sub[3] is None:
+                if -len(members) <= start < len(members):
+                    named.add(members[start])
+            else:
+                stop = int(sub[3]) if sub[3] else -1
+                first = len(members) + start if start < 0 else start
+                last = len(members) + stop if stop < 0 else stop
+                if sub[3] and last < first:
+                    raise ValueError("reversed group slice %s" % term)
+                named.update(members[start:None if stop == -1 else stop + 1])
+            continue
+        named.update(members)
+        named.update(h for h in hosts if _match(str(h), term))
+    return [str(h) for h in hosts if h not in named]
 
 
 def win_restart_hosts(target="", exclude_not=""):
     """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
     'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
-    parts = [t.strip() for t in str(target or "all").split(",") if t.strip()] or ["all"]
-    ex = [t for t in re.split(r"[,:]", str(exclude_not or "")) if t.strip()]
+    parts = _split_host_pattern(target or "") or ["all"]
+    ex = _split_host_pattern(exclude_not or "")
     return ",".join(parts + ex)
 
 
@@ -500,29 +579,44 @@ def win_restart_check(o):
     """The launch's answers -> [] or the reasons the job refuses (nothing is read or changed then)."""
     o = dict(o or {})
     bad = []
-    if not str(o.get("reason") or "").strip():
+    if not _clean_comment(o.get("reason")):
         bad.append("Reason is empty: say why the servers restart (it goes into the shutdown comment and the report)")
     if not CHANGE.match(str(o.get("change") or "").strip()):
         bad.append("the change number is letters, digits, - and _ only (e.g. CHG0012345)")
-    if not CODE.match(str(o.get("code") or "").strip()):
+    if not CODE.fullmatch(str(o.get("code") or "").strip()):
         bad.append("win_restart_reason_code is p:<major>:<minor> (e.g. p:0:0)")
     try:
         if not 0 <= int(o.get("delay")) <= 600:
             raise ValueError
     except (TypeError, ValueError):
         bad.append("win_restart_delay_seconds is 0 to 600")
+    terms = win_restart_selector(o.get("limit"), o.get("target"))
+    try:
+        for scope in (o.get("limit"), o.get("target")):
+            picks = _terms(scope)
+            # A standalone literal 'all' is also the play's default scope. A specific target or Limit can narrow it.
+            if len(picks) == 1 and picks[0].lower() == "all":
+                continue
+            for term in picks:
+                _assert_picked_group(term, _group_pattern(term)[0])
+    except ValueError as exc:
+        bad.append(str(exc))
+        return bad
     if any(t.startswith("@") for t in _terms(o.get("limit")) + _terms(o.get("target"))):
         bad.append("a Limit from a file (@file) is not taken here: pick the servers by name (or group) in the Limit")
-    elif not win_restart_selector(o.get("limit"), o.get("target")):
+    elif not terms:
         bad.append("no servers picked: set the Limit (or the Hosts box on the site portal) to the servers - an empty one, 'all' or "
                    "only exclusions ('!name') is refused; this job never acts on every server")
     elif o.get("resolved") is not None and not o["resolved"]:
         bad.append("the Limit matches no server")
-    elif o.get("resolved") is not None and win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")),
-                                                                o.get("groups") or {}):
-        bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(
-            win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")), o.get("groups") or {})))
-    elif o.get("excluded_in"):
+    elif o.get("resolved") is not None:
+        try:
+            unnamed = win_restart_unnamed(o["resolved"], terms, o.get("groups"))
+            if unnamed:
+                bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(unnamed))
+        except ValueError as exc:
+            bad.append(str(exc))
+    if o.get("excluded_in"):
         bad.append("left out by site_exclude_hosts but in this run: %s - the job stops" % ", ".join(o["excluded_in"]))
     elif int(o.get("hosts") or 0) > int(o.get("max_hosts") or 0):
         bad.append("%s servers in the Limit; at most %s in one run (win_restart_max_hosts)" % (o.get("hosts"), o.get("max_hosts")))

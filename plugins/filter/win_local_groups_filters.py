@@ -97,7 +97,7 @@ def _member(raw, computer):
     m = {"name": shown, "raw": name, "sid": sid, "type": typ, "source": src, "enabled": raw.get("enabled"), "last_logon": str(raw.get("last_logon") or "")}
     # the key that makes "the same member" across servers: a domain or unresolved one by its SID, a local one by its name
     m["key"] = ("local:" + shown.lower()) if src == "Local" and not shown.startswith("NT AUTHORITY") else ("sid:" + sid if sid else "name:" + shown.lower())
-    # 1.130.0: a well-known principal (any SID but a machine's or domain's own account, S-1-5-21-...: Authenticated Users
+    # 1.129.0: a well-known principal (any SID but a machine's or domain's own account, S-1-5-21-...: Authenticated Users
     # S-1-5-11, BUILTIN groups S-1-5-32-..., Everyone S-1-1-0) is the same member in every language of Windows
     if re.match(r"^S-1-(?!5-21-)[0-9-]+$", str(sid)) and not str(sid).startswith("S-1-12-"):
         m["key"] = "sid:" + sid
@@ -231,7 +231,7 @@ def _prevalence(read, groups, baseline_pct, rare_pct):
             count = len(hosts)
             member_sids = sids[group["key"], member_key]
             shared_sid = next(iter(member_sids)) if len(member_sids) == 1 else ""
-            # 1.130.0: the SID when some servers could not name it, or named it differently (another language): the check
+            # 1.129.0: the SID when some servers could not name it, or named it differently (another language): the check
             # then accepts every server it was counted on
             named = set(n for u, n in spellings if not u)
             entry = shared_sid if (shared_sid and (unresolved or any(u for u, _ in spellings) or len(named) > 1)) else name

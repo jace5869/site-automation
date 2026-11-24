@@ -48,7 +48,7 @@ options:
   publish: {description: "1.78.1: patterns (case-insensitive, * and ?) of the names of job templates and workflows to put on the portal: each gets the label (publish_label) and Execute for portal_user. Nothing is removed.", type: list, elements: str, default: []}
   publish_area: {description: "1.78.1: {pattern: area} - a published template whose name matches gets the label <area_label><area> (the first pattern wins; an area label already there stays).", type: dict, default: {}}
   unpublish: {description: "1.78.1: patterns of the names to take off the portal: the label (publish_label) is removed, never a role.", type: list, elements: str, default: []}
-  never: {description: "1.130.0: exact names (any case) never on the portal: never published by a pattern, and the label (publish_label) is taken off one that has it (Windows - trust store report: it removes certificates when check_trust_remove is true).", type: list, elements: str, default: []}
+  never: {description: "1.129.0: exact names (any case) never on the portal: never published by a pattern, and the label (publish_label) is taken off one that has it (Windows - trust store report: it removes certificates when check_trust_remove is true).", type: list, elements: str, default: []}
   publish_label: {description: The label that marks a template for the portal (portal_label)., type: str, default: portal}
   area_label: {description: The start of an area label (portal_label_area)., type: str, default: "portal-area:"}
   alone_label: {description: "1.92.0: the label that keeps a workflow's step on the portal as a card of its own (portal_label_alone): a check that is a useful report alone.", type: str, default: portal-alone}
@@ -303,7 +303,7 @@ class Setup(Sync):
             if not hit:
                 self.note("publish", pat, "skipped", why="matches no job template or workflow")
             for k, r in hit:
-                if is_never(r):                         # 1.130.0: never on the portal, whatever pattern matches it
+                if is_never(r):                         # 1.129.0: never on the portal, whatever pattern matches it
                     self.note("publish", str(r.get("name")), "skipped", why="never on the portal (it can change servers from a report run)")
                     continue
                 if (k, r["id"]) not in seen_p:
@@ -317,7 +317,7 @@ class Setup(Sync):
                 if (k, r["id"]) not in seen_u:
                     seen_u.add((k, r["id"]))
                     unpub.append((k, r))
-        for k, r in rows:                               # 1.130.0: and its label taken off when it has it (labels_on reads them all)
+        for k, r in rows:                               # 1.129.0: and its label taken off when it has it (labels_on reads them all)
             if is_never(r) and (k, r["id"]) not in seen_u:
                 seen_u.add((k, r["id"]))
                 unpub.append((k, r))

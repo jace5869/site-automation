@@ -62,7 +62,7 @@ ontap_capacity_fail: false               # true = mark the job FAILED when a clu
 
 # ---- NetApp - expand a volume (playbooks/ontap_volume_expand.yml) and its list (playbooks/ontap_volume_list.yml), 1.123.0 ----
 # The person running it picks one volume from the list; no approval. The ONTAP credential needs a role that may modify volumes and LUNs.
-ontap_expand_pct: 10                     # the default growth: this % of the volume's size ...
+ontap_expand_pct: 10                     # the default growth: this % of the LUN's size (a LUN volume) or the volume's ...
 ontap_expand_min_gb: 1                   # ... at least this many GB ...
 ontap_expand_max_gb: 512                 # ... at most this many GB (a size typed in the launch's Size box is not held to this; the aggregate limit still is)
 ontap_expand_aggr_max_pct: 97            # the volume's aggregate must stay at or under this % used after the growth, or nothing is changed (the report says the largest size that fits)
@@ -71,13 +71,13 @@ ontap_expand_aggr_max_pct: 97            # the volume's aggregate must stay at o
 # cluster part matches the ONTAP cluster name or its ontap_clusters address. SVM and node roots, SnapMirror destinations,
 # offline volumes and FlexGroups always are.
 ontap_expand_exclude: []
-ontap_expand_lun: same                   # a LUN grows by the same size as its volume (the only way so far)
+ontap_expand_lun: same                   # a LUN volume: the LUN grows by the growth, the volume only as much as the bigger LUN needs (the only way so far)
 ontap_expand_wait_seconds: 300           # how long to wait for ONTAP's job of each change
 # off = no incident (a number typed at the launch still goes in the volume's comment and the report); create = open one
 # through the ServiceNow API credential when the run changes something, and resolve it with the result.
 ontap_expand_incident: "off"
 ontap_expand_incident_group: ""          # the assignment group of the incident ontap_expand_incident: create opens - must be set for create
-ontap_expand_templates: ["NetApp - expand a volume"]   # the templates (names or IDs; or {template, kind}) whose survey the volume list writes
+ontap_expand_templates: ["NetApp - expand a volume"]   # the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand asks AAP about the runs of each (one at a time)
 ontap_expand_question: ontap_expand_volume   # the variable of the survey question the volume list writes (added, single select, when the survey lacks it)
 ontap_expand_max_choices: 500            # the most volumes the list offers (the report says how many more)
 # The launch's answers (the survey's questions; never set them in all.yml):
@@ -100,7 +100,7 @@ ontap_perf_latency_warn_ms: 10           # a volume or LUN this slow (ms) is amb
 ontap_perf_latency_crit_ms: 20           # ... this slow is red
 ontap_live_growth_days: 7                # a volume's or aggregate's growth a day: the slope of its points of the last this-many days
 ontap_live_growth_min_hours: 6           # ... and only once its points span this many hours (3 points at least): a rate from 30 minutes is noise
-ontap_live_days_warn: 30                 # full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber
+ontap_live_days_warn: 30                 # a volume full within this many days: amber (an aggregate's status is its used % only, ontap_aggr_warn_pct / _crit_pct)
 ontap_live_days_crit: 7                  # ... within this many days: red
 ontap_live_list_days: 90                 # the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within this many days first (the rest behind "Show all")
 # The page's site filter (1.127.2): a regular expression whose first group is the site, tried on the cluster's name, then the

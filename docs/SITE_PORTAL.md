@@ -973,7 +973,7 @@ what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md),
 - **Expand…** opens this portal's own Run dialog for *NetApp - expand a volume* (a found template: its survey form)
   with the LUN or volume picked - the survey's current choice, key included - and **Job type Check**. The Run dialog
   shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type - **Check** is picked
-  at first (1.130.0), Run only on purpose; it is sent to AAP with the launch and kept in the portal's log. Other templates are not changed.
+  at first (1.129.0), Run only on purpose; it is sent to AAP with the launch and kept in the portal's log. Other templates are not changed.
 - The button is off, with the reason, when the portal does not offer the template or the person may not run it:
   "needs Execute on NetApp - expand a volume".
 - The server reads the database at most once a minute while someone has the page open; the page asks every minute
@@ -1070,7 +1070,7 @@ A card appears only when **both** are true: the portal's account has **Execute**
 **The host picker.** Every host field is the same: a searchable list of the inventory's hosts **and groups**.
 
 1. Open the list. It has two parts, **Groups (n)** and **Hosts (n)**. A group shows its host count: *linux_prod (42 hosts)*.
-2. 1.130.0: **Group** (the drop-down above the search box) lists the inventory's groups as AAP has them now (a synced inventory's
+2. 1.129.0: **Group** (the drop-down above the search box) lists the inventory's groups as AAP has them now (a synced inventory's
    too; every group, by name). Pick one to see only its hosts: **Pick the whole group (n)** adds the group as one pick, or tick
    single hosts of it. *All hosts and groups* goes back to the whole list.
 3. Type to filter (any case, any part of the name; with a group picked, its hosts only). The list shows the first 200 matches, then *N more - type to narrow*.
@@ -1080,7 +1080,7 @@ A card appears only when **both** are true: the portal's account has **Execute**
 The list is read on the server and sent 200 rows at a time: an inventory of thousands of hosts is never sent whole. Without
 scripts the plain multi-select has the same two parts (Groups, Hosts).
 
-**Windows jobs (1.130.0).** A found template whose playbook is `playbooks/win_*.yml` (or a workflow whose name starts with
+**Windows jobs (1.129.0).** A found template whose playbook is `playbooks/win_*.yml` (or a workflow whose name starts with
 *Windows*) lists only the inventory's **Windows hosts**, and a group there stands for its Windows hosts: the count, the cap and
 the job's Limit are the Windows hosts only. A host is Windows by `portal_windows_hosts_from`:
 
@@ -1113,7 +1113,7 @@ the inventory.
 **Many groups.** The portal reads the hosts of the first 400 groups with the list. Every other group keeps its name in the
 **Group** drop-down and the search, and its hosts are read when it is opened or picked.
 
-**A playbook's own cap (1.130.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
+**A playbook's own cap (1.129.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
 schedule a restart* and *Windows - cancel a scheduled restart* take `win_restart_max_hosts` (from the template's Variables when set
 there, else 50). The picker says it (*at most N (win_restart_max_hosts)*), and the portal checks again when it starts the job;
 the playbook checks it a last time.
@@ -1165,8 +1165,8 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
-| `portal_windows_hosts_from` | groups `*windows*`; vars `ansible_connection` winrm/psrp, `ansible_shell_type` powershell/cmd | 1.130.0: which hosts a Windows job's picker lists (`{}` = every host) |
-| `portal_limit_max_playbooks` | restart and cancel: `win_restart_max_hosts` (50) | 1.130.0: `{playbook file: {var, max}}` - a playbook's own cap when lower than `portal_limit_max` |
+| `portal_windows_hosts_from` | groups `*windows*`; vars `ansible_connection` winrm/psrp, `ansible_shell_type` powershell/cmd | 1.129.0: which hosts a Windows job's picker lists (`{}` = every host) |
+| `portal_limit_max_playbooks` | restart and cancel: `win_restart_max_hosts` (50) | 1.129.0: `{playbook file: {var, max}}` - a playbook's own cap when lower than `portal_limit_max` |
 | `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
 | `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
 
@@ -1209,7 +1209,7 @@ Your jobs are already in AAP. Instead of adding the label `portal` to each one b
 4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
 5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
 
-It never removes anything but one case (1.130.0): a template on `portal_setup_never_published` (default *Windows - trust store
+It never removes anything but one case (1.129.0): a template on `portal_setup_never_published` (default *Windows - trust store
 report*, which removes certificates when `check_trust_remove` is true) is never published by a pattern, and its `portal` label is
 taken off where an earlier run put it (*label ... remove* in the list). A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
 **Admin** on the organization of the templates, as for the rest of this job.
