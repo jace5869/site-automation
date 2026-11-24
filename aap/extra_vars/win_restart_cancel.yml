@@ -18,6 +18,11 @@
 ## Removes only our restart tasks (name starts with win_restart_task_name) and their files.
 
 # ---- win_restart ---------------------------------------------------------------------------------
+## The time zone of win_restart_time: a name as timedatectl list-timezones prints it
+## (America/New_York), or UTC. Empty: the job refuses (a restart is never planned in a time zone it
+## guessed). Each server gets the same moment, in its own time zone.
+# win_restart_time_zone: "{{ report_time_zone | default('', true) }}"
+
 ## true (the survey's "Only if a reboot is pending": yes) = the server restarts only when a reboot
 ## is pending - when the plan is made, and again at the restart time (the task checks again first
 ## and does nothing when none is pending any more).
@@ -48,6 +53,19 @@
 ## Where the task's script and its settings live on each server (only SYSTEM and Administrators may
 ## change it).
 # win_restart_dir: 'C:\ProgramData\site-automation\restart'
+
+## SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a
+## window around the restart; SolarWinds manages it again by itself at the window's end. auto = when
+## the template has a "SolarWinds (manage nodes)" credential
+## (aap/credential_types/solarwinds_manage.yml, kind solarwinds_manage); none: "no credential - node
+## stays managed". false = never.
+# win_restart_solarwinds: auto
+
+## The window: this many minutes before the restart time ...
+# win_restart_solarwinds_before_minutes: 5
+
+## ... to this many minutes after it.
+# win_restart_solarwinds_minutes: 10
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

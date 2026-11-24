@@ -15,6 +15,7 @@
 #   skip_areas            its area before one section per platform and its area now, when they differ:
 #                         aap_templates_rename_skip_areas matches either
 #   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
+#   allow_simultaneous    Concurrent jobs, set where the catalog names it (Windows - schedule a restart: false)
 #   survey                1.107.0: the survey questions its workflows' nodes answer - each added when missing, never one
 #                         changed or taken off
 #   description           {does, targets, produces, supports} from aap/job_descriptions.yml (1.79.11): the lines
@@ -1568,7 +1569,7 @@ job_templates:
   - name: Windows - schedule a restart
     playbook: playbooks/win_restart_schedule.yml
     credentials: [machine_windows]
-    optional_credentials: []
+    optional_credentials: [solarwinds_manage, aap]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -1577,6 +1578,7 @@ job_templates:
     area: Windows
     ask_job_type: true
     portal: true
+    allow_simultaneous: false
     survey:
       - question_name: Restart time (24-hour HH:MM)
         variable: win_restart_time

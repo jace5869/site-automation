@@ -107,9 +107,20 @@ function Get-SiteRestartTask {
     catch { $next = '' }
     $start = ''
     if (@($t.Triggers).Count -gt 0) { $start = [string]@($t.Triggers)[0].StartBoundary }
+    $id = Get-SiteRegistrationId -Task $t
     $res.ours = @(@{ path = $Path; name = $Name; state = [string]$t.State; next_run = $next; start = $start;
-                     description = [string]$t.Description; id = (Get-SiteRegistrationId -Task $t) })
+                     description = [string]$t.Description; id = $id; at_utc = (Read-SiteRestartAt -Dir $Dir -Id $id) })
     return $res
+}
+
+function Read-SiteRestartAt {
+    # the restart moment this registration was made for (its settings file's at_utc), or '' - the report says an unmanage
+    # window SolarWinds still shows is likely that restart's (nothing is decided by it)
+    param([string]$Dir, [string]$Id)
+    if (-not $Id) { return '' }
+    $f = Join-Path $Dir ('restart-' + $Id + '.json')
+    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    try { return [string](Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).at_utc } catch { return '' }
 }
 
 function Remove-SiteRestartFiles {
@@ -202,7 +213,8 @@ try {
             $json = Join-Path $dir ('restart-' + $rid + '.json')
             Set-Content -Path $script -Value ([string]$cfg.task_script) -Encoding ASCII
             $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
-                              comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc }
+                              comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc;
+                              id = $rid }
             Set-Content -Path $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
             $oldXml = ''
             if ($ours.Count -gt 0) { $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath) }

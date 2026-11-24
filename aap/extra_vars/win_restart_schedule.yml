@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows - schedule a restart"
 #   playbook:    playbooks/win_restart_schedule.yml
-#   credentials: Machine (Windows)
+#   credentials: Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window), Red Hat Ansible Automation Platform (optional: refuses a second run at once)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -22,6 +22,8 @@
 # win_restart_change: ""
 ## The time zone of the time (default report_time_zone; empty = the job refuses; UTC is allowed)
 # win_restart_time_zone: America/New_York
+## SolarWinds: the node unmanaged from 5 minutes before to 10 after (auto: with a solarwinds_manage credential; false: never)
+# win_restart_solarwinds: auto
 
 # ---- win_restart ---------------------------------------------------------------------------------
 ## Pending file rename operations (PendingFileRenameOperations) are shown, but count as "a reboot is
@@ -53,6 +55,20 @@
 ## Where the task's script and its settings live on each server (only SYSTEM and Administrators may
 ## change it).
 # win_restart_dir: 'C:\ProgramData\site-automation\restart'
+
+## The window: this many minutes before the restart time ...
+# win_restart_solarwinds_before_minutes: 5
+
+## ... to this many minutes after it.
+# win_restart_solarwinds_minutes: 10
+
+## Seconds to wait for SolarWinds' answer to one call (no retry).
+# win_restart_solarwinds_timeout: 20
+
+## All SolarWinds work of one run at most this many seconds (it comes after the restart tasks are
+## registered); past it, or with the restart less than a minute away, a server's node is left
+## managed (a warning).
+# win_restart_solarwinds_budget_seconds: 120
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

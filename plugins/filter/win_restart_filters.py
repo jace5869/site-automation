@@ -175,7 +175,7 @@ def win_restart_model(hosts, opts=None):
         r = h.get("result") or {}
         row = {"host": str(h.get("host")), "status": "", "level": "info", "pending": "", "why": "", "up": _uptime(r),
                "at_local": r.get("at_local", ""), "ours": _list(r.get("ours")), "replaced": _list(r.get("replaced")),
-               "removed": _list(r.get("removed")), "error": ""}
+               "removed": _list(r.get("removed")), "error": "", "swis": h.get("swis") or {}}
         if h.get("unreached"):
             row.update(status="not reached", level="critical", error=str(h["unreached"])[:300])
             rows.append(row)
@@ -251,7 +251,8 @@ def win_restart_doc(model, when):
     title += "".join(", %d %s" % (c, w) for c, w in ((skipped, "skipped"), (bad, "failed or not reached")) if c)
     if check:
         title += " (nothing changed)"
-    status = "critical" if bad else ("ok" if sched or not check else "info")
+    sw_warn = any(x["swis"].get("level") == "warning" for x in rows)
+    status = "critical" if bad else ("warning" if sw_warn else ("ok" if sched or not check else "info"))
     summary = [{"label": "Servers", "value": n, "status": "info", "note": "the Limit"},
                {"label": "Would restart" if check else "Scheduled", "value": sched, "status": "warning" if check and sched else ("ok" if sched else "info"),
                 "note": at}]
@@ -261,11 +262,16 @@ def win_restart_doc(model, when):
                     "note": "%d of %d read%s" % (pending, read, "" if pending else " - none pending")})
     if bad:
         summary.append({"label": "Failed or not reached", "value": bad, "status": "critical", "note": "see the table"})
+    if any(x["swis"].get("text") for x in rows):
+        un = len([x for x in rows if x["swis"].get("level") == "ok"])
+        warn = len([x for x in rows if x["swis"].get("level") == "warning"])
+        summary.append({"label": "SolarWinds - would unmanage" if check else "SolarWinds unmanaged", "value": un,
+                        "status": "warning" if warn else "info", "note": ("%d not: see the table" % warn) if warn else (o.get("swis_window") or "")})
     res = []
     for x in rows:
         r = x["status"]
         if x["status"] in ("scheduled", "would restart"):
-            r = "%s at %s" % ("Scheduled" if x["status"] == "scheduled" else "Would restart", at)
+            r = "Scheduled" if x["status"] == "scheduled" else "Would restart"          # the time: the next column, the title
         elif x["status"] == "skipped":
             r = "Skipped: no reboot pending"
         elif x["error"]:
@@ -273,14 +279,15 @@ def win_restart_doc(model, when):
         if x["status"] == "failed":
             pass
         elif x["replaced"] or (check and x["ours"] and x["status"] == "would restart"):
-            r += " - replaces %s" % "; ".join(_task_line(t) for t in (x["replaced"] or x["ours"]))
+            r += " - replaces the restart at %s" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in (x["replaced"] or x["ours"]))
         elif x["status"] == "skipped" and x["removed"]:
             r += "; the earlier restart at %s was removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["removed"])
         elif x["status"] == "skipped" and x["ours"] and check:
             r += "; the earlier restart at %s would be removed" % "; ".join(t.get("next_run") or t.get("start") or "?" for t in x["ours"])
         res.append(r)
+    sw_on = any(x["swis"].get("text") for x in rows)
     table = {"title": "Servers", "columns": ["Server", "Reboot pending", "Why", "Up since", "Restart at (server time)", "Result"],
-             "kinds": ["", "", "wrap", "", "wrap", "wrap"],
+             "kinds": ["nw", "", "wrap", "", "wrap", "wrap"], "hidden_columns": ["Up since"],
              "rows": [[_short(x["host"]), x["pending"] or "-", x["why"] or "-", x["up"] or "-",
                        (re.sub(r" \(.*\)$", "", x["at_local"]) if x["status"] in ("scheduled", "would restart") else "-") or "-", res[i]]
                       for i, x in enumerate(rows)],
@@ -288,12 +295,34 @@ def win_restart_doc(model, when):
              "cell_status": [["", "warning" if x["pending"] == "yes" else "", "", "", "", _cell(x["status"])] for x in rows],
              "column_titles": ["Server", "A reboot is pending now", "Why it is pending", "Last boot (server time) and uptime",
                                "The restart in the server's own time zone", "What the job did"]}
+    if sw_on:                                   # the SolarWinds node: one more column (unmanaged for the window, or why not)
+        table["columns"].append("SolarWinds")
+        table["kinds"].append("wrap")
+        table["column_titles"].append("The server's SolarWinds node during the restart")
+        table["hidden_columns"].append("Restart at (server time)")      # under Columns: the server names stay on one line at 1280 px
+        for i, x in enumerate(rows):
+            txt = re.sub(r"^SolarWinds: ", "", x["swis"].get("text") or "-")
+            # the node's caption only when it is not the server's own name (the row says that already)
+            txt = re.sub(r"^node (\S+) \((N:\d+)\)", lambda m_: m_.group(2) if m_.group(1).split(".")[0].lower() == _short(x["host"]).lower()
+                         else "%s (%s)" % (m_.group(1), m_.group(2)), txt)
+            table["rows"][i].append(txt)
+            table["cell_status"][i].append({"warning": "warning", "ok": "ok"}.get(x["swis"].get("level"), ""))
     lines = ["Restart time: %s in %s = %s (%s)." % (when.get("time"), when.get("zone"), at, when.get("day"))]
     if when.get("note"):
         lines.append(when["note"])
     lines.append("Only if a reboot is pending: %s%s." % ("yes" if o.get("only_if_pending") else "no",
                                                        " - checked now and again at the restart time" if o.get("only_if_pending") else ""))
     lines.append("Reason: %s" % (o.get("comment") or "-"))
+    if o.get("swis_window"):
+        lines.append("SolarWinds: each server's node %s %s (%s); SolarWinds manages it again by itself at the end."
+                     % ("would be unmanaged" if check else "unmanaged", o["swis_window"], o.get("swis_span") or ""))
+        if o.get("only_if_pending"):
+            lines.append("With only if pending, the node is unmanaged for the window even when the server finds nothing pending "
+                         "at the restart time and does not restart.")
+    elif o.get("swis_note"):
+        lines.append(o["swis_note"])
+    for t in o.get("swis_times") or []:
+        lines.append("SolarWinds returns times as %s (the window read back after the unmanage)." % ("UTC" if t == "utc" else "local time"))
     sections = [table, {"title": "When and why", "lines": lines}]
     if check and sched:
         sections.append({"title": "Run it for real", "lines": [
@@ -320,6 +349,7 @@ def win_restart_cancel_doc(model):
     if check:
         title += " (nothing changed)"
     trs, cs = [], []
+    rows_by = dict((_short(x["host"]), x) for x in rows)
     for x in rows:
         tasks = (x["removed"] if x["status"] == "removed" else x["ours"]) or [{}]
         for t in tasks:
@@ -332,14 +362,24 @@ def win_restart_cancel_doc(model):
                 "note": "our restart tasks"}]
     if bad:
         summary.append({"label": "Failed or not reached", "value": bad, "status": "critical", "note": "see the table"})
-    sections = [{"title": "Servers", "columns": ["Server", "Task", "Was set for (server time)", "Reason", "Result"],
-                 "kinds": ["", "wrap", "", "wrap", "wrap"], "rows": trs, "cell_status": cs}]
+    sw = [x for x in rows if (x["swis"] or {}).get("text")]
+    if sw:
+        trs = [r + [re.sub(r"^SolarWinds: ", "", (rows_by[r[0]]["swis"] or {}).get("text") or "-")] for r in trs]
+        cs = [c + [{"warning": "warning", "ok": "ok"}.get((rows_by[trs[i][0]]["swis"] or {}).get("level"), "")] for i, c in enumerate(cs)]
+    sections = [{"title": "Servers", "columns": ["Server", "Task", "Was set for (server time)", "Reason", "Result"] + (["SolarWinds"] if sw else []),
+                 "kinds": ["nw", "wrap", "", "wrap", "wrap"] + (["wrap"] if sw else []), "rows": trs, "cell_status": cs}]
     if check and done:
         sections.append({"title": "Run it for real", "lines": [
             "This was a Check run: nothing was changed. Launch it again without Check to remove the tasks."]})
+    sw_lines = ([o["swis_note"]] if o.get("swis_note") else []) + [
+        "SolarWinds returns times as %s (the window read back after the unmanage)." % ("UTC" if t == "utc" else "local time")
+        for t in o.get("swis_times") or []]
+    if sw_lines:
+        sections.append({"title": "SolarWinds", "lines": sw_lines})
     h_counts = [[done, "would be cancelled" if check else "cancelled", "ok"]]
     h_counts += [[c, w_, st] for c, w_, st in ((_n(model, "nothing to cancel"), "had none", "info"), (bad, "failed or not reached", "critical")) if c]
-    return {"title": title, "status": "critical" if bad else "ok", "summary": summary, "sections": sections,
+    sw_warn = any((x["swis"] or {}).get("level") == "warning" for x in rows)
+    return {"title": title, "status": "critical" if bad else ("warning" if sw_warn else "ok"), "summary": summary, "sections": sections,
             "head_name": "Windows restart cancel", "head_counts": h_counts, "head_scope": ["nothing changed"] if check else None,
             "footer": "Only our tasks (name starts with %s) are removed; a restart already counting down is not stopped (shutdown /a)."
                       % (o.get("task_name") or "site-automation restart") + (" DRY RUN (Check): nothing was changed." if check else "")}
@@ -370,11 +410,20 @@ def win_restart_log(model, when=None):
             bits.append(x["error"])
         for t in x["replaced"]:
             bits.append("replaced " + _task_line(t))
+        if x["swis"].get("text"):
+            bits.append(x["swis"]["text"])
         for t in x["removed"]:
             bits.append("removed " + _task_line(t))
         if x["status"] == "would remove":
             bits.append("; ".join(_task_line(t) for t in x["ours"]))
         out.append("%s: %s" % (_short(x["host"]), " - ".join(bits)))
+    o = model.get("opts") or {}
+    if o.get("swis_note"):
+        out.append(o["swis_note"])
+    elif o.get("swis_window"):
+        out.append("SolarWinds window: %s (%s)." % (o["swis_window"], o.get("swis_span") or ""))
+    for t in o.get("swis_times") or []:
+        out.append("SolarWinds returns times as %s." % ("UTC" if t == "utc" else "local time"))
     return out or ["No server in this run."]
 
 
@@ -480,10 +529,114 @@ def win_restart_check(o):
     return bad
 
 
+_rs = None
+
+
+def _swis():
+    """plugins/module_utils/site_win_restart_swis.py (its window and time helpers), loaded by its path as the filters load
+    each other."""
+    global _rs
+    if _rs is None:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("site_win_restart_swis_for_filters", os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_win_restart_swis.py"))
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils")
+        import sys
+        if here not in sys.path:
+            sys.path.insert(0, here)                       # its own imports: site_swis, site_host_swis
+        _rs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_rs)
+    return _rs
+
+
+def _earlier(tasks, before=5, after=10):
+    """The unmanage window an earlier restart of ours asked for ({from, until}, from its settings' restart moment), or {}."""
+    for t in _list(tasks):
+        at_ = (t or {}).get("at_utc") if isinstance(t, dict) else ""
+        if at_:
+            return _swis().window(at_, before, after)
+    return {}
+
+
+def win_restart_swis_items(hosts, mode="schedule", check=False, before=5, after=10):
+    """hosts: [{host, ip, result}] -> the servers whose restart task is registered and verified (or, in Check, would be):
+    [{host, ip, earlier}]. Nothing else ever calls SolarWinds: no Remanage, not for a skip, a reschedule or a cancel."""
+    out = []
+    if mode != "schedule":
+        return out
+    for h in hosts or []:
+        r, host = h.get("result") or {}, str(h.get("host"))
+        if not r or r.get("error"):
+            continue
+        if (check and r.get("restart")) or (not check and r.get("scheduled")):
+            out.append({"host": host, "ip": str(h.get("ip") or ""),
+                        "earlier": _earlier(r.get("replaced") if not check else r.get("ours"), before, after)})
+    return out
+
+
+def win_restart_swis_map(hosts, result, state="on", why="", zone="", before=5, after=10):
+    """The SolarWinds line of each server: {host: {text, level}}. state: on, off, nocred, error (why)."""
+    out = {}
+    if state != "on":
+        return out
+    tz = _swis_tz(zone)
+    for h in hosts or []:
+        r, host = h.get("result") or {}, str(h.get("host"))
+        got = (result or {}).get(host)
+        if got and got.get("text"):
+            out[host] = {"text": got["text"], "level": got.get("level", "info")}
+        elif r and not r.get("error") and r.get("restart") is False:
+            text = "SolarWinds: not unmanaged (skipped: no reboot pending)"
+            e = _earlier(r.get("removed") or r.get("ours"), before, after)
+            if e:
+                text += "; the earlier restart's unmanage window (%s), if it was set, ends by itself" % _swis().shown(e, tz)
+            out[host] = {"text": text, "level": "info"}
+    return out
+
+
+def _swis_tz(zone):
+    z = str(zone or "").strip()
+    if not z or z.upper() in UTC_NAMES or zoneinfo is None:
+        return None
+    try:
+        return zoneinfo.ZoneInfo(z)
+    except Exception:  # noqa: BLE001 - shown in UTC then
+        return None
+
+
+def win_restart_swis_cancel(hosts, check=False, zone="", before=5, after=10, state="on"):
+    """Cancel never calls SolarWinds: the line of each server whose restart of ours goes - its unmanage window (if it was
+    set) stays and ends by itself."""
+    out = {}
+    if state == "off":
+        return out
+    tz = _swis_tz(zone)
+    for h in hosts or []:
+        r, host = h.get("result") or {}, str(h.get("host"))
+        if not r or r.get("error"):
+            continue
+        e = _earlier(r.get("ours") if check else r.get("removed"), before, after)
+        if e:
+            out[host] = {"level": "info", "text": "SolarWinds: the unmanage window %s (if it was set) %s and ends by itself; re-manage the "
+                                                  "node by hand in SolarWinds if needed" % (_swis().shown(e, tz), "would stay" if check else "stays")}
+    return out
+
+
+def win_restart_swis_note(state, why="", check=False):
+    """The one line when SolarWinds is not used this run."""
+    return {"off": "SolarWinds: off (win_restart_solarwinds: false) - nodes stay managed.",
+            "nocred": "SolarWinds: no credential - node stays managed (attach a SolarWinds credential that may manage nodes: kind solarwinds_manage).",
+            "error": "SolarWinds: %s - nodes stay managed." % (why or "could not be read")}.get(state, "")
+
+
 class FilterModule(object):
     def filters(self):
         return {"win_restart_when": win_restart_when, "win_restart_comment": win_restart_comment, "win_restart_parse": win_restart_parse,
                 "win_restart_model": win_restart_model, "win_restart_doc": win_restart_doc, "win_restart_cancel_doc": win_restart_cancel_doc,
                 "win_restart_summary_items": win_restart_summary_items, "win_restart_log": win_restart_log, "win_restart_check": win_restart_check,
                 "win_restart_selector": win_restart_selector, "win_restart_hosts": win_restart_hosts,
-                "win_restart_unnamed": win_restart_unnamed}
+                "win_restart_unnamed": win_restart_unnamed,
+                "win_restart_swis_items": win_restart_swis_items, "win_restart_swis_map": win_restart_swis_map,
+                "win_restart_swis_cancel": win_restart_swis_cancel,
+                "win_restart_swis_note": win_restart_swis_note}

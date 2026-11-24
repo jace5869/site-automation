@@ -63,13 +63,24 @@
     - name: Every server, as one model
       ansible.builtin.set_fact:
         _wr_model: >-
-          {{ _wr_hosts | win_restart_model({'mode': 'cancel', 'check': ansible_check_mode, 'task_name': win_restart_task_name}) }}
+          {{ _wr_hosts | win_restart_model({'mode': 'cancel', 'check': ansible_check_mode, 'task_name': win_restart_task_name,
+                                            'swis_note': _wr_sw_state | win_restart_swis_note}) }}
       vars:
+        # cancel never calls SolarWinds: each removed restart's unmanage window (if it was set) ends by itself - said
+        _wr_sw_state: "{{ 'off' if win_restart_solarwinds | string | lower in ['false', 'no', 'off'] else 'on' }}"
+        _wr_swcancel: >-
+          {%- set hs = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
+          {%-   set _ = hs.append({'host': h, 'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%- endfor -%}
+          {{ hs | win_restart_swis_cancel(ansible_check_mode, win_restart_time_zone | default('', true),
+                                          win_restart_solarwinds_before_minutes | int, win_restart_solarwinds_minutes | int, _wr_sw_state) }}
         _wr_hosts: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
           {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
-                                    'unreached': hostvars[h].site_host_unreached | default('')}) -%}
+                                    'unreached': hostvars[h].site_host_unreached | default(''),
+                                    'swis': _wr_swcancel[h] | default({})}) -%}
           {%- endfor -%}
           {{ out }}
       run_once: true

@@ -53,6 +53,24 @@
               docs/WINDOWS.md, "Schedule a restart".
             quiet: true
 
+        # 1 run at a time (two could both find a SolarWinds node without a window and both write): the template is made with
+        # Concurrent jobs off; with a "Red Hat Ansible Automation Platform" credential the run also checks it here
+        - name: Another run of this template still going? (AAP, read only)
+          site_win_restart_busy:
+            template_id: "{{ awx_job_template_id | default(tower_job_template_id | default(0)) | int }}"
+            job_id: "{{ awx_job_id | default(tower_job_id | default(0)) | int }}"
+          register: _wr_busy
+          delegate_to: localhost
+          check_mode: false
+
+        - name: Nothing is changed while another run of this template is going
+          ansible.builtin.assert:
+            that: _wr_busy.busy | default([]) | length == 0
+            fail_msg: >-
+              Nothing was read or changed: another run of this template is still going (AAP job {{ _wr_busy.busy | join(', ') }}).
+              Launch it again when that one has ended.
+            quiet: true
+
         - name: The restart time
           ansible.builtin.debug:
             msg: >-
@@ -79,20 +97,66 @@
         _wr_action: "{{ 'plan' if ansible_check_mode else 'schedule' }}"
       when: site_host_unreached | default('') | length == 0
 
+    # SolarWinds (win_restart_solarwinds: auto), after the restart tasks are registered and verified (the restart time is
+    # never lost to SolarWinds): each node found by name only, then unmanaged only when it has no unmanage window at all;
+    # never Remanage - an earlier window (ours or a person's) ends by itself. Bounded (win_restart_solarwinds_budget_seconds);
+    # a restart less than a minute away by then: SolarWinds skipped for that server.
+    - name: SolarWinds - unmanage the node of each restart scheduled (Check - what it would do)
+      site_win_restart_swis:
+        items: >-
+          {{ _wr_res_hosts | win_restart_swis_items('schedule', ansible_check_mode, win_restart_solarwinds_before_minutes | int,
+                                                    win_restart_solarwinds_minutes | int) }}
+        at_utc: "{{ _wr_when.utc }}"
+        before: "{{ win_restart_solarwinds_before_minutes | int }}"
+        after: "{{ win_restart_solarwinds_minutes | int }}"
+        check: "{{ ansible_check_mode }}"
+        zone: "{{ _wr_when.zone }}"
+        timeout: "{{ win_restart_solarwinds_timeout | int }}"
+        budget: "{{ win_restart_solarwinds_budget_seconds | int }}"
+      vars:
+        _wr_res_hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set _ = out.append({'host': h, 'ip': hostvars[h].ansible_host | default(''),
+                                    'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%- endfor -%}
+          {{ out }}
+      register: _wr_swrun
+      delegate_to: localhost
+      run_once: true
+      check_mode: false                 # in Check it is told so (check: true) and invokes nothing
+      when: win_restart_solarwinds | string | lower not in ['false', 'no', 'off']
+
   post_tasks:
     - name: Every server, as one model
       ansible.builtin.set_fact:
         _wr_model: >-
           {{ _wr_hosts | win_restart_model({'mode': 'schedule', 'check': ansible_check_mode, 'comment': _wr_comment,
-                                            'only_if_pending': win_restart_only_if_pending | bool}) }}
+                                            'only_if_pending': win_restart_only_if_pending | bool,
+                                            'swis_window': _wr_swrun.window_text | default('') if _wr_sw_state == 'on' else '',
+                                            'swis_span': win_restart_solarwinds_before_minutes ~ ' minutes before to '
+                                                         ~ win_restart_solarwinds_minutes ~ ' minutes after',
+                                            'swis_note': _wr_sw_state | win_restart_swis_note(_wr_swrun.skipped_why | default('')),
+                                            'swis_times': _wr_swrun.times | default([])}) }}
       vars:
         _wr_hosts: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
           {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
-                                    'unreached': hostvars[h].site_host_unreached | default('')}) -%}
+                                    'unreached': hostvars[h].site_host_unreached | default(''),
+                                    'swis': _wr_swmap[h] | default({})}) -%}
           {%- endfor -%}
           {{ out }}
+        _wr_sw_state: >-
+          {{ 'off' if _wr_swrun is skipped else ('nocred' if _wr_swrun.skipped_why | default('') == 'no credential'
+             else ('error' if _wr_swrun.skipped_why | default('') | length > 0 else 'on')) }}
+        _wr_swmap: >-
+          {%- set hs = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
+          {%-   set _ = hs.append({'host': h, 'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%- endfor -%}
+          {{ hs | win_restart_swis_map(_wr_swrun.result | default({}), _wr_sw_state, '', _wr_when.zone,
+                                       win_restart_solarwinds_before_minutes | int, win_restart_solarwinds_minutes | int) }}
       run_once: true
 
     - name: Each server

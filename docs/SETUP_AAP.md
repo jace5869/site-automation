@@ -676,7 +676,8 @@ and checks the ones already there. It never deletes a template.
 1. Make this one template by hand. Copy `aap/extra_vars/aap_templates_setup.yml` into its Variables box.
 2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
    (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`; 1.123.0:
-   `ontap_write`, the NetApp ONTAP credential that may grow volumes, for *NetApp - expand a volume*). A template
+   `ontap_write`, the NetApp ONTAP credential that may grow volumes, for *NetApp - expand a volume*; `solarwinds_manage`,
+   a credential of the type SolarWinds (manage nodes) (`aap/credential_types/solarwinds_manage.yml`) whose account may manage nodes, for *Windows - schedule a restart*). A template
    that needs a kind you did not name is skipped, and the job says which kind. The project, the inventory and the
    credentials are looked up in `aap_templates_organization` only (an execution environment of no organization too):
    one of another organization, or a personal credential, is never used. The inventory is needed only to make a

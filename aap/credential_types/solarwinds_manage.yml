@@ -1,0 +1,34 @@
+# Credential type: "SolarWinds (manage nodes)"
+# A SolarWinds Orion account that may manage nodes (Node Management rights), for Windows - schedule a restart
+# (playbooks/win_restart_schedule.yml): the server's node unmanaged for the restart window, which ends by itself (docs/WINDOWS.md, "SolarWinds: the node unmanaged for the restart"). Its own variables
+# (SOLARWINDS_MANAGE_*): the read-only "SolarWinds (read-only)" credential of the reports (SOLARWINDS_*) can never be used for
+# a write by mistake, and this one is never read by the reports. A Windows account: DOMAIN\user.
+inputs:
+  fields:
+    - id: url
+      type: string
+      label: SolarWinds address
+      help_text: "e.g. orion.yoursite.mil - https:// and the SWIS port 17774 are added (an Orion older than 2023.1: https://orion.yoursite.mil:17778)"
+    - id: username
+      type: string
+      label: SolarWinds user name (may manage nodes)
+    - id: password
+      type: string
+      label: SolarWinds password
+      secret: true
+    - id: verify
+      type: boolean
+      label: Check SolarWinds' certificate
+      default: true
+    - id: ca_path
+      type: string
+      label: CA file (PEM) to check it with
+      help_text: "a path where the job runs; empty = the execution environment's own trust"
+  required: [url, username, password]
+injectors:
+  env:
+    SOLARWINDS_MANAGE_URL: "{{ url }}"
+    SOLARWINDS_MANAGE_USERNAME: "{{ username }}"
+    SOLARWINDS_MANAGE_PASSWORD: "{{ password }}"
+    SOLARWINDS_MANAGE_VERIFY: "{{ verify }}"
+    SOLARWINDS_MANAGE_CA_PATH: "{{ ca_path }}"
