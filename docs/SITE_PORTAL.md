@@ -1094,11 +1094,14 @@ portal_windows_hosts_from:
 
 Only what AAP's API shows counts: group names, and the Variables of hosts, groups and the inventory (a dynamic source's host
 variables too; a dotted name reads into a mapping, e.g. `config.guestId: ["*windows*"]`). Settings in the project's
-`playbooks/group_vars` are not seen. When nothing matches (or the setting is `{}`), every host is listed and one muted line says
-*The Windows filter is not set* or *matches no host of this inventory*; the job's own check skips a host that is not Windows.
+`playbooks/group_vars` are not seen. **Only `portal_windows_hosts_from: {}` turns the filter off** (every host is listed, one muted
+line says so; the job's own check skips a host that is not Windows). A rule that matches no host lists **no** host and refuses
+the launch: *no host matches the Windows rule (portal_windows_hosts_from) - set it to your inventory's Windows group or variable*.
+That is checked again when the job starts: a sync that removed the last Windows match refuses the launch, never sends every host.
 
 The portal reads the inventory as Ansible does (AAP's *inventories/<id>/script/*, one call): a variable counts as the host would
-see it - the inventory's, then its groups from the top down (a child group over its parent; at the same depth the later name),
+see it - the inventory's, then its groups from the top down (a child group over its parent; at the same depth the higher
+`ansible_group_priority`, then the later name),
 then the host's own. It is read again **when the job starts**: a host synced into a picked group after the page opened is
 checked too. When AAP does not answer that read, the list says so and **Run is refused** (*could not check which hosts are
 Windows - try again*); it never falls back to every host.
@@ -1206,7 +1209,9 @@ Your jobs are already in AAP. Instead of adding the label `portal` to each one b
 4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
 5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
 
-It never removes anything. A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
+It never removes anything but one case (1.130.0): a template on `portal_setup_never_published` (default *Windows - trust store
+report*, which removes certificates when `check_trust_remove` is true) is never published by a pattern, and its `portal` label is
+taken off where an earlier run put it (*label ... remove* in the list). A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
 **Admin** on the organization of the templates, as for the rest of this job.
 
 To take a job off the portal, list it the same way and run the job again (Check first):

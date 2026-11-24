@@ -48,6 +48,7 @@ options:
   publish: {description: "1.78.1: patterns (case-insensitive, * and ?) of the names of job templates and workflows to put on the portal: each gets the label (publish_label) and Execute for portal_user. Nothing is removed.", type: list, elements: str, default: []}
   publish_area: {description: "1.78.1: {pattern: area} - a published template whose name matches gets the label <area_label><area> (the first pattern wins; an area label already there stays).", type: dict, default: {}}
   unpublish: {description: "1.78.1: patterns of the names to take off the portal: the label (publish_label) is removed, never a role.", type: list, elements: str, default: []}
+  never: {description: "1.130.0: exact names (any case) never on the portal: never published by a pattern, and the label (publish_label) is taken off one that has it (Windows - trust store report: it removes certificates when check_trust_remove is true).", type: list, elements: str, default: []}
   publish_label: {description: The label that marks a template for the portal (portal_label)., type: str, default: portal}
   area_label: {description: The start of an area label (portal_label_area)., type: str, default: "portal-area:"}
   alone_label: {description: "1.92.0: the label that keeps a workflow's step on the portal as a card of its own (portal_label_alone): a check that is a useful report alone.", type: str, default: portal-alone}
@@ -247,11 +248,12 @@ class Setup(Sync):
         (a problem is said and nothing is changed): a pattern that is not text, one that matches more than publish_max, a template in both lists."""
         p = self.p
         pubs, unpubs, areas = list(p.get("publish") or []), list(p.get("unpublish") or []), dict(p.get("publish_area") or {})
+        never = set(str(x).strip().casefold() for x in (p.get("never") or []) if str(x).strip())
         mx = p.get("publish_max")
         if isinstance(mx, bool) or not isinstance(mx, int) or not 1 <= mx <= 500:
             self.problems.append("portal_publish_max must be a number from 1 to 500, not %r (nothing was changed)" % (mx,))
             return None
-        if not pubs and not unpubs:
+        if not pubs and not unpubs and not never:
             return {"publish": [], "unpublish": [], "pats": {}}
         for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
             if not all(isinstance(x, str) and x.strip() for x in pats):
@@ -295,11 +297,15 @@ class Setup(Sync):
             self.problems.append("portal_publish_templates and portal_unpublish_templates both match: %s (nothing was changed)" % ", ".join(names[:10]))
             return None
         pub, unpub, seen_p, seen_u = [], [], set(), set()
+        is_never = lambda r: str(r.get("name") or "").strip().casefold() in never          # noqa: E731
         for pat in pubs:
             hit = found[("portal_publish_templates", pat)]
             if not hit:
                 self.note("publish", pat, "skipped", why="matches no job template or workflow")
             for k, r in hit:
+                if is_never(r):                         # 1.130.0: never on the portal, whatever pattern matches it
+                    self.note("publish", str(r.get("name")), "skipped", why="never on the portal (it can change servers from a report run)")
+                    continue
                 if (k, r["id"]) not in seen_p:
                     seen_p.add((k, r["id"]))
                     pub.append((k, r))
@@ -311,6 +317,10 @@ class Setup(Sync):
                 if (k, r["id"]) not in seen_u:
                     seen_u.add((k, r["id"]))
                     unpub.append((k, r))
+        for k, r in rows:                               # 1.130.0: and its label taken off when it has it (labels_on reads them all)
+            if is_never(r) and (k, r["id"]) not in seen_u:
+                seen_u.add((k, r["id"]))
+                unpub.append((k, r))
         return {"publish": pub, "unpublish": unpub, "areas": areas}
 
     def labels_on(self, api_kind, row):
@@ -614,6 +624,7 @@ def main():
                            scorecard=dict(type="dict", default={}),
                            publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
+                           never=dict(type="list", elements="str", default=[]),
                            area_label=dict(type="str", default="portal-area:"), alone_label=dict(type="str", default="portal-alone"), publish_max=dict(type="int", default=50),
                            describe=dict(type="dict", default={}), known=dict(type="dict", default=None),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),

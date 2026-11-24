@@ -217,6 +217,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_publish_organization` | (empty) | an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any |
 | `portal_publish_max` | `50` | the most one pattern may match |
 | `portal_unpublish_templates` | `[]` | Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape. |
+| `portal_setup_never_published` | `["Windows - trust store report"]` | 1.130.0: never on the portal (exact names, any case): never published by a pattern, and the label is taken off one that has it. Windows - trust store report removes certificates when check_trust_remove is true. |
 
 ## aap_template_audit
 

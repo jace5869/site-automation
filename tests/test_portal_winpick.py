@@ -336,16 +336,47 @@ class Live(unittest.TestCase):
         self.assertFalse(cat["Windows - trust store report"].get("portal"))      # it removes certificates when check_trust_remove is true
         self.assertTrue(cat["Windows - local group members"].get("portal"))
 
-    def test_g_no_filter_says_so(self):
+    def test_g_only_an_empty_rule_turns_the_filter_off(self):
+        """1.130.0 (Codex verify): portal_windows_hosts_from: {} lists every host; a rule that matches nothing lists nothing and
+        refuses the launch - never every host."""
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM="{}"))
         r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
         self.assertEqual(len(r["items"]), 9)
-        self.assertIn("not set (portal_windows_hosts_from)", r["os_note"])
+        self.assertIn("filter is off", r["os_note"])
+        self.assertEqual(len(p.aap.expand(["all_app"], INV, "windows")[0]), 3)
         p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM=json.dumps({"groups": ["nothing-like-this*"]})))
         r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
-        self.assertEqual(len(r["items"]), 9)
-        self.assertIn("matches no host", r["os_note"])
-        self.assertEqual(len(p.aap.expand(["all_app"], INV, "windows")[0]), 3)      # no Windows host known: the group as it is
+        self.assertEqual(r["items"], [])
+        self.assertIn("No host matches the Windows rule", r["os_note"])
+        self.assertIn("no host matches the Windows rule", p.aap.expand(["all_app"], INV, "windows")[1])
+        self.assertIn("no host matches the Windows rule", p.aap.expand_now(["all_app"], INV, "windows")[1])
+
+    def test_p_a_sync_that_drops_the_last_windows_match_refuses_the_launch(self):
+        """1.130.0 (Codex verify): picked while Windows hosts matched; at launch none does - refused, never the Linux members."""
+        inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
+        p = self.make(dict(self.env, PORTAL_WINDOWS_HOSTS_FROM=json.dumps({"groups": ["windows_servers"]})))
+        self.assertEqual(p.aap.expand(["all_app"], INV, "windows"), (["srv-app02.corp.example.mil"], ""))
+        keep = inv["groups"].pop("windows_servers")
+        try:
+            hosts, why = p.aap.expand_now(["all_app"], INV, "windows")
+            self.assertIsNone(hosts)
+            self.assertIn("no host matches the Windows rule", why)
+        finally:
+            inv["groups"]["windows_servers"] = keep
+
+    def test_q_an_empty_answer_is_a_failed_read(self):
+        """1.130.0 (Codex verify): an empty or odd 200 is not an inventory - refused, never "no Windows host"."""
+        from unittest import mock
+        for doc in ({}, {"all": {}}, {"_meta": {}}, {"_meta": {"hostvars": []}, "all": {}}, []):
+            with mock.patch.object(self.portal.aap, "call", return_value=(200, doc)):
+                self.assertEqual(self.portal.aap.classify(INV), (None, "could not check which hosts are Windows just now - try again"), doc)
+
+    def test_r_group_priority_between_depth_and_name(self):
+        """1.130.0 (Codex verify): siblings - a higher ansible_group_priority wins over a later name (Ansible's sort_groups)."""
+        vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
+        inv = {"hosts": ["h1"], "groups": {"a_win": ["h1"], "b_lin": ["h1"]},
+               "group_vars": {"a_win": "ansible_connection: winrm\nansible_group_priority: 10", "b_lin": "ansible_connection: ssh"}}
+        self.assertEqual(sp.windows_hosts(vr, Rules.script(inv)), {"h1"})
 
 
 if __name__ == "__main__":

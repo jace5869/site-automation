@@ -212,8 +212,8 @@ def windows_hosts(win_rules, script):
     """The Windows hosts of an inventory (a set), or None when there is no rule. script: the inventory as Ansible reads it
     (AAP's inventories/<id>/script/?hostvars=1&all=1: {group: {hosts, children, vars}, _meta: {hostvars}}). A host is Windows
     when a group it is in (or one above it) matches a name glob, or when a rule's variable matches its value as Ansible
-    would see it: the inventory's (all), then its groups from the top down (a child group over its parent; same depth by
-    name), then the host's own."""
+    would see it: the inventory's (all), then its groups as Ansible sorts them - by depth (a child over its parent), then
+    ansible_group_priority (higher wins), then name - then the host's own."""
     if not win_rules:
         return None
     doc = script if isinstance(script, dict) else {}
@@ -255,6 +255,11 @@ def windows_hosts(win_rules, script):
             out.add(g)
             todo.extend(parents.get(g, ()))
         return out
+    def prio(g):
+        try:
+            return int(((groups.get(g) or {}).get("vars") or {}).get("ansible_group_priority", 1))
+        except (TypeError, ValueError):
+            return 1
     out = set()
     globs = win_rules.get("groups") or []
     for h in hosts:
@@ -265,7 +270,7 @@ def windows_hosts(win_rules, script):
         if not win_rules.get("vars"):
             continue
         eff = dict((groups.get("all") or {}).get("vars") or {})
-        for g in sorted(gs, key=lambda x: (dep(x), x)):
+        for g in sorted(gs, key=lambda x: (dep(x), prio(x), x)):
             eff.update((groups.get(g) or {}).get("vars") or {})
         eff.update(hv.get(h) if isinstance(hv.get(h), dict) else {})
         if any(_var_hits(_var_value(eff, k), vals) for k, vals in win_rules["vars"].items()):
@@ -1367,8 +1372,9 @@ class Aap(object):
         if not self.cfg.windows_from:
             return None, ""
         code, doc = self.call("GET", "inventories/%d/script/?hostvars=1&towervars=0&all=1" % int(iid))
-        if code != 200 or not isinstance(doc, dict):
-            return None, "could not check which hosts are Windows just now - try again"
+        meta = doc.get("_meta") if isinstance(doc, dict) else None
+        if code != 200 or not isinstance(meta, dict) or not isinstance(meta.get("hostvars"), dict) or not isinstance(doc.get("all"), (dict, list)):
+            return None, "could not check which hosts are Windows just now - try again"          # an empty or odd answer too
         return windows_hosts(self.cfg.windows_from, doc), ""
 
     def listing_max_age(self):
@@ -1391,6 +1397,8 @@ class Aap(object):
                 return True
         return False                                    # none, a part, or one too old to stand for the inventory: the new read serves
 
+    NO_WINDOWS = ("stands for no Windows host: no host matches the Windows rule (portal_windows_hosts_from) - set it to your "
+                  "inventory's Windows group or variable")
     AMBIGUOUS = "is both a host's and a group's name in the inventory - a Limit cannot tell them apart: rename one, or pick the hosts another way"
 
     def _members(self, inv, name):
@@ -1422,7 +1430,9 @@ class Aap(object):
         if os_ == "windows" and inv.get("win_error"):
             return None, inv["win_error"]
         hostset, out, seen = set(inv["hosts"]), [], set()
-        win = inv.get("win") if os_ == "windows" and inv.get("win") else None
+        win = inv.get("win") if os_ == "windows" else None          # None only when portal_windows_hosts_from is {}
+        if win is not None and not win:
+            return None, self.NO_WINDOWS
         for name in items:
             if name in inv.get("bad", ()):
                 return None, "is a group whose hosts could not be read completely just now - pick its hosts, or try again"
@@ -1460,7 +1470,8 @@ class Aap(object):
             win, why = self.classify(iid)
             if why:
                 return None, why
-            win = win or None                       # the rule matches no host: the job's own check skips the others
+            if win is not None and not win:         # 1.130.0: a rule that matches nothing never means "every host"
+                return None, self.NO_WINDOWS
         grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
         if gwhy:
             return None, "could not be looked up in the inventory just now - try again"
@@ -1538,13 +1549,14 @@ class Aap(object):
         t = str(text or "").strip().lower()[:64]
         win = inv.get("win") if os_ == "windows" else None
         note = ""
-        if os_ == "windows" and inv.get("win_error"):
-            win, note = None, "Which hosts are Windows could not be read just now: every host is listed, and Run is refused until it can be read."
-        elif os_ == "windows" and not win:
-            win = None
-            note = ("The Windows filter is not set (portal_windows_hosts_from): every host is listed. The job skips hosts that are not Windows."
-                    if not self.cfg.windows_from else
-                    "The Windows filter (portal_windows_hosts_from) matches no host of this inventory: every host is listed. The job skips hosts that are not Windows.")
+        if os_ == "windows" and inv.get("win_error"):           # never every host instead: nothing to pick until it can be read
+            return {"items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
+                    "os_note": "Which hosts are Windows could not be read just now - try again in a minute."}
+        if os_ == "windows" and win is None:
+            note = "The Windows filter is off (portal_windows_hosts_from: {}): every host is listed. The job skips hosts that are not Windows."
+        elif os_ == "windows" and not win:          # 1.130.0: a rule that matches nothing lists nothing (never every host)
+            return {"items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
+                    "os_note": "No host matches the Windows rule (portal_windows_hosts_from) - set it to your inventory's Windows group or variable."}
         lazy = inv.get("lazy") or {}
         grp = str(group or "")[:200]
         if grp and grp in lazy:

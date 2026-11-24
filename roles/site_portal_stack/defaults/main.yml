@@ -120,8 +120,8 @@ portal_limit_max: 50                              # a found template's Limit sta
 # lists only the inventory's Windows hosts, and a group there stands for its Windows hosts. A host is Windows when it is in a group
 # whose name matches one of groups (globs, any case), or when one of vars matches: the host's own value, else a group's, else the
 # inventory's (what AAP's API shows - a dynamic source's host variables count; playbooks/group_vars in the project do not). A
-# dotted name reads into a mapping (config.guestId). Nothing matches, or {}: every host is listed, with one line saying so - the
-# job's own check skips a host that is not Windows either way.
+# dotted name reads into a mapping (config.guestId); group priority as Ansible. {} = the filter is off (every host is listed). A
+# rule that matches no host lists none and refuses the launch (set it to your Windows group or variable).
 portal_windows_hosts_from:
   groups: ["*windows*"]
   vars:
