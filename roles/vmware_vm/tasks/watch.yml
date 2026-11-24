@@ -348,7 +348,8 @@
             _vm_w_aar_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | outage_redact | truncate(200) }}"
 
     - name: VMware | the outage report
-      when: (_vm_w_report_it | bool or _vm_w_review | bool or _vm_w_mail.kind == 'recovered') and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
+      # 1.118.8: also when the email limit sends what it held (_vm_w_mail.held_send), on a run with nothing down now
+      when: (_vm_w_report_it | bool or _vm_w_review | bool or _vm_w_mail.kind == 'recovered' or _vm_w_mail.held_send | default(false) | bool) and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
       block:
         - name: VMware | the report
           ansible.builtin.set_fact:
@@ -448,6 +449,31 @@
     # an email that did not go out (no recipient, a review that was only a blip): the last state, as it was
     _vm_w_mail_keep: "{{ _vm_w_mail.state if _vm_w_mail_out | default(false) | bool or not _vm_w_mail.send | bool else _vm_w_mail.carry }}"
   when: _vm_w_mail_keep is not none and not ansible_check_mode
+
+# 1.118.8: the email state also in the report database, every run while the credential is attached (watch_email.yml), so
+# it is current when AAP cannot be read. Here, after the email: a send that failed stopped the job before this, and keeps
+# the last state there. The state as sent only when this email went out (site_mail answered); the last one otherwise.
+- name: VMware | the watch's email state in the report database (vm_watch_email_db)
+  site_vm_watch_email_db:
+    host: "{{ _vm_w_mail_dbh }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    mode: write
+    needed: "{{ _vm_w_mail.source | default('aap') == 'db' }}"
+    template: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
+    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    state: "{{ _vm_w_mail_dbkeep }}"
+  vars:
+    _vm_w_mail_went: >-
+      {{ _vm_w_mail_out | default(false) | bool and _email_sent is defined and _email_sent is not skipped
+         and _email_sent is not failed }}
+    _vm_w_mail_dbkeep: "{{ _vm_w_mail.state if _vm_w_mail_went | bool or not _vm_w_mail.send | bool else _vm_w_mail.carry }}"
+  no_log: "{{ vm_watch_review | bool }}"
+  when: _vm_w_mail_dbh | default('') | length > 0 and _vm_w_mail_dbkeep is not none and not ansible_check_mode
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml

@@ -1371,7 +1371,9 @@ AAP cannot be read, it reads it here. Each run keeps it here while the credentia
 
 | | |
 |---|---|
-| What a run writes | one row per job template: the last email's time and conditions (JSON, a few KB at most) |
+| What a run writes | one row per job template: the last email's time and conditions (JSON, a few KB at most), after the email went |
+| What a read checks | that a write works (written and rolled back). A login with SELECT only counts as no database |
+| A database that stops answering | given up after 20 seconds, before the email |
 | What a run deletes | nothing: the row is replaced |
 | When the database is down | a run that needs it (AAP not readable) warns in the job output. Then, only a critical condition is emailed, in the first 15 minutes of each 30 |
 | A dry run (Check) | reads, writes nothing |

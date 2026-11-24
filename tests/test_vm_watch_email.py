@@ -274,10 +274,24 @@ class Floor1188(unittest.TestCase):
         d = floor([cond("esx01")], None, T0, on_change=False)
         self.assertTrue(d["send"])
         d2 = floor([cond("esx01")], d["state"], T0 + 900, on_change=False)
-        self.assertEqual((d2["send"], d2["state"]), (False, d["state"]))
-        q = floor([], d["state"], T0 + 1200, on_change=False)
-        self.assertEqual((q["send"], q["state"]), (False, d["state"]))             # a clean run keeps the last email
-        self.assertTrue(floor([cond("esx01")], d["state"], T0 + 1800, on_change=False)["send"])
+        self.assertEqual((d2["send"], d2["state"]["sent_ts"], d2["state"]["ids"]), (False, T0, d["state"]["ids"]))
+        q = floor([], d2["state"], T0 + 1200, on_change=False)
+        self.assertEqual((q["send"], q["state"]), (False, d2["state"]))            # a clean run keeps the last email
+        d3 = floor([cond("esx01")], q["state"], T0 + 1800, on_change=False)
+        self.assertEqual((d3["send"], d3["changed"], d3["state"]["held"]), (True, [], []))   # esx01 is in the report itself
+
+    def test_every_report_mode_keeps_a_flap_inside_the_window(self):
+        # Codex review: a second host down and back inside the window still reaches the next email - on a clean run too
+        d = floor([cond("esx01")], None, T0, on_change=False)
+        d = floor([cond("esx01"), cond("esx02")], d["state"], T0 + 600, on_change=False)
+        self.assertFalse(d["send"])
+        d = floor([], d["state"], T0 + 1200, on_change=False)
+        self.assertFalse(d["send"])
+        d = floor([], d["state"], T0 + 1800, on_change=False)
+        self.assertEqual((d["send"], d["kind"], d["report"]), (True, "recovered", True))
+        self.assertEqual(d["changed"], ["Earlier (06:10): Seen: host:esx01 (critical)", "Earlier (06:10): Seen: host:esx02 (critical)"])
+        self.assertEqual(d["state"]["held"], [])
+        self.assertFalse(floor([], d["state"], T0 + 3600, on_change=False)["send"])      # once
 
     def test_manual_review_still_emails(self):
         st = floor([cond("esx01")])["state"]
@@ -286,6 +300,26 @@ class Floor1188(unittest.TestCase):
         self.assertEqual(d["state"]["read_ts"], T0 + 300)
         d = floor([], None, T0 + 300, review=True, why="no AAP connection")       # and with no state at all
         self.assertTrue(d["send"])
+
+    def test_a_review_carries_what_was_held(self):
+        # Codex review: a short critical outage held inside the window, over before the review, is in the review's email
+        st = floor([cond("esx01")])["state"]
+        h = floor([cond("esx01"), cond("esx02")], st, T0 + 600)["state"]
+        d = floor([cond("esx01")], h, T0 + 900, review=True)
+        self.assertEqual((d["send"], d["kind"]), (True, "review"))
+        self.assertIn("Earlier (06:10): New: host:esx02 (critical)", d["changed"])
+        self.assertEqual(d["state"]["held"], [])
+
+    def test_a_vcenter_not_read_does_not_hold_back_what_was_seen(self):
+        # Codex review: held on vc01, vc02 not read when the window ends - what was seen still goes, not as Recovered
+        st = floor([cond("esx01", vc="vc01")])["state"]
+        h = floor([cond("esx01", vc="vc01"), cond("esx02", vc="vc01")], st, T0 + 600)["state"]
+        d = floor([cond("esx01", vc="vc01")], h, T0 + 1800, unread=True)
+        self.assertEqual((d["send"], d["kind"]), (True, "change"))
+        self.assertEqual(d["changed"], ["Earlier (06:10): New: host:esx02 in vc01 (critical)"])
+        d = floor([], h, T0 + 1800, unread=True)                                        # nothing seen at all now
+        self.assertEqual((d["send"], d["kind"]), (True, "change"))                      # never Recovered on a partial read
+        self.assertEqual(d["state"]["ids"], st["ids"])
 
     def test_the_report_database_state_when_aap_cannot_be_read(self):
         st = floor([cond("esx01")])["state"]
@@ -337,7 +371,9 @@ class FakeCursor(object):
             row = self.conn.rows.get(args[0])
             self.one = (row[2],) if row else None
         elif sql.startswith("INSERT INTO vm_watch_email_state"):
-            self.conn.rows[args[0]] = args
+            if self.conn.select_only:
+                raise RuntimeError("INSERT command denied to user 'reader'")
+            self.conn.pending[args[0]] = args
         return 0
 
     def fetchone(self):
@@ -345,14 +381,18 @@ class FakeCursor(object):
 
 
 class FakeConn(object):
-    def __init__(self, tables=()):
-        self.tables, self.rows, self.sql = set(tables), {}, []
+    def __init__(self, tables=(), select_only=False):
+        self.tables, self.rows, self.sql, self.pending, self.select_only = set(tables), {}, [], {}, select_only
 
     def cursor(self):
         return FakeCursor(self)
 
     def commit(self):
-        pass
+        self.rows.update(self.pending)
+        self.pending = {}
+
+    def rollback(self):
+        self.pending = {}
 
 
 class Database1188(unittest.TestCase):
@@ -378,8 +418,62 @@ class Database1188(unittest.TestCase):
             tasks = yaml.safe_load(fh)
         read = next(t for t in tasks if (t.get("site_vm_watch_email_db") or {}).get("mode") == "read")
         self.assertEqual(read["site_vm_watch_email_db"]["create"], "{{ not ansible_check_mode }}")
+        self.assertFalse(any((t.get("site_vm_watch_email_db") or {}).get("mode") == "write" for t in tasks))
+
+    def write_task(self):
+        with open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "watch.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        names = [t.get("name") for t in tasks]
         write = next(t for t in tasks if (t.get("site_vm_watch_email_db") or {}).get("mode") == "write")
+        return tasks, names, write
+
+    def test_the_write_is_after_the_email(self):
+        # Codex review (P1): written after site_mail - a send that fails stops the job first, the last state stays
+        tasks, names, write = self.write_task()
+        self.assertGreater(names.index(write["name"]), names.index("VMware | the review's AAR draft and the outage report"))
         self.assertIn("not ansible_check_mode", write["when"])
+
+    def test_the_state_as_sent_only_when_site_mail_answered(self):
+        import jinja2
+        from ansible.plugins.filter.core import FilterModule
+        from ansible.plugins.test.core import TestModule
+        _, _, write = self.write_task()
+        env = jinja2.Environment()
+        env.filters.update(FilterModule().filters())
+        env.tests.update(TestModule().tests())
+        sent, carry = {"sent_ts": 2}, {"sent_ts": 1}
+        base = {"_vm_w_mail": {"send": True, "state": sent, "carry": carry}, "_vm_w_mail_out": True}
+
+        def keep(**ctx):
+            c = dict(base, **ctx)
+            c["_vm_w_mail_went"] = env.from_string(write["vars"]["_vm_w_mail_went"]).render(c).strip() == "True"
+            return env.from_string(write["vars"]["_vm_w_mail_dbkeep"]).render(c)
+        self.assertEqual(keep(_email_sent={"changed": False, "msg": "sent"}), str(sent))
+        self.assertEqual(keep(_email_sent={"skipped": True}), str(carry))               # not sent: the last state
+        self.assertEqual(keep(), str(carry))                                            # no send at all (a blip)
+        self.assertEqual(keep(_email_sent={"msg": "sent"}, _vm_w_mail_out=False), str(carry))   # no recipient
+        self.assertEqual(keep(_vm_w_mail={"send": False, "state": carry, "carry": carry}), str(carry))
+
+    def test_a_write_is_checked_on_the_read(self):
+        # Codex review: a SELECT-only login reads the table but could never keep the state - not "ok"
+        conn = FakeConn(["vm_watch_email_state"])
+        edb.write(conn, 71, 1, {"ids": {}})
+        self.assertTrue(edb.writable(conn, 71))
+        self.assertEqual(json.loads(conn.rows[71][2]), {"ids": {}})                    # rolled back: the row as it was
+        self.assertTrue(edb.writable(conn, 72))
+        self.assertNotIn(72, conn.rows)                                                 # the probe row is not kept
+        ro = FakeConn(["vm_watch_email_state"], select_only=True)
+        with self.assertRaises(RuntimeError):
+            edb.writable(ro, 71)
+        # such a database counts as no state: criticals only, in the first 15 minutes of each slot
+        d = floor([cond("esx01")], None, T0 + 1200, db={"ok": False, "error": "the login cannot write"}, why="no AAP connection")
+        self.assertEqual((d["send"], d["source"]), (False, "none"))
+        self.assertIn("report database: the login cannot write", d["lines"][-1])
+
+    def test_a_bounded_read_timeout(self):
+        import inspect
+        src = inspect.getsource(edb.main)
+        self.assertIn('read_timeout=dict(type="int", default=20)', src)
 
     def test_a_row_that_is_not_a_state_is_none(self):
         conn = FakeConn(["vm_watch_email_state"])

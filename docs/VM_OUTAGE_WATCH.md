@@ -176,10 +176,13 @@ No email: last one at 07:30, next possible at 08:00 (vm_watch_email_min_minutes:
 
 - The first email and the *Recovered* email wait too. *Recovered* goes after the 30 minutes, if all is still clear.
 - The reminder (`vm_watch_email_every_hours`) is as before.
-- A review launched by hand (`vm_watch_review`) always emails.
+- A review launched by hand (`vm_watch_review`) always emails. Its *Since the last email* box has what was held.
+- A change that was held always reaches an email: after the 30 minutes, also when nothing is down by then. A vCenter
+  that was not read holds back only *Recovered*; what the others showed still goes.
 - The 30 minutes count from the start of the run that sent the last email. A run that starts up to a minute early
   counts as on time.
-- `vm_watch_email_on_change: false` emails every report, but also at most once per 30 minutes.
+- `vm_watch_email_on_change: false` emails every report, but also at most once per 30 minutes. A condition seen only
+  in between is listed as `Earlier (07:40): Seen: ...` in the next email.
 - `vm_watch_email_min_minutes: 0` = no limit, as before 1.118.8.
 
 - **What counts as one condition.** The conditions of `vm_watch_report_on`, folded as the tickets are: a VM on a lost
@@ -209,8 +212,9 @@ organization, or a role on the template). A dry run (Check) reads but keeps noth
 database"** credential with the writer (`report_writer`) on *VM - outage watch*. The review attached it with the reader
 (`report_reader`) since 1.116.1: the reader cannot make the table. Switch it to the writer (the review's reads work with
 it), or make the table and grant by hand ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The outage watch's last email*).
-Each run then also keeps the state there, in the table `vm_watch_email_state` (one row per template). The first run
-makes the table. `vm_watch_email_db: false` = not used.
+Each run then also keeps the state there, in the table `vm_watch_email_state` (one row per template), after the email
+went: a failed send keeps the last state. The first run makes the table. A login that can read but not write it counts
+as no database. `vm_watch_email_db: false` = not used.
 
 **Neither readable** (no AAP credential and no report database): the watch cannot know when it last emailed. Then only a
 critical condition is emailed, and only by a run that starts in the first 15 minutes of each 30-minute slot of the

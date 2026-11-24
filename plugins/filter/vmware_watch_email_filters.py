@@ -64,7 +64,7 @@ def vm_watch_email_floor(conditions, runs=None, opts=None):
     clock = _ts(o.get("read_at")) or now
     tz = _w._tm.zone(o.get("time_zone"))[0]
     d = _w.vm_watch_email_decision(conditions, runs if source != "none" else [], o)
-    d = dict(d, lines=list(d["lines"]), changed=list(d["changed"]), source=source, held=False)
+    d = dict(d, lines=list(d["lines"]), changed=list(d["changed"]), source=source, held=False, held_send=False)
     if floor <= 0:
         return d
     ids = _w.vm_watch_email_ids(conditions, o.get("report_on"))
@@ -93,56 +93,72 @@ def vm_watch_email_floor(conditions, runs=None, opts=None):
                       "the last email is not known, next possible at %s (vm_watch_email_min_minutes: %s)" % (_hhmm(nxt, tz), _mins(floor))))
         return d
 
-    if d["review"]:                                    # a review always emails; it starts the next window
-        if d["state"] is not None:
-            d["state"] = dict(d["state"], read_ts=clock, held=[])
-        return d
     prev = _w._email_state(runs)
     last = float((prev or {}).get("read_ts") or (prev or {}).get("sent_ts") or 0)
     held = [h for h in ((prev or {}).get("held") or []) if isinstance(h, dict) and h.get("line")]
     open_ = bool(last) and clock - last < floor * 60 - GRACE      # the window since the last email is still open
     sent_at = {"sent_at": _w._utc(now), "sent_ts": now, "read_ts": clock, "held": []}
+    unread = bool(o.get("unread"))
 
-    def earlier(changed):
-        return [("Earlier (%s): %s" % (_hhmm(h.get("at") or 0, tz), h["line"])) for h in held if h["line"] not in changed]
+    def earlier(changed, present=()):
+        """The held changes this email does not show already (a condition still down is in the report itself)."""
+        return [("Earlier (%s): %s" % (_hhmm(h.get("at") or 0, tz), h["line"])) for h in held
+                if h["line"] not in changed and h.get("id") not in present]
+
+    def hold(keep, more):
+        seen = set(h["line"] for h in held)
+        keep = dict(keep, held=(held + [m for m in more if m["line"] not in seen])[-HELD_MAX:]) if keep else None
+        d.update(send=False, state=keep, carry=keep, held=True, why=_held_why(last, floor, tz))
+        if not d["report"]:
+            d["lines"].append("No email: " + d["why"])
+        return d
+
+    def held_send(base):
+        # held changes go out on their own after the window - also on a clean run. Recovered only after a full read: with a
+        # vCenter not read, what was seen still goes, as a change
+        d.update(send=True, kind="change" if ids or unread else "recovered", report=True, why="", state=base, held_send=True,
+                 carry=dict(prev) if prev else None, changed=earlier([], ids))
+        return d
+
+    if d["review"]:                                    # a review always emails, with what was held; it starts the next window
+        d["changed"] = d["changed"] + earlier(d["changed"])
+        if d["state"] is not None:
+            d["state"] = dict(d["state"], read_ts=clock, held=[])
+        return d
 
     if d["kind"] == "always":                          # vm_watch_email_on_change: false - every report, but the floor holds
-        if d["send"] and open_:
-            keep = dict(prev) if prev else None
-            d.update(send=False, state=keep, carry=keep, held=True, why=_held_why(last, floor, tz))
+        seen = [{"line": "Seen: %s (%s)" % (_w._shown_id(i), ids[i]), "id": i, "at": now} for i in sorted(ids)]
+        if open_:
+            if d["send"]:
+                return hold(dict(prev) if prev else None, seen)
+            d.update(state=dict(prev) if prev else None, carry=dict(prev) if prev else None)
             return d
+        st = dict(sent_at, ids=ids, review_ts=float((prev or {}).get("review_ts") or 0))
         if d["send"]:
-            st = dict(sent_at, ids=ids, review_ts=float((prev or {}).get("review_ts") or 0))
-            d.update(state=st, carry=dict(prev) if prev else None)
+            d.update(state=st, carry=dict(prev) if prev else None, changed=earlier([], ids))
+        elif held:
+            held_send(st)
         else:
             d.update(state=dict(prev) if prev else None, carry=dict(prev) if prev else None)
         return d
 
     if d["send"]:
         if open_:
-            seen = set(h["line"] for h in held)
-            more = [{"line": x, "at": now} for x in d["changed"] if x not in seen]
-            keep = d["carry"]
-            keep = dict(keep, held=(held + more)[-HELD_MAX:]) if keep else None
-            d.update(send=False, state=keep, carry=keep, held=True, why=_held_why(last, floor, tz))
-            if not d["report"]:
-                d["lines"].append("No email: " + d["why"])
-            return d
+            return hold(d["carry"], [{"line": x, "at": now} for x in d["changed"]])
         d["changed"] = d["changed"] + earlier(d["changed"])
         d["state"] = dict(d["state"], **sent_at) if d["state"] is not None else None
         return d
 
     # nothing new for the decision, but a new or worse condition was held: the first run after the window sends it (a flap
-    # that came and went, an event that aged out of the window) - not while a vCenter was not read (nothing counts as gone
-    # then). A held Cleared that came back is no news: the last email said so already.
+    # that came and went, an event that aged out of the window), also while a vCenter was not read. A held Cleared that
+    # came back is no news: the last email said so already.
     worse = [h for h in held if str(h["line"]).startswith(("New: ", "Worse: "))]
-    if worse and not open_ and not o.get("unread") and d["kind"] in ("quiet", "none"):
+    if worse and not open_ and d["kind"] in ("quiet", "none"):
         base = dict(d["state"] or prev or {}, **sent_at)
-        if d["kind"] == "none":
+        if d["kind"] == "none" and not unread:
             base["ids"] = {}
-        d.update(send=True, kind="change" if ids else "recovered", report=True, why="", state=base,
-                 carry=dict(prev) if prev else None, changed=earlier([]))
-    elif held and not open_ and not o.get("unread") and not d["send"] and isinstance(d["state"], dict):
+        return held_send(base)
+    if held and not open_ and not unread and isinstance(d["state"], dict):
         d["state"] = d["carry"] = dict(d["state"], held=[])          # a Cleared that came back: dropped, as no news
     return d
 

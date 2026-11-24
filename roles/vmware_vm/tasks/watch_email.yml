@@ -79,25 +79,3 @@
     msg: "{{ _vm_w_mail.lines | outage_redact if vm_watch_review | bool else _vm_w_mail.lines }}"
   when: _vm_w_mail.lines | length > 0
 
-# 1.118.8: the state also in the report database, every run while the credential is attached - so it is current when AAP
-# cannot be read. As watch.yml keeps the job artifact: the state as sent when the email has somewhere to go (or none was
-# due), the last state as it was otherwise. Never in a dry run (Check).
-- name: VMware | the watch's email state in the report database (vm_watch_email_db)
-  site_vm_watch_email_db:
-    host: "{{ _vm_w_mail_dbh }}"
-    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
-    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
-    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
-    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
-    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
-    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
-    mode: write
-    template: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
-    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
-    state: "{{ _vm_w_mail_dbkeep }}"
-  vars:
-    _vm_w_mail_dbkeep: >-
-      {{ _vm_w_mail.state if not _vm_w_mail.send | bool
-         or report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 else _vm_w_mail.carry }}
-  no_log: "{{ vm_watch_review | bool }}"
-  when: _vm_w_mail_dbh | length > 0 and _vm_w_mail_dbkeep is not none and not ansible_check_mode

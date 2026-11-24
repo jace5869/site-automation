@@ -26,7 +26,9 @@ options:
   tls: {description: Use TLS and check the server's certificate., type: bool, default: false}
   ca_file: {description: The CA file the certificate is checked with., type: str, default: ''}
   connect_timeout: {description: Seconds to wait for the connection., type: int, default: 10}
-  mode: {description: read or write., type: str, default: read}
+  mode: {description: "read (and check that a write would work: the row written and rolled back) or write.", type: str, default: read}
+  needed: {description: "write: the state is needed here (AAP could not be read) - a failed write warns. Otherwise it is one line in the result.", type: bool, default: false}
+  read_timeout: {description: Seconds to wait for the database to answer once connected (a server that takes the connection and never answers)., type: int, default: 20}
   create: {description: Make the table when it is not there (false in a dry run)., type: bool, default: true}
   template: {description: This job's template ID (0 outside AAP)., type: int, default: 0}
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
@@ -35,7 +37,7 @@ author: site automation
 '''
 
 RETURN = r'''
-ok: {description: The database answered and the table is there., type: bool}
+ok: {description: "The database answered, the table is there, and (read) a write works.", type: bool}
 error: {description: Why not, when ok is false., type: str}
 state: {description: The kept state (read), or none when this template has no row yet., type: dict}
 written: {description: The row was written., type: bool}
@@ -115,6 +117,19 @@ def read(conn, template):
     return st if isinstance(st, dict) and isinstance(st.get("ids", {}), dict) else None
 
 
+def writable(conn, template):
+    """A write works: this template's row written as it is (or an empty one) and rolled back. A login with SELECT only
+    fails here - its state could be read but never kept, and every run would then be a first email."""
+    cur = conn.cursor()
+    cur.execute("SELECT state FROM vm_watch_email_state WHERE template = %s", (template,))
+    r = cur.fetchone()
+    try:
+        cur.execute(UPSERT, (template, 0, (r[0] if r is not None else None) or "{}"))
+    finally:
+        conn.rollback()
+    return True
+
+
 def write(conn, template, job, state):
     conn.cursor().execute(UPSERT, (template, job, json.dumps(state or {}, sort_keys=True)))
     conn.commit()
@@ -132,7 +147,8 @@ def shut(conn):
 def main():
     module = AnsibleModule(
         argument_spec=dict(db.ARGS, mode=dict(type="str", default="read", choices=["read", "write"]),
-                           create=dict(type="bool", default=True),
+                           create=dict(type="bool", default=True), needed=dict(type="bool", default=False),
+                           read_timeout=dict(type="int", default=20),
                            template=dict(type="int", default=0), job=dict(type="int", default=0),
                            state=dict(type="dict", default={})),
         supports_check_mode=True)
@@ -142,7 +158,7 @@ def main():
 
     def give_up(msg):
         res["error"] = msg
-        if p["mode"] == "write":    # every run writes: a reader's login would warn every 10 minutes - said when it is read
+        if p["mode"] == "write" and not p["needed"]:   # AAP has the state: a reader's login would warn every run
             module.exit_json(**res)
         module.warn("The report database %s: %s - the VM outage watch's email state is not %s there (the login must make "
                     "and write the table vm_watch_email_state: the writer's Report database credential, or the table and "
@@ -156,13 +172,19 @@ def main():
         module.exit_json(**res)
     conn = None
     try:
-        conn, res["tls"] = db.connect(p)
+        conn, res["tls"] = db.connect(p)              # read_timeout: a server that stops answering never blocks the email
         there, res["created"] = schema(conn, p["create"] and not module.check_mode)
         if not there:
             shut(conn)
             give_up("the table %s is not there (a dry run makes nothing) - make it once, docs/REPORT_DATABASE.md" % TABLE)
         if p["mode"] == "read":
             res["state"] = read(conn, p["template"])
+            try:
+                writable(conn, p["template"])
+            except Exception as e:  # noqa: BLE001 - SELECT only: read, but never kept - as good as no state
+                res["state"] = None
+                shut(conn)
+                give_up("the login cannot write the table %s (%s)" % (TABLE, db.explain(e, p)))
         else:
             res["written"] = write(conn, p["template"], p["job"], p["state"])
         res["ok"] = True

@@ -30,8 +30,8 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
 # 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
 # its own, with tests/test_vm_watch_email.py.
 FROZEN_1188 = {
-    "plugins/filter/vmware_watch_email_filters.py": "b61cb2d5a24482b9e3a67826f61df8da895875a81d86aa28e9cbcbeabd39e065",
-    "roles/vmware_vm/tasks/watch_email.yml": "fa143af9dde766af01204beaa1658fb1468451fd2f16ee6386b8af16972ed3de",
+    "plugins/filter/vmware_watch_email_filters.py": "95bfaf2b6e3b8133dd049176c092e7f54b356562e203d5a1de4b9294c870bdac",
+    "roles/vmware_vm/tasks/watch_email.yml": "f5c498cacb702dc39c11f4cdad036c7b7d592006bde7b0f4635741ea8bef1c5b",
 }
 # The tasks of 1.118.4's watch.yml that differ at 1.116.0, each with why a scheduled run (vm_watch_review false) does exactly
 # what it did. Any other difference fails.
@@ -61,6 +61,14 @@ ALLOWED = {
     "VMware | the AAR draft was not made (the review goes on without it)": "redact a write failure inside the review-only AAR block",
     "VMware | the report": "only a review redacts the finished document; the report info adds attachment keys only for a review",
     "VMware | outage report": "every new value is guarded by _vm_w_review, or is '' / false, which site_email treats as unset",
+    # 1.118.8 (user-requested email limit): the report is also made when the limit sends changes it held, on a run with
+    # nothing down now (_vm_w_mail.held_send); without held changes the condition is 1.118.4's
+    "VMware | the outage report": "1.118.8: or _vm_w_mail.held_send, false unless the email limit sends held changes",
+}
+# 1.118.8: tasks added to watch.yml that run on a scheduled run - the email state kept in the report database after the
+# email went (a failed send stops the job before it). tests/test_vm_watch_email.py covers it.
+ADDED_1188_WATCH = {
+    "VMware | the watch's email state in the report database (vm_watch_email_db)": "after the email, never before it",
 }
 
 
@@ -142,7 +150,7 @@ class Frozen(unittest.TestCase):
                 expressions = when if isinstance(when, list) else [when]
                 guarded_here = guarded or any(requires_review(env.parse("{{ " + str(expr) + " }}").body[0].nodes[0])
                                               for expr in expressions)
-                if task.get("name") not in old_names:
+                if task.get("name") not in old_names and task.get("name") not in ADDED_1188_WATCH:
                     self.assertTrue(guarded_here, "missing review guard: %s" % task.get("name", task))
                 for branch in ("block", "rescue", "always"):
                     check_added(task.get(branch, []), guarded_here)
@@ -375,13 +383,13 @@ INCLUDED = {
 # 1.118.8 (user-requested: "can't get 50 emails"): the watch's email gets a limit, at most one per
 # vm_watch_email_min_minutes, and keeps its state in the report database when AAP cannot be read. These tasks of
 # watch_email.yml are new or change on a scheduled run on purpose; tests/test_vm_watch_email.py covers them. What the watch
-# finds (site_vmware_watch.py, vmware_watch_filters.py, watch.yml) stays 1.118.4's.
+# finds (site_vmware_watch.py, vmware_watch_filters.py) stays 1.118.4's; watch.yml's two 1.118.8 changes are in ALLOWED
+# and ADDED_1188_WATCH.
 CHANGED_1188 = {
     "roles/vmware_vm/tasks/watch_email.yml": {
         "added": {
             "VMware | the report database for the watch's email state (vm_watch_email_db)": "the database host, or '' when off",
             "VMware | the watch's last email, from the report database (AAP not readable)": "read only when AAP could not be read",
-            "VMware | the watch's email state in the report database (vm_watch_email_db)": "the state also kept in the database",
         },
         "changed": {
             "VMware | the watch's last email, from AAP (vm_watch_email_state)": "also read for the limit (vm_watch_email_min_minutes)",
