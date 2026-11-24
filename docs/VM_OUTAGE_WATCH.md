@@ -284,6 +284,11 @@ same time. Set `vm_watch_review_noise: false` to include these changes in the de
 timeline entry. Summed noise, *What else saw it* and *How it judged* follow.
 The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
 The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
+Their *Timeline* (1.116.6) reads in Excel: one row per event, the columns `#`, *Time (zone, ISO)* (for example
+`2026-11-23T07:15:58+01:00`), *Level*, *Kind* (host, datastore, vm, alarm, ticket, note), *Object*, *Host*, *Datastore*,
+*VM*, *What happened* (short), *In the story* and *Noise* (yes / no), *vCenter*, *Event type*, *Event key*, and the full
+*Message* last. Filter *In the story* to yes for the outage's own events, or *VM* for the servers named. The workbook's
+first row is frozen, with filters, and the columns fit their text.
 
 ### The VMs of a past outage
 

@@ -52,6 +52,11 @@ sitea-vm07 (07:09:30 VM powered off), ...*). Usage alarms and gray are noise. Ea
 confirmed, events, had files on / ran on. Only the confirmed are counted. The workbook adds the sheet *VMs with events*.
 The note for no confirmed VM reads *No VM confirmed down: the watch and HA recorded none.*
 
+**The CSV and the workbook's Timeline read in Excel.** The same rows, nothing dropped, in short columns: one time
+column (the report's zone, ISO), Level, Kind (host, datastore, vm, alarm, ticket, note), Object, Host, Datastore, VM,
+What happened, In the story (yes / no), Noise (yes / no), vCenter, Event type, Event key, and the full Message last.
+The workbook keeps its frozen first row, filters and fitted columns. The scheduled watch's sheet is unchanged.
+
 Known: Back to normal and *Down for* give a datastore's latest episode only (as in 1.116.4); Order of events shows
 each one. A loss after the first recovery is filed under Appendix A's *Recovery* phase (phases are time slices).
 

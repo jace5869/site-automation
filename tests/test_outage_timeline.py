@@ -107,6 +107,11 @@ def reviewed(evs=None, tks=None, **kw):
     return made(evs, tks, review=True, **kw)
 
 
+def cells(sheet):
+    """1.116.6: the review's Timeline sheet rows by column name."""
+    return [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
+
+
 def whats(r):
     return [row[4] for row in r["sections"][1 if r["cards"] else 0]["rows"]]
 
@@ -944,7 +949,7 @@ class SmartReview(unittest.TestCase):
         self.assertEqual(len(d["groups"]), 23)          # 1.116.6: APD and heartbeat loss (and return) of the same hosts, one row
         self.assertLessEqual(len(d["groups"]), d["group_total"])
         self.assertEqual([s["name"] for s in r["sheets"]], ["Timeline", "Outage summary", "Noise"])
-        self.assertEqual(sorted(row[17] for row in r["sheet"]["rows"] if row[9]), sorted(e["key"] for e in events))
+        self.assertEqual(sorted(row["Event key"] for row in cells(r["sheet"]) if row["vCenter"]), sorted(e["key"] for e in events))
         import csv
         import io
         self.assertEqual(len(list(csv.reader(io.StringIO(ot.outage_events_csv(r["sheet"]))))), len(r["sheet"]["rows"]) + 1)
@@ -1603,9 +1608,11 @@ class ReviewEmailAcceptance(unittest.TestCase):
         self.assertEqual(rows[-1]["What happened"], "Alarm back to green: Virtual machine memory usage")
         self.assertCountEqual([row["Event key"] for row in rows if row["vCenter"]], [e["key"] for e in self.events])
         ticket, = self.tickets
-        ticket_rows = [(row["Time (UTC)"], row["Source"]) for row in rows if row["Ticket"] == ticket["number"]]
-        expected = [(ticket["opened"], "ServiceNow"), (ticket["opened"], "ACT")] + [(t, "ServiceNow") for t, _ in ticket["notes"]]
-        self.assertCountEqual(ticket_rows, [(t.replace("T", " ").rstrip("Z"), source) for t, source in expected])
+        zone = sheet["columns"][1]
+        ticket_rows = [(row[zone], row["Kind"]) for row in rows if row["Object"] == ticket["number"]]
+        local = lambda t: ot._time(t).astimezone(ot._tm.zone("Europe/Berlin")[0]).isoformat()     # noqa: E731
+        expected = [(ticket["opened"], "ticket"), (ticket["opened"], "note")] + [(t, "note") for t, _ in ticket["notes"]]
+        self.assertCountEqual(ticket_rows, [(local(t), kind) for t, kind in expected])
         exported = list(csv.reader(io.StringIO(ot.outage_events_csv(self.review["sheet"]))))
         self.assertEqual(exported[0], sheet["columns"])
         self.assertEqual(exported[1:], [[str(value) for value in row] for row in sheet["rows"]])
@@ -1673,7 +1680,7 @@ class ClearedBeforeTheReview(unittest.TestCase):
     def test_a_raise_before_the_window_is_shown_with_its_clear(self):
         r = reviewed(self.raised_before(), [], min_seconds=300)
         self.assertEqual(len(r["sheet"]["rows"]), 4)
-        self.assertEqual(r["sheet"]["rows"][0][5], "Alarm red: " + self.CPU)
+        self.assertEqual(cells(r["sheet"])[0]["What happened"], "Alarm red: " + self.CPU)
         self.assertIn("2026-11-11 21:10 CET", r["window"])                              # the window starts at the first raise (20:10 UTC)
         self.assertTrue(r["cleared_before_review"])
         self.assertEqual(r["alarm_window"], ["2026-11-11T20:10:00Z", "2026-11-11T21:07:00Z"])
@@ -1804,7 +1811,7 @@ class Review(unittest.TestCase):
         self.assertEqual(t["rows"][3][1], "HA restarted a VM (x14)")
         self.assertEqual(t["row_status"], [row[3].lower() if row[3] in ("Low", "Warning", "Critical") else "" for row in t["rows"]])
         self.assertEqual(len(r["sheet"]["rows"]), 33)
-        self.assertEqual(sum(row[10].endswith("VmRestartedByHAEvent") for row in r["sheet"]["rows"]), 14)
+        self.assertEqual(sum(row["Event type"].endswith("VmRestartedByHAEvent") for row in cells(r["sheet"])), 14)
         self.assertEqual(r["draft"]["key"][0][1], "Host not responding")
         self.assertIn("back to normal", str(next(s for s in r["sections"] if s["title"].startswith("Noise"))))
 
@@ -2055,13 +2062,19 @@ class Outputs(unittest.TestCase):
     def test_the_sheet(self):
         s = reviewed()["sheet"]
         self.assertEqual(s["name"], "Timeline")
-        self.assertEqual(s["columns"][1:4], ["Time (UTC)", "Time (Europe/Berlin)", "Source"])
-        self.assertEqual(len(s["rows"]), 33)
-        self.assertEqual(s["rows"][0][4:8], ["esx03", "Storage path redundancy degraded", "Warning", 1])
-        self.assertEqual(s["rows"][1][5], "Storage path redundancy is back")
-        self.assertEqual(len([r for r in s["rows"] if r[5] == "HA restarted a VM" and r[14]]), 14)
-        self.assertTrue(any(r[8] == "INC0012345" and r[11] == ACT for r in s["rows"]))
-        self.assertEqual(reviewed(time_zone="")["sheet"]["columns"][2], "Time (UTC)")
+        # 1.116.6: one time column (the zone's, ISO), short columns, in the story / noise, the message last
+        self.assertEqual(s["columns"], ["#", "Time (Europe/Berlin, ISO)", "Level", "Kind", "Object", "Host", "Datastore", "VM",
+                                        "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Message"])
+        rows = cells(s)
+        self.assertEqual(len(rows), 33)
+        first = rows[0]
+        self.assertEqual((first["Time (Europe/Berlin, ISO)"], first["Level"], first["Kind"], first["Object"], first["What happened"]),
+                         ("2026-11-12T01:41:10+01:00", "Warning", "host", "esx03", "Storage path redundancy degraded"))
+        self.assertEqual(rows[1]["What happened"], "Storage path redundancy is back")
+        self.assertEqual(len([r for r in rows if r["What happened"] == "HA restarted a VM" and r["VM"] and r["Kind"] == "vm"]), 14)
+        self.assertTrue(any(r["Object"] == "INC0012345" and r["Message"] == ACT and r["Kind"] == "note" for r in rows))
+        self.assertEqual({r["In the story"] for r in rows} | {r["Noise"] for r in rows}, {"yes", "no"})
+        self.assertEqual(reviewed(time_zone="")["sheet"]["columns"][1], "Time (UTC, ISO)")
 
     def test_the_job_output(self):
         out = made()["lines"]

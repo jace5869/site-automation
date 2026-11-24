@@ -126,16 +126,17 @@ def event_places(review, sections):
             if sentence in body:
                 for n in row["source_rows"]:
                     places[n].add(place)
+        columns = review["sheet"]["columns"]
         for n in sources:
-            source = review["sheet"]["rows"][n - 1]
-            assert source[0] == n
-            when = source[2].split()[1]
+            source = dict(zip(columns, review["sheet"]["rows"][n - 1]))
+            assert source["#"] == n
+            when = source[columns[1]][11:19]                     # 1.116.6: ISO, the report's zone
             # A copied source row may use the original label instead of the grouped sentence.
             # A work note has its own payload even when its clock and label are both omitted.
-            if source[5].startswith("Work note in "):
-                found = source[11] in body
+            if source["What happened"].startswith("Work note in "):
+                found = source["Message"] in body
             else:
-                found = (source[5] in body and (source[4] or source[8]) in body and
+                found = (source["What happened"] in body and source["Object"] in body and
                          any(clock in (when, when[:5]) for clock in CLOCK.findall(body)))
             if found:
                 places[n].add(place)
@@ -295,8 +296,10 @@ class OnePlace(unittest.TestCase):
         sheet = review["sheets"][0]
         exported = list(csv.reader(io.StringIO(fixtures.ot.outage_events_csv(sheet))))
         self.assertEqual(exported[1:], [[str(cell) for cell in row] for row in sheet["rows"]])
-        self.assertCountEqual([row[17] for row in sheet["rows"] if row[9]], [e["key"] for e in events])
-        self.assertTrue(all(row[7] == 1 for row in sheet["rows"]))
+        rows = [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
+        self.assertCountEqual([row["Event key"] for row in rows if row["vCenter"]], [e["key"] for e in events])
+        self.assertEqual(sum(row["In the story"] == "yes" for row in rows),
+                         len({n for row in review["draft"]["story"]["rows"] for n in row["source_rows"]}))
 
     def test_appendix_default_and_explicit_cap(self):
         events, tickets, opts = fixtures.director_outage()
@@ -405,10 +408,11 @@ class OnePlace(unittest.TestCase):
 
     def test_duplicate_work_note_is_detected(self):
         review = fixtures.ot.outage_review_context(fixtures.ot.outage_timeline(*fixtures.director_outage()))
-        source = next(row for row in review["sheet"]["rows"] if row[5].startswith("Work note in "))
+        columns = review["sheet"]["columns"]
+        source = next(row for row in review["sheet"]["rows"] if row[columns.index("What happened")].startswith("Work note in "))
         aar, _ = word(review)
         at = next(i for i, block in enumerate(aar) if block.get("text") == "Reason for Outage (RFO) & Recovery")
-        duplicate = dict(type="field", label="Actions:", lines=[source[11]])
+        duplicate = dict(type="field", label="Actions:", lines=[source[columns.index("Message")]])
         seen = repeated_events(review, word_places(aar[:at] + [duplicate] + aar[at:]))
         self.assertEqual(set(seen), {source[0]})
         self.assertEqual({title for title, _ in seen[source[0]]}, {STORY, "Event Response"})
@@ -417,7 +421,7 @@ class OnePlace(unittest.TestCase):
 
         doc = fixtures.ot.outage_timeline_doc(fixtures.WATCH, review, True, True)
         judged = next(s for s in doc["sections"] if s["title"] == "How it judged")
-        judged["lines"] = [source[2] + " Example unrelated observation", source[11]]
+        judged["lines"] = [source[1] + " Example unrelated observation", source[columns.index("Message")]]
         parsed = SectionText([s["title"] for s in doc["sections"]], render("report_atlas.html.j2", doc))
         self.assertEqual(repeated_events(review, parsed.sections), {source[0]: {STORY, "How it judged"}})
 

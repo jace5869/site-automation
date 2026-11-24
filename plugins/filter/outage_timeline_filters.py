@@ -3330,16 +3330,30 @@ def outage_timeline(events, tickets=None, opts=None):
              "columns": ["#", "Time (UTC)", "Time (%s)" % (o.get("time_zone") or "UTC"), "Source", "Where", "What happened", "Level", "Count",
                          "Ticket", "vCenter", "Event type", "Message"], "rows": []}
     if review:
-        sheet["columns"] += ["Host", "Datastore", "VM", "Cluster", "Entity", "Event key", "From", "To"]
-    for n, e in enumerate(raw if review else evs, 1):
+        # 1.116.6: readable in Excel - one time column (the report's zone, ISO), short columns first, the message last
+        in_story = {n for row in story["rows"] for n in row.get("source_rows") or ()}
+        in_noise = {e["source_row"] for e in noise if "source_row" in e}
+        sheet["columns"] = ["#", "Time (%s, ISO)" % (o.get("time_zone") or "UTC"), "Level", "Kind", "Object", "Host", "Datastore", "VM",
+                            "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Message"]
+        for n, e in enumerate(raw, 1):
+            names = e.get("source_names", {})
+            host, ds, vm = (names.get(k, e.get(k, "")) or "" for k in ("host", "datastore", "vm"))
+            kind = (("ticket" if e["role"] in ("ticket", "resolved") else "note") if e.get("ticket") else
+                    "alarm" if e["kind"].startswith("alarm:") else "vm" if vm else
+                    "datastore" if ds and e["type"].startswith(("esx.problem.vmfs", "esx.clear.vmfs", "Datastore")) or ds and not host else
+                    "host" if host else "note")
+            obj = e.get("ticket") or {"vm": vm, "datastore": ds, "host": host}.get(kind) or \
+                names.get("entity", e.get("entity")) or names.get("where", e.get("where", ""))
+            sheet["rows"].append([n, loc(e["t"]).replace(microsecond=0).isoformat(), WORD[e["level"]], kind, obj, host, ds, vm,
+                                  e["label"], "yes" if n in in_story else "no", "yes" if n in in_noise else "no",
+                                  e["vcenter"], e["type"], e.get("key", ""), e.get("display_message", e.get("message", ""))])
+    for n, e in enumerate([] if review else evs, 1):
         msg = e.get("display_message", e.get("message", ""))
         if not review and e.get("names"):
             msg = ", ".join(e["names"]) + ": " + msg
         row = [n, e["t"].strftime("%Y-%m-%d %H:%M:%S"), loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]),
                LANE[e["lane"]], e.get("source_names", e)["where"], e["label"], WORD[e["level"]], 1 if review else e.get("count") or e["n"],
                e.get("ticket", ""), e["vcenter"], e["type"], msg]
-        if review:
-            row.extend(e.get("source_names", {}).get(k, e.get(k, "")) for k in ("host", "datastore", "vm", "cluster", "entity", "key", "from", "to"))
         sheet["rows"].append(row)
     out = ["Outage time line, %s: %d event(s)%s%s%s" % (
         window_text, len(evs), ("; first signal %s" % hm(first["t"], True)) if first else "",
