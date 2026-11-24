@@ -723,13 +723,13 @@
   ansible.builtin.set_fact:
     _portal_wall_logins:
       - name: site-portal-vcenter
-        on: "{{ _portal_wall_vc | bool }}"
+        enabled: "{{ _portal_wall_vc | bool }}"
         value: >-
           {{ {'user': portal_wall_vcenter_username, 'password': portal_wall_vcenter_password,
               'hosts': ([portal_wall_vcenter_host] if portal_wall_vcenter_host | length > 0 else []) + (portal_wall_vcenters | default([], true) | list),
               'verify': portal_wall_vcenter_validate_certs | bool} | to_json }}
       - name: site-portal-ontap
-        on: "{{ _portal_wall_ontap | bool }}"
+        enabled: "{{ _portal_wall_ontap | bool }}"
         value: >-
           {{ {'user': portal_wall_ontap_username, 'password': portal_wall_ontap_password, 'clusters': portal_wall_ontap_clusters | default([], true) | list,
               'verify': portal_wall_ontap_validate_certs | bool} | to_json }}
@@ -752,7 +752,7 @@
   loop: "{{ _portal_wall_state.results }}"
   loop_control: {label: "{{ item.item.name }}"}
   when: >-
-    item.rc == 0 and (not item.item.on | bool or
+    item.rc == 0 and (not item.item.enabled | bool or
     ((item.stdout | trim) != (item.item.value | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
   changed_when: true
   no_log: true
@@ -767,7 +767,7 @@
     stdin_add_newline: false
   loop: "{{ _portal_wall_state.results }}"
   loop_control: {label: "{{ item.item.name }}"}
-  when: item.item.on | bool and (item.rc != 0 or (item.stdout | trim) != (item.item.value | hash('sha256')))
+  when: item.item.enabled | bool and (item.rc != 0 or (item.stdout | trim) != (item.item.value | hash('sha256')))
   changed_when: true
   failed_when: false                      # said by the next task, with podman's reason
   no_log: true

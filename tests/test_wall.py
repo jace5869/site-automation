@@ -381,6 +381,32 @@ class Browser(unittest.TestCase):
         out = self.dom("style=lights&freeze=1&open=ds:DS-SITEB-LOCAL")
         self.assertIn("No NetApp match found", out)
 
+    def test_never_green_when_stale(self):
+        """vCenter read 15 min ago, nothing wrong in that read: the VMware area is Not current, never OK"""
+        def stale_view():
+            v = demo.view(vc2_state="ok")
+            s1 = v["sources"]["vcenter:" + demo.VC1]
+            s1["at"] = s1["tried"] = time.time() - 900
+            for h in s1["snap"]["hosts"]:
+                h.update(state="connected", cpu_pct=40.0, mem_pct=50.0)
+            for d in s1["snap"]["datastores"]:
+                d["free"] = d["capacity"] // 2
+            v["sources"]["vcenter:" + demo.VC2]["at"] = time.time() - 900
+            v["history"] = {}
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(stale_view), netapp_minutes_old=30)
+        self.addCleanup(stop)
+        for st in ("lights", "cockpit", "map"):
+            args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1920,1080", "--virtual-time-budget=8000",
+                    "--dump-dom", url + "wall?style=%s&freeze=1" % st]
+            out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=180).stdout
+            self.assertIn('data-ready="1"', out, st)
+            self.assertNotIn('class="word ok"', out, st)                              # no green anywhere: every source is stale
+            self.assertNotIn('class="lamp s-ok"', out, st)
+            self.assertIn("Not current", out, st)
+            if st == "lights":
+                self.assertIn('aria-label="VMware: Not current"', out)
+
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):
             for w in (1920, 1280):

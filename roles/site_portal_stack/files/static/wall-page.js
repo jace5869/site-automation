@@ -703,7 +703,8 @@
       add(card, [h("div", "sec", ["NetApp · " + p.rows[0].cluster, freshK(ntFeed(), "fr")]), nr]);
     }
     var link = W.full && W.full.storage ? h("a", "fullp", ["Open on NetApp page ", h("span", "", ["↗"], {"aria-hidden": "true"})], {href: W.full.storage + "?q=" + encodeURIComponent(name)}) : null;
-    add(card, h("div", "df", [link, h("span", "lg", ["Where to verify: vSphere Client › Storage › " + name + "; ONTAP System Manager › Storage › Volumes. Marks: datastore, LUN, volume " + dt[0] + " / " + dt[1] + " %; aggregate " + at[0] + " / " + at[1] + " %."])]));
+    var fbk = W.me && W.me.feedback ? h("button", "fbon kxh", ["Feedback on this card"], {type: "button", "data-fb": "ds:" + name + "|storage"}) : null;
+    add(card, h("div", "df", [link, fbk, h("span", "lg", ["Where to verify: vSphere Client › Storage › " + name + "; ONTAP System Manager › Storage › Volumes. Marks: datastore, LUN, volume " + dt[0] + " / " + dt[1] + " %; aggregate " + at[0] + " / " + at[1] + " %."])]));
     back.classList.add("on");
     tip.classList.remove("on");
     if (!again) { var x = card.querySelector(".x"); if (x) x.focus(); }
@@ -740,18 +741,19 @@
     return gauge({label: label, small: small, v: v, disp: pct(v), unit: "%", thr: thr2, st: withFresh(st, fk), why: why, d: d, title: title});
   }
   function ctr(o) {
-    var stale = o.feed && feedFresh(o.feed) === "stale", st = stale && !o.v ? "stale" : o.st || (o.v > 0 ? "crit" : "ok");
-    if (stale && o.v > 0) st = o.st || "crit";      // an open condition from old data: it stays, its "as of" says how old
+    // stale data: always "?" and Not current, the last known count in words - never green, never a colour from old data
+    // (a live count - a vCenter not answering now - is never stale)
+    var stale = o.feed && feedFresh(o.feed) === "stale" && !(o.live && o.v > 0), st = stale ? "stale" : o.st || (o.v > 0 ? "crit" : "ok");
     var w = st === "ok" ? word("ok", "None") : st === "stale" ? word("stale") : word(st, o.word);
     return h("div", "ctr " + st, [h("div", "cl", [o.l], {title: o.l}),
-      h("div", "row", [h("span", "big", [stale && !o.v ? "?" : String(o.v)]), o.of != null ? h("span", "of", ["of " + o.of]) : null, w]),
-      h("div", "det", [stale && !o.v ? "not current - last known: 0" : (o.det || " ")]), o.feed ? freshK(o.feed) : null],
+      h("div", "row", [h("span", "big", [stale ? "?" : String(o.v)]), o.of != null ? h("span", "of", ["of " + o.of]) : null, w]),
+      h("div", "det", [stale ? "not current - last known: " + o.v : (o.det || " ")]), o.feed ? freshK(o.feed) : null],
       {tabindex: "0", role: "button", "data-d": "ctr:" + o.k, title: "Click: what this counts, what is open, where to check"});
   }
   function detOf(list) { return list.length ? [h("b", "", [list[0].t]), " · " + dur(NOW() - list[0].start)] : null; }
   var CT = {
     hosts: function () { var l = nOpen("host"); return ctr({k: "hosts", l: "Hosts not responding", v: l.length, feed: vcFeed(), det: detOf(l) || "all hosts connected"}); },
-    vc: function () { var v = W.vmware.vcenters, dn = v.filter(function (x) { return !x.up; }).length; return ctr({k: "vc", l: "vCenter not answering", v: dn, of: v.length, det: dn ? detOf(nOpen("vc")) : v.map(function (x) { return x.name; }).join(", ") + " answering"}); },
+    vc: function () { var v = W.vmware.vcenters, dn = v.filter(function (x) { return !x.up; }).length; return ctr({k: "vc", l: "vCenter not answering", v: dn, of: v.length, feed: vcFeed(), live: true, det: dn ? detOf(nOpen("vc")) : v.map(function (x) { return x.name; }).join(", ") + " answering"}); },
     dsi: function () { var l = nOpen("dsi"); return ctr({k: "dsi", l: "Datastores inaccessible", v: l.length, feed: vcFeed(), det: detOf(l) || "all " + W.vmware.datastores.length + " accessible"}); },
     hung: function () { var l = nOpen("vmhung"); return ctr({k: "hung", l: "VMs with no heartbeat", v: l.length, feed: vcFeed(), det: detOf(l) || (W.thresholds.vm_heartbeat ? "no powered-on VM with a red heartbeat" : "off (portal_wall_vm_heartbeat)")}); },
     hot: function () { var l = nOpen(["cpu", "mem"]); return ctr({k: "hot", l: "Sustained high (" + thr("high")[1] + " min+)", v: l.length, st: l.length ? "warn" : "ok", word: "Warning", feed: vcFeed(), det: detOf(l) || "no host or VM"}); },
@@ -863,7 +865,7 @@
     if (mem) g.push(clGauge(mem, "mem"));
     var down = nOpen("host");
     var allCl = W.vmware.clusters[0];
-    g.push(upGauge("ESXi hosts up", "all clusters", hu[0], hu[1], down.length ? down.map(function (c) { return c.host; }).join(", ") + " not responding" : "all connected", vcFeed(),
+    g.push(upGauge("ESXi hosts up", "all clusters", hu[0], hu[1], down.length ? down.map(function (c) { return c.t; }).join(", ") : "all connected", vcFeed(),
       down.length ? "c:" + down[0].id : allCl ? "cl:" + allCl.vc + "|" + allCl.n + "|hosts" : null));
     return panel("VMware", W.vmware.vcenters.map(function (x) { return x.name; }).join(", "), "area:vmware", [h("div", "gauges c" + g.length, g), h("div", "counters cc3", [CT.hosts(), CT.vc(), CT.hot()])], "n" + n, "vmware");
   }

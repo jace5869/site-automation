@@ -5513,13 +5513,27 @@ class WallLive(object):
         if self.collector is None and wall_live is not None:
             src = wall_sources(cfg)
             if src:
+                # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
+                keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
                 self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
-                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)))
+                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep)
                 self.collector.start()
+                # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
+                threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()
 
     def viewed(self):
         if self.nal is not None:
             self.nal.viewed()
+
+    def follow(self):
+        """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""
+        while True:
+            time.sleep(self.cfg.wall_opts["seconds"])
+            try:
+                self.viewed()
+                self.model()
+            except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said in the log
+                self.log.add({"event": "wall", "model": "not made", "why": clean(str(e), 200)})
 
     def netapp(self):
         """-> (the NetApp run's model or None, its read time (epoch) or None, why there is none)"""

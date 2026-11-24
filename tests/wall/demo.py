@@ -108,7 +108,7 @@ def netapp_db(minutes_old=11):
     return T.fill(now=now)
 
 
-def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None):
+def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None):
     """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it"""
     import json
     import shutil
@@ -126,8 +126,9 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None):
     nal = sp.NetappLive(cfg, p.log, p, db=nl.Database(lambda: db, mark="?"))
     nal.refresh()
     cfg.netapp_tab = True
-    wall = sp.WallLive(cfg, p.log, nal, collector=FakeCollector(lambda: view(vc2_state=vc2_state)))
-    wall.model(time.time() - 3 * 3600)              # a first read 3 h ago: the tracker's starts, so durations read like a running wall
+    wall = sp.WallLive(cfg, p.log, nal, collector=collector or FakeCollector(lambda: view(vc2_state=vc2_state)))
+    if collector is None:
+        wall.model(time.time() - 3 * 3600)              # a first read 3 h ago: the tracker's starts, so durations read like a running wall
     srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, p, os.path.join(FILES, "static"), wall=wall))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     inner = "http://127.0.0.1:%d" % srv.server_address[1]
