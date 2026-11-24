@@ -2080,7 +2080,7 @@ def _review_parts(incident, opts, begin, end, stamp):
         if (vc, "datastore", name) in placed or \
                 (vc, "datastore", re.sub(r" \[[^\]]+\]$", "", name)) in placed:
             continue
-        names = sorted(incident["files_on"].get(obj, ()))
+        names = sorted(n for n in incident["files_on"].get(obj, ()) if (vc, n) not in tier2)
         if names:
             files_lines.append("%s %s files on %s (may have hung or failed): %s" % (
                 _count(len(names), "VM"), "has" if len(names) == 1 else "have", display(vc, name), _shown(names)))
@@ -3401,6 +3401,8 @@ def outage_timeline(events, tickets=None, opts=None):
         listed_files = len(parts["files_lines"]) > len(parts["files_unread"])
         summary[1].update(text=parts["affected_note"], status="warning" if vm_count or listed_files else "info",
                           lines=([parts["unread"]] if parts["unread"] else []) + parts["files_lines"])
+        if not parts["affected"] and parts["files_lines"]:
+            summary[1] = {k: v for k, v in summary[1].items() if k != "columns"}   # no empty table, no "None."
         now_severity = parts["now"][0][0].lower() if parts["now"] else "ok"
         summary[2].update(text=read_line, status=now_severity, row_status=[r[0].lower() for r in parts["now"]],
                           lines=([risk_line] if risk_line else []) + ([] if parts["now"] or parts["unread"] else ["Nothing is down now."]))

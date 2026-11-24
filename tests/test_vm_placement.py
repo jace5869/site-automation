@@ -300,6 +300,25 @@ class EventTier(unittest.TestCase):
         self.assertEqual([row[:2] for row in sheet["rows"]], [["sitea-vm07", "VM powered off"],
                                                                ["sitea-vm03", "Alarm red: Virtual machine heartbeat"]])
 
+    def test_no_double_listing_from_the_watchs_members(self):
+        events, tickets, opts = tc.shared_ds_outage(still_down=True, members=["sitea-vm01", "sitea-vm02", "sitea-vm03"])
+        events.append(dict(events[0], key=90011, time="2026-11-23T06:09:20Z", type="AlarmStatusChangedEvent", host=tc.HOSTS[1],
+                           vm="sitea-vm02", alarm="Virtual machine heartbeat", entity="sitea-vm02", entity_type="vm", to="red",
+                           **{"from": "green"}))
+        d = ot.outage_timeline(events, tickets, opts)["draft"]
+        # a member of the lost datastore with a signal of its own is confirmed (as since 1.112.4c), and listed only there
+        self.assertIn("sitea-vm02", str(d["affected"]))
+        self.assertEqual(d["files_lines"], ["2 VMs have files on ds_shared_01 (may have hung or failed): sitea-vm01, sitea-vm03"])
+
+    def test_no_empty_table_above_the_lines(self):
+        r = tc.review()
+        section = next(x for x in r["web_sections"] if x["title"].startswith("What it affected"))
+        self.assertNotIn("columns", section)
+        from test_report_hover import render
+        html = render("report_atlas.html.j2", ot.outage_timeline_doc(dict(title="x", sections=[]), r, True, True))
+        part = html.split("What it affected: no VM confirmed", 1)[1].split("Down now", 1)[0]
+        self.assertNotIn('class="none">None.', part)
+
     def test_usage_alarms_are_never_a_signal(self):
         r = tc.review()                                     # 307 usage-alarm changes on VMs of the lost hosts, in the window
         self.assertFalse([line for line in r["draft"]["files_lines"] if "events of their own" in line])

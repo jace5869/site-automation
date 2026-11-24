@@ -773,7 +773,8 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
     "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
     "vm_health_report.yml": ("VM - health report", "VMware vCenter", "", ""),
     "vm_log_analysis.yml": ("VM - vCenter log analysis", "VMware vCenter (read-only + Global > Diagnostics), ACT model key", "", ""),
-    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter (and ACT model key for vm_outage_act)", "", """\
+    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter (and ACT model key for vm_outage_act, Report database for a "
+                            "review's VMs and other sources)", "", """\
 ## Every 5 to 15 minutes, in a workflow: [VM - outage watch] --Always--> [ServiceNow tickets]; Concurrent jobs off
 # vm_watch_window_minutes: 15                    # the schedule's interval
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)

@@ -5,8 +5,8 @@
 **To set up:** for the VMs of a past outage, make the new template *VMware - VM placement snapshot*
 (`playbooks/vmware_placement_snapshot.yml`, in the setup catalog) with a **VMware vCenter** credential (read-only is
 enough) and the **Report database** credential (the writer); no Limit; Concurrent jobs off; schedule it every 60 minutes.
-Give the outage review template the **Report database** credential too (the reader is enough). Without them the review
-reads vCenter now for those VMs, as before nothing else changes.
+Give the *VM - outage watch* template the **Report database** credential too (the reader is enough), so a review can
+read that history. Without the job or the credential, a review reads vCenter now for those VMs.
 
 - One datastore lost by all paths down (APD) on many hosts made a long AAR (the user's 10 pages came from 1.116.2).
   On the test shape (tests/test_outage_compact.py, LibreOffice render) 1.116.4 gives 6 pages; 1.116.6 gives 4.
