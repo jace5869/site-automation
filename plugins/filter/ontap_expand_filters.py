@@ -207,6 +207,10 @@ def ontap_expand_key(e):
 def ontap_expand_choices(choices, found=None, limit=500):
     """the list's survey choices: each with its datastore (found: one per choice, from site_vmware_netapp_ds map), at most limit"""
     found = found or []
+    # (user) the fullest first: used % of the volume, most to least (the limit keeps the fullest)
+    order = sorted(range(len(choices or [])), key=lambda i: -(float(choices[i].get("used") or 0) / float(choices[i].get("size") or 1)))
+    choices = [choices[i] for i in order]
+    found = [found[i] if i < len(found) else {} for i in order]
     out = []
     for i, e in enumerate(choices or []):
         f = found[i] if i < len(found) and found[i] else {}
