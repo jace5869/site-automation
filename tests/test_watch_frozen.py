@@ -30,7 +30,7 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
 # 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
 # its own, with tests/test_vm_watch_email.py.
 FROZEN_1188 = {
-    "plugins/filter/vmware_watch_email_filters.py": "95bfaf2b6e3b8133dd049176c092e7f54b356562e203d5a1de4b9294c870bdac",
+    "plugins/filter/vmware_watch_email_filters.py": "873a9efb3e04dab8b5753c6a01fe4933e426aea14842d1fd9c2fdde8c9892e36",
     "roles/vmware_vm/tasks/watch_email.yml": "f5c498cacb702dc39c11f4cdad036c7b7d592006bde7b0f4635741ea8bef1c5b",
 }
 # The tasks of 1.118.4's watch.yml that differ at 1.116.0, each with why a scheduled run (vm_watch_review false) does exactly
@@ -50,7 +50,8 @@ ALLOWED = {
         "only a requested review redacts the debug lines",
     "VMware | single sign-on and OCSP - read": "passes the review-only no_log flag to the shared reader",
     "VMware | phase 2's decision (made, not carried out)": "no_log only on a requested review",
-    "VMware | the watch's email state as a job artifact (vm_watch_email_state)": "no_log only on a requested review",
+    "VMware | the watch's email state as a job artifact (vm_watch_email_state)":
+        "no_log only on a requested review; 1.118.8: as sent only when site_mail sent it, and only a mapping (2.16 renders null as '')",
     "VMware | nothing down or hung (vm_watch_fail_on)": "only a requested review masks the failure message",
     "VMware | what was found, and what phase 2 would restart (nothing is restarted)":
         "no_log only on a requested review",
@@ -62,8 +63,8 @@ ALLOWED = {
     "VMware | the report": "only a review redacts the finished document; the report info adds attachment keys only for a review",
     "VMware | outage report": "every new value is guarded by _vm_w_review, or is '' / false, which site_email treats as unset",
     # 1.118.8 (user-requested email limit): the report is also made when the limit sends changes it held, on a run with
-    # nothing down now (_vm_w_mail.held_send); without held changes the condition is 1.118.4's
-    "VMware | the outage report": "1.118.8: or _vm_w_mail.held_send, false unless the email limit sends held changes",
+    # nothing down now (_vm_w_mail.send); a run the decision does not send is 1.118.4's
+    "VMware | the outage report": "1.118.8: or _vm_w_mail.send - a send without a condition now (held changes, a reminder on a partial read); the blip guard kept",
 }
 # 1.118.8: tasks added to watch.yml that run on a scheduled run - the email state kept in the report database after the
 # email went (a failed send stops the job before it). tests/test_vm_watch_email.py covers it.

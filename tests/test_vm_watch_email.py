@@ -293,6 +293,26 @@ class Floor1188(unittest.TestCase):
         self.assertEqual(d["state"]["held"], [])
         self.assertFalse(floor([], d["state"], T0 + 3600, on_change=False)["send"])      # once
 
+    def test_every_report_mode_keeps_a_critical_that_became_a_warning(self):
+        # Codex pass 2: held by id and severity - a critical now only a warning keeps its critical line
+        o = dict(on_change=False, report_on=["critical", "warning"])
+        d = floor([cond("esx01")], None, T0, **o)
+        d = floor([cond("esx01"), cond("esx02")], d["state"], T0 + 600, **o)
+        d = floor([cond("esx01"), cond("esx02", "warning")], d["state"], T0 + 1800, **o)
+        self.assertTrue(d["send"])
+        self.assertIn("Earlier (06:10): Seen: host:esx02 (critical)", d["changed"])
+        self.assertNotIn("Earlier (06:10): Seen: host:esx01 (critical)", d["changed"])   # still critical: in the report
+
+    def test_a_review_in_every_report_mode_starts_the_window(self):
+        # Codex pass 2: on_change false - a review keeps a fresh sent state, so no email minutes later, nothing replayed
+        d = floor([cond("esx01")], None, T0, on_change=False)
+        h = floor([cond("esx01"), cond("esx02")], d["state"], T0 + 600, on_change=False)["state"]
+        r = floor([cond("esx01")], h, T0 + 1500, on_change=False, review=True)
+        self.assertEqual((r["send"], r["state"]["sent_ts"], r["state"]["read_ts"], r["state"]["held"]), (True, T0 + 1500, T0 + 1500, []))
+        self.assertIn("Earlier (06:10): Seen: host:esx02 (critical)", r["changed"])
+        n = floor([cond("esx01")], r["state"], T0 + 1800, on_change=False)
+        self.assertEqual((n["send"], n["held"]), (False, True))
+
     def test_manual_review_still_emails(self):
         st = floor([cond("esx01")])["state"]
         d = floor([cond("esx01")], st, T0 + 300, review=True)
@@ -453,6 +473,75 @@ class Database1188(unittest.TestCase):
         self.assertEqual(keep(), str(carry))                                            # no send at all (a blip)
         self.assertEqual(keep(_email_sent={"msg": "sent"}, _vm_w_mail_out=False), str(carry))   # no recipient
         self.assertEqual(keep(_vm_w_mail={"send": False, "state": carry, "carry": carry}), str(carry))
+
+    def watch_tasks(self):
+        with open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "watch.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        flat = []
+
+        def walk(ts):
+            for t in ts:
+                flat.append(t)
+                for k in ("block", "rescue", "always"):
+                    walk(t.get(k) or [])
+        walk(tasks)
+        return dict((t.get("name"), t) for t in flat)
+
+    def env(self):
+        import jinja2
+        from ansible.plugins.filter.core import FilterModule
+        from ansible.plugins.test.core import TestModule
+        env = jinja2.Environment()
+        env.filters.update(FilterModule().filters())
+        env.tests.update(TestModule().tests())
+        return env
+
+    def test_no_state_is_no_write_also_on_2_16(self):
+        # Codex pass 2: on ansible-core 2.16 a null renders as '' - both stores need a mapping, never "not none"
+        env, tasks = self.env(), self.watch_tasks()
+        for name in ("VMware | the watch's email state as a job artifact (vm_watch_email_state)",
+                     "VMware | the watch's email state in the report database (vm_watch_email_db)"):
+            when = tasks[name]["when"]
+            self.assertIn("is mapping", when, name)
+            for keep, want in (("", False), (None, False), ({"ids": {}}, True)):
+                ctx = {"_vm_w_mail_keep": keep, "_vm_w_mail_dbkeep": keep, "_vm_w_mail_dbh": "db.example.mil", "ansible_check_mode": False}
+                self.assertEqual(env.compile_expression(when)(**ctx), want, (name, keep))
+
+    def test_both_stores_keep_as_sent_only_what_site_mail_sent(self):
+        # Codex pass 2: report_email_also's only address filtered out - site_mail skipped - the AAP artifact keeps the last state too
+        env, tasks = self.env(), self.watch_tasks()
+        sent, carry = {"sent_ts": 2}, {"sent_ts": 1}
+        for name, key in (("VMware | the watch's email state as a job artifact (vm_watch_email_state)", "_vm_w_mail_keep"),
+                          ("VMware | the watch's email state in the report database (vm_watch_email_db)", "_vm_w_mail_dbkeep")):
+            v = tasks[name]["vars"]
+            for email_sent, want in (({"msg": "sent"}, sent), ({"skipped": True}, carry), (None, carry)):
+                ctx = {"_vm_w_mail": {"send": True, "state": sent, "carry": carry}, "_vm_w_mail_out": True}
+                if email_sent is not None:
+                    ctx["_email_sent"] = email_sent
+                ctx["_vm_w_mail_went"] = env.from_string(v["_vm_w_mail_went"]).render(ctx).strip() == "True"
+                self.assertEqual(env.from_string(v[key]).render(ctx), str(want), (name, email_sent))
+
+    def test_the_report_opens_whenever_the_decision_sends(self):
+        # Codex pass 2: a reminder or held changes on a partial read with nothing seen - the email goes, once; a blip never
+        env, tasks = self.env(), self.watch_tasks()
+        when = env.compile_expression(tasks["VMware | the outage report"]["when"])
+        base = {"_vm_w_report_it": False, "_vm_w_review": False, "_vm_w_tl": {}}
+        self.assertTrue(when(**dict(base, _vm_w_mail={"kind": "reminder", "send": True})))
+        self.assertFalse(when(**dict(base, _vm_w_mail={"kind": "quiet", "send": False})))
+        self.assertFalse(when(**dict(base, _vm_w_mail={"kind": "reminder", "send": True}, _vm_w_tl={"skip": True})))
+
+    def test_a_closed_window_review_keeps_since_the_last_email(self):
+        # Codex pass 2: the review spends the held changes - its email must show them
+        import outage_timeline_filters as ot
+        box = {"title": "Since the last email", "status": "info", "top": True, "lines": ["Earlier (06:10): New: host:esx02 (critical)"]}
+        doc = {"title": "Watch", "status": "critical", "sections": [box, {"title": "Down or hung now", "lines": ["x"]}]}
+        tl = {"sections": [{"title": "Down now", "status": "ok", "lines": []}], "title": "Outage review", "window": "06:00-07:00",
+              "closed_window": True}
+        tl["web_sections"] = tl["sections"]
+        for web in (False, True):
+            titles = [x["title"] for x in ot.outage_timeline_doc(doc, tl, web, True)["sections"]]
+            self.assertIn("Since the last email", titles)
+            self.assertNotIn("Down or hung now", titles)
 
     def test_a_write_is_checked_on_the_read(self):
         # Codex review: a SELECT-only login reads the table but could never keep the state - not "ok"

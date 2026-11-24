@@ -100,10 +100,12 @@ def vm_watch_email_floor(conditions, runs=None, opts=None):
     sent_at = {"sent_at": _w._utc(now), "sent_ts": now, "read_ts": clock, "held": []}
     unread = bool(o.get("unread"))
 
-    def earlier(changed, present=()):
-        """The held changes this email does not show already (a condition still down is in the report itself)."""
+    def earlier(changed, present=None):
+        """The held changes this email does not show already (a condition still down, at the same severity, is in the
+        report itself)."""
+        present = present or {}
         return [("Earlier (%s): %s" % (_hhmm(h.get("at") or 0, tz), h["line"])) for h in held
-                if h["line"] not in changed and h.get("id") not in present]
+                if h["line"] not in changed and not (h.get("id") in present and present[h["id"]] == h.get("severity"))]
 
     def hold(keep, more):
         seen = set(h["line"] for h in held)
@@ -122,12 +124,11 @@ def vm_watch_email_floor(conditions, runs=None, opts=None):
 
     if d["review"]:                                    # a review always emails, with what was held; it starts the next window
         d["changed"] = d["changed"] + earlier(d["changed"])
-        if d["state"] is not None:
-            d["state"] = dict(d["state"], read_ts=clock, held=[])
+        d["state"] = dict(d["state"] if d["state"] is not None else dict(ids=ids, review_ts=now), **sent_at)
         return d
 
     if d["kind"] == "always":                          # vm_watch_email_on_change: false - every report, but the floor holds
-        seen = [{"line": "Seen: %s (%s)" % (_w._shown_id(i), ids[i]), "id": i, "at": now} for i in sorted(ids)]
+        seen = [{"line": "Seen: %s (%s)" % (_w._shown_id(i), ids[i]), "id": i, "severity": ids[i], "at": now} for i in sorted(ids)]
         if open_:
             if d["send"]:
                 return hold(dict(prev) if prev else None, seen)

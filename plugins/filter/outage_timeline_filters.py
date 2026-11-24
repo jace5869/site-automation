@@ -3284,7 +3284,9 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
             # The watch document describes today's whole inventory. Only the reviewed roots' Down now rows belong here.
             out["subtitle"] = "Review of %s." % timeline["window"]
             out["status"] = next(s["status"] for s in mine if s["title"] == "Down now")
-            own = [{"title": "How it judged", "lines": []}] if timeline.get("context_judged") else []
+            # 1.118.8: the email limit's box stays - its held changes are spent by this email
+            own = ([sec for sec in own if sec.get("title") == "Since the last email"]
+                   + ([{"title": "How it judged", "lines": []}] if timeline.get("context_judged") else []))
         if any(s.get("title") == "Down now" for s in mine):
             own = [s for s in own if s.get("title") != "Down or hung now" and not s.get("title", "").startswith("VMs with files on ")]
         if timeline.get("root_judgments"):

@@ -19,8 +19,8 @@ database*, neither works yet.
 - Neither readable: only a critical condition is emailed, by a run in the first 15 minutes of each 30-minute slot.
   The job output says what to attach on every run.
 - `vm_watch_email_on_change: false` is limited too. `vm_watch_email_min_minutes: 0` = no limit, as before.
-- The report database keeps an email as sent only after the mail relay took it. A failed send keeps the last state,
-  so the next run tries again.
+- The report database and the job artifact keep an email as sent only after the mail relay took it. A failed or skipped
+  send keeps the last state, so the next run tries again.
 - A database login that can read but not write the table counts as no database. The job output says so.
   A database that stops answering is given up after 20 seconds, before the email.
 - Held changes are never lost: they go after the 30 minutes, also on a clean run, also with
