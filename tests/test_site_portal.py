@@ -53,7 +53,7 @@ ACTIONS = {
                             "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}},
                    "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"],
                    "fixes": False, "kinds": ["fapolicyd", "eventlog"], "button": "Ask ACT"},
-    "disk_cleanup": {"title": "Clean up this mount", "area": "Disk & services", "summary": "Removes old files.", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
+    "disk_cleanup": {"title": "Clean up this mount", "area": "Linux", "summary": "Removes old files.", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
                      "kinds": ["disk_full"],
                      "vars": {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
                               "finding_id": {"kind": "text", "max": 200, "pattern": "[A-Za-z0-9_.:/@-]{1,200}"}},
@@ -4384,28 +4384,28 @@ class Home1782(unittest.TestCase):
     def cards(self):
         c = self.card
         return [c("e", "ACT - triage", "ACT"), c("z", "Zeta tool", "Zeta"), c("o", "Plain one", ""), c("s2", "STIG - import", "STIG", wf=True, status="failed"),
-                c("s1", "STIG - recheck", "STIG"), c("d", "Disk cleanup", "Disk & services"), c("a", "Alpha tool", "alpha")]
+                c("s1", "STIG - recheck", "STIG"), c("d", "Disk cleanup", "Linux"), c("a", "Alpha tool", "alpha")]
 
     def heads(self, h):
         return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
 
     # 1: by area
-    def test_1_the_cards_are_grouped_by_area_in_the_old_order(self):
+    def test_1_the_cards_are_grouped_by_area_in_the_platform_order(self):
         cfg, p = self.portal(self.cards())
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
-        self.assertEqual([x[0] for x in self.heads(h)], ["STIG", "Disk & services", "ACT", "alpha", "Zeta", "Other"])     # the built-in areas, others by name, Other last
-        self.assertEqual([x[2] for x in self.heads(h)], ["2", "1", "1", "1", "1", "1"])
+        self.assertEqual([x[0] for x in self.heads(h)], ["Linux", "STIG", "ACT", "alpha", "Zeta", "Other"])     # the platform areas in order, others by name, Other last
+        self.assertEqual([x[2] for x in self.heads(h)], ["1", "2", "1", "1", "1", "1"])
         self.assertLess(h.index('id="ftiles"'), h.index('id="agrid"'))                                                      # under the tiles and the search
         self.assertLess(h.index('class="find"'), h.index('id="agrid"'))
         self.assertEqual(len(re.findall(r"<li data-wf", h)), 7)
-        grp = h[h.index('data-area="STIG"'):h.index('data-area="Disk')]
+        grp = h[h.index('data-area="STIG"'):h.index('data-area="ACT"')]
         self.assertLess(grp.index("STIG - import"), grp.index("STIG - recheck"))                                            # by title inside a group
 
     def test_2_the_tiles_and_the_search_filter_inside_the_groups_and_empty_groups_hide(self):
         cfg, p = self.portal(self.cards())
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"show": ["workflow"]})
         self.assertEqual([(a, bool(hid), n) for a, hid, n in self.heads(h)],
-                         [("STIG", False, "1"), ("Disk & services", True, "0"), ("ACT", True, "0"), ("alpha", True, "0"), ("Zeta", True, "0"), ("Other", True, "0")])
+                         [("Linux", True, "0"), ("STIG", False, "1"), ("ACT", True, "0"), ("alpha", True, "0"), ("Zeta", True, "0"), ("Other", True, "0")])
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"q": ["zeta"]})
         self.assertEqual([a for a, hid, n in self.heads(h) if not hid], ["Zeta"])
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"show": ["failed"]})
@@ -4868,9 +4868,44 @@ class Areas1784(unittest.TestCase):
 
     def test_4_the_built_in_prefixes(self):
         for name, want in (("Linux - health", "Linux"), ("Windows - health", "Windows"), ("VMware - deploy", "VMware"), ("VM - ask", "VMware"), ("ACT - triage", "ACT"),
-                           ("STIG recheck", "STIG"), ("stig - fix", "STIG"), ("AAP - set up", "Admin"), ("fapolicyd daily", "fapolicyd"), ("Renew the certificate now", "Certificates"),
-                           ("Certificates due", "")):
+                           ("STIG recheck", "STIG"), ("stig - fix", "STIG"), ("AAP - set up", "Admin"), ("fapolicyd daily", "Linux"), ("Renew the certificate now", "Certificates"),
+                           ("Certificates due", "Certificates"), ("Something else", "")):
             self.assertEqual(rules.area_for(name)[0], want, name)
+
+    def test_4b_one_section_per_platform_by_name(self):
+        """The site's own templates by name: the catalog's rules without its catch-all - an unknown name stays Other."""
+        for name, want in (("Active Directory health report", "Active Directory"), ("ACT - triage finding", "ACT"), ("act for Windows - install", "ACT"),
+                           ("VMware - deploy from ServiceNow ticket", "VMware"), ("VM - deploy from ServiceNow ticket", "VMware"),
+                           ("NetApp - expand a volume", "NetApp"), ("Horizon - user help", "Horizon"), ("ESXi - network check", "VMware"),
+                           ("Windows STIG recheck", "STIG"), ("Windows - trust store report", "Certificates"), ("VMware - certificate report", "Certificates"),
+                           ("Windows health check", "Windows"), ("ServiceNow tickets", "Tickets & incidents"), ("Outage AAR - Word document", "Tickets & incidents"),
+                           ("AAP - health check", "Admin"), ("Site portal - deploy", "Admin"), ("SolarWinds - snapshot", "Network"), ("Cisco UCS inventory", "Network"),
+                           ("Tenable.sc - scan", "STIG"), ("Linux - tmp cleanup", "Linux"),
+                           ("Health check", ""), ("Patch hosts", ""), ("Something unknown", "")):
+            self.assertEqual(rules.area_for(name), (want, "name") if want else ("", ""), name)
+            self.assertEqual(rules.area_by_name(name), want, name)
+        self.assertEqual(rules.area_by_name("Health check", catch_all=True), "Linux")                                   # the catalog's catch-all only
+        self.assertEqual(rules.area_by_name("Active Directory - account lockout", catch_all=True), "Active Directory")   # never "ACT - *"
+        self.assertNotIn("*", [m for m, _ in rules.BUILTIN_AREA_RULES])
+        self.assertEqual(rules.AREAS, ("Linux", "Windows", "Active Directory", "VMware", "Horizon", "NetApp", "Network", "STIG", "Certificates",
+                                       "Tickets & incidents", "ACT", "Admin"))
+        self.assertEqual(set(a for a, _ in rules.AREA_RULES), set(rules.AREAS))
+        self.assertEqual(sp.AREA_FIRST, rules.AREAS)
+
+    def test_4c_a_workflow_by_its_catalog_name(self):
+        wa = {"daily health": "Linux", "stig drift": "STIG"}
+        self.assertEqual(rules.area_for("Daily  Health", "", "", {}, [], wa), ("Linux", "catalog"))                     # any case, any spacing
+        self.assertEqual(rules.area_for("Daily health", "", "Mine", {}, [], wa), ("Mine", "label"))                      # the label still wins
+        self.assertEqual(rules.area_for("Daily health", "", "", {}, [("Daily *", "R")]), ("R", "your rule"))            # not for a job template (no map)
+        self.assertEqual(rules.area_for("Daily health", "playbooks/x.yml", "", {}, [], wa), ("", ""))                    # a playbook: never by name
+        self.assertEqual(rules.area_for("Daily health", "", "", {}, [("Daily *", "R")], wa), ("Linux", "catalog"))       # the catalog before your rules
+        cfg = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_WORKFLOW_AREAS": json.dumps({"Daily health": "Linux", "": "X", "Y": ""})})
+        self.assertEqual(cfg.workflow_areas, {"daily health": "Linux"})
+        self.assertEqual(sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_WORKFLOW_AREAS": "not json"}).workflow_areas, {})
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn('PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"', y)
+        self.assertIn('"catalog": "its workflow\'s area in the job catalog"', open(sp.__file__).read())
 
     def test_5_the_rules_are_checked_naming_the_setting(self):
         ok = rules.site_portal_area_rules([{"match": "Linux - *", "area": " Linux "}])

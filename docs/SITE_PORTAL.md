@@ -250,8 +250,9 @@ actions:
 | `text` | at most `max` characters (4000 when not set, 20000 at most); with `pattern`, the whole value must match it (a regular expression) |
 
 `area` (up to 40 characters) is the group an action sits in on the Actions page, and `summary` (up to 160) is the one line
-under its title. The groups of this version's actions are *STIG*, *Disk & services*, *fapolicyd*, *Tickets* and *ACT*,
-in that order; any other area follows by name, and an action with none sits in *Other*, last.
+under its title. The page has one section per platform, in this order: *Linux*, *Windows*, *Active Directory*, *VMware*, *Horizon*,
+*NetApp*, *Network*, *STIG*, *Certificates*, *Tickets & incidents*, *ACT*, *Admin*; any other area follows by name, and an action
+with none sits in *Other*, last. This version's actions use *Linux*, *STIG*, *Tickets & incidents* and *ACT*.
 
 `multi_host: true` (optional, with `limit_from`) makes a group or several hosts ONE job; see *One job for a group*.
 
@@ -816,8 +817,8 @@ label, and the portal's own actions.
 1. **The strip** says *Connected - AAP: 25 jobs found* (or why AAP could not be asked) and when it was last read. **Refresh** reads AAP again now.
 2. **The four tiles** are filters: All, Job templates, Workflows, and *Last run failed*. They are links, so they work without scripts.
 3. **The search** looks in the name, the description and the labels. Press **/** to jump to it; *13 of 13* says how many cards show.
-4. **The cards are grouped by area**, with a heading and a count for each: *STIG*, *Disk & services*, *fapolicyd*, *Tickets*, *ACT*, then the areas of
-   your templates (their `portal-area:X` label), then *Other*. The tiles and the search filter inside the groups, and a group with nothing to show hides.
+4. **The cards are grouped by area**, with a heading and a count for each: *Linux*, *Windows*, *Active Directory*, *VMware*, *Horizon*, *NetApp*,
+   *Network*, *STIG*, *Certificates*, *Tickets & incidents*, *ACT*, *Admin*, then any other area (a `portal-area:X` label or your rule), then *Other*. The tiles and the search filter inside the groups, and a group with nothing to show hides.
 5. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
    the template's labels (not the portal's own), **Details** and **Run**. A template with no description says *No description*.
    While a card's last run is still going, the page asks for it again every 15 seconds and shows its end (1.79.6). The portal reads the last
@@ -847,9 +848,29 @@ These need scripts and are kept in this browser only; without scripts every page
 
 ## Which area a found template is in
 
-Each found template gets an area, the first of these that says: **1.** its `portal-area:<area>` label; **2.** the area its playbook has in the job catalog (`aap/job_templates.yml`, an `area` on each entry; the deploy reads the file when the repository has it);
-**3.** your own rules, `portal_area_rules`; **4.** its name's start: *Linux - *, Windows - *, VMware - * and VM - *  (VMware), ACT - *, STIG*, AAP - * (Admin), fapolicyd*, and anything with *certificate* in it (Certificates)*; **5.** *Other*, last.
-**Details** says which one: *Area: Linux (from its name)*. The groups are the built-in areas first (STIG, Disk & services, fapolicyd, Tickets, ACT), then the rest A to Z, then Other.
+Each found template gets an area, the first of these that says: **1.** its `portal-area:<area>` label; **2.** its area in the job catalog
+(`aap/job_templates.yml`, an `area` on each entry: a job template by its playbook, a workflow by its name; the deploy reads the file when the
+repository has it); **3.** your own rules, `portal_area_rules`; **4.** the name rules below; **5.** *Other*, last.
+**Details** says which one: *Area: VMware (from its name)*. The sections are the twelve below in that order, then any other area A to Z, then Other.
+
+The name rules (the same rules give every catalog entry its area): the first that matches wins, `*` is any text, any case.
+
+| Area | Names |
+|---|---|
+| Admin | `AAP - *`, `Site portal - deploy`, `Report website*`, `Workflow gate*` |
+| Tickets & incidents | `ServiceNow*`, `Site portal - open ticket`, `Outage*`, `SOP*` |
+| ACT | `ACT - *`, `ACT for *`, `Apply approved ACT fix`, `Fix with approval (ACT)` |
+| STIG | `STIG*`, `Windows STIG*`, `Evaluate-STIG*`, `POA&M*`, `Checklists imported*`, `Weekly compliance`, `Windows weekly compliance`, `Security posture`, `Tenable.sc*` |
+| Certificates | `*certificate*`, `PKI*`, `*trust store*` (every platform) |
+| Active Directory | `Active Directory*` |
+| Windows | `Windows*` |
+| NetApp | `NetApp*` |
+| Horizon | `Horizon*` |
+| VMware | `VM *`, `VM - *`, `VMware*`, `ESXi*`, `vCenter*` |
+| Network | `Network*`, `SolarWinds*`, `Cisco*` |
+| Linux | `Linux - *`, `fapolicyd*` (in the catalog: every name no rule above names) |
+
+A template of yours that no rule names is in *Other*: give it a `portal-area:` label or a `portal_area_rules` entry.
 
 ```yaml
 portal_area_rules:

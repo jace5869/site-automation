@@ -242,13 +242,19 @@ class Config(object):
             self.motion = "auto"
         ar = g("PORTAL_AREA_RULES", "[]")
         pa = g("PORTAL_PLAYBOOK_AREAS", "{}")
+        wa = g("PORTAL_WORKFLOW_AREAS", "{}")                   # a catalog workflow's area, by its name (a workflow has no playbook)
         try:                                                    # 1.78.4: where a found template without a label gets its area (the deploy checked them; here a wrong one is dropped)
             ar = json.loads(ar) if isinstance(ar, str) else ar
             pa = json.loads(pa) if isinstance(pa, str) else pa
         except ValueError:
             ar, pa = [], {}
+        try:
+            wa = json.loads(wa) if isinstance(wa, str) else wa
+        except ValueError:
+            wa = {}
         self.area_rules = rules.site_portal_area_rules(ar if isinstance(ar, list) else [])["rules"]
         self.playbook_areas = dict((str(k), str(v)[:rules.AREA_MAX]) for k, v in (pa.items() if isinstance(pa, dict) else []) if k and v)
+        self.workflow_areas = dict((" ".join(str(k).split()).casefold(), str(v)[:rules.AREA_MAX]) for k, v in (wa.items() if isinstance(wa, dict) else []) if k and v)
         self.publish_org = str(g("PORTAL_PUBLISH_ORGANIZATION", "")).strip()           # 1.78.3: said in the help panel when nothing is labelled yet
         self.label_title = g("PORTAL_LABEL_TITLE", "portal-title:").strip()
         tj = g("PORTAL_TITLES", "{}")                           # 1.78.1c: {casefolded AAP name: card title}; an entry the deploy would refuse is dropped here
@@ -861,7 +867,8 @@ class Aap(object):
         sigf["limit_inv"] = limit_inv or 0                 # a form drawn for another inventory is not launched against this one
         lab = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
                     and l[len(cfg.label_area):].strip()), "")
-        area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules)
+        area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules,
+                                         cfg.workflow_areas if typ == "workflow" else None)
         name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
         title = cfg.titles.get(tname.casefold()) or next(
             (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]
@@ -2043,7 +2050,7 @@ class Portal(object):
                     return
             scope = [3, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
-                     cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.limit_max,
+                     cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.workflow_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
             self.catalog_key = hmac.digest(self.key, json.dumps(scope, sort_keys=True).encode(), "sha256")
             self._load_catalog()
@@ -3339,7 +3346,7 @@ def parse_time(t):
 
 
 AREA_OTHER = "Other"
-AREA_FIRST = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT")      # the areas of the role's actions.yml, in this order; others by name; Other last
+AREA_FIRST = rules.AREAS      # one section per platform, in this order (Linux, Windows, ... Admin); others by name; Other last
 
 
 def clock(cfg, t=None):
@@ -3517,8 +3524,9 @@ def described_html(a):
 
 
 def area_line(a):
-    """Where a card's area came from (1.78.4): label, playbook, your rule, name - for a found template; the actions file for a built-in one."""
-    src = {"label": "its portal-area: label", "playbook": "its playbook's area in the job catalog", "your rule": "your rule (portal_area_rules)",
+    """Where a card's area came from (1.78.4): label, playbook, catalog, your rule, name - for a found template; the actions file for a built-in one."""
+    src = {"label": "its portal-area: label", "playbook": "its playbook's area in the job catalog", "catalog": "its workflow's area in the job catalog",
+           "your rule": "your rule (portal_area_rules)",
            "name": "its name", "": ""}.get(a.get("area_from", "file" if not a.get("discovered") else ""), "")
     if not a.get("discovered"):
         src = "the actions file"

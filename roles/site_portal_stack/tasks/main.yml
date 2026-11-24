@@ -330,6 +330,16 @@
                     | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='area') | list)) }}
   when: _portal_catalog_stat.stat.exists | default(false)
 
+# a workflow has no playbook: its catalog entry (workflows, an 'area' on each) is found by its name
+- name: Areas | the area of each workflow of the catalog
+  ansible.builtin.set_fact:
+    _portal_workflow_areas: >-
+      {{ dict((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).workflows | default([])
+              | selectattr('area', 'defined') | map(attribute='name') | list
+              | zip((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).workflows | default([])
+                    | selectattr('area', 'defined') | map(attribute='area') | list)) }}
+  when: _portal_catalog_stat.stat.exists | default(false)
+
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
     _portal_actions_raw: "{{ _portal_merge.actions }}"
@@ -787,6 +797,7 @@
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
       PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
+      PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
       PORTAL_SEASON: "{{ _portal_season }}"
       PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"

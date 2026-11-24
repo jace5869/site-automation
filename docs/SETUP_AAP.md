@@ -864,7 +864,8 @@ How it finds them - the way the descriptions do:
 
 What is never renamed unless the map names it (a name the map gives stays: the next run does not rename it again):
 
-- **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - every one that
+- **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - the catalog's
+  *Network* area (*Network config ...*, *Network map*, *SolarWinds - snapshot*, *Cisco UCS inventory* ...) and every one that
   runs on the Network execution environment). The match leaves them out too.
 - **The templates and workflows AAP - set up portal actions makes** (*STIG recheck*, *Disk - clean up (approved)* ...):
   that job knows its own by name. Nothing is renamed onto those names either.

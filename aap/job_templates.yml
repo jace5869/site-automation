@@ -10,13 +10,14 @@
 #   extra_vars            Variables it always has (a second template of the same playbook)
 #   made_by               another job makes it (AAP - set up portal actions): left to that job
 #   portal                the site portal launches this playbook (aap_templates_label_portal: portal-actions labels these)
-#   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal)
+#   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal); one per
+#                         platform, from the name rules of plugins/filter/site_portal_filters.py (a workflow has one too)
 #   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
 #   survey                1.107.0: the survey questions its workflows' nodes answer - each added when missing, never one
 #                         changed or taken off
 #   description           {does, targets, produces, supports} from aap/job_descriptions.yml (1.79.11): the lines
 #                         aap_templates_describe writes on the template ("** Does: ...")
-# workflows: [{name, playbooks (its steps' playbooks), description}] - the workflows aap_templates_describe describes,
+# workflows: [{name, playbooks (its steps' playbooks), area, description}] - the workflows aap_templates_describe describes,
 #   found by name, else by the playbooks of their steps; 1.83.0, with nodes: made by "AAP - set up job templates" too
 #   (prompts, nodes as roles/site_portal_stack/files/workflows.yml writes them); replaces: the old names to delete;
 #   1.107.0: every workflow of docs/WORKFLOWS_AND_SCHEDULES.md has nodes (a node's job_type / diff_mode: its Job type and
@@ -208,7 +209,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/disk_report.yml
-    area: Disk & services
+    area: Linux
     description:
       does: Lists local filesystems, LVM thin pools and snapshots near full (85/90%) and the old data in /tmp and /var/tmp,
         for capacity follow-up.
@@ -226,7 +227,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/tmp_cleanup.yml
-    area: Disk & services
+    area: Linux
     description:
       does: Deletes old files in /tmp (10 days) and /var/tmp (30 days), never sockets or files systemd, ssh or Kerberos keep,
         to free space.
@@ -304,7 +305,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/service_watch.yml
-    area: Disk & services
+    area: Linux
     description:
       does: Watches the podman containers that should run; when one is down, ACT finds the cause and proposes the fix (or
         makes it in self-heal).
@@ -323,7 +324,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/service_watch.yml
-    area: Disk & services
+    area: Linux
     extra_vars:
       watch_mode: approval
     description:
@@ -344,7 +345,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/service_fix_approved.yml
-    area: Disk & services
+    area: Linux
     description:
       does: After a workflow approval, runs exactly the approved container fix commands on each host, with no model, then
         checks the containers again.
@@ -605,7 +606,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/disk_cleanup_plan.yml
-    area: Disk & services
+    area: Linux
     made_by: AAP - set up portal actions
     portal: true
     description:
@@ -623,7 +624,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/disk_cleanup.yml
-    area: Disk & services
+    area: Linux
     made_by: AAP - set up portal actions
     portal: true
     description:
@@ -643,7 +644,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/service_restart.yml
-    area: Disk & services
+    area: Linux
     portal: true
     description:
       does: 'Workflow 50''s service step for one down service of a health check: look = its status and last log lines; restart
@@ -663,7 +664,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/fapolicyd_allow.yml
-    area: fapolicyd
+    area: Linux
     portal: true
     description:
       does: 'Workflow 51, the portal''s Allow this: for one fapolicyd denial, picks the one trust entry or rule line that
@@ -682,7 +683,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/disk_space_request.yml
-    area: Disk & services
+    area: Linux
     made_by: AAP - set up portal actions
     portal: true
     portal_actions: [disk_space_request]
@@ -702,7 +703,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/portal_open_ticket.yml
-    area: Tickets
+    area: Tickets & incidents
     made_by: AAP - set up portal actions
     portal: true
     portal_actions: [open_ticket]
@@ -843,7 +844,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/workflow_gate.yml
-    area: Linux
+    area: Admin
     made_by: AAP - set up portal actions
     description:
       does: 'Sits between a check and its approval: the workflow goes on only when the check handed on a plan (workflow_gate_var).'
@@ -959,7 +960,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_perf_report.yml
-    area: Reports
+    area: Network
     description:
       does: Measures latency, jitter, loss, TCP connect and OCSP answers from each Linux host to its targets, against the
         host's own usual.
@@ -977,7 +978,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/log_analysis.yml
-    area: Reports
+    area: Linux
     description:
       does: 'On demand: reads warning and error log lines of a group of hosts for a time window, groups them into patterns,
         and ACT explains the top ones.'
@@ -995,7 +996,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/fapolicyd_denials.yml
-    area: fapolicyd
+    area: Linux
     description:
       does: Reads each host's fapolicyd denials from the audit log and has ACT explain them and propose a trust entry or narrow
         rule.
@@ -1050,7 +1051,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
-    area: fapolicyd
+    area: Linux
     description:
       does: Finds what keeps fapolicyd down and what it blocks, and lists each fix to approve; makes only the fixes given
         in fapolicyd_approved.
@@ -1068,7 +1069,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
-    area: fapolicyd
+    area: Linux
     extra_vars:
       fapolicyd_workflow: 'true'
       fapolicyd_since: yesterday
@@ -1089,7 +1090,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/fapolicyd.yml
-    area: fapolicyd
+    area: Linux
     extra_vars:
       fapolicyd_since: yesterday
     description:
@@ -1277,7 +1278,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/ad_health_report.yml
-    area: Windows
+    area: Active Directory
     description:
       does: Reads the health of every domain controller and domain (replication, DNS, FSMO, time, certificates, recent changes)
         into one report.
@@ -1296,7 +1297,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/ad_lockout.yml
-    area: Windows
+    area: Active Directory
     description:
       does: 'For the service desk: shows whether an account is locked out and which computers'' failed sign-ins lock it, read
         from every DC''s Security log.'
@@ -1314,7 +1315,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/cert_report.yml
-    area: Reports
+    area: Certificates
     description:
       does: Lists every certificate on the Linux hosts (files, keystores, TLS ports) by expiry date and fails hosts with ones
         due within check_certs_warn_days.
@@ -1332,7 +1333,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/cert_renew_csr.yml
-    area: Linux
+    area: Certificates
     description:
       does: Makes a new private key and CSR on the host for each Linux certificate due, and attaches the CSR to its ServiceNow
         incident or catalog order.
@@ -1349,7 +1350,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/cert_install_check.yml
-    area: Linux
+    area: Certificates
     description:
       does: 'Workflow 29 step 1: finds issued certificates on the renewals'' ServiceNow requests and plans each install; fails
         on purpose when one needs approval.'
@@ -1365,7 +1366,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/cert_install_approved.yml
-    area: Linux
+    area: Certificates
     description:
       does: 'After the approval: installs the approved certificates from the check''s plan, reloads the service, checks the
         port; puts old files back on failure.'
@@ -1382,7 +1383,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/cert_restore.yml
-    area: Linux
+    area: Certificates
     description:
       does: Puts an earlier certificate back from an install's backup (cert_restore_backup or cert_restore_only), reloads
         the service and checks the port.
@@ -1399,7 +1400,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_cert_report.yml
-    area: Windows
+    area: Certificates
     description:
       does: Lists every certificate in the Windows machine stores (and TLS endpoints) by expiry, with where each is used;
         fails servers with ones due.
@@ -1417,7 +1418,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_cert_renew_csr.yml
-    area: Windows
+    area: Certificates
     description:
       does: Makes a new key and CSR (certreq -new -machine) on the server for each Windows certificate due, and attaches the
         CSR to ServiceNow.
@@ -1435,7 +1436,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_cert_install_check.yml
-    area: Windows
+    area: Certificates
     description:
       does: 'Step 1 of the Windows certificate install: finds issued certificates on the ServiceNow requests and plans each
         install; fails on purpose for approval.'
@@ -1452,7 +1453,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_cert_install_approved.yml
-    area: Windows
+    area: Certificates
     description:
       does: 'After the approval: accepts each approved certificate into Personal and moves its bindings (https, Remote Desktop,
         WinRM); moves them back on failure.'
@@ -1470,7 +1471,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_cert_restore.yml
-    area: Windows
+    area: Certificates
     description:
       does: Moves a Windows certificate's bindings back to the old certificate from an install's backup record (win_cert_restore_backup
         or _only).
@@ -1487,7 +1488,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/trust_report.yml
-    area: Reports
+    area: Certificates
     description:
       does: Finds trust stores on the Linux hosts that still hold a compromised or browser-dropped CA (check_trust list) and
         fails the hosts that do.
@@ -1504,7 +1505,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/win_trust_report.yml
-    area: Windows
+    area: Certificates
     description:
       does: Finds Windows machine stores, Java cacerts and certifi bundles that still hold a compromised or browser-dropped
         CA, and fails those servers.
@@ -1539,7 +1540,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_trust_report.yml
-    area: VMware
+    area: Certificates
     description:
       does: Checks vCenter's trusted roots and each ESXi host's trusted CAs for a compromised or browser-dropped CA; fails
         when one is still held.
@@ -1556,7 +1557,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_cert_report.yml
-    area: VMware
+    area: Certificates
     description:
       does: Lists the certificates of vCenter and every ESXi host by expiry, and what the renewal would do for each one due.
       targets: vCenter via its API from the AAP side (VMware vCenter credential, read-only is enough); no Limit
@@ -1572,7 +1573,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_cert_renew.yml
-    area: VMware
+    area: Certificates
     description:
       does: 'For each vCenter or ESXi certificate due: a ServiceNow incident (or catalog order) and a CSR made on vCenter
         or the host, attached to it.'
@@ -1589,7 +1590,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_cert_request.yml
-    area: VMware
+    area: Certificates
     description:
       does: 'On demand: makes a CSR on the vCenters or ESXi hosts named in vmware_cert_request_for and orders it from the
         PKI''s catalog item now.'
@@ -1607,7 +1608,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_cert_install_check.yml
-    area: VMware
+    area: Certificates
     description:
       does: 'Workflow 39 step 1: finds issued vCenter/ESXi certificates on their ServiceNow requests and plans each install;
         fails on purpose for approval.'
@@ -1623,7 +1624,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/vmware_cert_install_approved.yml
-    area: VMware
+    area: Certificates
     description:
       does: 'After the approval: installs the approved certificates on ESXi hosts, then vCenter''s Machine SSL; older vCenter
         restarts its services (10-20 min).'
@@ -1675,7 +1676,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_cert_report.yml
-    area: Reports
+    area: Certificates
     description:
       does: Reads the TLS certificate each network device presents (switches, iLO, UPS ...) with a TLS hello, soonest expiry
         first; no login to devices.
@@ -1692,7 +1693,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_cert_renew.yml
-    area: Linux
+    area: Certificates
     description:
       does: Opens or updates a ServiceNow incident for each network device certificate due within net_cert_warn_days, with
         the steps to renew it.
@@ -1710,7 +1711,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/pki_bundle_check.yml
-    area: Linux
+    area: Certificates
     description:
       does: Downloads the PKI's PKCS7 CA bundle (pki_bundle_url), verifies it and compares it with your copy (cert_install_ca_bundle).
       targets: The AAP side only (execution environment, localhost); no Limit, no credential
@@ -2099,7 +2100,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/site_portal_deploy.yml
-    area: Linux
+    area: Admin
     description:
       does: Installs or updates the site portal (reports, actions that launch AAP jobs, live jobs, approvals) as podman containers;
         run after updates.
@@ -2311,7 +2312,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_api_test.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Proves the Horizon API connection: logs in, asks each REST API path the other jobs use, checks pool names in
         settings; run first.'
@@ -2327,7 +2328,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_health_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: Checks Connection Servers, gateways, vCenter and AD as Horizon sees them, event DB, SAML/True SSO, license, pools
         and broken desktops.
@@ -2345,7 +2346,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_capacity_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: Shows per desktop pool its maximum, free, in use, broken and busy desktops and sessions, and how full it is, to
         spot pools running out.
@@ -2363,7 +2364,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_events_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Summarizes Horizon''s event database for the last horizon_events_hours (24): failed logons by user, errors by
         type, admin changes.'
@@ -2381,7 +2382,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_settings_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: Compares Horizon's global and per Connection Server settings (timeouts, SSO, FIPS, smart cards) with horizon_settings_baseline.
       targets: Horizon Connection Server REST API (Horizon API credential); runs on the AAP side, no inventory needed.
@@ -2398,7 +2399,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_sessions_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: Lists old Horizon Clients, pending sessions, sessions on broken desktops, long sessions, users with two or more
         sessions, protocols.
@@ -2415,7 +2416,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_logon_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Shows desktop logon timing of the last horizon_logon_hours from Horizon''s Help Desk data: per pool median, 95th
         percentile, slowest phase.'
@@ -2433,7 +2434,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_fslogix_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Lists FSLogix profile containers on horizon_fslogix_shares: size vs cap, stale, duplicates, orphan folders, and
         each share''s free space.'
@@ -2452,7 +2453,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_internal_vms_report.yml
-    area: VMware
+    area: Horizon
     description:
       does: Lists instant-clone internal VMs (cp-template, cp-replica, cp-parent) that are orphaned, inaccessible or unused,
         and the disk they hold.
@@ -2470,7 +2471,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_message_users.yml
-    area: VMware
+    area: Horizon
     description:
       does: Sends a message (horizon_message) to the Horizon sessions of some pools, an ESXi host's desktops, some users or
         everyone, e.g. before maintenance.
@@ -2488,7 +2489,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_plan.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Step 1 of the ESXi host maintenance workflow: lists the desktops on horizon_maint_host to put in maintenance
         and the sessions to message.'
@@ -2506,7 +2507,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_start.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'After the approval: puts the planned desktops (re-checked) into Horizon maintenance mode and messages the host''s
         sessions; stops without a plan.'
@@ -2525,7 +2526,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_host_maintenance_end.yml
-    area: VMware
+    area: Horizon
     description:
       does: After the ESXi host's maintenance, takes the desktops the start job put in Horizon maintenance mode back out (horizon_maint_host).
       targets: Horizon Connection Server REST API (Horizon API credential); runs on the AAP side, no inventory needed.
@@ -2541,7 +2542,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_desktops_check.yml
-    area: VMware
+    area: Horizon
     extra_vars:
       horizon_desktops_mode: approval
     description:
@@ -2561,7 +2562,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_desktops_fix_approved.yml
-    area: VMware
+    area: Horizon
     description:
       does: After the approval in the broken desktops workflow, fixes exactly the approved Horizon desktops that are still
         broken and have no session.
@@ -2580,7 +2581,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/horizon_image_check.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Checks whether a Horizon instant-clone golden image VM is ready to snapshot and push: PASS/WARN/FAIL per check,
         READY or NOT READY.'
@@ -2599,7 +2600,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_image_push_plan.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'Step 1 of the image push workflow: checks the pools, golden VM and snapshot in Horizon and builds the push plan
         for the approver.'
@@ -2618,7 +2619,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_image_push_approved.yml
-    area: VMware
+    area: Horizon
     description:
       does: After the approval, schedules the approved golden image push on each pool still there, not protected and with
         no push already scheduled.
@@ -2637,7 +2638,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_user_help.yml
-    area: VMware
+    area: Horizon
     description:
       does: 'For the service desk: shows one user''s Horizon sessions and desktops and, if asked, logs off, disconnects, resets,
         restarts or recovers them.'
@@ -2654,7 +2655,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/horizon_session_cleanup.yml
-    area: VMware
+    area: Horizon
     description:
       does: Logs off Horizon sessions disconnected for horizon_session_max_disconnected_hours (8) or more, so their desktops
         are freed and refreshed.
@@ -2673,7 +2674,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_config_backup.yml
-    area: Linux
+    area: Network
     description:
       does: Daily backup of each network device's running configuration, with a report of what changed and the diff (secret
         values hidden).
@@ -2692,7 +2693,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_config_load.yml
-    area: Linux
+    area: Network
     ask_job_type: true
     description:
       does: Sends configuration lines to network devices, or restores a backup, for a ServiceNow change request in state Implement;
@@ -2712,7 +2713,7 @@ job_templates:
     ask_inventory: false
     ee: network
     variables_file: aap/extra_vars/net_config_load.yml
-    area: Linux
+    area: Network
     extra_vars:
       site_dry_run_only: 'true'
     job_type: check
@@ -2809,7 +2810,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_health_report.yml
-    area: Reports
+    area: NetApp
     description:
       does: 'Reports NetApp ONTAP health: nodes, alerts, hardware, network, capacity, SnapMirror, SVMs, CIFS, LUNs, certificates,
         time, problems first.'
@@ -2827,7 +2828,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_hardware_report.yml
-    area: Reports
+    area: NetApp
     description:
       does: Lists every ONTAP controller, shelf, disk and port with model, serial number and firmware, for hardware and firmware
         tracking.
@@ -2846,7 +2847,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_capacity_trends.yml
-    area: Linux
+    area: NetApp
     description:
       does: 'Shows how full ONTAP clusters, aggregates and volumes are and where they are going: growth a day, days to 90%,
         fastest growing volumes.'
@@ -2865,7 +2866,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_volume_list.yml
-    area: VMware
+    area: NetApp
     description:
       does: Writes the NetApp volumes that may be grown (one per LUN, with their VMware datastore) as the expand job's survey
         list; run on a schedule.
@@ -2884,7 +2885,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_volume_expand.yml
-    area: VMware
+    area: NetApp
     ask_job_type: true
     survey:
       - question_name: Which volume to grow?
@@ -2921,7 +2922,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ucs_inventory_report.yml
-    area: Reports
+    area: Network
     description:
       does: Lists each Cisco UCS domain's fabric interconnects, chassis, servers, firmware and critical/major faults, for
         inventory and firmware tracking.
@@ -2940,7 +2941,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/netmap_report.yml
-    area: Reports
+    area: Network
     description:
       does: Maps the sites, WAN links, nodes and links SolarWinds knows, and what is down or changed since the last run, as
         a globe and site views.
@@ -2959,7 +2960,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/solarwinds_snapshot.yml
-    area: Reports
+    area: Network
     description:
       does: 'Every 10 minutes: reads SolarWinds once and keeps it in the report database, so the reports read the database
         instead of SolarWinds.'
@@ -2978,7 +2979,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/tenable_scan.yml
-    area: Linux
+    area: STIG
     description:
       does: Launches Tenable.sc (ACAS) scans of an inventory group, one scan per zone, so each host is scanned from its own
         datacenter's scanner.
@@ -2997,7 +2998,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_test_ticket.yml
-    area: Tickets
+    area: Tickets & incidents
     ask_job_type: true
     description:
       does: Proves AAP can reach ServiceNow and open, read back, note and resolve an incident; run once before the ServiceNow
@@ -3016,7 +3017,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_catalog_test.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: Checks the PKI's ServiceNow catalog item and the cert_renew_catalog_variables answers before certificate renewals
         order from it.
@@ -3034,7 +3035,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_tickets.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: 'Workflow step after a check job: opens a ServiceNow incident per finding, adds work notes to open ones, and notes
         the cleared ones.'
@@ -3052,7 +3053,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_health.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: 'Hourly: does the ServiceNow instance answer its API, and are its MID Servers up, validated and healthy (also
         self-hosted nodes if in inventory).'
@@ -3071,7 +3072,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_health.yml
-    area: Tickets
+    area: Tickets & incidents
     extra_vars:
       servicenow_health_part: nodes
     description:
@@ -3092,7 +3093,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_availability.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: 'Every 5 to 15 minutes: times the ServiceNow REST API and login page; fails when ServiceNow is down, for a workflow''s
         notification.'
@@ -3111,7 +3112,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_war.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: 'Weekly: what a ServiceNow assignment group opened, completed and still has open, with lines to paste into the
         weekly activity report.'
@@ -3129,7 +3130,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_insights.yml
-    area: Tickets
+    area: Tickets & incidents
     description:
       does: 'Monthly or quarterly: months of ServiceNow tickets summed up for management: common issues and fixes, backlog,
         P1/P2s, team pages.'
@@ -3148,7 +3149,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_email_question.yml
-    area: Reports
+    area: Admin
     description:
       does: Adds an 'Also email the report to' box to the surveys of every report template and its workflows, so a launcher
         can add recipients.
@@ -3166,7 +3167,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_ee.yml
-    area: Linux
+    area: Admin
     description:
       does: Puts one execution environment on many job templates at once (picked by project, current EE or name), e.g. after
         a new EE is added.
@@ -3183,7 +3184,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_workflow_gates.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     description:
       does: Puts the 'Workflow gate - has a plan' step between each check and its approval in hand-built workflows, so a failed
@@ -3201,7 +3202,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_portal_setup.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     description:
       does: Makes or updates the job templates and workflows the site portal's actions launch, and gives the portal's AAP
@@ -3220,7 +3221,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_templates_setup.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     description:
       does: Makes the catalog's job templates in AAP or checks them; can rename yours to the catalog's names and match their
@@ -3239,7 +3240,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_templates_setup.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     extra_vars:
       aap_templates_describe: 'true'
@@ -3261,7 +3262,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_inventory_move.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     description:
       does: Moves every job template, workflow, workflow node and schedule from one named inventory to another (aap_inventory_replace).
@@ -3279,7 +3280,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_credentials_setup.yml
-    area: Linux
+    area: Admin
     ask_job_type: true
     description:
       does: Renames AAP credentials and attaches them to, or takes them off, job templates (aap_credential_renames, _attach,
@@ -3298,7 +3299,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_health_check.yml
-    area: Linux
+    area: Admin
     description:
       does: 'Checks a containerized AAP 2.5+ host: OS, containers and units, logs, database, controller and gateway API, receptor,
         certificates.'
@@ -3315,7 +3316,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/aap_template_audit.yml
-    area: Linux
+    area: Admin
     description:
       does: 'Reads every job and workflow template''s Variables and says which settings belong elsewhere: inventory, all.yml,
         enclave file, credential.'
@@ -3333,7 +3334,7 @@ job_templates:
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/report_web_copy.yml
-    area: Reports
+    area: Admin
     description:
       does: 'Copies report pages kept as job artifacts (report_web_copy: true) onto the report website, for report jobs that
         cannot reach the web server.'
@@ -3352,7 +3353,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/incident_aar.yml
-    area: Linux
+    area: Tickets & incidents
     description:
       does: Turns the outage details typed in the survey into an after action report Word document (AAR.docx), with an SOP
         from it when asked.
@@ -3371,7 +3372,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/incident_sop.yml
-    area: Linux
+    area: Tickets & incidents
     description:
       does: Turns the SOP typed in the survey (purpose, steps to troubleshoot, fix and check, escalation) into a Word document.
       targets: The AAP side only (localhost); no hosts and no machine credential; an ACT model key credential only for the
@@ -3388,7 +3389,7 @@ job_templates:
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/incident_docs_survey.yml
-    area: Linux
+    area: Admin
     description:
       does: Writes the survey questions of the 'Outage AAR - Word document' and 'SOP - Word document' templates into AAP;
         run once after making them.
@@ -3403,6 +3404,7 @@ workflows:
       - playbooks/auditd_tuning.yml
       - playbooks/workflow_gate.yml
       - playbooks/auditd_tuning.yml
+    area: Linux
     description:
       does: Reads the audit backlog, queue and kernel argument of container hosts; makes the listed changes once a person
         approves.
@@ -3431,6 +3433,7 @@ workflows:
       - playbooks/stigman_ckl_import.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: Reads checklists (CKL, CKLB) on a share, plans their reviews and new assets, and writes them to STIG Manager once
         a person approves.
@@ -3444,6 +3447,7 @@ workflows:
     playbooks:
       - playbooks/act_triage_finding.yml
       - playbooks/act_triage_finding.yml
+    area: ACT
     description:
       does: 'The site portal''s Ask ACT: one fapolicyd or event-log finding from an earlier job explained by ACT (GenAI),
         likely cause and fix.'
@@ -3455,6 +3459,7 @@ workflows:
     playbooks:
       - playbooks/stig_recheck.yml
       - playbooks/win_stig_recheck.yml
+    area: STIG
     description:
       does: 'The site portal''s Recheck: the rules STIG Manager has Open or Not Reviewed checked again on one host, to see
         what is fixed now.'
@@ -3469,6 +3474,7 @@ workflows:
       - playbooks/workflow_gate.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: 'The site portal''s Update STIG Manager: one STIG rule rechecked on one host; if it passes now, its review is
         written after approval.'
@@ -3484,6 +3490,7 @@ workflows:
       - playbooks/stig_finding_recheck.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: 'The site portal''s Fix rule: ACT proposes exact commands for one failed STIG rule; once approved they run, then
         a recheck and its review.'
@@ -3498,6 +3505,7 @@ workflows:
       - playbooks/stig_finding_recheck.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: 'The site portal''s Create asset: a host missing from STIG Manager scanned in full; its asset and the scan''s
         answers created after approval.'
@@ -3511,6 +3519,7 @@ workflows:
       - playbooks/disk_cleanup_plan.yml
       - playbooks/workflow_gate.yml
       - playbooks/disk_cleanup.yml
+    area: Linux
     description:
       does: 'The site portal''s Clean up on a full filesystem: plans the old files in its tmp folders and deletes them once
         a person approves.'
@@ -3526,6 +3535,7 @@ workflows:
       - playbooks/workflow_gate.yml
       - playbooks/service_restart.yml
       - playbooks/service_restart.yml
+    area: Linux
     description:
       does: 'The site portal''s Restart on a service_down finding: shows the service''s status and log, then restarts that
         one service once approved.'
@@ -3538,6 +3548,7 @@ workflows:
       - playbooks/fapolicyd_allow.yml
       - playbooks/workflow_gate.yml
       - playbooks/fapolicyd_allow.yml
+    area: Linux
     description:
       does: 'The site portal''s Allow this: picks the one fapolicyd change (trust entry or rule) for one denial and makes
         it once a person approves.'
@@ -3551,6 +3562,7 @@ workflows:
       - playbooks/service_watch.yml
       - playbooks/workflow_gate.yml
       - playbooks/service_fix_approved.yml
+    area: Linux
     description:
       does: Watches podman containers that should run; when one is down ACT (GenAI) finds why and its fix is applied after
         approval, or at once.
@@ -3588,6 +3600,7 @@ workflows:
       - playbooks/horizon_desktops_check.yml
       - playbooks/workflow_gate.yml
       - playbooks/horizon_desktops_fix_approved.yml
+    area: Horizon
     description:
       does: Finds Horizon desktops in a broken state and, once a person approves the list, recovers or removes the ones still
         broken.
@@ -3614,6 +3627,7 @@ workflows:
     playbooks:
       - playbooks/horizon_image_push_plan.yml
       - playbooks/horizon_image_push_approved.yml
+    area: Horizon
     description:
       does: Checks a golden image push plan (pools, image VM, snapshot, start, log-off policy) and schedules the push once
         a person approves.
@@ -3662,6 +3676,7 @@ workflows:
       - playbooks/horizon_host_maintenance_plan.yml
       - playbooks/horizon_host_maintenance_start.yml
       - playbooks/horizon_host_maintenance_end.yml
+    area: Horizon
     description:
       does: 'Before ESXi host work: its free desktops into Horizon maintenance mode and users messaged; a second approval
         brings them back.'
@@ -3702,6 +3717,7 @@ workflows:
     playbooks:
       - playbooks/vm_snapshot_report.yml
       - playbooks/vm_snapshot_cleanup.yml
+    area: VMware
     description:
       does: Lists every VM snapshot and deletes the ones older than the survey's days once a person approves the report's
         list.
@@ -3734,6 +3750,7 @@ workflows:
     playbooks:
       - playbooks/vm_snapshot_delete_picked.yml
       - playbooks/vm_snapshot_delete_picked.yml
+    area: VMware
     description:
       does: 'Service desk tool: the snapshots ticked in the survey are planned, then deleted exactly as planned once a person
         approves.'
@@ -3762,6 +3779,7 @@ workflows:
     playbooks:
       - playbooks/vm_reboot_picked.yml
       - playbooks/vm_reboot_picked.yml
+    area: VMware
     description:
       does: 'Service desk tool: the VMs ticked in the survey are planned, then restarted (guest restart or hard reset) once
         a person approves.'
@@ -3798,6 +3816,7 @@ workflows:
     playbooks:
       - playbooks/vm_outage_watch.yml
       - playbooks/servicenow_tickets.yml
+    area: VMware
     description:
       does: 'Every 5 to 15 minutes: is a host, datastore or VM down or hung in vCenter now; opens, notes and clears ServiceNow
         incidents.'
@@ -3813,6 +3832,7 @@ workflows:
     playbooks:
       - playbooks/vm_deploy_from_ticket.yml
       - playbooks/vm_deploy_from_ticket.yml
+    area: VMware
     description:
       does: 'Builds the VMs a ServiceNow ticket asks for: the first run checks and places them, a person approves, the second
         run builds them.'
@@ -3834,6 +3854,7 @@ workflows:
   - name: VM - deploy from change (no touch)
     playbooks:
       - playbooks/vm_deploy_from_ticket.yml
+    area: VMware
     description:
       does: Checks the change and builds a clean plan. Sends a plan with warnings to the approval workflow.
       targets: vCenter and the approved ServiceNow change in Implement.
@@ -3852,6 +3873,7 @@ workflows:
     playbooks:
       - playbooks/net_config_load.yml
       - playbooks/net_config_load.yml
+    area: Network
     description:
       does: 'Loads an approved change onto network devices: a dry run shows what would be sent, a person approves, the real
         run sends it.'
@@ -3899,6 +3921,7 @@ workflows:
     playbooks:
       - playbooks/mail_relay_plan.yml
       - playbooks/mail_relay_approved.yml
+    area: Linux
     description:
       does: 'Adds the IP addresses in the survey to the SMTP relay whitelist: the plan is emailed, a person approves, the
         lines are written.'
@@ -3937,6 +3960,7 @@ workflows:
     playbooks:
       - playbooks/mail_relay_plan.yml
       - playbooks/mail_relay_approved.yml
+    area: Linux
     description:
       does: 'Removes the IP addresses in the survey from the SMTP relay whitelist: the plan is emailed, a person approves,
         they are removed.'
@@ -3965,6 +3989,7 @@ workflows:
     playbooks:
       - playbooks/mail_relay_unused.yml
       - playbooks/mail_relay_approved.yml
+    area: Linux
     description:
       does: Finds whitelist addresses that sent no mail through any relay in six months and removes them once a person approves.
       targets: 'The mail relay servers (group mail_relays): their whitelist and mail logs.'
@@ -3986,6 +4011,7 @@ workflows:
     playbooks:
       - playbooks/health_check.yml
       - playbooks/servicenow_tickets.yml
+    area: Linux
     description:
       does: 'Every morning: the daily health checks on Linux hosts, and a ServiceNow incident for each problem (noted again
         when it clears).'
@@ -4008,6 +4034,7 @@ workflows:
       - playbooks/servicenow_tickets.yml
       - playbooks/poam_status.yml
       - playbooks/servicenow_tickets.yml
+    area: STIG
     description:
       does: 'Weekly: the security health checks, the certificate report and the POA&M status, each followed by its ServiceNow
         tickets.'
@@ -4036,6 +4063,7 @@ workflows:
       - playbooks/health_check.yml
       - playbooks/servicenow_tickets.yml
       - playbooks/servicenow_tickets.yml
+    area: Linux
     description:
       does: 'Monthly patching: a health pre-check, a person approves, the hosts are patched, a post-check, and tickets for
         what is wrong.'
@@ -4076,6 +4104,7 @@ workflows:
       - playbooks/patch_hosts.yml
       - playbooks/health_check.yml
       - playbooks/servicenow_tickets.yml
+    area: Linux
     description:
       does: As Patch with checks, but a dry run lists every package first so the approver sees exactly what will be installed.
       targets: Linux hosts in the Limit; never AAP hosts or no_patch groups.
@@ -4115,6 +4144,7 @@ workflows:
       - playbooks/servicenow_tickets.yml
       - playbooks/act_fix_approved.yml
       - playbooks/servicenow_tickets.yml
+    area: ACT
     description:
       does: A health check where ACT (GenAI) proposes a fix for problems; a person approves, and exactly those commands run,
         then the checks again.
@@ -4145,6 +4175,7 @@ workflows:
       - playbooks/servicenow_tickets.yml
       - playbooks/poam_status.yml
       - playbooks/servicenow_tickets.yml
+    area: STIG
     description:
       does: Weekly STIG-related checks (SELinux, fapolicyd, auditd, accounts) and the POA&M status, with ServiceNow tickets.
       targets: Linux hosts (health checks); POA&M list and optional STIG Manager read on the controller.
@@ -4166,6 +4197,7 @@ workflows:
       - playbooks/cert_report.yml
       - playbooks/servicenow_tickets.yml
       - playbooks/cert_renew_csr.yml
+    area: Certificates
     description:
       does: 'Daily: every certificate that expires soon on Linux hosts, an incident for each, and a new key and CSR on its
         ticket.'
@@ -4192,6 +4224,7 @@ workflows:
       - playbooks/cert_install_check.yml
       - playbooks/workflow_gate.yml
       - playbooks/cert_install_approved.yml
+    area: Certificates
     description:
       does: 'Daily: finds issued certificates waiting on their ServiceNow requests and installs them on Linux hosts once a
         person approves.'
@@ -4224,6 +4257,7 @@ workflows:
       - playbooks/win_cert_install_check.yml
       - playbooks/workflow_gate.yml
       - playbooks/win_cert_install_approved.yml
+    area: Certificates
     description:
       does: Finds issued certificates waiting on their ServiceNow requests and installs them on Windows servers once a person
         approves.
@@ -4256,6 +4290,7 @@ workflows:
       - playbooks/fapolicyd.yml
       - playbooks/workflow_gate.yml
       - playbooks/fapolicyd.yml
+    area: Linux
     description:
       does: 'Daily: what keeps fapolicyd down or what it blocked, and each host''s fix lines; once a person approves, those
         lines are made.'
@@ -4285,6 +4320,7 @@ workflows:
       - playbooks/win_stig_full_scan.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: Scans every host of the Limit in full (Linux and Windows) and writes every rule's result to STIG Manager once
         a person approves.
@@ -4323,6 +4359,7 @@ workflows:
       - playbooks/win_stig_recheck.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: Rechecks what STIG Manager has Open or Not Reviewed on the Limit's hosts, makes missing assets, writes it all
         once a person approves.
@@ -4362,6 +4399,7 @@ workflows:
       - playbooks/stig_recheck.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: Rechecks the rules STIG Manager has Open or Not Reviewed on Linux hosts and writes the changed reviews once a
         person approves.
@@ -4374,6 +4412,7 @@ workflows:
       - playbooks/win_stig_recheck.yml
       - playbooks/workflow_gate.yml
       - playbooks/stigman_update.yml
+    area: STIG
     description:
       does: Rechecks the rules STIG Manager has Open or Not Reviewed on Windows servers and writes the changed reviews once
         a person approves.
@@ -4384,6 +4423,7 @@ workflows:
     playbooks:
       - playbooks/stig_drift_report.yml
       - playbooks/servicenow_tickets.yml
+    area: STIG
     description:
       does: Weekly STIG scan of Linux hosts compared with STIG Manager and earlier scans; an incident per host that drifted.
       targets: Linux hosts of the target group; STIG Manager read; the tickets step on the controller.
@@ -4399,6 +4439,7 @@ workflows:
     playbooks:
       - playbooks/net_perf_report.yml
       - playbooks/servicenow_tickets.yml
+    area: Network
     description:
       does: 'Hourly: latency, loss, refused ports, interface drops and OCSP from Linux hosts against their usual; incidents
         for problems.'
@@ -4415,6 +4456,7 @@ workflows:
     playbooks:
       - playbooks/database_health.yml
       - playbooks/servicenow_tickets.yml
+    area: Linux
     description:
       does: Hourly MariaDB and MySQL health (running, connections, replication, errors) with a ServiceNow incident for each
         problem.
@@ -4430,6 +4472,7 @@ workflows:
     playbooks:
       - playbooks/troubleshoot.yml
       - playbooks/health_check.yml
+    area: Linux
     description:
       does: 'On demand for one host: the troubleshooting commands, ACT''s (GenAI) explanation, then every health check.'
       targets: One Linux host (the Limit).
@@ -4451,6 +4494,7 @@ workflows:
       - playbooks/stigman_deploy.yml
       - playbooks/service_watch.yml
       - playbooks/health_check.yml
+    area: STIG
     description:
       does: 'Deploys or updates the STIG Manager stack: a dry run first, a person approves, the real run, then container and
         health checks.'
@@ -4484,6 +4528,7 @@ workflows:
       - playbooks/disk_report.yml
       - playbooks/tmp_cleanup.yml
       - playbooks/disk_report.yml
+    area: Linux
     description:
       does: Daily disk and thin pool report; once a person approves, old /tmp and /var/tmp files on full filesystems are deleted,
         then a report.
@@ -4509,6 +4554,7 @@ workflows:
     playbooks:
       - playbooks/stigman_availability.yml
       - playbooks/servicenow_tickets.yml
+    area: STIG
     description:
       does: 'Every 5 to 15 minutes: is STIG Manager (API, database, Keycloak) answering; an incident while it is down, a note
         when it is back.'
@@ -4526,6 +4572,7 @@ workflows:
     playbooks:
       - playbooks/win_health_check.yml
       - playbooks/servicenow_tickets.yml
+    area: Windows
     description:
       does: 'Every morning: the daily health checks on Windows servers, and a ServiceNow incident for each problem.'
       targets: Windows servers over WinRM; the tickets step runs on the controller.
@@ -4546,6 +4593,7 @@ workflows:
       - playbooks/win_cert_report.yml
       - playbooks/servicenow_tickets.yml
       - playbooks/win_cert_renew_csr.yml
+    area: STIG
     description:
       does: Weekly Windows security checks and certificate report with tickets, and a new key and CSR on the ticket of each
         expiring certificate.
@@ -4574,6 +4622,7 @@ workflows:
       - playbooks/win_patch.yml
       - playbooks/win_health_check.yml
       - playbooks/servicenow_tickets.yml
+    area: Windows
     description:
       does: 'Windows patching: pre-check, a dry run of what Software Center offers, a person approves, install, post-check
         and tickets.'
@@ -4610,6 +4659,7 @@ workflows:
     playbooks:
       - playbooks/win_act_install.yml
       - playbooks/win_act_install.yml
+    area: ACT
     description:
       does: 'Installs or updates the ACT tool on Windows servers: a dry run says what would change, a person approves, then
         the real run.'
@@ -4632,6 +4682,7 @@ workflows:
     playbooks:
       - playbooks/win_troubleshoot.yml
       - playbooks/win_health_check.yml
+    area: Windows
     description:
       does: 'On demand for one Windows server: the troubleshooting commands for an area, then every health check.'
       targets: One Windows server (the Limit), over WinRM.
@@ -4654,6 +4705,7 @@ workflows:
       - playbooks/servicenow_tickets.yml
       - playbooks/cert_report.yml
       - playbooks/servicenow_tickets.yml
+    area: Linux
     description:
       does: 'Every morning in one workflow: Linux and Windows daily health and the certificate report, each with its ServiceNow
         tickets.'
@@ -4683,6 +4735,7 @@ workflows:
       - playbooks/vm_health_report.yml
       - playbooks/vm_alarm_report.yml
       - playbooks/vm_alarm_act_analysis.yml
+    area: VMware
     description:
       does: 'Daily vSphere look: cluster and host health, alarms and the day''s events, then ACT''s (GenAI) likely cause and
         fix for each problem.'
@@ -4702,6 +4755,7 @@ workflows:
       - playbooks/vmware_cert_install_check.yml
       - playbooks/workflow_gate.yml
       - playbooks/vmware_cert_install_approved.yml
+    area: Certificates
     description:
       does: Finds issued certificates for vCenter and ESXi hosts on their ServiceNow requests and installs them once a person
         approves.
