@@ -51,9 +51,9 @@ fixture = {
         "/api/cluster": {"fields": ["name", "uuid", "version"], "single": {"name": "cluster1", "uuid": "c-1"}},
         "/api/storage/volumes": {"fields": ["uuid", "name", "svm", "aggregates", "state", "type", "style", "is_svm_root", "space", "guarantee", "nas", "comment"],
                                  "records": vols},
-        "/api/storage/aggregates": {"fields": ["uuid", "name", "space"], "records": [
-            {"uuid": "a-1", "name": "aggr1", "space": {"block_storage": {"size": 20 * TB, "used": int(14.24 * TB)}}},
-            {"uuid": "a-2", "name": "aggr2", "space": {"block_storage": {"size": aggr2_size, "used": int(aggr2_size * 0.97) - 180 * GB}}}]},
+        "/api/storage/aggregates": {"fields": ["uuid", "name", "space", "node"], "records": [
+            {"uuid": "a-1", "name": "aggr1", "node": {"name": "cluster1-01"}, "space": {"block_storage": {"size": 20 * TB, "used": int(14.24 * TB)}}},
+            {"uuid": "a-2", "name": "aggr2", "node": {"name": "cluster1-02"}, "space": {"block_storage": {"size": aggr2_size, "used": int(aggr2_size * 0.97) - 180 * GB}}}]},
         "/api/storage/luns": {"fields": ["uuid", "name", "svm", "location", "space", "serial_number"], "records": [
             lun("l-ds01", "/vol/vol_ds01/lun_ds01", "svm_vmware", "vol_ds01", 9 * GB, "80Ab1DmT5zXq", used=8.1 * GB),
             lun("l-a", "/vol/vol_ds03/lun_a", "svm_vmware", "vol_ds03", 900 * GB, "80Ab1DmT5zXa", used=711 * GB),

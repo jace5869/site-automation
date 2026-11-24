@@ -2859,7 +2859,7 @@ job_templates:
   - name: NetApp - refresh volume list
     playbook: playbooks/ontap_volume_list.yml
     credentials: [ontap, aap]
-    optional_credentials: [vmware]
+    optional_credentials: [vmware, report_db]
     ask_limit: false
     ask_variables: false
     ask_inventory: false
@@ -2893,7 +2893,8 @@ job_templates:
         choices:
           - (run NetApp - refresh volume list first)
         required: true
-      - question_name: 'Size to add (optional: empty = 10 % of the volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB'
+      - question_name: 'Size to add (optional: empty = 10 % of the LUN or NFS volume, at least 1 GB, at most 512 GB), e.g.
+          150GB or 1TB'
         variable: ontap_expand_size
         type: text
         max: 20

@@ -84,6 +84,13 @@
     data:
       ontap_volume_list: "{{ {'at': _ol_when, 'choices': _ol_choices.choices, 'excluded': _ol_list.excluded, 'clusters': _ol_list.clusters} }}"
 
+# The portal's NetApp page - this run in the report database, with the health parts (only with the credential)
+- name: NetApp | the portal's NetApp page (the report database)
+  ansible.builtin.include_tasks: live_db.yml
+  when:
+    - ontap_live_db | bool
+    - lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
+
 - name: NetApp | every cluster was read and every survey written
   ansible.builtin.assert:
     that:

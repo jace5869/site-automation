@@ -120,6 +120,67 @@ _ontap_queries:
     path: /api/cluster/ntp/servers
     fields: [server, version, authentication_enabled]
 
+# What NetApp - refresh volume list reads for the portal's NetApp page (roles/ontap_report/tasks/live_db.yml) when
+# ontap_live_health / ontap_live_perf are on: the health report's own queries above (cluster, nodes, failover, subsystems,
+# disks, ems, ldap, snapmirror) - the CLI SnapMirror query also asks each relationship's schedule - and the schedules, to
+# say a lag against its schedule. GET only.
+_ontap_live_health_queries:
+  - key: cluster
+    path: /api/cluster
+    fields: [name, version.full]
+  - key: nodes
+    path: /api/cluster/nodes
+    fields: [name, state, uptime, model, ha.enabled, ha.partners.name, ha.takeover.state]
+    fallback_fields: [name, state, uptime, model]
+  - key: failover
+    path: /api/private/cli/storage/failover
+    fields: [node, partner-name, possible, state-description]
+  - key: subsystems
+    path: /api/private/cli/system/health/subsystem
+    fields: [subsystem, health]
+  - key: ems
+    path: /api/support/ems/events
+    fields: [time, message.name, message.severity, log_message, node.name]
+    query: {message.severity: "emergency|alert|error", time: ">={{ (now(utc=true).timestamp() - (ontap_ems_hours | float) * 3600) | int }}"}
+    fallback_query: {message.severity: "emergency|alert|error"}
+    max: "{{ ontap_ems_max | int }}"
+  - key: ldap
+    path: /api/name-services/ldap
+    fields: [svm.name, servers]
+    fallback_fields: [svm.name]
+  - key: disks
+    path: /api/storage/disks
+    fields: [name, state, container_type, node.name, home_node.name]
+    max: 50000
+  - key: snapmirror_cli
+    path: /api/private/cli/snapmirror
+    fields: [source-path, destination-path, type, state, status, healthy, unhealthy-reason, lag-time,
+             last-transfer-end-timestamp, total-progress, last-transfer-error, policy, schedule]
+    fallback_fields: [source-path, destination-path, state, status, healthy, lag-time]
+    max: 20000
+  - key: snapmirror
+    path: /api/snapmirror/relationships
+    fields: [source.path, destination.path, state, healthy, unhealthy_reason.message, lag_time, transfer.state,
+             transfer.bytes_transferred, transfer.end_time, policy.name]
+    max: 20000
+  - key: schedules
+    path: /api/cluster/schedules
+    fields: [name, type, cron, interval]
+    fallback_fields: [name, cron]
+# ONTAP's latest performance sample of each volume and LUN (metric: latency in microseconds, IOPS, throughput in bytes a
+# second, over its duration - PT15S). One GET each a cluster; an hour's average would be a GET per volume (not read).
+_ontap_live_perf_queries:
+  - key: perf_volumes
+    path: /api/storage/volumes
+    fields: [name, svm.name, metric.latency.total, metric.iops.total, metric.throughput.total, metric.duration, metric.timestamp]
+    query: {is_constituent: "false"}
+    max: 50000
+  - key: perf_luns
+    path: /api/storage/luns
+    fields: [name, svm.name, location.volume.name, metric.latency.total, metric.iops.total, metric.throughput.total,
+             metric.duration, metric.timestamp]
+    max: 50000
+
 # What the hardware inventory reads (playbooks/ontap_hardware_report.yml): the controllers, shelves, disks and ports,
 # with their models, serial numbers and firmware versions. Fields checked against the same reference (ONTAP 9.10 to
 # 9.16); an older ONTAP that refuses one: asked again as above.

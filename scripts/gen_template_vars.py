@@ -382,7 +382,8 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## ontap_expand_incident: create needs the ServiceNow API credential and ontap_expand_incident_group
 """),
     "ontap_volume_list.yml": ("NetApp - refresh volume list",
-                              "NetApp ONTAP, Red Hat Ansible Automation Platform (optional: VMware vCenter, for the datastore names)", "", """\
+                              "NetApp ONTAP, Red Hat Ansible Automation Platform (optional: VMware vCenter, for the datastore names; "
+                              "Report database, for the portal's NetApp page)", "", """\
 ## Run it on a schedule (e.g. every 30 minutes); it writes the Volume list of ontap_expand_templates' survey
 """),
     "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\

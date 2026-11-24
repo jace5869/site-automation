@@ -1296,6 +1296,142 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4,
 | `ad_db_create` | `true` | Make the tables on the first run |
 | `ad_db_keep_days` | `400` | Delete this template's older runs. `0`: never |
 
+## The NetApp page's runs (portal)
+
+The site portal's **NetApp** page (`/portal/netapp`, [SITE_PORTAL.md](SITE_PORTAL.md), [NETAPP.md](NETAPP.md) *The live page*)
+reads *NetApp - refresh volume list*'s runs from here: each LUN and volume, how full and how fast it fills, the
+aggregates, and the health parts.
+
+1. Add the **Report database** credential (the writer's) to *NetApp - refresh volume list*. The template setup job
+   attaches it when `aap_templates_credentials` maps `report_db`.
+2. *Site portal - deploy* needs the read-only `report_reader` login (the same as the AD page): `GRANT SELECT` on `site_reports.*`.
+3. The next run of the refresh makes the tables and writes its run. The portal shows the **NetApp** tab once there is one.
+
+| | |
+|---|---|
+| What a run writes | one row in `ontap_live_run` (when, the job, its template, the clusters and what could not be read, the expand template and its question, the page's settings), a row per LUN and per volume in `ontap_live_volume` (sizes, how full and from which source - `datastore`, `LUN` or `volume` - thick or thin, the datastore, whether the expand job offers it and its survey choice, or why not; the growth, the days until full and the status, worked out by the writer), a row per aggregate in `ontap_live_aggr` (with the days until `ontap_expand_aggr_max_pct`), a point per LUN, volume and aggregate in `ontap_live_point`, and one JSON document per health part in `ontap_live_part` (`snapmirror`, `nodes`, `disks`, `ems`, `clusters`, `perf`) |
+| Schema version | 1 (`schema_version` component `ontap_live`) |
+| How much | 500 LUNs and volumes every 15 minutes: about 48,000 points a day; runs are kept `ontap_live_db_keep_hours` (48), points `ontap_live_db_keep_days` (14) |
+| When the database is down | one warning in the job output; the survey is written as before, the job stays green. The portal shows the run before |
+| A dry run (Check) | logs in and looks at the tables, writes nothing |
+| Who reads it | the portal, as `report_reader` (SELECT only) |
+| Turning it off | `ontap_live_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE ontap_live_part, ontap_live_point, ontap_live_aggr, ontap_live_volume, ontap_live_run;` and `DELETE FROM schema_version WHERE component = 'ontap_live';` |
+
+**By hand.** If the writer may not create tables, set `ontap_live_db_create: false` and make them once as root, in
+`site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE.
+
+<!-- the statements: site_ontap_live_db.ddl(), word for word (tests/test_netapp_live.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_live_run (
+  run_id BIGINT NOT NULL AUTO_INCREMENT,
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  template_id BIGINT NOT NULL DEFAULT 0,
+  clusters TEXT NULL,
+  not_read TEXT NULL,
+  expand_template VARCHAR(255) NOT NULL DEFAULT '',
+  expand_question VARCHAR(128) NOT NULL DEFAULT '',
+  opts TEXT NULL,
+  volumes INT NOT NULL DEFAULT 0,
+  offered INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id),
+  KEY ontap_live_run_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_live_volume (
+  run_id BIGINT NOT NULL,
+  row_key CHAR(40) NOT NULL,
+  address VARCHAR(191) NOT NULL,
+  cluster VARCHAR(191) NOT NULL DEFAULT '',
+  svm VARCHAR(191) NOT NULL DEFAULT '',
+  volume VARCHAR(191) NOT NULL,
+  lun VARCHAR(255) NOT NULL DEFAULT '',
+  luns INT NOT NULL DEFAULT 0,
+  size_b BIGINT NOT NULL DEFAULT 0,
+  used_b BIGINT NOT NULL DEFAULT 0,
+  aggr VARCHAR(191) NOT NULL DEFAULT '',
+  aggr_free_b BIGINT NOT NULL DEFAULT 0,
+  datastore VARCHAR(255) NOT NULL DEFAULT '',
+  ds_kind VARCHAR(8) NOT NULL DEFAULT '',
+  offered TINYINT NOT NULL DEFAULT 0,
+  why VARCHAR(300) NOT NULL DEFAULT '',
+  choice TEXT NULL,
+  root TINYINT NOT NULL DEFAULT 0,
+  full_size_b BIGINT NOT NULL DEFAULT 0,
+  full_used_b BIGINT NOT NULL DEFAULT 0,
+  full_src VARCHAR(16) NOT NULL DEFAULT '',
+  thick TINYINT NOT NULL DEFAULT 0,
+  growth_gb_day DOUBLE NULL,
+  days_full DOUBLE NULL,
+  rate_why VARCHAR(120) NOT NULL DEFAULT '',
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, row_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_live_aggr (
+  run_id BIGINT NOT NULL,
+  address VARCHAR(191) NOT NULL,
+  aggr VARCHAR(191) NOT NULL,
+  cluster VARCHAR(191) NOT NULL DEFAULT '',
+  node VARCHAR(191) NOT NULL DEFAULT '',
+  size_b BIGINT NOT NULL DEFAULT 0,
+  used_b BIGINT NOT NULL DEFAULT 0,
+  growth_gb_day DOUBLE NULL,
+  days_limit DOUBLE NULL,
+  days_full DOUBLE NULL,
+  rate_why VARCHAR(120) NOT NULL DEFAULT '',
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, address, aggr)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_live_point (
+  address VARCHAR(191) NOT NULL,
+  kind VARCHAR(8) NOT NULL,
+  obj VARCHAR(255) NOT NULL,
+  at_s BIGINT NOT NULL,
+  read_at DATETIME NOT NULL,
+  size_b BIGINT NOT NULL DEFAULT 0,
+  used_b BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (address, kind, obj, at_s),
+  KEY ontap_live_point_at (at_s)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ontap_live_part (
+  run_id BIGINT NOT NULL,
+  part VARCHAR(16) NOT NULL,
+  body MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (run_id, part)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('ontap_live', 1, UTC_TIMESTAMP());
+```
+<!-- end of the NetApp page's statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_live_db` | `true` | Keep each run here when the template has the credential |
+| `ontap_live_db_create` | `true` | Make the tables on the first run |
+| `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | Delete older points / runs (the newest run is always kept) |
+
 ## The heat grid's points (1.65.0)
 
 The *VM - health report* ([VMWARE.md](VMWARE.md)) draws each cluster's CPU and memory over 30 days and says what

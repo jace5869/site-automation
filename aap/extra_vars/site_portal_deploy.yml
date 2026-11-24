@@ -357,6 +357,16 @@ portal_public_url: https://stigman.example.mil/portal/
 ## two AD templates (two forests): the ID of the one the page shows; "" = the newest run's
 # portal_ad_template: ""
 
+## ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page")
+## ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database
+## (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume soonest
+## full first with Expand... (NetApp - expand a volume, the choice and Check preselected), the
+## aggregates, SnapMirror, health, performance. The tab shows once the database has a run.
+# portal_netapp: true
+
+## a run older than this is said to be old on the page (the refresh runs every 15-30 min)
+# portal_netapp_old_minutes: 60
+
 ## The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when
 ## this deploy's job template has a "Report database" credential - attach it with the read-only
 ## account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on

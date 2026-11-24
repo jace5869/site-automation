@@ -43,7 +43,8 @@ author: site automation
 RETURN = r'''
 clusters: {description: "list: each cluster read - {address, name, reachable, error}.", type: list, returned: always}
 choices: {description: "list: the volumes that may be grown (site_ontap_expand.choice_text's fields + choice, naa, nfs_path, nfs_ips).", type: list, returned: always}
-excluded: {description: "list: [{volume, svm, cluster, why}].", type: list, returned: always}
+excluded: {description: "list: [{volume, svm, cluster, why, address, size, used, aggr, aggr_free, uuid, root}].", type: list, returned: always}
+aggregates: {description: "list: every aggregate read - [{cluster, address, name, node, size, used}].", type: list, returned: always}
 plan: {description: "plan, grow: site_ontap_expand.plan's answer + volume_uuid, lun_uuid, naa, nfs_path, nfs_ips, cluster.", type: dict, returned: always}
 steps: {description: "grow: [{step, exactly, ok, result}] in order.", type: list, returned: always}
 '''
@@ -65,6 +66,7 @@ from ansible.module_utils import site_ontap_expand as X
 VOL_FIELDS = ("uuid,name,svm.name,aggregates.name,state,type,style,is_svm_root,space.size,space.used,space.available,"
               "space.snapshot.reserve_percent,guarantee.type,nas.path,comment")
 AGGR_FIELDS = "uuid,name,space.block_storage.size,space.block_storage.used"
+LIST_AGGR_FIELDS = AGGR_FIELDS + ",node.name"     # the list's aggregates also name their node (the portal's NetApp page)
 # space.used: the blocks written (drops only after UNMAP); space.guarantee.requested: space-reserved (thick) or thin
 LUN_FIELDS = "uuid,name,svm.name,location.volume.name,space.size,space.used,space.guarantee.requested,serial_number"
 
@@ -199,7 +201,8 @@ def cluster_name(c):
 def list_cluster(c, opts):
     name = cluster_name(c)
     vols = c.records("/api/storage/volumes", VOL_FIELDS)
-    aggrs = {a["name"]: aggr_in(a) for a in c.records("/api/storage/aggregates", AGGR_FIELDS)}
+    arecs = c.records("/api/storage/aggregates", LIST_AGGR_FIELDS)
+    aggrs = {a["name"]: aggr_in(a) for a in arecs}
     luns = {}
     for l_ in c.records("/api/storage/luns", LUN_FIELDS):
         luns.setdefault(((l_.get("svm") or {}).get("name"), ((l_.get("location") or {}).get("volume") or {}).get("name")), []).append(l_)
@@ -208,11 +211,14 @@ def list_cluster(c, opts):
     for v in sorted(vols, key=lambda r: ((r.get("svm") or {}).get("name") or "", r.get("name") or "")):
         why = X.excluded(v, opts["exclude"])
         svm = (v.get("svm") or {}).get("name") or ""
-        if why:
-            excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why})
-            continue
         vi = vol_in(v)
         a = aggrs.get((vi["aggregates"] or [""])[0]) or {"name": (vi["aggregates"] or ["?"])[0], "size": 0, "used": 0}
+        if why:
+            # the sizes too (the portal's NetApp page shows a volume not offered with its reason)
+            excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why, "address": c.address,
+                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)),
+                             "uuid": v.get("uuid") or "", "root": bool(v.get("is_svm_root")) or v.get("name") == "vol0" or not svm})
+            continue
         base = {"cluster": name, "address": c.address, "svm": svm, "volume": vi["name"], "size": vi["size"], "used": vi["used"],
                 "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
                 "nfs_ips": addr.get(svm, []), "lun": "", "luns": 0, "naa": ""}
@@ -225,7 +231,9 @@ def list_cluster(c, opts):
                          vol_available=vi["available"], snap_pct=vi["snap_pct"], guarantee=vi["guarantee"])
             e["uuid"] = v.get("uuid") or ""
             choices.append(e)
-    return name, choices, excluded
+    ag_out = [{"cluster": name, "address": c.address, "name": r.get("name") or "", "node": (r.get("node") or {}).get("name") or "",
+               "size": aggr_in(r)["size"], "used": aggr_in(r)["used"]} for r in arecs]
+    return name, choices, excluded, ag_out
 
 
 def read_one(c, key, opts, size_text):
@@ -368,21 +376,22 @@ def main():
     ctx = ssl_context(p["validate_certs"], p["ca_path"], p["tls_legacy"])
 
     if p["action"] == "list":
-        out, choices, excluded = [], [], []
+        out, choices, excluded, aggregates = [], [], [], []
         for a in clusters:
             c = Client(a, user, password, ctx, p["timeout"])
             try:
-                name, ch, ex = list_cluster(c, opts)
+                name, ch, ex, ag = list_cluster(c, opts)
                 out.append({"address": a, "name": name, "reachable": True, "error": ""})
                 choices += ch
                 excluded += ex
+                aggregates += ag
             except Unreachable as e:
                 out.append({"address": a, "name": a, "reachable": False, "error": explain(str(e), e.kind, a, p["timeout"])})
             except Failed as e:
                 out.append({"address": a, "name": a, "reachable": True, "error": str(e)})
         for e in choices:
             e["choice"] = X.choice_text(e)
-        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded)
+        m.exit_json(changed=False, clusters=out, choices=choices, excluded=excluded, aggregates=aggregates)
 
     key = X.parse_choice(p["choice"])
     if not key:

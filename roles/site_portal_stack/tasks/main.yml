@@ -421,6 +421,10 @@
     - {src: static/netmap-history.css, dest: static/netmap-history.css}
     - {src: static/ad-page.js, dest: static/ad-page.js}
     - {src: static/ad-page.css, dest: static/ad-page.css}
+    # the NetApp page: its reader (the refresh volume list job's runs in the report database) and its files
+    - {src: netapp_live.py, dest: netapp_live.py}
+    - {src: static/netapp-page.js, dest: static/netapp-page.js}
+    - {src: static/netapp-page.css, dest: static/netapp-page.css}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -837,6 +841,9 @@
       PORTAL_AD_SECONDS: "{{ portal_ad_seconds | string }}"
       PORTAL_AD_OLD_MINUTES: "{{ portal_ad_old_minutes | string }}"
       PORTAL_AD_TEMPLATE: "{{ portal_ad_template | string }}"
+      # the NetApp page (its runs from the report database; the tab only once there is one)
+      PORTAL_NETAPP: "{{ '1' if portal_netapp | bool else '0' }}"
+      PORTAL_NETAPP_OLD_MINUTES: "{{ portal_netapp_old_minutes | string }}"
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"

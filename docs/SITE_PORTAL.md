@@ -940,6 +940,26 @@ Each state is said, never shown as current:
 Two AD templates (two forests): `portal_ad_template` is the one the page shows; empty shows the newest run's.
 `portal_ad: false` turns the page and its menu entry off.
 
+## The NetApp page
+
+The portal's **NetApp** page (`/portal/netapp`) shows *NetApp - refresh volume list*'s newest run from the report
+database: At a glance, the Space runway (each LUN and volume soonest full first, its VMware datastore, a search box,
+and **Expand…**), the aggregates, SnapMirror, health and performance. [NETAPP.md](NETAPP.md), *The live page*, has
+what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md), *The NetApp page's runs*, the tables.
+
+- **Expand…** opens this portal's own Run dialog for *NetApp - expand a volume* (a found template: its survey form)
+  with the LUN or volume picked - the survey's current choice, key included - and **Job type Check**. The Run dialog
+  shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type; it is sent to
+  AAP with the launch and kept in the portal's log. Other templates are not changed.
+- The button is off, with the reason, when the portal does not offer the template or the person may not run it:
+  "needs Execute on NetApp - expand a volume".
+- The server reads the database at most once a minute while someone has the page open; the page asks every minute
+  with an ETag. The **NetApp** tab shows only once the database has a run (asked every 5 minutes).
+- Under the strict CSP: the page is drawn by `static/netapp-page.js` (no inline script or style).
+
+**Set it up:** the read-only **Report database** login on *Site portal - deploy* (as for the Active Directory page) and
+the writer's on *NetApp - refresh volume list*. `portal_netapp: false` turns the page and its tab off.
+
 ## What is on and what is off
 
 An available card has a solid border, a bar in the accent colour and a filled **Run**. A card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on one line, and no Run (only Details); the accent

@@ -455,6 +455,51 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
 | `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 
+## The live page
+
+The site portal's **NetApp** page (`/portal/netapp`, [SITE_PORTAL.md](SITE_PORTAL.md)) shows what *NetApp - refresh
+volume list* read last, from the report database ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The NetApp page's runs*).
+GET only on NetApp; the page only reads the database.
+
+- **The live line:** as of when, the refresh's job. Older than `portal_netapp_old_minutes` (60): said, not "Live".
+- **At a glance:** clusters healthy, how many LUNs and volumes over `ontap_volume_warn_pct` / `ontap_volume_crit_pct`,
+  the soonest full, SnapMirror broken and lagging, disks failed and spares, ONTAP errors.
+- **Space runway:** a row per LUN (a LUN volume is judged by its LUN, *How full a volume is*) and per NFS volume, worst
+  and soonest full first: the VMware datastore, the aggregate, how full and from where, free GB, growth a day, days
+  until full - and **Expand…**. A search box finds a datastore, volume, SVM or aggregate. Then the aggregates with the
+  days until `ontap_expand_aggr_max_pct` (97 %).
+- **Expand…** opens *NetApp - expand a volume* in the portal's Run dialog with that LUN or volume picked (the survey's
+  own choice) and **Job type Check**. Only the ones the job offers have it; the others say why ("Not offered: DP
+  volume ..."). When the portal may not run the job, the button is off and says why ("needs Execute on NetApp - expand
+  a volume").
+- **SnapMirror:** problems first; lagging is over 2x its schedule or over `ontap_snapmirror_lag_warn_hours`.
+- **Health:** nodes and HA (takeover possible), disks by node (failed, rebuilding, spares), ONTAP's error events of
+  `ontap_ems_hours`.
+- **Performance:** the busiest LUNs and volumes by latency or IOPS - ONTAP's latest sample (15 s) at the refresh, not an
+  average (an hour's average would be a GET per volume: not read).
+- Where vCenter was not read, the Datastore column says "not read - attach the VMware vCenter credential to NetApp -
+  refresh volume list".
+
+**Set it up.**
+
+1. Attach the **Report database** credential to *NetApp - refresh volume list* (the template setup job does it with
+   `report_db` in `aap_templates_credentials`). Schedule the refresh every 15 to 30 minutes.
+2. *Site portal - deploy* with the read-only `report_reader` login (as for the AD page). Run it once.
+3. The **NetApp** tab shows once the refresh has written a run.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_live_db` | `true` | keep each refresh in the report database (with the credential) |
+| `ontap_live_health` | `true` | also read SnapMirror, nodes and HA, disks and error events |
+| `ontap_live_perf` | `true` | also read each volume's and LUN's latest latency, IOPS and throughput (2 GETs a cluster) |
+| `ontap_live_perf_top` | `10` | the busiest this many by latency and by IOPS |
+| `ontap_perf_latency_warn_ms` / `_crit_ms` | `10` / `20` | amber / red latency |
+| `ontap_live_growth_days` / `ontap_live_growth_min_hours` | `7` / `6` | the growth: the slope of the points of these days, once they span these hours (3 points at least) |
+| `ontap_live_days_warn` / `_crit` | `30` / `7` | full (or at the aggregate limit) within these days: amber / red |
+| `ontap_live_list_days` | `90` | the runway lists first the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest) |
+| `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | delete older points / runs |
+| `portal_netapp` / `portal_netapp_old_minutes` | `true` / `60` | the portal's page on or off; a run older than this is said old |
+
 ## Settings
 
 Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for every run.

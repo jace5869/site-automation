@@ -1,0 +1,47 @@
+/* The portal's NetApp page (/portal/netapp, static/netapp-page.js) - the look's own tokens (portal.css), light and dark. */
+.strip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:10px 16px;margin:14px 0}
+.strip .l{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13.5px}
+.adp-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg)}
+.adp-dot.off{background:var(--muted);box-shadow:none}
+html.moves .adp-dot:not(.off){animation:napulse 2.4s ease-in-out infinite}
+@keyframes napulse{50%{box-shadow:0 0 0 6px var(--ok-bg)}}
+.chip.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
+tr.r-critical>td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+tr.r-warning>td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+.muted{color:var(--muted)}
+.adp-foot{margin:28px 0 8px;font-size:12.5px;color:var(--muted);max-width:90ch}
+.nap-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+.nap-tiles .tile:nth-child(n+5){border-top:1px solid var(--line)}
+.nap-tiles .tile:nth-child(5){border-left:0}
+.tile .v .big{font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.sub2{display:block;color:var(--muted);font-size:12.5px;margin-top:2px;overflow-wrap:anywhere;font-weight:400}
+.nap-narrow{display:none}
+td.wrap{white-space:normal}
+td.act{width:170px;min-width:150px}
+td .btn.sm{font-size:12.5px;padding:4px 10px;white-space:nowrap}
+td .btn.sm[disabled]{opacity:.55;cursor:not-allowed}
+.notoff{font-size:12px;color:var(--muted);display:block;max-width:26ch;overflow-wrap:normal;word-break:normal;line-height:1.35;white-space:normal;margin-top:3px}
+th.num{white-space:normal}
+td b.mono{white-space:nowrap}
+.brk{overflow-wrap:normal;word-break:normal}
+.path{display:block}
+.ctrl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 10px;justify-content:space-between}
+.ctrl .h3{margin:0}
+.ctrl .lbl{margin-right:2px}
+.more-line{color:var(--muted);font-size:13px;margin:8px 2px 0;max-width:120ch}
+.nap-nr{color:var(--warning)}
+.h3{margin:18px 0 8px;font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.seg2{display:inline-flex;background:var(--card-strong);border:1px solid var(--edge);border-radius:9px;padding:2px;gap:2px}
+.seg2 button{border:0;background:transparent;font-size:12.5px;padding:4px 10px;border-radius:7px;color:var(--muted);cursor:pointer}
+.seg2 button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
+@media (max-width:900px){
+  .nap-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.nap-tiles .tile:nth-child(odd){border-left:0}
+  .nap-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}
+  .nap-wide{display:none}.nap-narrow{display:block}
+  .grid2{grid-template-columns:minmax(0,1fr)}
+  td,th{padding-left:10px;padding-right:10px}
+}
+.nap-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nap-q{font:inherit;font-size:13px;padding:5px 10px;border:1px solid var(--edge);border-radius:9px;background:var(--card);color:var(--ink);width:min(300px,60vw)}
+.nap-ds{font-weight:600}
