@@ -151,8 +151,8 @@
 ## ... within this many days: red
 # ontap_live_days_crit: 7
 
-## the page lists the volumes over ontap_volume_warn_pct or full within this many days first (the
-## rest behind "Show all")
+## the page lists every VMware datastore and the volumes over ontap_volume_warn_pct or full within
+## this many days first (the rest behind "Show all")
 # ontap_live_list_days: 90
 
 # ---- vmware_vm -----------------------------------------------------------------------------------

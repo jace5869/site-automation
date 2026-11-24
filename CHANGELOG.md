@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.127.1 — 2026-11-24
+
+**To set up:** run Site portal - deploy; the next refresh fills the datastores.
+
+- **NetApp page: every volume and LUN, however small.** `ontap_volume_min_gb` (the health report's setting) no longer
+  leaves rows out of the page; root volumes still are. The small VMware datastore LUNs it hid were the rows that named
+  their datastores, so the page looked as if no datastore came through.
+- **The default (short) view always shows the VMware datastores,** plus anything over 85 % or full within
+  `ontap_live_list_days`.
+- A LUN with more written than its size shows 100 % (the real figure on hover).
+- The growth's wait reads short: "rate after 6 h (2 of 3 points)".
+
 ## 1.127.0 — 2026-11-24
 
 **To set up:** attach the Report database credential (the writer) and the VMware vCenter credential to NetApp - refresh

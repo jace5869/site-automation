@@ -114,18 +114,14 @@ SRC_WORD = {"datastore": "datastore used", "LUN": "LUN written", "volume": "volu
 
 def model(run, vrows, arows, prow):
     """The rows of one run -> the page's model: a row per LUN (a LUN volume is judged by its LUN) and per NFS volume, worst
-    first then soonest full; root volumes and the ones under ontap_volume_min_gb left out (counted)."""
-    o = run.get("opts") or {}
-    min_b = float(o.get("min_gb", 0) or 0) * 1024 ** 3
+    first then soonest full; root volumes left out (counted). 1.127.1: none left out for its size."""
     vols, small, roots = [], 0, 0
     for (addr, cl, svm, vol, lun, luns, size, used, aggr, afree, ds, kind, offered, why, choice, root, g, days, rwhy, st,
          fsize, fused, fsrc, thick) in vrows:
         if int(root or 0):
             roots += 1
             continue
-        if int(size or 0) < min_b:
-            small += 1
-            continue
+        # 1.127.1: every volume and LUN the list read is on the page, however small (ontap_volume_min_gb is the health report's)
         fsize, fused = int(fsize or size or 0), int(fused if fused is not None else used or 0)
         lname = (lun or "").rsplit("/", 1)[-1]
         pct = round(100.0 * fused / fsize, 1) if fsize else 0.0

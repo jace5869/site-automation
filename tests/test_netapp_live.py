@@ -161,10 +161,10 @@ class Growth(unittest.TestCase):
         now = 1_800_000_000
         g, why = L.rate(*self.sums([(now - 3600, 1.0), (now, 2.0)], now))
         self.assertIsNone(g)
-        self.assertEqual(why, "rate after 3 points over 6 h (2 so far, 1 h)")
+        self.assertEqual(why, "rate after 6 h (2 of 3 points)")
         g, why = L.rate(*self.sums([(now - 1800, 1.0), (now - 900, 2.0), (now, 3.0)], now))
         self.assertIsNone(g)                                    # three points over 30 minutes: noise, not a rate
-        self.assertIn("(3 so far, 0.5 h)", why)
+        self.assertEqual(why, "rate after 6 h (3 of 3 points)")
         self.assertIsNotNone(L.rate(*self.sums([(now - 7 * 3600, 1.0), (now - 3600, 2.0), (now, 3.0)], now))[0])
 
     def test_points_that_do_not_move_are_not_filling(self):
@@ -290,7 +290,7 @@ class Writer(unittest.TestCase):
         self.assertIsNone(g[("vol_ds05", "")][1])                                            # shrinking: not filling
         self.assertLess(g[("vol_ds05", "")][0], 0)
         self.assertIsNone(g[("vol_new01", "/vol/vol_new01/lun1")][0])                        # 2 points in 1 h: no rate yet
-        self.assertEqual(g[("vol_new01", "/vol/vol_new01/lun1")][2], "rate after 3 points over 6 h (2 so far, 1 h)")
+        self.assertEqual(g[("vol_new01", "/vol/vol_new01/lun1")][2], "rate after 6 h (2 of 3 points)")
         a = dict((r[0], r[1:]) for r in q("SELECT aggr, growth_gb_day, days_limit, days_full, status FROM ontap_live_aggr WHERE run_id = ?", rid))
         self.assertAlmostEqual(a["aggr2_c2n2"][0], 28, places=2)
         self.assertAlmostEqual(a["aggr2_c2n2"][1], 21.6 * 1024 * (97 - 91.2) / 100.0 / 28, delta=0.05)
@@ -317,7 +317,7 @@ class Writer(unittest.TestCase):
         r = db.db.execute("SELECT full_src, growth_gb_day, rate_why FROM ontap_live_volume WHERE run_id = ? AND volume = 'vol_ds03'", (rid,)).fetchone()
         self.assertEqual(r[0], "LUN")
         self.assertIsNone(r[1])                                                      # a new history: one point, no rate
-        self.assertIn("(1 so far", r[2])
+        self.assertIn("(1 of 3 points)", r[2])
 
     def test_p2_a_pre_release_table_gets_its_missing_column(self):
         """the schema check: every column of this release, a missing one added with ALTER TABLE (a fake cursor)"""
@@ -440,6 +440,20 @@ class Reader(unittest.TestCase):
             part = [v for v in vs if bool(v["ds"]) == grp]
             keys = [(-float(v["used"]) / v["size"], v["name"]) for v in part]
             self.assertEqual(keys, sorted(keys), grp)                                          # least free first, ties by name
+
+    def test_a_small_datastore_lun_is_on_the_page(self):
+        # 1.127.1 (the user's site): 64 rows "under 50 GB (ontap_volume_min_gb)" left out - every datastore among them
+        db = fill()
+        db.db.execute("INSERT INTO ontap_live_volume (run_id, row_key, address, cluster, svm, volume, lun, luns, size_b, used_b, aggr, "
+                   "aggr_free_b, datastore, ds_kind, offered, why, choice, root, full_size_b, full_used_b, full_src, thick, pt_obj, status) "
+                   "SELECT run_id, 'small-1', address, cluster, svm, 'vol_small', '/vol/vol_small/lun0', 1, %d, %d, aggr, aggr_free_b, "
+                   "'DS-SMALL', 'VMFS', offered, why, choice, 0, %d, %d, 'datastore', 1, 'p-small', 'ok' FROM ontap_live_volume "
+                   "WHERE run_id = (SELECT MAX(run_id) FROM ontap_live_run) AND volume = 'vol_ds03'" % (25 * GB, 23 * GB, 23 * GB, 5 * GB))
+        m = nl.Database(lambda: db, mark="?").read()
+        v = [x for x in m["volumes"] if x["name"] == "vol_small"]
+        self.assertEqual(len(v), 1, [x["name"] for x in m["volumes"]])
+        self.assertEqual((v[0]["ds"], v[0]["src"]), ("DS-SMALL", "datastore used"))
+        self.assertEqual(m["left_out"], {"roots": 1, "small": 0})
 
     def test_model(self):
         m = nl.Database(lambda: fill(), mark="?").read()
@@ -778,7 +792,7 @@ class Browser(unittest.TestCase):
 
     READ = ("var q=function(s){return [].map.call(document.querySelectorAll(s),function(x){return x.textContent.trim()})};"
             "r.h2=q('#na section.sec > h2');r.tiles=q('.nap-tiles .tile .k');r.expand=document.querySelectorAll('a[data-expand]').length;"
-            "r.off=q('.notoff');r.grp=q('.nap-vols tr.nap-grp th');r.rows=document.querySelectorAll('.nap-vols tbody tr').length;"
+            "r.off=q('.notoff');r.grp=q('.nap-vols tr.nap-grp th');r.dsrows=document.querySelectorAll('.nap-vols tbody .nap-ds').length;r.rows=document.querySelectorAll('.nap-vols tbody tr').length;"
             "r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;r.h=document.documentElement.scrollHeight;"
             "var i=document.getElementById('nap-q');i.value='SITEA-07';i.dispatchEvent(new Event('input',{bubbles:true}));"
             "r.found=q('.nap-vols tbody tr b.mono');")
@@ -799,6 +813,7 @@ class Browser(unittest.TestCase):
             self.assertEqual(r["side"], 0, w)
             self.assertEqual(r["found"], ["vol_ds07"])
             self.assertEqual([x.split(" (")[0] for x in r["grp"]], ["VMware datastores", "Other volumes and LUNs"], w)
+            self.assertEqual(r["dsrows"], len([v for v in a["model"]["volumes"] if v["ds"]]), w)   # every datastore in the default (short) view
 
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")

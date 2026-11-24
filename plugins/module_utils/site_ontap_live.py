@@ -26,7 +26,7 @@ def rate(n, t0, t1, sx, sy, sxx, sxy, min_points=3, min_hours=6.0):
     n = int(n or 0)
     span_h = (float(t1 or 0) - float(t0 or 0)) / 3600.0 if n else 0.0
     if n < int(min_points) or span_h < float(min_hours):
-        return None, "rate after %d points over %s h (%d so far, %s h)" % (int(min_points), _num(min_hours), n, _num(round(span_h, 1)))
+        return None, "rate after %s h (%d of %d points)" % (_num(min_hours), min(n, int(min_points)), int(min_points))
     den = n * float(sxx) - float(sx) ** 2
     if den <= 0:
         return None, "the points are all at one time"

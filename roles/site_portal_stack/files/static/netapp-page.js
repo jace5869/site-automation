@@ -198,7 +198,7 @@
   function runway(m) {
     const o = m.run.opts || {};
     const all = m.volumes || [];
-    const look = all.filter((v) => v.st !== "ok" || v.pct >= (o.volume_warn_pct || 85) || (v.days != null && v.days <= (o.list_days || 90)));
+    const look = all.filter((v) => v.ds || v.st !== "ok" || v.pct >= (o.volume_warn_pct || 85) || (v.days != null && v.days <= (o.list_days || 90)));
     const q = query.trim().toLowerCase();
     const vols = q ? all.filter((v) => (v.ds + " " + v.name + " " + v.svm + " " + v.aggr).toLowerCase().indexOf(q) >= 0) : showAll ? all : look;
     const vcWhy = !o.vmware ? "not read - attach the VMware vCenter credential to NetApp - refresh volume list"
@@ -211,7 +211,7 @@
         td("nap-wide", v.ds ? [el("span", "nap-ds", v.ds), sub(v.kind + (v.lun ? (v.thick ? ", thick LUN" : ", thin LUN") : ""))]
           : [el("span", "muted", vcWhy || "no datastore on it"), v.lun ? sub(v.thick ? "thick LUN" : "thin LUN") : null]),
         td("nap-wide mono", v.aggr),
-        td("num", [fmt(v.pct, 1), sub(v.src)]), td("num", gb(v.free)), td("num", v.g == null ? "-" : (v.g > 0 ? "+" : "") + fmt(v.g, 1)), days, expandCell(v)]);
+        (() => { const c = td("num", [fmt(Math.min(100, v.pct), 1), sub(v.src)]); if (v.pct > 100) c.title = fmt(v.pct, 1) + " % (more written than its size: ONTAP counts its metadata)"; return c; })(), td("num", gb(v.free)), td("num", v.g == null ? "-" : (v.g > 0 ? "+" : "") + fmt(v.g, 1)), days, expandCell(v)]);
     };
     // VMware datastores first, then the rest (the reader's order); a thin heading over each group when both are there
     const onDs = vols.filter((v) => v.ds), others = vols.filter((v) => !v.ds);
@@ -222,7 +222,7 @@
     const ex = m.expand;
     const lo = m.left_out || {};
     const more = (showAll ? "All " + all.length : look.length + " of " + all.length) + " LUNs and volumes" +
-      (showAll ? "." : ": the ones over " + fmt(o.volume_warn_pct || 85) + " % or full within " + fmt(o.list_days || 90) + " days (ontap_live_list_days).") +
+      (showAll ? "." : ": the VMware datastores, and the ones over " + fmt(o.volume_warn_pct || 85) + " % or full within " + fmt(o.list_days || 90) + " days (ontap_live_list_days).") +
       (lo.roots || lo.small ? " Left out: " + [lo.roots ? lo.roots + " root volumes" : "", lo.small ? lo.small + " under " + fmt(o.min_gb) + " GB (ontap_volume_min_gb)" : ""].filter(Boolean).join(", ") + "." : "");
     const aggrRows = (m.aggrs || []).map((a) => tr(a.st, [td("", chip(a.st)), td("", [el("b", "mono", a.a), sub(a.node + " · " + a.c)]),
       td("num", fmt(a.pct, 1)), td("num", tb(a.free)), td("num nap-wide", size(a.size)), td("num", a.g == null ? "-" : (a.g > 0 ? "+" : "") + fmt(a.g)),

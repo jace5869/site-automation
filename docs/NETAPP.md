@@ -512,7 +512,7 @@ GET only on NetApp; the page only reads the database.
 | `ontap_perf_latency_warn_ms` / `_crit_ms` | `10` / `20` | amber / red latency |
 | `ontap_live_growth_days` / `ontap_live_growth_min_hours` | `7` / `6` | the growth: the slope of the points of these days, once they span these hours (3 points at least) |
 | `ontap_live_days_warn` / `_crit` | `30` / `7` | full (or at the aggregate limit) within these days: amber / red |
-| `ontap_live_list_days` | `90` | the runway lists first the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest) |
+| `ontap_live_list_days` | `90` | the runway's short view: every VMware datastore, plus the ones over `ontap_volume_warn_pct` or full within these days ("Show all" for the rest; every volume and LUN however small - `ontap_volume_min_gb` is the health report's) |
 | `ontap_live_db_keep_days` / `_keep_hours` | `14` / `48` | delete older points / runs |
 | `portal_netapp` / `portal_netapp_old_minutes` | `true` / `60` | the portal's page on or off; a run older than this is said old |
 

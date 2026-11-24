@@ -112,7 +112,7 @@ run() {   # run NAME -- TEXT...
         ONTAP_USERNAME=svc_ro ONTAP_PASSWORD=live-Test9 REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT="$dbport" REPORT_DB_NAME=site_reports \
         REPORT_DB_USER=report_writer REPORT_DB_PASSWORD="$wpw" ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
-        "$ap" -i "$work/inv.yml" playbooks/ontap_volume_list.yml -e "$vars" -e '{"awx_job_id": 9100, "awx_job_template_id": 57}') \
+        "$ap" -i "$work/inv.yml" playbooks/ontap_volume_list.yml -e "$vars" -e '{"awx_job_id": 9100, "awx_job_template_id": 57}' ${EXTRA:+-e "$EXTRA"}) \
         > "$work/out.txt" 2>&1 || { bad "$tname: exit $?"; grep -E '"msg"|ERROR|fatal' "$work/out.txt" | head -5 | cut -c1-400; return 1; }
     tr -s ' \n' '  ' < "$work/out.txt" > "$work/flat.txt"
     for t in "${texts[@]}"; do
@@ -140,7 +140,13 @@ grow 1
 run "the second run" -- "This list is kept in the report database (run 2:"
 back
 grow 2
-run "the third run: three points 12 h apart, a growth a day" -- "This list is kept in the report database (run 3:"
+# the third run with vCenter's map as the datastore role gives it (one per choice of the list, in its order: svm1 vol_home,
+# vol_sql01; svm_vmware vol_ds01, vol_ds03 lun_a, lun_b, vol_nfs02) - 1.127.1: the datastore reaches the page, however small
+EXTRA='{"_ol_found": [{}, {}, {"datastore": "DS-SMALL", "kind": "VMFS", "hosts": ["esx01"], "capacity": 9663676416, "free": 2147483648}, {}, {}, {}]}' \
+run "the third run: three points 12 h apart, a growth a day" -- "This list is kept in the report database (run 3:" "VMware datastore DS-SMALL"
+[ "$(q "SELECT CONCAT(datastore, '/', full_src) FROM ontap_live_volume WHERE run_id = 3 AND volume = 'vol_ds01'")" = "DS-SMALL/datastore" ] \
+    && ok "  ...the map's datastore in the row (vol_ds01: DS-SMALL, judged by the datastore)" \
+    || bad "  ...vol_ds01: $(q "SELECT CONCAT(datastore, '/', full_src) FROM ontap_live_volume WHERE run_id = 3 AND volume = 'vol_ds01'")"
 [ "$(q "SELECT COUNT(*) FROM ontap_live_run")" = 3 ] && ok "  ...3 runs kept" || bad "  ...runs: $(q "SELECT COUNT(*) FROM ontap_live_run")"
 [ "$(q "SELECT COUNT(*) FROM ontap_live_point")" = $((p1 * 3)) ] && ok "  ...a point per object per run ($p1 a run)" \
     || bad "  ...points: $(q "SELECT COUNT(*) FROM ontap_live_point") (first run $p1)"
@@ -185,9 +191,11 @@ class Page(unittest.TestCase):
         self.assertFalse(a.get("stale"), a.get("stale"))
         self.assertEqual(m["run"]["job"], 9100)
         names = [v["name"] for v in m["volumes"]]
-        self.assertEqual(m["left_out"], {"roots": 1, "small": 1})                # vol_ds01 (10 GB) under ontap_volume_min_gb
-        for want in ("vol_ds03/lun_a", "vol_ds03/lun_b", "vol_home", "vol_nfs02"):
+        self.assertEqual(m["left_out"], {"roots": 1, "small": 0})                # 1.127.1: none left out for its size
+        for want in ("vol_ds03/lun_a", "vol_ds03/lun_b", "vol_home", "vol_nfs02", "vol_ds01"):
             self.assertIn(want, names)
+        d1 = [v for v in m["volumes"] if v["name"] == "vol_ds01"][0]
+        self.assertEqual((d1["ds"], d1["src"]), ("DS-SMALL", "datastore used"))         # the map's datastore on the page
         on = [v for v in m["volumes"] if v["x"]]
         self.assertGreaterEqual(len(on), 4, names)
         for v in on:                                                     # each button names the survey's own choice, with Check
@@ -208,6 +216,7 @@ class Page(unittest.TestCase):
         self.assertEqual([x.split("\n")[0][:12] for x in r["h2"]][:2], ["At a glance", "Space runway"])
         self.assertGreaterEqual(r["expand"], 4)
         self.assertEqual(r["side"], 0)
+        self.assertEqual(r["dsrows"], 1)                                     # the datastore in the default (short) view
         if png:
             T.run_page(T.page_files(self, a, theme="light", width=1280), 1280, height=1500, shot=png)
         print("ok   - the page from the database (report_reader): %d rows, %d Expand buttons, vol_home +%.1f GB a day%s"
