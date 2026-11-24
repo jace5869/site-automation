@@ -329,21 +329,23 @@
 ## The Christmas theme of the report website and the Site portal (1.115.0, docs/WEB_REPORTS.md):
 ## pixel decor in the header bar of the atlas, brief and ops pages and their index - a string of
 ## lights that twinkle, a small tree by the site's name, a candy stripe under the active tab, a few
-## snowflakes in the side margins (1200 px and wider). Tiles, tables, chips and status colours never
-## change; print, the PDFs and the emails never get it. none = off (the pages as always); christmas
-## = on; auto = on from Dec 1 to Jan 6 (by the day in report_time_zone). Each page carries its last
-## day, so a page written in the season stops being festive after Jan 6 by itself. Every viewer gets
-## a Festive button in the bar (Festive, Lights, Twinkle, Snow - each On or Off, kept in that
-## browser). The system's reduced-motion setting (or report_motion: off): no twinkle and no snow.
-## The portal follows it (portal_theme_season).
+## snowflakes in the side margins (1200 px and wider), Santa's sleigh flying along the lights now
+## and then and a small snowman after the page's title (both 16bit only). Tiles, tables, chips and
+## status colours never change; print, the PDFs and the emails never get it. none = off (the pages
+## as always); christmas = on; auto = on from Dec 1 to Jan 6 (by the day in report_time_zone). Each
+## page carries its last day, so a page written in the season stops being festive after Jan 6 by
+## itself. Every viewer gets a Festive button in the bar (Festive, Lights, Twinkle, Sleigh, Snow -
+## each On or Off, kept in that browser). The system's reduced-motion setting (or report_motion:
+## off): no twinkle, no snow, the sleigh parked still at the bar's end. The portal follows it
+## (portal_theme_season).
 # report_theme_season: none
 
-## 16bit (shaded sprites, the default) or 8bit (flat colours, bigger pixels).
+## 16bit (shaded sprites, the default) or 8bit (flat colours, bigger pixels; no sleigh, no snowman).
 # report_theme_season_style: 16bit
 
-## Each part, for everyone: true = on, the viewer may turn it off (their Lights / Twinkle / Snow
-## switch); false = off, and that switch is not shown. Twinkle needs the lights. the string of
-## lights (and the Lights switch)
+## Each part, for everyone: true = on, the viewer may turn it off (their Lights / Twinkle / Sleigh /
+## Snow switch); false = off, and that switch is not shown. Twinkle and the sleigh need the lights.
+## the string of lights (and the Lights switch)
 # report_theme_season_lights: true
 
 ## the lights twinkle (and the Twinkle switch)
@@ -351,6 +353,9 @@
 
 ## snow in the side margins (and the Snow switch)
 # report_theme_season_snow: true
+
+## Santa's sleigh along the lights now and then, 16bit (and the Sleigh switch)
+# report_theme_season_sleigh: true
 
 ## The site portal (1.67.0, docs/SITE_PORTAL.md): its address with /portal, e.g.
 ## https://stigman.yoursite.mil/portal. Set, the report website's pages get its buttons: "Ask ACT"

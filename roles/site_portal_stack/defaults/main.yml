@@ -39,7 +39,7 @@ portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if po
 # by policy - use it only if the site agrees); off: never. Print is still in every mode.
 portal_motion: auto                              # auto | always | off
 # 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas | auto (Dec 1 to Jan 6, decided on each page). Default: the
-# report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow.
+# report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow, _sleigh.
 portal_theme_season: "{{ report_theme_season | default('none') }}"
 portal_title: Site portal                           # the pages' title
 # 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text = portal_title). portal_logo is a PNG, JPEG,

@@ -793,6 +793,7 @@
       PORTAL_SEASON_LIGHTS: "{{ '1' if report_theme_season_lights | default(true) | bool else '0' }}"
       PORTAL_SEASON_TWINKLE: "{{ '1' if report_theme_season_twinkle | default(true) | bool else '0' }}"
       PORTAL_SEASON_SNOW: "{{ '1' if report_theme_season_snow | default(true) | bool else '0' }}"
+      PORTAL_SEASON_SLEIGH: "{{ '1' if report_theme_season_sleigh | default(true) | bool else '0' }}"
       PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default('') }}"
       PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
       PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"

@@ -109,6 +109,7 @@ options:
   season_lights: {description: "1.115.0 - the string of lights, the viewer's Lights switch (report_theme_season_lights).", type: bool, default: true}
   season_twinkle: {description: "1.115.0 - the lights twinkle, the viewer's Twinkle switch (report_theme_season_twinkle).", type: bool, default: true}
   season_snow: {description: "1.115.0 - snow in the side margins, the viewer's Snow switch (report_theme_season_snow).", type: bool, default: true}
+  season_sleigh: {description: "Santa's sleigh along the lights now and then (16bit only), the viewer's Sleigh switch (report_theme_season_sleigh).", type: bool, default: true}
   lock_wait: {description: "1.79.14 - seconds to wait for the index's lock (<index.json>.lock; report_web_index_lock_wait); 0 = no lock.", type: int, default: 120}
   index_sha: {description: "1.79.14 - with windows_host: the index.json's SHA-256 as read there (the script writes it only when it is still that).", type: str, default: ''}
   index_pending: {description: "1.79.14 - with windows_host: the index.pending-*.json the read script found, [{name, text}] (put in, then deleted).", type: list, elements: dict, default: []}
@@ -2442,6 +2443,7 @@ def main():
             season_lights=dict(type='bool', default=True),
             season_twinkle=dict(type='bool', default=True),
             season_snow=dict(type='bool', default=True),
+            season_sleigh=dict(type='bool', default=True),
             portal_link=dict(type='str', default=''),          # 1.118.0: report_portal_link, resolved (vars/main.yml _web_portal_link)
         ),
         supports_check_mode=True,
@@ -2493,7 +2495,7 @@ def main():
     # site is); each page carries its last day, so it stops being festive by itself after Jan 6
     today = datetime.datetime.now(tz or datetime.timezone.utc).date()
     festive = dict(until=fz.season_until(p['season'], today) if p['theme'] in WEB_LOOKS else '', style=fz.style_of(p['season_style']),
-                   parts=fz.allowed(p['season_lights'], p['season_twinkle'], p['season_snow']), used=[])
+                   parts=fz.allowed(p['season_lights'], p['season_twinkle'], p['season_snow'], p['season_sleigh']), used=[])
 
     def deck(h, rel, where):
         """The page rel with the decor (festive['until'] '': as it is); its CSS and JS linked from its place."""

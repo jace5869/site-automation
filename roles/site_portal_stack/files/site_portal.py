@@ -278,7 +278,8 @@ class Config(object):
         self.season = str(g("PORTAL_SEASON", "none")).strip().lower()
         self.season = self.season if self.season in site_festive.SEASONS else "none"
         self.season_style = site_festive.style_of(g("PORTAL_SEASON_STYLE", "16bit"))
-        self.season_parts = site_festive.allowed(g("PORTAL_SEASON_LIGHTS", "1"), g("PORTAL_SEASON_TWINKLE", "1"), g("PORTAL_SEASON_SNOW", "1"))
+        self.season_parts = site_festive.allowed(g("PORTAL_SEASON_LIGHTS", "1"), g("PORTAL_SEASON_TWINKLE", "1"), g("PORTAL_SEASON_SNOW", "1"),
+                                                  g("PORTAL_SEASON_SLEIGH", "1"))
         self.placement_template = g("PORTAL_VM_DEPLOY_PLACEMENT_TEMPLATE", "VM - deploy placement change")
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
         # 1.120.0: approvers and requesters from AD groups (portal_approver_groups, portal_requester_groups: names or DNs), read
@@ -3254,13 +3255,15 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     until = site_festive.season_until(cfg.season, datetime.datetime.now(cfg.tz or datetime.timezone.utc).date())
     fz = (lambda part: part) if until else (lambda part: "")
     st = cfg.season_style
+    if until:                                       # the snowman after the page's title (16-bit; the sleigh rides in the lights)
+        body = body.replace("</h1>", site_festive.snowman(st) + "</h1>", 1)
     bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
            '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s'
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s%s</div>'
            % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
               fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), seg,
-              fz(until and site_festive.lights(st)), bar_end))
+              fz(until and site_festive.lights(st, "sleigh" in site_festive.parts_of(st, cfg.season_parts))), bar_end))
     festive_head = ('<link rel="stylesheet" href="%sstatic/festive.css?v=%s"><script src="%sstatic/festive.js?v=%s"></script>'
                     % (cfg.path, site_festive.version(site_festive.CSS), cfg.path, site_festive.version(site_festive.JS))) if until else ""
     return ('<!doctype html><html lang="en" data-look="%s"%s%s><head><meta charset="utf-8">'

@@ -12,6 +12,7 @@ import datetime
 import http.server
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -92,10 +93,13 @@ class Season(unittest.TestCase):
             self.assertEqual(fz.season_until(s, D(2026, 12, 14)), "", s)
 
     def test_parts(self):
-        self.assertEqual(fz.allowed(), ["lights", "twinkle", "snow"])
-        self.assertEqual(fz.allowed(twinkle=False), ["lights", "snow"])
-        self.assertEqual(fz.allowed(lights="false"), ["snow"])                  # no lights: no twinkle either
-        self.assertEqual(fz.allowed(snow=False, twinkle="0"), ["lights"])
+        self.assertEqual(fz.allowed(), ["lights", "twinkle", "sleigh", "snow"])
+        self.assertEqual(fz.allowed(twinkle=False), ["lights", "sleigh", "snow"])
+        self.assertEqual(fz.allowed(lights="false"), ["snow"])                  # no lights: no twinkle and no sleigh either
+        self.assertEqual(fz.allowed(snow=False, twinkle="0", sleigh="0"), ["lights"])
+        self.assertEqual(fz.allowed(True, True, True, False), ["lights", "twinkle", "snow"])
+        self.assertEqual(fz.parts_of("16bit", fz.PARTS), ["lights", "twinkle", "sleigh", "snow"])
+        self.assertEqual(fz.parts_of("8bit", fz.PARTS), ["lights", "twinkle", "snow"])          # 8bit: no sleigh
         self.assertEqual(fz.style_of("8BIT"), "8bit")
         self.assertEqual(fz.style_of("4bit"), "16bit")
 
@@ -492,9 +496,185 @@ class RealChrome(unittest.TestCase):
         self.open("on/vm/latest.html", clear=True)
         self.c.call("Emulation.setEmulatedMedia", media="print")
         time.sleep(0.2)
-        for sel in (".fz-lights", ".fz-snow", ".fz-tree", ".fz-m"):
+        for sel in (".fz-lights", ".fz-snow", ".fz-tree", ".fz-m", ".fz-sky", ".fz-snowman"):
             self.assertEqual(self.shown(sel), 0, sel)
         self.c.call("Emulation.setEmulatedMedia", media="")
+
+    # ---- the sleigh, the snowman, the snow under 1200 px
+    def rect(self, sel):
+        return self.c.js("(r => r && [r.left, r.top, r.right, r.bottom])(document.querySelector(%s)?.getBoundingClientRect())" % json.dumps(sel))
+
+    def test_10_no_snow_under_1200_px(self):
+        for path in ("on/vm/latest.html", "on/index.html"):
+            self.open(path, 800, clear=True)
+            self.assertEqual(self.c.js(PARTS_STATE)[3], "on", path)
+            self.assertEqual(self.shown(".fz-snow"), 0, path)
+            self.open(path, 1280)
+            self.assertEqual(self.shown(".fz-snow"), 1, path)
+
+    def test_11_the_sleigh_flies_in_the_lights_now_and_then(self):
+        for path in ("on/vm/latest.html", "on/index.html"):
+            for w in (1280, 800):
+                self.open(path, w, clear=True)
+                self.assertEqual(self.c.js("document.documentElement.getAttribute('data-fz-sleigh')"), "on", path)
+                self.assertEqual(self.shown(".fz-sky"), 1, path)
+                self.assertEqual(self.c.js("document.querySelector('.fz-sky').parentElement.className"), "fz-lights")
+                self.assertEqual(self.rect(".fz-sky"), self.rect(".fz-lights"), (path, w))        # the lights' strip: nothing else there
+                self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-sky')).pointerEvents"), "none")
+                self.assertFalse(self.c.js("document.querySelector('.fz-sky').classList.contains('fz-fly')"))
+                time.sleep(3.6)                                                                  # ~3 s after the page opens
+                self.assertTrue(self.c.js("document.querySelector('.fz-sky').classList.contains('fz-fly')"), (path, w))
+                self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-sled')).animationName"), "fz-sled")
+                self.assertGreater(self.c.js("+localStorage.getItem('site-festive-sleigh-at')"), 0)
+                self.assertEqual(self.c.js("document.documentElement.scrollWidth - document.documentElement.clientWidth"), 0, (path, w))
+                self.open(path, w)                                                               # the next page: not again so soon
+                time.sleep(3.6)
+                self.assertFalse(self.c.js("document.querySelector('.fz-sky').classList.contains('fz-fly')"), (path, w))
+                self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-sled')).visibility"), "hidden")
+        self.c.js("document.querySelector('.fz-tg').click()")
+        self.assertEqual(self.shown('.fz-sw[data-k="sleigh"]'), 1)
+        self.flip("lights")                                                                      # only while Lights is on
+        self.assertEqual(self.shown(".fz-sky"), 0)
+        self.assertEqual(self.shown('.fz-sw[data-k="sleigh"]'), 0)
+        self.assertEqual(self.c.js("document.documentElement.getAttribute('data-fz-sleigh')"), "off")
+        self.flip("lights")
+        self.flip("sleigh")
+        self.assertEqual(self.shown(".fz-sky"), 0)
+        self.assertEqual(self.c.js("localStorage.getItem('site-festive-sleigh')"), "off")
+        self.c.js("localStorage.clear()")
+
+    def parked(self):
+        sled, lights, holly = self.rect(".fz-sled"), self.rect(".fz-lights"), self.rect(".fz-holly.r")
+        self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-sled')).visibility"), "visible")
+        self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-sled')).animationName"), "none")
+        self.assertGreaterEqual(sled[0], lights[0])
+        self.assertLessEqual(sled[2], holly[0])                                                 # still, at the right end, before the holly
+        self.assertGreater(sled[0], lights[2] / 2)
+        time.sleep(3.6)
+        self.assertFalse(self.c.js("document.querySelector('.fz-sky').classList.contains('fz-fly')"))
+
+    def test_12_less_motion_parks_the_sleigh_and_the_snowman_is_still(self):
+        for w in (1280, 800):
+            self.open("on/vm/latest.html", w, motion="reduce", clear=True)
+            self.assertEqual(self.shown(".fz-sky"), 1)
+            self.parked()
+            self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-arm-d')).animationName"), "none")
+            self.assertEqual(self.shown(".fz-arm-u"), 0)
+        self.open("on/vm/latest.html", clear=True)                                               # the site's motion off
+        self.c.js("document.documentElement.classList.add('motion-off')")
+        self.parked()
+
+    def test_13_the_snowman_by_the_reports_title_not_on_the_index(self):
+        for look in ("", "-brief", "-ops"):
+            self.open("on%s/vm/latest.html" % look, clear=True)
+            self.assertEqual(self.shown(".fz-snowman"), 1, look)
+            self.assertEqual(self.c.js("document.querySelector('.fz-snowman').parentElement.tagName"), "H1", look)
+            self.assertTrue(self.c.js("!!document.querySelector('.wrap h1 .fz-snowman, main h1 .fz-snowman')"), look)
+            self.assertEqual(self.c.js("getComputedStyle(document.querySelector('.fz-arm-d')).animationName"), "fz-armd", look)
+        self.open("on/index.html")
+        self.assertEqual(self.c.js("document.querySelectorAll('.fz-snowman').length"), 0)
+        self.assertEqual(self.shown(".fz-tree"), 1)
+
+    def test_14_8bit_has_neither(self):
+        self.open("eight/vm/latest.html", clear=True)
+        self.assertEqual(self.c.js("document.querySelectorAll('.fz-sky, .fz-snowman, .fz-sw[data-k=\"sleigh\"]').length"), 0)
+        self.assertIsNone(self.c.js("document.documentElement.getAttribute('data-fz-sleigh') === 'on' || null"))
+
+
+class SleighAndSnowman(unittest.TestCase):
+    """The markup: where each goes, the settings wired end to end, nothing inline."""
+
+    def test_report_page(self):
+        h = page()
+        out = fz.decorate(h, "report", "2027-01-06", "16bit")
+        self.assertEqual(out.count('class="fz-sky"'), 1)
+        self.assertEqual(out.count('class="fz-snowman"'), 1)
+        lights = out.index('class="fz-lights"')
+        self.assertTrue(lights < out.index('class="fz-sky"') < out.index('<div class="wrap'))     # in the lights, in the bar
+        i = out.index('class="fz-snowman"')
+        self.assertEqual(out.index("</h1>", out.index('<div class="wrap')), out.index("</svg>", i) + len("</svg>"))   # right before the title's </h1>
+        self.assertIn('data-k="sleigh"', out)
+        self.assertIn('data-fz-allow="lights twinkle sleigh snow"', out)
+        self.assertEqual(out.count("<script>"), h.count("<script>"))                                # no inline script added
+
+    def test_index_page_has_the_sleigh_but_no_snowman(self):
+        d = tempfile.mkdtemp()
+        try:
+            publish(d, "christmas")
+            with open(os.path.join(d, "index.html")) as fh:
+                idx = fh.read()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertIn('class="fz-sky"', idx)
+        self.assertNotIn("fz-snowman", idx)
+        self.assertIn('class="fz-tree"', idx)
+
+    def test_8bit_and_the_setting_off_leave_it_out(self):
+        for style, parts in (("8bit", fz.PARTS), ("16bit", ["lights", "twinkle", "snow"]), ("16bit", ["sleigh", "snow"])):
+            out = fz.decorate(page(), "report", "2027-01-06", style, parts)
+            self.assertNotIn('class="fz-sky"', out, (style, parts))
+            self.assertNotIn('data-k="sleigh"', out, (style, parts))
+            self.assertNotIn("sleigh", out[:out.index("<head")], (style, parts))
+        self.assertNotIn("fz-snowman", fz.decorate(page(), "report", "2027-01-06", "8bit"))
+        self.assertEqual(fz.sky("8bit") + fz.snowman("8bit"), "")
+
+    def test_nothing_inline(self):
+        for frag in (fz.sky("16bit"), fz.snowman("16bit"), fz.lights("16bit", True)):
+            self.assertNotIn(" style=", frag)
+            self.assertNotIn("<script", frag)
+            self.assertNotRegex(frag, r"\son[a-z]+=")
+            self.assertIn('aria-hidden="true"', frag)
+        self.assertNotIn(".style", fz.JS)                                 # no CSSOM either: the flight is CSS only
+        self.assertNotIn("setAttribute(\"style", fz.JS)
+
+    def test_the_snow_rule_under_1200_px_wins(self):
+        self.assertIn('@media (max-width:1199px){html[data-festive="on"][data-fz-snow="on"] .fz-snow{display:none}}', fz.CSS)
+
+    def test_portal_shell(self):
+        sys.path[:0] = [os.path.join(REPO, "plugins", "filter"), os.path.join(REPO, "roles", "site_portal_stack", "files")]
+        import site_portal as sp
+        base = {"PORTAL_DATA": "/tmp", "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/tmp/x.json", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                "PORTAL_AAP_TOKEN": "x", "PORTAL_TITLE": "Example site portal", "PORTAL_SEASON": "christmas"}
+        body = '<div class="hero"><h1>What you can start</h1></div><h2>x</h2><h1>second</h1>'
+        h = sp.shell(sp.Config(base), "Actions", body, ME, page="home")
+        self.assertIn('class="fz-sky"', h)
+        self.assertIn('data-k="sleigh"', h)
+        self.assertIn('What you can start<svg class="fz-snowman"', h)
+        self.assertEqual(h.count("fz-snowman"), 1)
+        self.assertFalse(re.search(r"<script(?![^>]*\ssrc=)[^>]*>", h))                       # every script a file
+        for env in ({"PORTAL_SEASON_SLEIGH": "0"}, {"PORTAL_SEASON_LIGHTS": "0"}, {"PORTAL_SEASON_STYLE": "8bit"}):
+            h = sp.shell(sp.Config(dict(base, **env)), "Actions", body, ME, page="home")
+            self.assertNotIn('class="fz-sky"', h, env)
+            self.assertNotIn('data-k="sleigh"', h, env)
+        self.assertNotIn("fz-snowman", h)                                                       # 8bit
+        h = sp.shell(sp.Config(dict(base, PORTAL_SEASON="none")), "Actions", body, ME, page="home")
+        self.assertNotIn("fz-", h)
+
+    def test_the_setting_is_wired(self):
+        def rd(*p):
+            with open(os.path.join(REPO, *p)) as fh:
+                return fh.read()
+        self.assertIn("\nreport_theme_season_sleigh: true", rd("roles", "site_email", "defaults", "main.yml"))
+        for f in ("main.yml", "copy_page.yml", "pages.yml"):
+            self.assertIn('season_sleigh: "{{ report_theme_season_sleigh | default(true) | bool }}"', rd("roles", "site_email", "tasks", f), f)
+        self.assertIn("PORTAL_SEASON_SLEIGH: \"{{ '1' if report_theme_season_sleigh | default(true) | bool else '0' }}\"",
+                      rd("roles", "site_portal_stack", "tasks", "main.yml"))
+        self.assertIn('g("PORTAL_SEASON_SLEIGH", "1")', rd("roles", "site_portal_stack", "files", "site_portal.py"))
+        web = rd("roles", "site_email", "library", "site_report_web.py")
+        self.assertIn("season_sleigh=dict(type='bool', default=True)", web)
+        self.assertIn("p['season_sleigh']", web)
+        self.assertIn("report_theme_season_sleigh", rd("docs", "VARIABLES_REFERENCE.md"))
+        self.assertIn("report_theme_season_sleigh", rd("docs", "WEB_REPORTS.md"))
+        d = tempfile.mkdtemp()
+        try:
+            publish(d, "christmas", season_sleigh=False)
+            with open(os.path.join(d, "vm", "latest.html")) as fh:
+                h = fh.read()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertNotIn('class="fz-sky"', h)
+        self.assertNotIn('data-k="sleigh"', h)
+        self.assertIn("fz-snowman", h)                                                          # the snowman has no switch
 
 
 PORT = int(os.environ.get("FESTIVE_PORTAL_PORT") or 18871)

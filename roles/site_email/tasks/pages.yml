@@ -30,6 +30,7 @@
     season_lights: "{{ report_theme_season_lights | default(true) | bool }}"
     season_twinkle: "{{ report_theme_season_twinkle | default(true) | bool }}"
     season_snow: "{{ report_theme_season_snow | default(true) | bool }}"
+    season_sleigh: "{{ report_theme_season_sleigh | default(true) | bool }}"
     json: "{{ report_web_json | bool }}"
     data:
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
