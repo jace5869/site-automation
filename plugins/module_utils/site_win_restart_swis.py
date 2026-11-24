@@ -128,18 +128,6 @@ def node_window(node):
     return {"from": str(node.get("from") or ""), "until": str(node.get("until") or "")}
 
 
-def ends(text, tz=None):
-    """Every moment an end could be: one with Z or an offset exactly; a naive one as UTC and in the site's zone tz, both
-    folds when the clocks go back (01:45 twice on that night)."""
-    out = [parse(text)]
-    if tz is not None and naive(text):
-        loc = parse(text, None)
-        if loc is not None:
-            wall = loc.replace(tzinfo=None)
-            out += [wall.replace(tzinfo=tz, fold=f).astimezone(U) for f in (0, 1)]
-    return [e for e in out if e is not None]
-
-
 def has_window(node, now, tz=None):
     """The node has an unmanage window now: unmanaged; or an end any reading of which is still ahead (past only when past
     every way); or an end that cannot be read at all (a window is there - it is left)."""
@@ -148,10 +136,13 @@ def has_window(node, now, tz=None):
     until = str(node.get("until") or "").strip()
     if not until:
         return False
-    got = ends(until, tz)
-    if not got:
+    end = parse(until)
+    if end is None:
         return True
-    return any(e > now for e in got)
+    # Orion need not use the site's time zone. Compare the age to avoid overflowing a far-future end.
+    margin = datetime.timedelta(hours=14 if naive(until) else 0)
+    return now - end < margin
+
 
 
 class Manager(sw.Client):

@@ -11,6 +11,9 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import fnmatch
+import functools
+import ipaddress
 import json
 import re
 
@@ -251,7 +254,7 @@ def win_restart_doc(model, when):
     title += "".join(", %d %s" % (c, w) for c, w in ((skipped, "skipped"), (bad, "failed or not reached")) if c)
     if check:
         title += " (nothing changed)"
-    sw_warn = any(x["swis"].get("level") == "warning" for x in rows)
+    sw_warn = o.get("swis_state") == "error" or any(x["swis"].get("level") == "warning" for x in rows)
     status = "critical" if bad else ("warning" if sw_warn else ("ok" if sched or not check else "info"))
     summary = [{"label": "Servers", "value": n, "status": "info", "note": "the Limit"},
                {"label": "Would restart" if check else "Scheduled", "value": sched, "status": "warning" if check and sched else ("ok" if sched else "info"),
@@ -427,15 +430,69 @@ def win_restart_log(model, when=None):
     return out or ["No server in this run."]
 
 
+GROUP_SLICE = re.compile(r"(.+)\[(-?\d+|(?=:))(?:[:-](-?\d+|))?\]")
+RESERVED_GROUPS = ("all", "ungrouped")
+
+
+def _ipv6_parts(parts, start):
+    # Eight hextets, or seven plus a leading/trailing double colon. Prefer the longest literal.
+    if not re.fullmatch(r"[!&]?[a-fA-F0-9]{0,4}", parts[start].strip()):
+        return 0
+    for end in range(min(len(parts), start + 9), start + 1, -1):
+        candidate = ":".join(parts[start:end]).strip().lstrip("!&")
+        try:
+            ipaddress.IPv6Address(candidate)
+        except ValueError:
+            continue
+        if ":" not in candidate.partition("%")[2]:
+            return end - start
+    return 0
+
+
+def _split_host_pattern(text):
+    pattern = str(text or "").strip()
+    separator = "," if "," in pattern else ":"
+    parts = []
+    start = 0
+    first_in_class = None
+    escaped = False
+    for i, char in enumerate(pattern):
+        if char == separator and first_in_class is None:
+            parts.append(pattern[start:i])
+            start = i + 1
+            escaped = False
+        elif escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "[" and first_in_class is None:
+            first_in_class = i + 1
+            if pattern[first_in_class:first_in_class + 1] in ("^", "!"):
+                first_in_class += 1
+        elif char == "]" and first_in_class is not None and i > first_in_class:
+            # A closing bracket in the first position is a literal member of the class.
+            first_in_class = None
+    parts.append(pattern[start:])
+    if separator == ",":
+        return [part.strip() for part in parts if part.strip()]
+
+    terms = []
+    i = 0
+    while i < len(parts):
+        term = parts[i].strip()
+        if term.lstrip("!&").startswith("~"):
+            terms.append(":".join(parts[i:]).strip())
+            break
+        count = _ipv6_parts(parts, i) or 1
+        term = ":".join(parts[i:i + count]).strip()
+        if term:
+            terms.append(term)
+        i += count
+    return terms
+
+
 def _terms(text):
-    """A host pattern -> its picking terms: split at , and : (not inside a [range]), without the exclusions (!x) and the
-    narrowing ones (&x)."""
-    out = []
-    for t in re.split(r"[,:](?![^\[]*\])", str(text or "")):
-        t = t.strip()
-        if t and not t.startswith(("!", "&")):
-            out.append(t)
-    return out
+    return [term for term in _split_host_pattern(text) if not term.startswith(("!", "&"))]
 
 
 def win_restart_selector(limit="", target=""):
@@ -448,51 +505,94 @@ def win_restart_selector(limit="", target=""):
     return []
 
 
-def _match(host, term):
-    """A host against an Ansible host pattern term: * and ?, and a range web[01:03] (web01, web02, web03)."""
+@functools.lru_cache(maxsize=128)
+def _host_matcher(term):
+    """Compile a selector once, bounding inventory range expansion before building the regex."""
+    if term.startswith("~"):
+        try:
+            return re.compile(term[1:]).search
+        except (re.error, OverflowError) as exc:
+            raise ValueError("invalid Limit regex %s (%s)" % (term, exc)) from exc
+    term = term.lower()
     out, i = "", 0
-    for m in re.finditer(r"\[(\d+):(\d+)\]|\[([a-z]):([a-z])\]", term):
+    for m in re.finditer(r"\[([0-9]+):([0-9]+)\]|\[([a-z]):([a-z])\]", term):
         out += _glob(term[i:m.start()])
         if m.group(1) is not None:
-            a, b, w = int(m.group(1)), int(m.group(2)), len(m.group(1))
-            out += "(?:%s)" % "|".join("%0*d" % (w, n) for n in range(a, b + 1))
+            start, end = m.group(1, 2)
+            if max(len(start), len(end)) > 16:
+                raise ValueError("host range %s has an oversized endpoint" % m.group())
+            a, b = int(start), int(end)
+            if b < a:
+                raise ValueError("reversed host range %s" % m.group())
+            if b - a >= 1000:
+                raise ValueError("host range %s exceeds 1000 entries" % m.group())
+            out += "(?:%s)" % "|".join("%0*d" % (len(start), n) for n in range(a, b + 1))
         else:
+            if m.group(4) < m.group(3):
+                raise ValueError("reversed host range %s" % m.group())
             out += "[%s-%s]" % (m.group(3), m.group(4))
         i = m.end()
-    out += _glob(term[i:])
-    return re.fullmatch(out, host) is not None
+    return re.compile(out + _glob(term[i:]), re.IGNORECASE).fullmatch
+
+
+def _match(host, term):
+    match = _host_matcher(term)
+    return bool(match(host) or match(host.split(".")[0]))
 
 
 def _glob(text):
     return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in text)
 
 
+def _group_pattern(term):
+    if term.startswith("~"):
+        return _host_matcher(term), None
+    sub = GROUP_SLICE.fullmatch(term)
+    pattern = sub[1] if sub else term
+    return lambda group: fnmatch.fnmatchcase(group, pattern), sub
+
+
+def _assert_picked_group(term, match):
+    for group in RESERVED_GROUPS:
+        if match(group):
+            raise ValueError("Limit term %r matches the reserved inventory group %r: pick named servers or a specific group" %
+                             (term, group))
+
+
 def win_restart_unnamed(hosts, terms, groups=None):
     """The hosts of the run that no picked term names: a host name (any case; a short name too), a pattern of them (* ? [..]),
     or an inventory group the host is in. [] when every one was picked."""
     groups = groups or {}
-    out = []
-    for h in hosts or []:
-        h_ = str(h).lower()
-        ok = False
-        for t in terms or []:
-            tl = t.lower().lstrip("~")
-            if t in groups and h in (groups.get(t) or []):
-                ok = True
-            elif tl in (h_, h_.split(".")[0]) or any(_match(x, tl) for x in (h_, h_.split(".")[0])):
-                ok = True
-            if ok:
-                break
-        if not ok:
-            out.append(str(h))
-    return out
+    hosts = list(hosts or [])
+    named = set()
+    for term in terms or []:
+        match, sub = _group_pattern(term)
+        _assert_picked_group(term, match)
+        matching = [g for g in groups if match(g)]
+        members = list(dict.fromkeys(h for g in matching for h in groups[g]))
+        if matching and sub:
+            start = int(sub[2] or 0)
+            if sub[3] is None:
+                if -len(members) <= start < len(members):
+                    named.add(members[start])
+            else:
+                stop = int(sub[3]) if sub[3] else -1
+                first = len(members) + start if start < 0 else start
+                last = len(members) + stop if stop < 0 else stop
+                if sub[3] and last < first:
+                    raise ValueError("reversed group slice %s" % term)
+                named.update(members[start:None if stop == -1 else stop + 1])
+            continue
+        named.update(members)
+        named.update(h for h in hosts if _match(str(h), term))
+    return [str(h) for h in hosts if h not in named]
 
 
 def win_restart_hosts(target="", exclude_not=""):
     """The play's hosts: target's terms and the exclusion as separate comma-separated parts ('A,B,!site_excluded'), never
     'A,B:!site_excluded' (Ansible splits at the commas first: the exclusion would bind to B alone)."""
-    parts = [t.strip() for t in str(target or "all").split(",") if t.strip()] or ["all"]
-    ex = [t for t in re.split(r"[,:]", str(exclude_not or "")) if t.strip()]
+    parts = _split_host_pattern(target) or ["all"]
+    ex = _split_host_pattern(exclude_not)
     return ",".join(parts + ex)
 
 
@@ -511,18 +611,33 @@ def win_restart_check(o):
             raise ValueError
     except (TypeError, ValueError):
         bad.append("win_restart_delay_seconds is 0 to 600")
+    terms = win_restart_selector(o.get("limit"), o.get("target"))
+    try:
+        for scope in (o.get("limit"), o.get("target")):
+            picks = _terms(scope)
+            # A standalone literal 'all' is also the play's default scope. A specific target or Limit can narrow it.
+            if len(picks) == 1 and picks[0].lower() == "all":
+                continue
+            for term in picks:
+                _assert_picked_group(term, _group_pattern(term)[0])
+    except ValueError as exc:
+        bad.append(str(exc))
+        return bad
     if any(t.startswith("@") for t in _terms(o.get("limit")) + _terms(o.get("target"))):
         bad.append("a Limit from a file (@file) is not taken here: pick the servers by name (or group) in the Limit")
-    elif not win_restart_selector(o.get("limit"), o.get("target")):
+    elif not terms:
         bad.append("no servers picked: set the Limit (or the Hosts box on the site portal) to the servers - an empty one, 'all' or "
                    "only exclusions ('!name') is refused; this job never acts on every server")
     elif o.get("resolved") is not None and not o["resolved"]:
         bad.append("the Limit matches no server")
-    elif o.get("resolved") is not None and win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")),
-                                                                o.get("groups") or {}):
-        bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(
-            win_restart_unnamed(o["resolved"], win_restart_selector(o.get("limit"), o.get("target")), o.get("groups") or {})))
-    elif o.get("excluded_in"):
+    elif o.get("resolved") is not None:
+        try:
+            unnamed = win_restart_unnamed(o["resolved"], terms, o.get("groups"))
+            if unnamed:
+                bad.append("in this run but not named in the Limit: %s - the job stops" % ", ".join(unnamed))
+        except ValueError as exc:
+            bad.append(str(exc))
+    if o.get("excluded_in"):
         bad.append("left out by site_exclude_hosts but in this run: %s - the job stops" % ", ".join(o["excluded_in"]))
     elif int(o.get("hosts") or 0) > int(o.get("max_hosts") or 0):
         bad.append("%s servers in the Limit; at most %s in one run (win_restart_max_hosts)" % (o.get("hosts"), o.get("max_hosts")))

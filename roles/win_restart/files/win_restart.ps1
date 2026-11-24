@@ -10,7 +10,7 @@
 #   cancel   our task removed, and its files in dir (restart.log is kept). Another product's task of that name: refused.
 # The pending-reboot check is the one the task runs at the restart time (task_script, win_restart_task.ps1), loaded here.
 # The script prints ONE line: ###SITE-JSON### {...}. Windows PowerShell 5.1 and PowerShell 7, also in Constrained Language
-# Mode (no .NET calls but on core types: icacls for the folder, the task registered from its XML).
+# Mode. Directory and file security is checked with built-in Windows tools.
 $ErrorActionPreference = 'Stop'
 $cfgText = '{}'
 if ($env:SITE_CHECK_CONFIG) { $cfgText = $env:SITE_CHECK_CONFIG }
@@ -69,7 +69,7 @@ function Test-SiteOurTask {
     if ($acts.Count -ne 1) { return $false }
     if ([string]$Task.Author -ne 'site-automation') { return $false }
     if (-not ([string]$Task.Description).Contains('(site-automation')) { return $false }
-    return ([string]$acts[0].Arguments).Contains('-File "' + (Join-Path $Dir 'restart-task-'))
+    return [bool](Get-SiteRegistrationId -Task $Task -Dir $Dir)
 }
 
 function Find-SiteTask {
@@ -82,8 +82,9 @@ function Find-SiteTask {
 
 function Get-SiteRegistrationId {
     # the registration id in a task of ours: its action's restart-task-<id>.ps1
-    param($Task)
-    $m = [regex]::Match([string]@($Task.Actions)[0].Arguments, 'restart-task-([0-9]+-[0-9]+)\.ps1')
+    param($Task, [string]$Dir)
+    $prefix = [regex]::Escape((Join-Path $Dir 'restart-task-'))
+    $m = [regex]::Match([string]@($Task.Actions)[0].Arguments, '(?:^|\s)-File "' + $prefix + '([0-9]+-[0-9]+)\.ps1"$')
     if ($m.Success) { return $m.Groups[1].Value }
     return ''
 }
@@ -102,15 +103,22 @@ function Get-SiteRestartTask {
     $next = ''
     try {
         $i = Get-ScheduledTaskInfo -TaskName $Name -TaskPath $Path
-        if ($null -ne $i.NextRunTime -and $i.NextRunTime.Year -gt 2000) { $next = $i.NextRunTime.ToString('yyyy-MM-dd HH:mm') }
+        if ($null -ne $i.NextRunTime -and $i.NextRunTime.Year -gt 2000) { $next = $i.NextRunTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
     }
     catch { $next = '' }
     $start = ''
     if (@($t.Triggers).Count -gt 0) { $start = [string]@($t.Triggers)[0].StartBoundary }
-    $id = Get-SiteRegistrationId -Task $t
+    $id = Get-SiteRegistrationId -Task $t -Dir $Dir
     $res.ours = @(@{ path = $Path; name = $Name; state = [string]$t.State; next_run = $next; start = $start;
                      description = [string]$t.Description; id = $id; at_utc = (Read-SiteRestartAt -Dir $Dir -Id $id) })
     return $res
+}
+
+function ConvertTo-SiteUtc {
+    param($Value)
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+    return [DateTime]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, $styles)
 }
 
 function Read-SiteRestartAt {
@@ -118,30 +126,148 @@ function Read-SiteRestartAt {
     # window SolarWinds still shows is likely that restart's (nothing is decided by it)
     param([string]$Dir, [string]$Id)
     if (-not $Id) { return '' }
+    try { Initialize-SiteRestartDir -Dir $Dir -ReadOnly }
+    catch [System.Management.Automation.ItemNotFoundException] { return '' }
     $f = Join-Path $Dir ('restart-' + $Id + '.json')
     if (-not (Test-Path -LiteralPath $f)) { return '' }
-    try { return [string](Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).at_utc } catch { return '' }
+    Assert-SiteRestartItem $f
+    try {
+        $value = (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).at_utc
+        return (ConvertTo-SiteUtc $value).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    } catch { return '' }
 }
 
 function Remove-SiteRestartFiles {
     # one registration's script and settings in our folder (restart.log and every other registration's stay)
     param([string]$Dir, [string]$Id)
     if (-not $Id) { return }
+    Initialize-SiteRestartDir -Dir $Dir -ReadOnly
     foreach ($n in @(('restart-task-' + $Id + '.ps1'), ('restart-' + $Id + '.json'))) {
         $f = Join-Path $Dir $n
-        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
+        if (Test-Path -LiteralPath $f) {
+            Assert-SiteRestartItem $f
+            Remove-Item -LiteralPath $f -Force
+        }
     }
 }
 
+function Assert-SiteRestartItem {
+    param([string]$Path, [switch]$Directory)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing reparse point at $Path" }
+    if ($item.PSIsContainer -ne $Directory.IsPresent) { throw "Unexpected file type at $Path" }
+}
+
+function Invoke-SiteIcacls {
+    param([string]$Path, [string[]]$Options)
+    $null = & "$env:SystemRoot\System32\icacls.exe" $Path /L @Options
+    if ($LASTEXITCODE -ne 0) { throw "icacls $($Options[0]) on $Path failed ($LASTEXITCODE)" }
+}
+
+function Get-SiteRestartAcl {
+    param([string]$Path, [switch]$Directory)
+    # /save supplies the DACL as SDDL, independent of the host language. It omits the owner.
+    $record = New-TemporaryFile -ErrorAction Stop
+    try {
+        Assert-SiteRestartItem $Path -Directory:$Directory
+        Invoke-SiteIcacls $Path @('/save', $record.FullName)
+        Assert-SiteRestartItem $Path -Directory:$Directory
+        $ownerSddl = (Get-Acl -LiteralPath $Path -ErrorAction Stop).Sddl
+        Assert-SiteRestartItem $Path -Directory:$Directory
+        $lines = @(Get-Content -LiteralPath $record.FullName -Encoding Unicode -ErrorAction Stop)
+        if ($lines.Count -ne 2 -or $lines[0] -ne (Split-Path -Leaf $Path) -or $lines[1] -notlike 'D:*') {
+            throw "Cannot read DACL on $Path"
+        }
+        if ($ownerSddl -notmatch '^O:([A-Z]{2}|S-[0-9-]+)(?=G:|D:|S:|$)') { throw "Cannot read owner on $Path" }
+        # Decode the owner's SID and the link's DACL together. CIM preserves directory inheritance flags.
+        $sddl = 'O:' + $Matches[1] + $lines[1]
+        $result = Invoke-CimMethod -ClassName Win32_SecurityDescriptorHelper -MethodName SDDLToWin32SD -Arguments @{ SDDL = $sddl } -ErrorAction Stop
+        if ($result.ReturnValue -ne 0 -or -not $result.Descriptor.Owner.SIDString) { throw "Cannot decode security descriptor on $Path" }
+        return $result.Descriptor
+    }
+    finally { Remove-Item -LiteralPath $record.FullName -Force }
+}
+
+function Assert-SiteRestartAcl {
+    param([string]$Path, [switch]$Directory, [switch]$NewDirectory)
+    $acl = Get-SiteRestartAcl $Path -Directory:$Directory
+    $admins = 'S-1-5-32-544'
+    $system = 'S-1-5-18'
+    $trusted = @($admins, $system, 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if ($acl.Owner.SIDString -notin $trusted) { throw "Unsafe existing owner $($acl.Owner.SIDString) on $Path" }
+    if ($null -eq $acl.DACL) { throw "Missing DACL on $Path" }
+    $full = @()
+    foreach ($ace in $acl.DACL) {
+        $sid = $ace.Trustee.SIDString
+        if ($Directory -and $ace.AceType -eq 1) { continue }
+        if ($ace.AceType -ne 0 -or -not $sid -or $null -eq $ace.AccessMask) { throw "Unrecognized ACE on $Path" }
+        # Read, execute, synchronize and generic read/execute are safe for other trustees.
+        # Check even inherit-only grants: these can make the task's files writable.
+        if ($sid -notin $trusted -and ($ace.AccessMask -band 0x5fedff56)) {
+            throw "Unsafe existing permissions on $Path (write or control granted to $sid)"
+        }
+        if ($ace.AccessMask -eq 0x1f01ff) {
+            $flags = [int]$ace.AceFlags
+            if (($Directory -and $flags -eq 3) -or (-not $Directory -and $flags -in @(0, 16))) { $full += $sid }
+        }
+    }
+    if (-not $Directory -and ($system -notin $full -or $admins -notin $full)) {
+        throw "Missing SYSTEM or Administrators full control on $Path"
+    }
+    if ($NewDirectory -and ($acl.Owner.SIDString -ne $admins -or -not ([int]$acl.ControlFlags -band 0x1000) -or
+        $acl.DACL.Count -ne 2 -or $system -notin $full -or $admins -notin $full)) {
+        throw "Unexpected owner or ACL on new directory $Path"
+    }
+}
+
+function New-SiteRestartDir {
+    param([string]$Path)
+    # md reports an existing name as a failure, including a directory created after our lookup.
+    # Delayed expansion passes the path as data without interpreting shell characters in it.
+    $env:SITE_RESTART_NEW_DIR = $Path
+    try {
+        $null = & "$env:SystemRoot\System32\cmd.exe" /d /e:off /v:on /c 'md "!SITE_RESTART_NEW_DIR!"'
+        if ($LASTEXITCODE -ne 0) { throw "Could not create new directory $Path ($LASTEXITCODE)" }
+    }
+    finally { Remove-Item Env:SITE_RESTART_NEW_DIR }
+    Assert-SiteRestartItem $Path -Directory
+    Invoke-SiteIcacls $Path @('/setowner', '*S-1-5-32-544')
+    Assert-SiteRestartItem $Path -Directory
+    Invoke-SiteIcacls $Path @('/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
+    Assert-SiteRestartAcl $Path -Directory -NewDirectory
+}
+
 function Initialize-SiteRestartDir {
-    # the folder: only SYSTEM and Administrators (the task runs its script as SYSTEM); owner Administrators, nothing inherited
-    param([string]$Dir)
-    $null = New-Item -ItemType Directory -Path $Dir -Force
-    $null = & icacls.exe $Dir /setowner '*S-1-5-32-544'
-    if ($LASTEXITCODE -ne 0) { throw ('icacls /setowner on ' + $Dir + ' failed (' + $LASTEXITCODE + ')') }
-    $null = & icacls.exe $Dir /reset
-    $null = & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
-    if ($LASTEXITCODE -ne 0) { throw ('icacls on ' + $Dir + ' failed (' + $LASTEXITCODE + ')') }
+    param([string]$Dir, [switch]$ReadOnly)
+    if (-not (Split-Path -IsAbsolute $Dir) -or $Dir -match '(?:^|[\\/])\.{1,2}(?:[\\/]|$)|[*?]') {
+        throw 'win_restart_dir must be an absolute directory path without wildcards or relative segments'
+    }
+    if ($Dir -notmatch '^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]|/(?!/))') { throw 'win_restart_dir needs a filesystem root' }
+    $root = $Matches[0]
+    $path = $root
+    $paths = @(foreach ($part in ($Dir.Substring($root.Length) -split '[\\/]')) {
+        if ($part) {
+            $path = Join-Path $path $part
+            $path
+        }
+    })
+    if (-not $paths.Count -or $paths[-1] -eq $env:ProgramData) { throw 'win_restart_dir must be a dedicated directory' }
+    Assert-SiteRestartItem $root -Directory
+    $aboveManagedDirs = $env:ProgramData -in $paths
+    foreach ($path in $paths) {
+        if ($aboveManagedDirs) {
+            Assert-SiteRestartItem $path -Directory
+            $aboveManagedDirs = $path -ne $env:ProgramData
+            continue
+        }
+        try { Assert-SiteRestartItem $path -Directory }
+        catch [System.Management.Automation.ItemNotFoundException] {
+            if ($ReadOnly) { throw }
+            New-SiteRestartDir $path
+            continue
+        }
+        Assert-SiteRestartAcl $path -Directory
+    }
 }
 
 function Enter-SiteRestartLock {
@@ -149,6 +275,7 @@ function Enter-SiteRestartLock {
     param([string]$Dir)
     $lock = Join-Path $Dir 'restart.lock'
     if (Test-Path -LiteralPath $lock) {
+        Assert-SiteRestartItem $lock
         if ((Get-Item -LiteralPath $lock).LastWriteTime -lt (Get-Date).AddMinutes(-10)) { Remove-Item -LiteralPath $lock -Force }
         else { throw ('another schedule or cancel of a restart is running on this server (' + $lock + '): launch it again in a few minutes') }
     }
@@ -161,20 +288,19 @@ $out = @{ computer = $env:COMPUTERNAME; action = [string]$cfg.action }
 try {
     $tz = [TimeZoneInfo]::Local
     $out.tz_id = [string]$tz.Id
-    $out.now_local = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    $out.now_local = (Get-Date).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
     try {
         $os = Get-CimInstance -ClassName Win32_OperatingSystem
         $boot = [datetime]$os.LastBootUpTime
-        $out.boot = $boot.ToString('yyyy-MM-dd HH:mm')
+        $out.boot = $boot.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
         $out.uptime_days = [int](((Get-Date) - $boot).TotalHours * 10 / 24) / 10
     }
     catch { $out.boot = ''; $out.uptime_days = $null }
     $prefix = [string]$cfg.task_name
     if ($cfg.action -in @('plan', 'schedule')) {
-        $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
-        $atUtc = [DateTime]::Parse([string]$cfg.at_utc, [Globalization.CultureInfo]::InvariantCulture, $styles)
+        $atUtc = ConvertTo-SiteUtc $cfg.at_utc
         $atLocal = $atUtc.ToLocalTime()
-        $out.at_local = $atLocal.ToString('yyyy-MM-dd HH:mm') + ' ' + (Format-SiteOffset -Offset ($atLocal - $atUtc)) + ' (' + $tz.Id + ')'
+        $out.at_local = $atLocal.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) + ' ' + (Format-SiteOffset -Offset ($atLocal - $atUtc)) + ' (' + $tz.Id + ')'
         $probes = Read-SiteRestartProbes
         $out.probes = $probes
         $out.reasons = @(Get-SiteRestartReasons -Probes $probes -CountFileRenames ([bool]$cfg.count_file_renames))
@@ -183,7 +309,9 @@ try {
         $out.why = [string]$d.why
     }
     $dir = [string]$cfg.dir
-    $tpath = [string]$cfg.task_path
+    $folder = ([string]$cfg.task_path).Trim().Trim('\')
+    $tpath = '\'
+    if ($folder) { $tpath += $folder + '\' }
     $lock = ''
     if ($cfg.action -in @('schedule', 'cancel')) {
         Initialize-SiteRestartDir -Dir $dir
@@ -207,33 +335,59 @@ try {
             if ($null -eq (Get-Command -Name Register-ScheduledTask -ErrorAction SilentlyContinue)) {
                 throw 'Register-ScheduledTask is not on this server (Windows Server 2012 or later has it)'
             }
+            $log = Join-Path $dir 'restart.log'
+            if (Test-Path -LiteralPath $log) { Assert-SiteRestartAcl $log }
             # this registration's own files, never rewritten: an earlier task keeps reading its own until it is replaced
-            $rid = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-' + [string](Get-Random -Minimum 1000 -Maximum 9999)
+            $rid = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss', [Globalization.CultureInfo]::InvariantCulture) + '-' + [string](Get-Random -Minimum 1000 -Maximum 9999)
             $script = Join-Path $dir ('restart-task-' + $rid + '.ps1')
             $json = Join-Path $dir ('restart-' + $rid + '.json')
-            Set-Content -Path $script -Value ([string]$cfg.task_script) -Encoding ASCII
-            $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
-                              comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay; at_utc = [string]$cfg.at_utc;
-                              id = $rid }
-            Set-Content -Path $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
-            $oldXml = ''
-            if ($ours.Count -gt 0) { $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath) }
-            $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            $xml = New-SiteRestartTaskXml -StartUtc $atUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") -EndUtc $atUtc.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") `
-                -Command $ps -Arguments ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"') -Description ([string]$cfg.description)
+            # Create both names exclusively in the secured directory. Never write through an existing file or link.
+            Initialize-SiteRestartDir -Dir $dir -ReadOnly
+            $null = New-Item -ItemType File -Path $script -ErrorAction Stop
             try {
+                $null = New-Item -ItemType File -Path $json -ErrorAction Stop
+            } catch {
+                Initialize-SiteRestartDir -Dir $dir -ReadOnly
+                Assert-SiteRestartItem $script
+                Remove-Item -LiteralPath $script -Force
+                throw
+            }
+            $settingsDoc = @{ only_if_pending = [bool]$cfg.only_if_pending; count_file_renames = [bool]$cfg.count_file_renames;
+                              comment = [string]$cfg.comment; code = [string]$cfg.code; delay = [int]$cfg.delay;
+                              at_utc = $atUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture);
+                              id = $rid }
+
+            $oldXml = ''
+            try {
+                foreach ($file in @($script, $json)) {
+                    Assert-SiteRestartItem $file
+                    Invoke-SiteIcacls $file @('/setowner', '*S-1-5-32-544')
+                }
+                Initialize-SiteRestartDir -Dir $dir -ReadOnly
+                Assert-SiteRestartAcl $script
+                Set-Content -LiteralPath $script -Value ([string]$cfg.task_script) -Encoding ASCII
+                Assert-SiteRestartAcl $json
+                Set-Content -LiteralPath $json -Value (ConvertTo-Json -InputObject $settingsDoc -Compress) -Encoding ASCII
+                if ($ours.Count -gt 0) {
+                    $oldScript = Join-Path $dir ('restart-task-' + $ours[0].id + '.ps1')
+                    Assert-SiteRestartAcl $oldScript
+                    $oldXml = [string](Export-ScheduledTask -TaskName $prefix -TaskPath $tpath)
+                }
+                $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                $endUtc = $atUtc.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+                $xml = New-SiteRestartTaskXml -StartUtc $settingsDoc.at_utc -EndUtc $endUtc `
+                    -Command $ps -Arguments ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"') -Description ([string]$cfg.description)
                 if ($ours.Count -gt 0) {
                     # replace only the task verified as ours in this run, checked again right before (one step: never both, never none)
                     $again = Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir
                     if ($again.collision -or $again.ours.Count -ne 1 -or [string]$again.ours[0].id -ne [string]$ours[0].id) {
                         throw 'the task changed while this job ran'
                     }
-                    $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath -Force
                 }
-                else {
-                    # none there: create only - a task of that name made meanwhile by anything else makes this fail, untouched
-                    $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath
-                }
+                # When no task existed, create only. A task made by another product meanwhile must survive.
+                Initialize-SiteRestartDir -Dir $dir -ReadOnly
+                Assert-SiteRestartAcl $script
+                $null = Register-ScheduledTask -Xml $xml -TaskName $prefix -TaskPath $tpath -Force:($ours.Count -gt 0)
                 $info = Get-ScheduledTaskInfo -TaskName $prefix -TaskPath $tpath
                 $next = $info.NextRunTime
                 if ($null -eq $next -or (($next.ToUniversalTime() - $atUtc).TotalMinutes -gt 1) -or (($atUtc - $next.ToUniversalTime()).TotalMinutes -gt 1)) {
@@ -248,12 +402,14 @@ try {
                 try {
                     # only what this run wrote is undone: the task there now must carry this run's registration id
                     $cur = Find-SiteTask -Path $tpath -Name $prefix
-                    $mine = ($null -ne $cur) -and (Test-SiteOurTask -Task $cur -Dir $dir) -and ((Get-SiteRegistrationId -Task $cur) -eq $rid)
+                    $mine = ($null -ne $cur) -and (Test-SiteOurTask -Task $cur -Dir $dir) -and ((Get-SiteRegistrationId -Task $cur -Dir $dir) -eq $rid)
                     if (-not $mine) {
                         $undo = 'nothing this run registered is there: left as it is'
                         if ($ours.Count -gt 0) { $undo += ' (the earlier restart, ' + [string]$ours[0].next_run + ', stays)' }
                     }
                     elseif ($oldXml) {
+                        Initialize-SiteRestartDir -Dir $dir -ReadOnly
+                        Assert-SiteRestartAcl $oldScript
                         $null = Register-ScheduledTask -Xml $oldXml -TaskName $prefix -TaskPath $tpath -Force
                         $undo = 'rolled back: the earlier restart (' + [string]$ours[0].next_run + ') is scheduled again'
                     }
@@ -268,7 +424,7 @@ try {
             }
             if ($ours.Count -gt 0) { Remove-SiteRestartFiles -Dir $dir -Id ([string]$ours[0].id) }   # the replaced registration's only
             $out.replaced = $ours
-            $out.scheduled = @{ path = $tpath; name = $prefix; next_run = $next.ToString('yyyy-MM-dd HH:mm'); id = $rid }
+            $out.scheduled = @{ path = $tpath; name = $prefix; next_run = $next.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture); id = $rid }
             $out.ours = (Get-SiteRestartTask -Path $tpath -Name $prefix -Dir $dir).ours
         }
         if ($cfg.action -eq 'cancel') {
@@ -283,7 +439,11 @@ try {
         }
     }
     finally {
-        if ($lock -and (Test-Path -LiteralPath $lock)) { Remove-Item -LiteralPath $lock -Force }
+        if ($lock) {
+            Initialize-SiteRestartDir -Dir $dir -ReadOnly
+            Assert-SiteRestartItem $lock
+            Remove-Item -LiteralPath $lock -Force
+        }
     }
 }
 catch {

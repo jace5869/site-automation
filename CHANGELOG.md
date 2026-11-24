@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.128.0 — 2026-11-24
+## 1.128.0 — 2026-11-25
 
 **To set up:** run AAP - set up job templates for NetApp - expand a volume (its Size question's wording, and
 Concurrent jobs off), then NetApp - refresh volume list once, and Site portal - deploy. The ONTAP credential of the
@@ -48,6 +48,12 @@ design (docs/NETAPP.md, Limits).
   `ontap_live_health` is off.
 - SnapMirror: a lag not known no longer reads "0.0x the schedule".
 - NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
+- Windows - schedule a restart (review of 1.127.x):
+  - Windows restart scheduling secures the task directory and its dedicated parent, refuses reparse points, and verifies the script owner and permissions before registration.
+  - A later queued AAP job can wait for the current run. Target exclusions work with colon-separated patterns. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+  - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
+  - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
+  Folder checks use built-in Windows tools only (icacls, PowerShell); an existing site-automation folder that an admin or SYSTEM did not make is refused, never repaired. A Limit term (wildcard, regex or slice) that would select all is refused.
 
 ## 1.127.3 — 2026-11-24
 
