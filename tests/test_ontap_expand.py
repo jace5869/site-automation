@@ -406,12 +406,14 @@ class Grow1124(unittest.TestCase):
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": int(3.05 * TB)})
         steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
         vb = [b for path, b in c.patches if "volumes" in path]
-        self.assertEqual(vb[0], {"autosize": {"mode": "off"}})
+        self.assertEqual(vb[0]["autosize"], {"mode": "off"})
+        self.assertIn("[site-automation: autosize paused ", vb[0]["comment"])                    # the note goes with the pause
         self.assertEqual(list(vb[1]), ["size"])
-        self.assertEqual(vb[2], {"autosize": {"mode": "grow", "maximum": p["target"]}})            # its maximum raised to the new size
+        self.assertEqual(vb[2]["autosize"], {"mode": "grow", "maximum": p["target"]})              # its maximum raised to the new size
+        self.assertNotIn("site-automation", vb[2]["comment"])                                       # the note out again
         self.assertEqual([x["step"] for x in steps], ["Read the volume and aggr1 again", "Pause autosize (grow)", "Grow the volume",
-                                                      "Restore autosize", "Grow the LUN"])
-        self.assertIn("maximum raised", steps[3]["result"])
+                                                      "Grow the LUN", "Restore autosize"])           # the LUN while autosize is paused
+        self.assertIn("maximum raised", steps[4]["result"])
         self.assertTrue(all(x["ok"] for x in steps), steps)
 
     def test_p1_autosize_put_back_when_the_change_fails_and_said_when_that_fails(self):
@@ -425,7 +427,7 @@ class Grow1124(unittest.TestCase):
         orig = c.call
 
         def call(method, path, query=None, body=None):
-            if body == {"autosize": {"mode": "grow"}}:
+            if (body or {}).get("autosize") == {"mode": "grow"}:                   # the restore
                 raise self.V.Failed("HTTP 500: no answer")
             return orig(method, path, query, body)
         c.call = call
@@ -440,7 +442,7 @@ class Grow1124(unittest.TestCase):
 
         def call(method, path, query=None, body=None):
             r = orig(method, path, query, body)
-            if body == {"autosize": {"mode": "off"}}:
+            if (body or {}).get("autosize") == {"mode": "off"}:
                 raise self.V.Unreachable("timed out", "timeout")              # done, the answer lost
             return r
         c.call = call
@@ -489,7 +491,7 @@ class Grow1124(unittest.TestCase):
         self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
         self.assertEqual(c.autosize, {"mode": "grow", "maximum": 3 * TB})          # the size read back: 3 TB, the maximum as it was
 
-    def test_p2_no_lun_when_autosize_was_not_put_back(self):
+    def test_p2_autosize_not_put_back_is_said_and_its_note_stays(self):
         p = self.plan(avail=int(0.1 * TB))
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB})
         orig = c.call
@@ -500,9 +502,10 @@ class Grow1124(unittest.TestCase):
             return orig(method, path, query, body)
         c.call = call
         steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
-        self.assertEqual(c.lun_size, 2 * TB)                                        # the LUN left as it was
-        self.assertEqual(steps[-1]["step"], "Grow the LUN")
-        self.assertIn("autosize could not be put back", steps[-1]["result"])
+        self.assertEqual(c.lun_size, 2 * TB + p["growth"])                          # grown while autosize was paused
+        self.assertEqual((steps[-1]["step"], steps[-1]["ok"]), ("Restore autosize", False))
+        self.assertIn("autosize may be OFF", steps[-1]["result"])
+        self.assertIn("the note stays in its comment", steps[-1]["result"])
 
     def test_p2_a_thick_lun_never_grows_the_volume_more_than_its_growth_and_reserve(self):
         over = vol(100 * GB, 100 * GB, available=-20 * GB, snap_pct=0, guarantee="volume")      # 20 GB over-full already
@@ -581,6 +584,87 @@ class Grow1124(unittest.TestCase):
         self.assertEqual(c.patches, [])
         self.assertIn("needs more than planned now", steps[0]["result"])
 
+    def nas_plan(self, size=100 * GB):
+        v = vol(size, size // 2, available=size // 2, guarantee="volume", name="vol_ds01", svm="svm1")
+        p = X.plan(v, AGGR, size, {}, size_text="10GB")
+        p.update(volume_uuid="v1", lun_uuid="")
+        return p
+
+    def test_p1_moved_right_before_the_patch_not_sent(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB, 3 * TB, 3 * TB + 5 * GB], avail=[int(0.1 * TB)] * 3)      # READ, REREAD, then moved
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertFalse([b for _p, b in c.patches if "size" in b])
+        self.assertIn("changed right before the change", steps[-1]["result"])
+
+    def test_p1_a_resize_not_known_leaves_autosize_paused(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB})
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            if "size" in (body or {}):
+                raise self.V.Unreachable("timed out", "timeout")               # sent, no answer, not landed (yet)
+            return orig(method, path, query, body)
+        c.call = call
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.autosize["mode"], "off")
+        self.assertIn("resize job ? still running - autosize left paused", steps[-1]["result"])
+
+    def test_p2_never_over_the_plans_own_size(self):
+        p = self.nas_plan()
+        p["max_target"] = p["target"]
+        c = FakeCluster([100 * GB + X.MB], avail=[50 * GB])                          # 1 MiB more since the plan
+        self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        sent = [b["size"] for _p, b in c.patches if "size" in b]
+        self.assertEqual(sent, [p["max_target"]])                                    # never the plan's size + 1 MiB
+
+    def test_p2_never_over_the_plans_lun_size(self):
+        p = self.plan(avail=int(0.9 * TB))                                           # room: the LUN only
+        p["max_lun_target"] = p["lun"]["target"]
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)], lun_size=2 * TB + X.MB // 2)
+        self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.lun_size, p["max_lun_target"])
+
+    def test_p2_the_lun_with_autosize_paused_also_with_no_volume_growth(self):
+        p = self.plan(avail=int(0.9 * TB))
+        self.assertEqual(p["vol_growth"], 0)
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)], autosize={"mode": "grow_shrink", "maximum": 4 * TB})
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual([x["step"] for x in steps], ["Read the volume and aggr1 again", "Pause autosize (grow_shrink)", "Grow the volume",
+                                                      "Grow the LUN", "Restore autosize"])
+        self.assertTrue(all(x["ok"] for x in steps), steps)
+
+    def test_p2_a_pause_note_left_behind(self):
+        note = X.marker("2020-01-01T00:00Z", "grow", 4 * TB, "77")
+        self.assertEqual(X.find_marker("app team | " + note), {"at": "2020-01-01T00:00Z", "mode": "grow", "max": 4 * TB, "job": "77"})
+        self.assertEqual(X.strip_marker("app team | " + note), "app team")
+        p = self.plan(avail=int(0.9 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.9 * TB)], autosize={"mode": "off", "maximum": 4 * TB})
+        orig = c.vol
+        c.comment = "app team | " + note
+
+        def vol():
+            r = orig()
+            r["comment"] = c.comment
+            return r
+        oc = c.call
+
+        def call(method, path, query=None, body=None):
+            if "comment" in (body or {}):
+                c.comment = body["comment"]
+            return oc(method, path, query, body)
+        c.vol, c.call = vol, call
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": [], "stale_minutes": 60}, "", 1)
+        self.assertEqual((steps[1]["step"], steps[1]["ok"]), ("Restore autosize left paused", True))      # old: put back first
+        self.assertEqual(c.autosize["mode"], "grow")
+        self.assertNotIn("site-automation", c.comment)
+        fresh = X.marker(self.V.time.strftime("%Y-%m-%dT%H:%MZ", self.V.time.gmtime()), "grow", 4 * TB, "78")
+        c.comment, c.patches = fresh, []
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": [], "stale_minutes": 60}, "", 1)
+        self.assertIn("another expand may be running on this volume (job 78", steps[0]["result"])
+        self.assertEqual(c.patches, [])
+
     def test_p2_a_lun_resized_since_stops_before_any_write(self):
         p = self.plan(avail=int(0.1 * TB))
         c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], lun_size=2 * TB + 10 * GB)
@@ -598,10 +682,10 @@ class Grow1124(unittest.TestCase):
 
     def test_p2_the_luns_size_within_its_volume(self):
         p = self.plan()
-        c = FakeCluster([3 * TB])
-        steps = self.V._grow_lun(c, p, {"volume": "vol_ds01"}, 1, [], vol_size=2 * TB)
+        c = FakeCluster([2 * TB])                                                    # the parent read right before: 2 TB
+        steps = self.V._grow_lun(c, p, {"volume": "vol_ds01"}, 1, [], "v1")
         self.assertFalse(steps[-1]["ok"])
-        self.assertIn("would be over its volume", steps[-1]["result"])
+        self.assertIn("not over its", steps[-1]["result"])
         self.assertEqual(c.patches, [])
 
 

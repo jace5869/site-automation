@@ -478,6 +478,7 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
 | `ontap_expand_templates` / `ontap_expand_question` | the expand template / `ontap_expand_volume` | whose survey the list writes, and its question |
 | `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
 | `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
+| `ontap_expand_stale_minutes` | `60` | an earlier expand's autosize pause note older than this is put back by the next expand; newer: that run stops |
 
 ## The live page
 
@@ -589,6 +590,19 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 - The CLI commands it reads through REST (system health, storage failover, SnapMirror progress)
   are ONTAP `show` commands at admin level, which the `readonly` role may run.
 - It reports; it changes nothing. Fixes are done in System Manager or the ONTAP CLI.
+- **Expand a volume, the size write.** ONTAP's REST API grows a volume by its absolute size (`PATCH
+  /api/storage/volumes/{uuid}` with `size`). The CLI's relative `volume size -new-size +N` exists, but the job does not
+  send it through the private CLI passthrough: its REST contract (path, verb, body) is not in NetApp's public docs. So
+  the job reads the size right before the change and sends nothing when it moved; between that read and ONTAP's change
+  (well under a second) someone else could still grow the volume - the job then reads it back, reports the size it
+  finds over the plan, and never sends a smaller size afterwards. A LUN is written the same way, inside the volume's
+  autosize pause.
+- **The autosize pause note.** While autosize is paused the volume's comment carries `[site-automation: autosize paused
+  <time> was <mode> max <bytes> job <id>]`. A job stopped mid-way (killed, timed out) leaves it: *NetApp - refresh volume
+  list* reports it in Problems (and on the portal's NetApp page), and the next expand of that volume puts autosize back
+  when the note is older than `ontap_expand_stale_minutes` (60), or stops when it is newer. Whether another expand is
+  still running is judged by that age alone.
+- Expand was tested against the fake ONTAP API only; its first Check and Run on one real volume are its verification.
 - Capacity trends was tested against the same fake ONTAP API, a fake AAP job history and a real MySQL 8.4. It was not
   run against a real cluster or a real AAP. It counts from its own points; it does not read ONTAP's own performance
   history.

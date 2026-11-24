@@ -270,6 +270,10 @@ def ontap_expand_list_doc(r):
     probs = ["%s: %s" % (c.get("address"), c.get("error")) for c in cl if c.get("error")] + ["Survey NOT updated: %s" % x for x in bad_survey]
     if r.get("vc_error"):
         probs.append("vCenter: %s - the datastore names are left out of the list" % r["vc_error"])
+    for z in r.get("paused") or []:
+        probs.append("%s: volume %s (%s) - autosize OFF since %s: expand job %s paused it (was %s) and did not put it back - the next expand of "
+                     "it puts it back after ontap_expand_stale_minutes, or set it back in ONTAP System Manager" % (
+                         z.get("cluster"), z.get("volume"), z.get("svm"), z.get("at"), z.get("job"), z.get("mode")))
     if probs:
         sections.append({"title": "Problems", "status": "critical" if bad_survey or not read else "warning", "lines": probs})
     rows, cells = [], []
