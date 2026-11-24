@@ -229,10 +229,10 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
         if p["lun"]["target"] > p["target"]:
             p["why"] = "the LUN would be bigger than its volume (%s > %s)" % (human(p["lun"]["target"]), human(p["target"]))
             return p
-    p["landing"] = landing(vol, None, g, g)
-    p["aggr_pct_after"] = pct(p["aggr_used"] + g, p["aggr_size"])
+    take = p["landing"] = landing(vol, None, g, g)     # a thin volume (guarantee none) takes nothing for its size
+    p["aggr_pct_after"] = pct(p["aggr_used"] + take, p["aggr_size"])
     p["used_pct_after"] = pct(used, p["target"])
-    if g > p["room"] or not aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], 0):
+    if not aggr_fits(p["aggr_size"], p["aggr_used"], o["max_pct"], take):
         what = ("Default %s" % human(g)) if p["by"] == "default" else human(g)
         p["why"] = ("%s would put %s at %.1f %%; %s" % (what, p["aggr"], p["aggr_pct_after"],
                     ("up to %s fits" % human(p["room"], floor=True)) if p["room"] >= MIN_TYPED else "nothing fits (it is at %.1f %% now, the limit is %g %%)"
@@ -416,8 +416,11 @@ def recheck(p, vol, aggr, exclude=()):
     if abs(int(vol["size"]) - int(p["size"])) > SLACK:
         return "the volume changed between the plan and the change (%s, now %s) - nothing was changed" % (human(p["size"]), human(vol["size"]))
     left = room(int(aggr.get("size") or 0), int(aggr.get("used") or 0), p["max_pct"])
-    take = p.get("landing", p.get("vol_growth", p["growth"]))
-    if take > left or not aggr_fits(aggr.get("size"), aggr.get("used"), p["max_pct"], take):
+    # what lands on the aggregate from the guarantees as they are now (a thin volume may have got a volume guarantee since)
+    take = landing(vol, p.get("lun"), p.get("vol_growth", p["growth"]), p["growth"]) if vol.get("guarantee") is not None \
+        else p.get("landing", p.get("vol_growth", p["growth"]))
+    p["landing"] = take
+    if not aggr_fits(aggr.get("size"), aggr.get("used"), p["max_pct"], take):
         return ("%s got fuller between the plan and the change (%.1f %% now): %s no longer fits under %g %% - nothing was changed"
                 % (p["aggr"], pct(aggr.get("used"), aggr.get("size")), human(take), p["max_pct"]))
     return ""

@@ -117,7 +117,8 @@ function initRun(f) {                  // the confirm page's form, or the Run di
     $("state").textContent = "Starting…";
     try {
       const sg = qa(f, 'input[name="portal-sig"]')[0];
-      const jt = qa(f, 'input[name="portal-job-type"]:checked')[0];          // the Job type (a template that asks it at launch)
+      // the Job type: the one picked (a template that asks it at launch), or the Check the address asked of one fixed to Check
+      const jt = qa(f, 'input[name="portal-job-type"]:checked')[0] || qa(f, 'input[type="hidden"][name="portal-job-type"]')[0];
       const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined, job_type: jt ? jt.value : undefined});
       rememberRunning(r.job_id);
       $("state").textContent = "Started: job " + r.job_id + (r.warning ? ". " + r.warning : "") + ". Opening it…";

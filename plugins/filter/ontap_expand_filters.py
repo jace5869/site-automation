@@ -63,6 +63,9 @@ def ontap_expand_doc(r):
     hand = []
     if p.get("status") == "grow" and check:
         vg = p.get("vol_growth", p.get("growth"))
+        if vg and p.get("autosize") in ("grow", "grow_shrink"):
+            steps.append({"step": "Pause autosize (%s)" % p["autosize"], "exactly": "autosize grow paused during the change, put back after it",
+                          "ok": None, "result": NOT_RUN})
         steps += [{"step": "Grow the volume", "exactly": ("PATCH /api/storage/volumes/{uuid} size %s -> %s%s" % (
                        X.human(p["size"]), X.human(p["target"]), (" (%s)" % p["vol_how"]) if p.get("vol_how") else "")) if vg
                    else "size %s stays: %s" % (X.human(p["size"]), p.get("vol_how") or "room enough"),

@@ -269,6 +269,20 @@ class Review1124(unittest.TestCase):
         self.assertEqual(thin_lun["status"], "grow", thin_lun["why"])
         self.assertEqual(X.landing({"guarantee": ""}, self.LUN, 5, 7), 12)                    # not read: the most it can be
 
+    def test_p1_the_recheck_takes_the_guarantee_as_it_is_now(self):
+        thin = vol(100 * GB, 50 * GB, available=50 * GB, guarantee="none")
+        tight = {"name": "aggr1", "size": 100 * GB, "used": 96 * GB}                          # 1 GiB under 97 %
+        p = X.plan(thin, tight, 100 * GB, {}, size_text="5GB")
+        self.assertEqual((p["status"], p["landing"]), ("grow", 0))
+        self.assertEqual(X.recheck(p, thin, tight), "")
+        self.assertIn("got fuller", X.recheck(p, dict(thin, guarantee="volume"), tight))      # a volume guarantee since: 5 GB lands
+
+    def test_p2_a_thin_nfs_volume_admitted_by_what_lands(self):
+        p = X.plan(vol(100 * GB, 50 * GB, available=50 * GB, guarantee="none"), {"name": "aggr1", "size": 100 * GB, "used": 96 * GB},
+                   100 * GB, {}, size_text="2GB")
+        self.assertEqual(p["status"], "grow", p["why"])
+        self.assertEqual(p["aggr_pct_after"], 96.0)
+
     def test_p2_the_spill_counted_once(self):
         """70 GiB data, 30 GiB snapshots, 20 % reserve, 100 GiB full: +10 GiB needs 110 GiB, not 112.5"""
         v = self.v(100 * GB, 0, snap=20, snap_used=30 * GB)
@@ -296,8 +310,9 @@ def volume_module():
 class FakeCluster(object):
     """A cluster for grow(): its volume (sizes that move on the reads given), its aggregate, its LUN; every PATCH kept."""
 
-    def __init__(self, vols, lun_size=2 * TB, avail=None, aggr_used=int(14 * TB)):
+    def __init__(self, vols, lun_size=2 * TB, avail=None, aggr_used=int(14 * TB), autosize=None, fail=()):
         self.reads, self.vols, self.patches, self.lun_size = 0, list(vols), [], lun_size
+        self.autosize, self.fail = dict(autosize or {"mode": "off"}), fail
         self.avail = avail if avail is not None else [int(0.85 * TB)] * len(vols)
         self.aggr_used = aggr_used
 
@@ -306,7 +321,8 @@ class FakeCluster(object):
         self.reads += 1
         return {"uuid": "v1", "name": "vol_ds01", "svm": {"name": "svm1"}, "aggregates": [{"name": "aggr1"}], "state": "online", "type": "rw",
                 "style": "flexvol", "space": {"size": self.vols[i], "used": self.vols[i] - self.avail[i], "available": self.avail[i],
-                                              "snapshot": {"reserve_percent": 0, "used": 0}}, "guarantee": {"type": "volume"}, "comment": ""}
+                                              "snapshot": {"reserve_percent": 0, "used": 0}}, "guarantee": {"type": "volume"}, "comment": "",
+                "autosize": dict(self.autosize)}
 
     def records(self, path, fields, **q):
         if path == "/api/storage/volumes":
@@ -318,6 +334,12 @@ class FakeCluster(object):
 
     def call(self, method, path, query=None, body=None):
         self.patches.append((path, body))
+        for k in self.fail:
+            if k in body:
+                raise self.Failed("HTTP 400: refused (%s)" % k)
+        if "autosize" in body:
+            self.autosize.update(body["autosize"])
+            return {}
         if "luns" in path:
             self.lun_size = body["space"]["size"]
         elif "size" in body:
@@ -372,6 +394,53 @@ class Grow1124(unittest.TestCase):
         self.assertFalse(steps[0]["ok"])
         self.assertIn("needs more than planned now", steps[0]["result"])
         self.assertEqual(c.patches, [])
+
+    def test_p1_autosize_paused_for_the_change_and_put_back(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": int(3.05 * TB)})
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        vb = [b for path, b in c.patches if "volumes" in path]
+        self.assertEqual(vb[0], {"autosize": {"mode": "off"}})
+        self.assertEqual(list(vb[1]), ["size"])
+        self.assertEqual(vb[2], {"autosize": {"mode": "grow", "maximum": p["target"]}})            # its maximum raised to the new size
+        self.assertEqual([x["step"] for x in steps], ["Read the volume and aggr1 again", "Pause autosize (grow)", "Grow the volume",
+                                                      "Restore autosize", "Grow the LUN"])
+        self.assertIn("maximum raised", steps[3]["result"])
+        self.assertTrue(all(x["ok"] for x in steps), steps)
+
+    def test_p1_autosize_put_back_when_the_change_fails_and_said_when_that_fails(self):
+        FakeCluster.Failed = self.V.Failed                                         # the module's own refusal
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow_shrink", "maximum": 4 * TB}, fail=("size",))
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.autosize["mode"], "grow_shrink")
+        self.assertEqual([x["ok"] for x in steps], [True, True, False, True])
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], autosize={"mode": "grow", "maximum": 4 * TB}, fail=("size",))
+        orig = c.call
+
+        def call(method, path, query=None, body=None):
+            if body == {"autosize": {"mode": "grow"}}:
+                raise self.V.Failed("HTTP 500: no answer")
+            return orig(method, path, query, body)
+        c.call = call
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertFalse(steps[-1]["ok"])
+        self.assertIn("autosize is OFF on this volume now", steps[-1]["result"])
+
+    def test_p2_a_lun_resized_since_stops_before_any_write(self):
+        p = self.plan(avail=int(0.1 * TB))
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)], lun_size=2 * TB + 10 * GB)
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.patches, [])
+        self.assertIn("the LUN is 2.01 TB now", steps[0]["result"])
+
+    def test_p2_never_more_than_the_plan_said(self):
+        p = self.plan(avail=int(0.1 * TB))
+        p["vol_growth_cap"] = p["vol_growth"] - 20 * GB                             # the plan the person saw asked less
+        c = FakeCluster([3 * TB], avail=[int(0.1 * TB)])
+        steps = self.V.grow(c, p, {"volume": "vol_ds01", "svm": "svm1"}, {"exclude": []}, "", 1)
+        self.assertEqual(c.patches, [])
+        self.assertIn("needs more than planned now", steps[0]["result"])
 
     def test_p2_the_luns_size_within_its_volume(self):
         p = self.plan()

@@ -373,16 +373,22 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
    - **If the volume has the room already,** it is not grown; only the LUN is.
    - The plan says it plainly: *LUN 2.00 TB -> 2.20 TB; volume 2.10 TB -> 2.32 TB (thick LUN + 5 % snapshot reserve)*.
 4. Checks the aggregate against what really lands on it: the volume's growth on a volume with a volume guarantee; on
-   a thin volume (guarantee none) the growth of a space-reserved LUN; the guarantee not read: both. An aggregate already
+   a thin volume (guarantee none) the growth of a space-reserved LUN, nothing for an NFS volume's size; the guarantee
+   not read: both. The re-check right before the change takes the guarantees as they are then. An aggregate already
    over the limit refuses the run, even when the volume need not grow. After it the aggregate must stay **at or under 97 % used**
    (`ontap_expand_aggr_max_pct`). The growth counts as used, even on a thin volume. When it does not fit, nothing is
    changed. The report says the largest size that fits: *"Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB
    fits"* (for a LUN volume: the largest LUN growth whose volume growth fits).
 5. Reads the volume, its LUNs and the aggregate again, right before the change, and works the volume's growth out again
    from what is there (a snapshot deleted since may have made the room: then the volume is not grown). It stops if the
-   volume now needs more than planned, or anything else moved against the plan. Right before the volume's change it
-   reads the size once more: a size under the volume's own (autosize grew it) is never sent. The LUN's new size must fit
-   the volume's confirmed size.
+   volume now needs more than the plan said (`max_vol_growth`: the Check's and the plan's growth is the ceiling), the LUN
+   was resized, or anything else moved against the plan - before anything is written. The LUN's new size must fit the
+   volume's confirmed size.
+   - **Autosize:** a volume whose autosize is `grow` or `grow_shrink` has it paused (off) for the change: the size is
+     read once more and sent only when bigger (a size under the volume's own is never sent), then autosize is put back
+     as it was - its maximum raised to the new size when it was under it, said in the report. It is put back also when
+     the change fails; if that fails, the report says autosize is off and to set it back. The Check plan shows "autosize
+     grow paused during the change".
    - **The snapshot reserve** is a % of the volume; snapshots over it (the spill) take usable space too. The new size
      counts the spill at that size, once.
 6. Grows the volume (when it needs to), then reads it back. The incident number and the growth are added to the

@@ -2324,10 +2324,15 @@ class Portal(object):
         if not a.get("discovered") and str(values.get("report_job", "")).isdigit():         # 907, 0907 and 00907 are one job
             values = dict(values, report_job=str(int(values["report_job"])))
         jt = None
-        if (a.get("job_type") or {}).get("ask") and job_type is not None:
+        if job_type is not None:
             if job_type not in ("check", "run"):
                 return 400, {"error": "Not started: the Job type is Check or Run."}
-            jt = job_type
+            info = a.get("job_type") or {}
+            if info.get("ask"):
+                jt = job_type
+            elif job_type == "check" and info.get("default") != "check":       # Check asked, and the template now runs for real
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "Check asked; the template's Job type is fixed to Run"})
+                return 409, {"error": "Not started: " + CHECK_GONE + "."}
         key = self.once_key(name, values)
         if key is None:
             return self._launch(cn, ip, name, a, values, jt)
@@ -3558,26 +3563,36 @@ def details_page(cfg, portal, cn, name):
     return shell(cfg, "Details", body, cn, page="action")
 
 
+CHECK_GONE = ("this job can no longer be asked for Check (its Job type is fixed to Run): nothing is started - turn on Prompt "
+              "on launch for Job type on the template, then open it again")
+
+
 def job_type_html(a, query):
-    """The Run dialog's Job type (a template that asks it at launch): Check or Run, the template's own by default, or the one
-    the address asks (portal-job-type=check: the NetApp page's Expand...). '' for any other template."""
+    """The Run dialog's Job type -> (html, may start). A template that asks it at launch: Check or Run, the template's own by
+    default, or the one the address asks (portal-job-type=check: the NetApp page's Expand...). The address asks Check of a
+    template that does not ask it: kept as a hidden field when Check is its fixed Job type, else refused (CHECK_GONE) - a
+    Check never turns into a real run. Any other template: ('', True)."""
     jt = a.get("job_type") or {}
-    if not jt.get("ask"):
-        return ""
     want = (query.get(NETAPP_JOB_TYPE) or [""])[-1] if isinstance(query.get(NETAPP_JOB_TYPE), list) else query.get(NETAPP_JOB_TYPE, "")
+    if not jt.get("ask"):
+        if want != "check":
+            return "", True
+        if jt.get("default") == "check":
+            return ('<input type="hidden" name="%s" value="check"><p class="sub">Job type: Check (the template\'s own).</p>' % NETAPP_JOB_TYPE), True
+        return '<p class="note bad" role="alert"><b>Not started.</b> %s.</p>' % esc(CHECK_GONE[0].upper() + CHECK_GONE[1:]), False
     pick = want if want in ("check", "run") else jt.get("default", "run")
     opts = (("check", "Check - the plan only, nothing is changed"), ("run", "Run - the job does its work"))
     return ('<div class="field"><label id="l-jt">Job type</label><div class="multi" role="radiogroup" aria-labelledby="l-jt">%s</div>'
             '<p class="why" id="p-jt"></p></div>'
             % "".join('<label class="opt"><input type="radio" name="%s" value="%s"%s> %s</label>' % (NETAPP_JOB_TYPE, v, " checked" if v == pick else "", esc(t))
-                      for v, t in opts))
+                      for v, t in opts)), True
 
 
 def action_page(cfg, portal, cn, name, query, embed=False):
     a = portal.actions.get(name)
     if a is None:                                   # taken off just now (a refresh of the cards)
         return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
-    jt_html = job_type_html(a, query)
+    jt_html, jt_ok = job_type_html(a, query)
     query = dict((k, v) for k, v in query.items() if k != NETAPP_JOB_TYPE)       # never a survey value
     sent = {k: (v if a["vars"].get(k, {}).get("kind") == "multichoice" else v[-1]) for k, v in query.items()
             if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
@@ -3647,7 +3662,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
              ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No", ""),
              ("Started by" if a.get("started_by") else "Started as", cn, " mono")]
     dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
-    can = allowed and not off and not busy
+    can = allowed and not off and not busy and jt_ok
     line = a.get("summary") or a.get("description") or ""
     if embed:                                           # 1.78.0: the Run dialog's content (the page's script puts it in a <dialog>)
         sub = "This form is made from the template's survey in AAP." if a.get("discovered") else line
@@ -5334,8 +5349,9 @@ class NetappLive(object):
                     v["off"], v["dis"] = ex["fixed_run"], True
                     now = None
                 if now:
+                    # every Expand asks Check: the dialog and the launch refuse when the template can no longer run as Check
                     v["x"].append({"lun": v.get("lun", ""), "href": "%sactions/%s?%s" % (self.cfg.path, ex["name"], urllib.parse.urlencode(
-                        [(ex["q"], now)] + ([(NETAPP_JOB_TYPE, "check")] if ex["job_type"] else [])))})
+                        [(ex["q"], now), (NETAPP_JOB_TYPE, "check")]))})
                 if not v["x"] and not v.get("off"):
                     v["off"] = "not in the job's current list - the portal reads AAP again within portal_discover_seconds"
             elif v.get("offered"):

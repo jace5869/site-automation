@@ -143,6 +143,42 @@ def epoch(dt):
     return int((dt - datetime.datetime(1970, 1, 1)).total_seconds())
 
 
+def columns(sql):
+    """a CREATE TABLE -> (table, [(column, its definition)]) - the keys left out"""
+    head, rest = sql.split(" (", 1)
+    body = rest.rsplit(") ", 1)[0]
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur.strip())
+    return head.split()[-1], [(x.split()[0], x) for x in parts if not x.startswith(("PRIMARY KEY", "KEY "))]
+
+
+def add_missing(conn, create):
+    """Every column of this release in its table (a table made by a pre-release build may lack one): the missing ones added
+    (ALTER TABLE ... ADD COLUMN, as docs/REPORT_DATABASE.md shows) -> the columns added; with create false, an error that
+    names them."""
+    cur = conn.cursor()
+    added = []
+    for c in CREATE:
+        table, cols = columns(c)
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = %s", (table,))
+        have = set(str(r[0]).lower() for r in cur.fetchall())
+        missing = [(n, d) for n, d in cols if n.lower() not in have]
+        if missing and not create:
+            raise RuntimeError("%s lacks %s (a table from a build before this one) - add them as docs/REPORT_DATABASE.md shows, or set "
+                               "ontap_live_db_create: true" % (table, ", ".join(n for n, _d in missing)))
+        for n, d in missing:
+            cur.execute("ALTER TABLE %s ADD COLUMN %s" % (table, d))
+            added.append("%s.%s" % (table, n))
+    return added
+
+
 def schema(conn, create):
     """(there, created): the tables, made when one is not there and create is true; schema_version's row with them."""
     cur = conn.cursor()
@@ -162,6 +198,8 @@ def schema(conn, create):
         cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
     elif r and int(r[0][0]) > SCHEMA_VERSION:
         raise RuntimeError("the NetApp page's tables are version %s, newer than this release knows (%s) - update site-automation" % (r[0][0], SCHEMA_VERSION))
+    if there:
+        add_missing(conn, create)
     conn.commit()
     return True, not there
 

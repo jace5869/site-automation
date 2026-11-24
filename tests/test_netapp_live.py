@@ -285,6 +285,42 @@ class Writer(unittest.TestCase):
         self.assertIsNone(r[1])                                                      # a new history: one point, no rate
         self.assertIn("(1 so far", r[2])
 
+    def test_p2_a_pre_release_table_gets_its_missing_column(self):
+        """the schema check: every column of this release, a missing one added with ALTER TABLE (a fake cursor)"""
+        sent = []
+
+        class Cur(object):
+            def __init__(self):
+                self.rows = []
+
+            def execute(self, sql, args=()):
+                sent.append((sql, args))
+                if "information_schema.tables" in sql:
+                    self.rows = [(t,) for t in ldb.TABLES]
+                elif "information_schema.columns" in sql:
+                    table = args[0]
+                    self.rows = [(n,) for n, _d in ldb.columns([c for c in ldb.CREATE if (" %s (" % table) in c][0])[1] if n != "pt_obj"]
+                elif "FROM schema_version" in sql:
+                    self.rows = [(1,)]
+                else:
+                    self.rows = []
+
+            def fetchall(self):
+                return self.rows
+
+        class Conn(object):
+            def cursor(self):
+                return Cur()
+
+            def commit(self):
+                pass
+        self.assertEqual(ldb.schema(Conn(), True), (True, False))
+        self.assertEqual([q for q, _a in sent if q.startswith("ALTER")], ["ALTER TABLE ontap_live_volume ADD COLUMN pt_obj CHAR(40) NOT NULL DEFAULT ''"])
+        with self.assertRaises(RuntimeError) as e:
+            ldb.schema(Conn(), False)
+        self.assertIn("ontap_live_volume lacks pt_obj", str(e.exception))
+        self.assertIn("ALTER TABLE ontap_live_volume ADD COLUMN pt_obj CHAR(40) NOT NULL DEFAULT '';", open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md")).read())
+
     def test_prune(self):
         db = fill()
         now = fx.at(0)
@@ -425,7 +461,7 @@ class Expand(unittest.TestCase):
         a["job_type"]["default"] = "check"                                         # fixed to Check: allowed, nothing to ask
         v = [x for x in self.model(actions={"jt_58": a})["volumes"] if x["name"] == "vol_ds03"][0]
         self.assertEqual(len(v["x"]), 1)
-        self.assertNotIn("portal-job-type", v["x"][0]["href"])
+        self.assertIn("portal-job-type=check", v["x"][0]["href"])                 # every Expand asks Check
 
     def test_off_with_its_reason(self):
         m = self.model(found={"skipped": [], "no_execute": [EXPAND]})
@@ -480,6 +516,30 @@ class RunDialog(unittest.TestCase):
         p.actions["jt_58"]["job_type"] = {"ask": False, "default": "run"}
         self.assertNotIn("portal-job-type", sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True))
 
+    def test_p1_check_asked_of_a_template_now_fixed_to_run_is_refused(self):
+        texts = newest_texts()
+        a = expand_action(texts, ask=False)
+        a["job_type"]["default"] = "check"
+        p = self.portal(a)
+        q = {"ontap_expand_volume": [texts[0]], "portal-job-type": ["check"]}
+        h = sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True)
+        self.assertIn('<input type="hidden" name="portal-job-type" value="check">', h)
+        self.assertNotIn('id="go" disabled', h)
+        p.actions["jt_58"]["job_type"]["default"] = "run"                         # switched to Run before the dialog opened
+        h = sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True)
+        self.assertIn("can no longer be asked for Check", h)
+        self.assertIn('id="go" disabled', h)
+        sent = []
+        p.same_template = lambda a_: ""
+        p.aap.call = lambda m, path, body=None: (sent.append(body) or (201, {"job": 77}))
+        code, out = p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[0]}, "s1", "check")
+        self.assertEqual(code, 409)
+        self.assertIn("can no longer be asked for Check", out["error"])
+        self.assertEqual(sent, [])
+        p.actions["jt_58"]["job_type"]["default"] = "check"
+        self.assertEqual(p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[0]}, "s1", "check")[0], 201)
+        self.assertNotIn("job_type", sent[-1])                                    # fixed to Check: its own, not sent
+
     def test_launch_sends_the_job_type(self):
         texts = newest_texts()
         p = self.portal(expand_action(texts))
@@ -492,7 +552,10 @@ class RunDialog(unittest.TestCase):
         self.assertEqual(sent[-1][2]["extra_vars"], {"ontap_expand_volume": texts[0]})
         self.assertEqual(p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[0]}, "s1", "drop")[0], 400)
         p.actions["jt_58"]["job_type"] = {"ask": False, "default": "run"}
-        p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[1]}, "s1", "check")
+        n = len(sent)
+        self.assertEqual(p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[1]}, "s1", "check")[0], 409)   # Check asked, Run fixed
+        self.assertEqual(len(sent), n)
+        self.assertEqual(p.launch(CN, "192.0.2.5", "jt_58", {"ontap_expand_volume": texts[1]}, "s1")[0], 201)
         self.assertNotIn("job_type", sent[-1][2])                                # a template that does not ask: never sent
 
 

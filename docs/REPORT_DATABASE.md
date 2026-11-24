@@ -1321,6 +1321,16 @@ aggregates, and the health parts.
 **By hand.** If the writer may not create tables, set `ontap_live_db_create: false` and make them once as root, in
 `site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE.
 
+**A table from a test build.** Each run checks every column of its tables. A column a pre-release build did not have is
+added (`ALTER TABLE`, the writer needs ALTER); with `ontap_live_db_create: false` the run says which one, and an admin
+adds it, e.g.:
+
+```sql
+ALTER TABLE ontap_live_volume ADD COLUMN pt_obj CHAR(40) NOT NULL DEFAULT '';
+```
+
+Or drop the five tables and the `schema_version` row (*Removing it* above): the next run makes them again.
+
 <!-- the statements: site_ontap_live_db.ddl(), word for word (tests/test_netapp_live.py checks it) -->
 ```sql
 CREATE TABLE IF NOT EXISTS schema_version (

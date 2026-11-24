@@ -75,6 +75,8 @@ class H(http.server.BaseHTTPRequestHandler):
             r["comment"] = b["comment"]
         if "space" in b:
             r.setdefault("space", {}).update(b["space"])
+        if "autosize" in b:
+            r.setdefault("autosize", {}).update(b["autosize"])
         self.reply(202, {"job": {"uuid": "job-" + uuid, "_links": {"self": {"href": "/api/cluster/jobs/job-" + uuid}}}})
 
     def do_GET(self):
