@@ -72,27 +72,91 @@
         tasks_from: reach.yml
 
   tasks:
+    # SolarWinds (win_restart_solarwinds: auto): each server's node found first (read only), so the restart task's settings
+    # keep which node and window are ours; unmanaged after the task is verified (post_tasks)
+    - name: SolarWinds - the node of each server (read only)
+      site_win_restart_swis:
+        action: find
+        hosts: "{{ _wr_sw_hosts }}"
+        at_utc: "{{ _wr_when.utc }}"
+        before: "{{ win_restart_solarwinds_before_minutes | int }}"
+        after: "{{ win_restart_solarwinds_minutes | int }}"
+        zone: "{{ _wr_when.zone }}"
+        timeout: "{{ win_restart_solarwinds_timeout | int }}"
+      vars:
+        _wr_sw_hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set _ = out.append({'host': h, 'ip': hostvars[h].ansible_host | default('')}) -%}
+          {%- endfor -%}
+          {{ out }}
+      register: _wr_swfind
+      delegate_to: localhost
+      run_once: true
+      check_mode: false                 # it only reads
+      when: win_restart_solarwinds | string | lower not in ['false', 'no', 'off']
+
     - name: The plan (Check) or the restart scheduled
       ansible.builtin.include_role:
         name: win_restart
       vars:
         _wr_action: "{{ 'plan' if ansible_check_mode else 'schedule' }}"
+        _wr_solarwinds: >-
+          {{ ((_wr_swfind.found | default({}))[inventory_hostname] | default({}))
+             | win_restart_swis_record(_wr_swfind.window | default({})) }}
       when: site_host_unreached | default('') | length == 0
+
+    - name: SolarWinds - unmanage the node of each restart scheduled (Check - what it would do)
+      site_win_restart_swis:
+        action: run
+        items: "{{ _wr_res_hosts | win_restart_swis_items(_wr_swfind.found | default({}), _wr_swfind.window | default({}), 'schedule', ansible_check_mode) }}"
+        check: "{{ ansible_check_mode }}"
+        zone: "{{ _wr_when.zone }}"
+        timeout: "{{ win_restart_solarwinds_timeout | int }}"
+      vars:
+        _wr_res_hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%- endfor -%}
+          {{ out }}
+      register: _wr_swrun
+      delegate_to: localhost
+      run_once: true
+      check_mode: false                 # in Check it is told so (check: true) and invokes nothing
+      when:
+        - _wr_swfind is not skipped
+        - _wr_swfind.skipped_why | default('') | length == 0
 
   post_tasks:
     - name: Every server, as one model
       ansible.builtin.set_fact:
         _wr_model: >-
           {{ _wr_hosts | win_restart_model({'mode': 'schedule', 'check': ansible_check_mode, 'comment': _wr_comment,
-                                            'only_if_pending': win_restart_only_if_pending | bool}) }}
+                                            'only_if_pending': win_restart_only_if_pending | bool,
+                                            'swis_window': _wr_swfind.window_text | default('') if _wr_sw_state == 'on' else '',
+                                            'swis_span': win_restart_solarwinds_before_minutes ~ ' minutes before to '
+                                                         ~ win_restart_solarwinds_minutes ~ ' minutes after',
+                                            'swis_note': _wr_sw_state | win_restart_swis_note(_wr_swfind.skipped_why | default('')),
+                                            'swis_times': _wr_swrun.times | default([])}) }}
       vars:
         _wr_hosts: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
           {%-   set _ = out.append({'host': h, 'result': hostvars[h].win_restart_result | default({}),
-                                    'unreached': hostvars[h].site_host_unreached | default('')}) -%}
+                                    'unreached': hostvars[h].site_host_unreached | default(''),
+                                    'swis': _wr_swmap[h] | default({})}) -%}
           {%- endfor -%}
           {{ out }}
+        _wr_sw_state: >-
+          {{ 'off' if _wr_swfind is skipped else ('nocred' if _wr_swfind.skipped_why | default('') == 'no credential'
+             else ('error' if _wr_swfind.skipped_why | default('') | length > 0 else 'on')) }}
+        _wr_swmap: >-
+          {%- set hs = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_unreached is defined -%}
+          {%-   set _ = hs.append({'host': h, 'result': hostvars[h].win_restart_result | default({})}) -%}
+          {%- endfor -%}
+          {{ hs | win_restart_swis_map(_wr_swrun.result | default({}), _wr_sw_state) }}
       run_once: true
 
     - name: Each server

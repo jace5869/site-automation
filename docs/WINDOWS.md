@@ -638,6 +638,38 @@ A reboot is pending when any of these says so (the same as the patching check):
 - Pending file rename operations: shown, but counted only with `win_restart_count_file_renames: true` (some software
   sets them all the time)
 
+### SolarWinds: the node unmanaged for the restart
+
+So the restart raises no SolarWinds alerts, the job unmanages each server's SolarWinds node for a window: from
+`win_restart_solarwinds_before_minutes` (5) before the restart time to `win_restart_solarwinds_minutes` (10) after it. A 22:30 restart: 22:25-22:40.
+SolarWinds manages the node again by itself at the window's end.
+
+To set it up:
+
+1. Make a second credential of the type **SolarWinds (read-only)** whose account may manage nodes (Orion: Node
+   Management rights). The read-only credential of the reports is never used for this.
+2. Name it in **AAP - set up job templates**: `aap_templates_credentials: {solarwinds_manage: "<that credential>"}`. It is
+   attached to the two restart templates only.
+3. `win_restart_solarwinds: auto` (the default) uses it when it is attached. Without it each run says "SolarWinds: no
+   credential - node stays managed". `false` = never.
+
+What it does:
+
+- The node is found by the server's name, then its IP, then its short name - the rules of every SolarWinds reader here.
+  Not found, or more than one: the row says so (a warning), and the restart still goes ahead.
+- Only for servers whose task was verified. A skipped server ("only if pending", nothing pending) is not unmanaged.
+- The call: SWIS Invoke `Orion.Nodes/Unmanage` with `["N:<id>", <from UTC>, <until UTC>, false]`.
+- A node already unmanaged: when the window is the one our earlier run recorded (in the task's settings file), it is
+  replaced; a window a person set is left as it is, with a warning.
+- A failed SolarWinds call is a warning on that row; the restart stays scheduled; the job ends as a warning.
+- With "only if pending" the node is unmanaged for the window even if, at the restart time, nothing is pending and the
+  server does not restart.
+- Cancel manages the node again (`Orion.Nodes/Remanage`) only when its window is still the one ours recorded.
+- The window is sent in UTC. What SWIS returns for `UnManageFrom` and `UnManageUntil` is not documented: a time with a
+  zone is taken as it is; one without is accepted as UTC or as the site's zone (`win_restart_time_zone`), each within
+  90 seconds, and the report says which matched ("SolarWinds returns times as UTC" / "as local time"). Neither: not ours,
+  left with a warning. Check on the first real run that the node's window in Orion is the report's.
+
 ### Cancel it
 
 Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our task; Run removes it. Only the

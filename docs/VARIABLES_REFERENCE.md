@@ -3195,6 +3195,10 @@ File: `roles/win_restart/defaults/main.yml`
 | `win_restart_task_path` | `"\\site-automation\\"` | The scheduled task's folder in Task Scheduler. |
 | `win_restart_task_name` | `"site-automation restart"` | The scheduled task's name (one per server). Only this exact folder and name is touched, and only a task this job made. |
 | `win_restart_dir` | `'C:\ProgramData\site-automation\restart'` | Where the task's script and its settings live on each server (only SYSTEM and Administrators may change it). |
+| `win_restart_solarwinds` | `auto` | SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a window around the restart; SolarWinds manages it again by itself at the window's end. auto = when the template has a SolarWinds credential of the kind solarwinds_manage (an account that may manage nodes); none: "no creden… (all of it: the role file) |
+| `win_restart_solarwinds_before_minutes` | `5` | The window: this many minutes before the restart time ... |
+| `win_restart_solarwinds_minutes` | `10` | ... to this many minutes after it. |
+| `win_restart_solarwinds_timeout` | `30` | Seconds to wait for SolarWinds' answer to one call. |
 
 ## win_troubleshoot
 

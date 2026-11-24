@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows - cancel a scheduled restart"
 #   playbook:    playbooks/win_restart_cancel.yml
-#   credentials: Machine (Windows)
+#   credentials: Machine (Windows), SolarWinds (manage nodes) (optional: the node unmanaged for the restart window)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -18,6 +18,11 @@
 ## Removes only our restart tasks (name starts with win_restart_task_name) and their files.
 
 # ---- win_restart ---------------------------------------------------------------------------------
+## The time zone of win_restart_time: a name as timedatectl list-timezones prints it
+## (America/New_York), or UTC. Empty: the job refuses (a restart is never planned in a time zone it
+## guessed). Each server gets the same moment, in its own time zone.
+# win_restart_time_zone: "{{ report_time_zone | default('', true) }}"
+
 ## true (the survey's "Only if a reboot is pending": yes) = the server restarts only when a reboot
 ## is pending - when the plan is made, and again at the restart time (the task checks again first
 ## and does nothing when none is pending any more).
@@ -48,6 +53,15 @@
 ## Where the task's script and its settings live on each server (only SYSTEM and Administrators may
 ## change it).
 # win_restart_dir: 'C:\ProgramData\site-automation\restart'
+
+## SolarWinds (docs/WINDOWS.md "Schedule a restart", SolarWinds): each server's node unmanaged for a
+## window around the restart; SolarWinds manages it again by itself at the window's end. auto = when
+## the template has a SolarWinds credential of the kind solarwinds_manage (an account that may
+## manage nodes); none: "no credential - node stays managed". false = never.
+# win_restart_solarwinds: auto
+
+## Seconds to wait for SolarWinds' answer to one call.
+# win_restart_solarwinds_timeout: 30
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

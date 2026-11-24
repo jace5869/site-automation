@@ -70,6 +70,7 @@ KINDS = [("Machine (Windows)", "machine_windows"), ("Red Hat Ansible Automation 
          ("Network config git repository", "net_git"), ("MariaDB monitor", "mariadb"), ("TLS certificate", "tls_certificate"),
          ("SQL Server (certificate inventory)", "sqlserver"), ("Keystore password", "keystore"), ("Report database (reader)", "report_db_reader"),
          ("Report database", "report_db"),
+         ("SolarWinds (manage nodes)", "solarwinds_manage"),     # Windows - schedule a restart: unmanage the node (a write)
          ("Teams webhook", "teams"), ("STIG Manager API (writer)", "stigman_api_writer"), ("NetApp ONTAP (write)", "ontap_write"),
          ("Machine", "machine")]   # writer: 1.83.0, CREDS; ontap_write: 1.123.0, CREDS
 OPTIONAL = re.compile(r"optional|\bwith\b|\bonly\b", re.I)
