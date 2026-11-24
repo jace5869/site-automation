@@ -158,6 +158,14 @@ dl.def dd{overflow-wrap:anywhere;font-weight:550}
 .pk-kind{flex:none;font-size:12px;color:var(--muted);white-space:nowrap}
 .pk-empty,.pk-foot{padding:6px 8px;margin:0}
 .pk-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+/* 1.130.0: the group drop-down, the list's parts (Groups, Hosts, one group's hosts) and the Windows line */
+.pk-gbar{display:flex;gap:8px;align-items:center;margin:0 0 6px}
+.pk-glab{font-size:13px;color:var(--muted);flex:none}
+.field .pk-group{flex:1 1 auto;min-width:0;max-width:100%}
+.pk-head{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 8px 4px;font-size:12px;font-weight:600;color:var(--muted);text-transform:none;position:sticky;top:-4px;background:var(--card);z-index:1}
+.pk-head .pk-htext{overflow-wrap:anywhere;min-width:0}
+.pk-whole{padding:3px 10px;font-size:12.5px}
+.pk-os{margin:0 0 10px}
 .field.bad input,.field.bad select,.field.bad textarea{border-color:var(--critical)}
 .why{color:var(--critical);font-size:12.5px;margin:4px 0 0}
 .why:empty{display:none}

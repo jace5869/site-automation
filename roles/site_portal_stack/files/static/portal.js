@@ -373,13 +373,20 @@ function hostPickers() {
     for (const x of box.querySelectorAll(".help")) x.hidden = true;
     const chips = el("div", "pk-chips"), q = el("input", "pk-q"), list = el("ul", "pk-list"), foot = el("p", "pk-foot muted-line");
     const all = el("button", "btn pk-all", "Select all shown"), note = el("span", "muted-line pk-note"), hid = el("div", "pk-hidden");
+    // 1.130.0: the group drop-down - all, or one group of the inventory: its hosts, to pick the whole group or some of them
+    const gsel = el("select", "pk-group"), gwrap = el("div", "pk-gbar"), glab = el("label", "pk-glab", "Group");
+    gsel.id = "pk-g-" + field; glab.htmlFor = gsel.id;
+    gsel.append(new Option("All hosts and groups", ""));
+    gwrap.append(glab, gsel);
+    gwrap.hidden = true;
+    let group = "", groupsAsked = false;
     q.type = "search"; q.placeholder = "Search hosts and groups"; q.autocomplete = "off"; q.spellcheck = false;
     q.setAttribute("role", "combobox"); q.setAttribute("aria-expanded", "true"); q.setAttribute("aria-controls", "pk-" + field);
     q.setAttribute("aria-label", "Search the inventory's hosts and groups");
     list.id = "pk-" + field; list.setAttribute("role", "listbox"); list.setAttribute("aria-multiselectable", "true");
     all.type = "button";
     const bar = el("div", "pk-bar"); bar.append(all, note);
-    box.append(chips, q, list, foot, bar, hid);
+    box.append(chips, gwrap, q, list, foot, bar, hid);
     let rows = [], on = 0, seq = 0, timer = 0, matches = 0, stale = "";
     const total = () => { let n = 0; for (const c of picked.values()) n += c; return n; };
     function sync() {
@@ -401,9 +408,26 @@ function hostPickers() {
       note.textContent = "About " + total() + " of " + cap + " hosts";
     }
     function fits(r) { return picked.has(r.name) || r.count <= cap; }          // the server counts the distinct hosts of the groups and says when it is too many
+    let gInfo = null, nHosts = 0, nGroups = 0;
+    function head(text, extra) {
+      const li = el("li", "pk-head"); li.setAttribute("role", "presentation");
+      li.append(el("span", "pk-htext", text));
+      if (extra) li.append(extra);
+      list.append(li);
+    }
     function draw() {
       list.replaceChildren();
+      if (gInfo) {                                  // one group: the whole group as one pick, then its hosts
+        const r = {name: gInfo.name, kind: "group", count: gInfo.count}, on_ = picked.has(r.name);
+        const b = el("button", "btn pk-whole", on_ ? "Whole group picked" : "Pick the whole group (" + r.count + ")");
+        b.type = "button"; b.disabled = !on_ && (!fits(r) || total() + r.count > cap);
+        if (!fits(r)) b.title = "Too big: at most " + cap + " hosts (" + setting + ")";
+        b.addEventListener("click", () => { toggle(r); });
+        head(gInfo.name + " · " + gInfo.count + " host" + (gInfo.count === 1 ? "" : "s") + (matches < gInfo.count ? " · " + matches + " match" : ""), b);
+      }
       rows.forEach((r, i) => {
+        if (!gInfo && r.kind === "group" && (i === 0 || rows[i - 1].kind !== "group")) head("Groups (" + nGroups + ")");
+        if (!gInfo && r.kind !== "group" && (i === 0 || rows[i - 1].kind === "group")) head("Hosts (" + nHosts + ")");
         const li = el("li", "pk-row" + (i === on ? " on" : "") + (picked.has(r.name) ? " sel" : "") + (fits(r) ? "" : " off"));
         li.setAttribute("role", "option"); li.setAttribute("aria-selected", picked.has(r.name) ? "true" : "false");
         if (!fits(r)) { li.setAttribute("aria-disabled", "true"); li.title = "Too big: at most " + cap + " hosts (" + setting + ")"; }
@@ -414,6 +438,8 @@ function hostPickers() {
       });
       if (!rows.length) list.append(el("li", "pk-empty", "Nothing matches."));
       foot.textContent = (stale ? stale + " " : "") + (matches > rows.length ? (matches - rows.length) + " more - type to narrow." : "");
+      const free = rows.filter((r) => !picked.has(r.name) && fits(r)).length;
+      all.textContent = "Select all shown" + (free ? " (" + free + ")" : "");
       all.disabled = !rows.some((r) => !picked.has(r.name) && fits(r) && total() + r.count <= cap);
     }
     function toggle(r) {
@@ -423,22 +449,35 @@ function hostPickers() {
     async function ask() {
       const my = ++seq;
       let r;
-      try { r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim()) + (box.dataset.inv ? "&inv=" + encodeURIComponent(box.dataset.inv) : "")); } catch (e) { foot.textContent = "The inventory could not be read just now."; return; }
+      const wantGroups = !groupsAsked;
+      try {
+        r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim()) + (box.dataset.inv ? "&inv=" + encodeURIComponent(box.dataset.inv) : "")
+          + (box.dataset.os ? "&os=" + encodeURIComponent(box.dataset.os) : "") + (group ? "&group=" + encodeURIComponent(group) : "") + (wantGroups ? "&groups=1" : ""));
+      } catch (e) { foot.textContent = "The inventory could not be read just now."; return; }
       if (my !== seq) return;
+      if (wantGroups && r.groups) {
+        groupsAsked = true;
+        for (const g of r.groups) gsel.append(new Option(g.name + " (" + g.count + ")", g.name));
+        if (r.groups_more) { const o = new Option(r.groups_more + " more groups - type a group's name in the search", ""); o.disabled = true; gsel.append(o); }
+        gwrap.hidden = !r.groups.length;
+      }
       rows = r.items || []; matches = r.matches || rows.length; stale = r.stale || ""; on = 0;
+      nHosts = r.hosts || 0; nGroups = r.groups_n || 0; gInfo = r.group || null;
       draw();
+      if (r.error && !rows.length) foot.textContent = r.error;
     }
     all.addEventListener("click", () => {
       for (const r of rows) if (!picked.has(r.name) && fits(r) && total() + r.count <= cap) picked.set(r.name, r.count);
       sync(); draw();
     });
     q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(ask, 150); });
+    gsel.addEventListener("change", () => { group = gsel.value; q.placeholder = group ? "Search the hosts of " + group : "Search hosts and groups"; ask(); });
     q.addEventListener("keydown", (ev) => {
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         ev.preventDefault();
         if (rows.length) on = (on + (ev.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
         draw();
-        const cur = list.children[on]; if (cur && cur.scrollIntoView) cur.scrollIntoView({block: "nearest"});
+        const cur = list.querySelector(".pk-row.on"); if (cur && cur.scrollIntoView) cur.scrollIntoView({block: "nearest"});
       } else if ((ev.key === "Enter" || (ev.key === " " && !q.value)) && rows[on]) { ev.preventDefault(); toggle(rows[on]); }
       else if (ev.key === "Backspace" && !q.value && picked.size) { picked.delete(Array.from(picked.keys()).pop()); sync(); draw(); }
     });

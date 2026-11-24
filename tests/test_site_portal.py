@@ -1594,9 +1594,10 @@ class Found(unittest.TestCase):
 
     def test_20_the_list(self):
         r = self.portal.aap.inventory_items("")
-        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],
-                         [("fail01.example.mil", "host", 1), ("failing", "group", 1), ("web01.example.mil", "host", 1), ("web03.example.mil", "host", 1),
-                          ("web_servers", "group", 2)])
+        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],             # 1.130.0: the groups first, then the hosts (the list's two parts)
+                         [("failing", "group", 1), ("web_servers", "group", 2), ("fail01.example.mil", "host", 1), ("web01.example.mil", "host", 1),
+                          ("web03.example.mil", "host", 1)])
+        self.assertEqual((r["groups_n"], r["hosts"]), (2, 3))
         self.assertEqual([i["name"] for i in self.portal.aap.inventory_items("WEB_")["items"]], ["web_servers"])      # substring, any case
         r = self.portal.aap.inventory_items("", 2)
         self.assertEqual((len(r["items"]), r["matches"]), (2, 5))                                                        # the cap, and how many there are

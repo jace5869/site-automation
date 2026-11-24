@@ -181,6 +181,15 @@ For all of these, use: **Inventory** `Windows servers`, **Project** `site-automa
 from step 2, **Credentials** `Windows (WinRM)`, **Limit** empty with **Prompt on launch** ticked.
 Leave **Variables** empty: with no `target`, they run on every server in the inventory.
 
+**From the site portal (1.130.0).** Run **AAP - set up job templates** with `aap_templates_label_portal: portal-actions` (or
+`all`): the Windows reports whose servers are the Limit get the portal's label and show under **Windows** (STIG drift under
+**STIG**, the certificate and trust store reports under **Certificates**) with a Hosts box - several servers, a whole group or
+some servers of a group, one job for all of them, Windows hosts only (docs/SITE_PORTAL.md, "Windows jobs"). They are:
+*Windows connection test*, *Windows health check*, *Windows troubleshoot*, *Windows - local group members*, *Windows certificate
+report*, *Windows - trust store report*, *Windows STIG drift report*, and (since 1.127.0) *Windows - schedule a restart* and
+*Windows - cancel a scheduled restart*. The jobs that change servers (patch, certificate install and restore, CSRs, ACT
+install) are not labelled: they run in their workflows, with an approval.
+
 ### Windows health check
 
 | Field | Value |
@@ -582,6 +591,12 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
    Actions page, with a Hosts box for the servers.
 3. Set the templates' inventory to your Windows inventory.
 4. Optional: `report_email_to` and `report_web_dest` on the template, for the report email and page.
+
+**In the site portal (1.130.0).** The Hosts box takes one server, several, a whole inventory group, or some servers of a
+group (the **Group** drop-down shows one group's servers; **Pick the whole group** or tick single ones). It lists only the
+Windows hosts of the inventory (`portal_windows_hosts_from`, docs/SITE_PORTAL.md "Windows jobs"); a group counts by its Windows
+hosts. One pick set is **one job**, up to `win_restart_max_hosts` servers (the portal reads it from the template's Variables).
+The form keeps the survey (time, reason, only if pending, change) and offers **Check** (the plan only) before **Run**.
 
 ### Run it
 

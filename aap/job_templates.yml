@@ -407,6 +407,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_stig_drift_report.yml
     area: STIG
+    portal: true
     description:
       does: Runs Evaluate-STIG on Windows servers (or reads its checklists) and compares with STIG Manager and earlier scans
         to find drift.
@@ -1150,6 +1151,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_connection_test.yml
     area: Windows
+    portal: true
     description:
       does: 'Proves AAP can reach the Windows servers over WinRM before any other Windows template: EE libraries, PowerShell,
         account, admin rights.'
@@ -1167,6 +1169,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_health_check.yml
     area: Windows
+    portal: true
     survey:
       - question_name: Which checks?
         variable: health_checks
@@ -1206,6 +1209,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_troubleshoot.yml
     area: Windows
+    portal: true
     description:
       does: 'On demand: runs the first PowerShell commands an admin would run for one problem area (ts_area) on a server,
         plus the matching checks.'
@@ -1430,6 +1434,7 @@ job_templates:
     variables_file: aap/extra_vars/win_cert_report.yml
     area: Certificates
     skip_areas: [Windows, Certificates]
+    portal: true
     description:
       does: Lists every certificate in the Windows machine stores (and TLS endpoints) by expiry, with where each is used;
         fails servers with ones due.
@@ -1541,6 +1546,7 @@ job_templates:
     variables_file: aap/extra_vars/win_trust_report.yml
     area: Certificates
     skip_areas: [Windows, Certificates]
+    portal: true
     description:
       does: Finds Windows machine stores, Java cacerts and certifi bundles that still hold a compromised or browser-dropped
         CA, and fails those servers.
@@ -1558,6 +1564,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_local_groups.yml
     area: Windows
+    portal: true
     description:
       does: Inventories every member of Administrators and the other privileged local groups on each server; builds the approved
         list and its checks.

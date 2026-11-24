@@ -140,6 +140,112 @@ def names(v):
     return [x.strip() for x in re.split(r"[,\n]", t) if x.strip()]
 
 
+# ---- 1.130.0: Windows hosts in the picker of a Windows job, and a playbook's own cap of hosts --------------------------------
+def _json_setting(v, default):
+    if isinstance(v, type(default)):
+        return v
+    try:
+        d = json.loads(str(v or "").strip() or json.dumps(default))
+    except ValueError:
+        return default
+    return d if isinstance(d, type(default)) else default
+
+
+def windows_rules(v):
+    """portal_windows_hosts_from -> {groups: [globs], vars: {name: [globs]}} (any case). A host is Windows when it is in a group
+    whose name matches a glob, or when a variable it has (its own, else a group's, else the inventory's) matches. {} = no filter."""
+    d = _json_setting(v, {})
+    gl = d.get("groups") or []
+    gl = [gl] if isinstance(gl, str) else gl
+    vs = d.get("vars") if isinstance(d.get("vars"), dict) else {}
+    out = {"groups": [str(x).strip().lower() for x in gl if isinstance(x, (str, int)) and str(x).strip()][:20],
+           "vars": {}}
+    for k, vals in list(vs.items())[:20]:
+        vals = [vals] if isinstance(vals, (str, int)) else (vals if isinstance(vals, list) else [])
+        vals = [str(x).strip().lower() for x in vals if str(x).strip()][:20]
+        if str(k).strip() and vals:
+            out["vars"][str(k).strip()] = vals
+    return out if (out["groups"] or out["vars"]) else {}
+
+
+def playbook_caps(v):
+    """portal_limit_max_playbooks -> {playbook file name: {var, max}}: a found template that runs it takes at most max hosts, or the
+    value of var in the template's own Variables when it sets it (win_restart_max_hosts)."""
+    out = {}
+    for k, c in _json_setting(v, {}).items():
+        name = os.path.basename(str(k).strip())
+        if not name:
+            continue
+        if isinstance(c, dict):
+            try:
+                m = int(c.get("max"))
+            except (TypeError, ValueError):
+                continue
+            out[name] = {"var": str(c.get("var") or "").strip(), "max": max(1, min(500, m))}
+        else:
+            try:
+                out[name] = {"var": "", "max": max(1, min(500, int(c)))}
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _var_value(d, key):
+    """A variable from a host's, group's or inventory's Variables: a plain name, or a dotted path into a mapping."""
+    if not isinstance(d, dict):
+        return None
+    if key in d:
+        return d[key]
+    cur = d
+    for part in key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _var_hits(value, globs):
+    return value is not None and not isinstance(value, (dict, list)) and any(fnmatch.fnmatchcase(str(value).strip().lower(), g) for g in globs)
+
+
+def windows_hosts(win_rules, hosts, host_vars, groups, group_vars, inv_vars):
+    """The Windows hosts of a listing (a set), or None when there is no rule. hosts: [names]; host_vars: {host: dict};
+    groups: {group: [member hosts]}; group_vars: {group: dict}; inv_vars: dict."""
+    if not win_rules:
+        return None
+    out = set()
+    by_group = [g for g in groups if any(fnmatch.fnmatchcase(g.lower(), p) for p in win_rules.get("groups") or [])]
+    for g in by_group:
+        out.update(groups[g])
+    member_of = {}
+    for g, mem in groups.items():
+        for h in mem:
+            member_of.setdefault(h, []).append(g)
+    for h in hosts:
+        if h in out:
+            continue
+        for key, globs in (win_rules.get("vars") or {}).items():
+            own = _var_value(host_vars.get(h) or {}, key)
+            if own is not None:                     # the host's own value wins
+                hit = _var_hits(own, globs)
+            else:
+                gv = [_var_value(group_vars.get(g) or {}, key) for g in member_of.get(h, [])]
+                gv = [x for x in gv if x is not None]
+                hit = any(_var_hits(x, globs) for x in gv) if gv else _var_hits(_var_value(inv_vars or {}, key), globs)
+            if hit:
+                out.add(h)
+                break
+    return out
+
+
+def action_os(playbook, name):
+    """1.130.0: 'windows' for a Windows job (its playbook is playbooks/win_*.yml, or a workflow named Windows ...), else ''."""
+    pb = os.path.basename(str(playbook or ""))
+    if pb.startswith("win_"):
+        return "windows"
+    return "windows" if not pb and re.match(r"(?i)^windows\b", str(name or "").strip()) else ""
+
+
 
 # 1.79.9b: playbooks that run on the AAP side only (hosts: localhost) - a workflow step of one needs no Limit
 # the AAP side only (hosts: localhost): a workflow's Limit has nothing to narrow there - the gate (1.79.9b), and the STIG
@@ -264,6 +370,9 @@ class Config(object):
         except ValueError:
             tj = {}
         self.titles = rules.site_portal_titles(tj if isinstance(tj, dict) else {})["titles"]
+        # 1.130.0: which hosts are Windows (the picker of a Windows job lists only those) and a playbook's own cap of hosts
+        self.windows_from = windows_rules(g("PORTAL_WINDOWS_HOSTS_FROM", "{}"))
+        self.limit_max_playbooks = playbook_caps(g("PORTAL_LIMIT_MAX_PLAYBOOKS", "{}"))
         self.approval_required = names(g("PORTAL_APPROVAL_REQUIRED", "[]"))
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
@@ -791,8 +900,10 @@ class Aap(object):
                 continue
             action = dict(result.action, last=(row.get("summary_fields") or {}).get("last_job") or {})
             if iid is not None:
-                hosts = {"kind": "hosts", "label": "Hosts", "required": True, "default": None, "max": cfg.limit_max,
-                         "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cfg.limit_max)}
+                own = action.get("cap")                    # 1.130.0: the playbook's own cap, when lower than portal_limit_max
+                cap, setting = (own[0], own[1]) if own and own[0] < cfg.limit_max else (cfg.limit_max, "portal_limit_max")
+                hosts = {"kind": "hosts", "label": "Hosts", "required": True, "default": None, "max": cap, "setting": setting,
+                         "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cap)}
                 action.update(limit_inv_name=inv_name, vars={rules.LIMIT_VAR: hosts, **action["vars"]})
             out["actions"][action["name"]] = action
             if result.steps:                            # 1.92.0: a workflow with a card - its steps have none of their own
@@ -891,8 +1002,24 @@ class Aap(object):
             "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
             "approval": cfg.label_approval in labels or tname in cfg.approval_required,
             # a job template that asks its Job type at launch (Prompt on launch): the Run dialog offers Check and Run
-            "job_type": {"ask": typ == "job" and bool(r.get("ask_job_type_on_launch")), "default": "check" if str(r.get("job_type")) == "check" else "run"}}
+            "job_type": {"ask": typ == "job" and bool(r.get("ask_job_type_on_launch")), "default": "check" if str(r.get("job_type")) == "check" else "run"},
+            # 1.130.0: a Windows job's picker lists Windows hosts only; a playbook with its own cap of hosts (portal_limit_max_playbooks)
+            "os": action_os(r.get("playbook") if typ == "job" else "", tname), "cap": self._playbook_cap(r) if typ == "job" else None}
         return TemplateRead(action=action, inventory=limit_inv, steps=steps)
+
+    def _playbook_cap(self, r):
+        """1.130.0: the hosts a template's playbook takes at most (portal_limit_max_playbooks): its var in the template's Variables
+        when set (win_restart_max_hosts), else the setting's max -> [cap, the setting that says it]; None when the playbook has no cap of its own."""
+        c = self.cfg.limit_max_playbooks.get(os.path.basename(str(r.get("playbook") or "")))
+        if not c:
+            return None
+        if c["var"]:
+            v = site_aap.vars_of(r.get("extra_vars")).get(c["var"])
+            try:
+                return [max(1, min(500, int(v))), c["var"]]
+            except (TypeError, ValueError):
+                pass
+        return [c["max"], c["var"] or "portal_limit_max_playbooks"]
 
     def _hide_steps(self, out, builtin, labelled_jobs, wf_steps, wf_unsure=()):
         """1.92.0: the portal shows a workflow, never its parts. A labelled job template that is a step of a portal workflow (found
@@ -1182,11 +1309,26 @@ class Aap(object):
             trunc = trunc or bool(bad)
             got = {"hosts": hosts, "groups": groups, "bad": bad, "truncated": trunc, "at": time.time(),
                    "gids": dict((str(g.get("name")), int(g["id"])) for g in grows)}
+            got["win"] = self._windows_of(iid, rows, grows, hosts, groups)          # 1.130.0: None = no rule (every host is listed)
             with self.lock:
                 self.listings[key] = got
             return got
         finally:
             lock.release()
+
+    def _windows_of(self, iid, rows, grows, hosts, groups):
+        """1.130.0: the Windows hosts of an inventory by portal_windows_hosts_from - from what AAP's API shows: the groups' names, the
+        hosts', groups' and the inventory's own Variables (what a dynamic source sets there). None when the setting is empty."""
+        wr = self.cfg.windows_from
+        if not wr:
+            return None
+        inv_vars = {}
+        if wr.get("vars"):
+            code, row = self.call("GET", "inventories/%d/" % int(iid))
+            inv_vars = site_aap.vars_of(row.get("variables")) if code == 200 and isinstance(row, dict) else {}
+        hv = dict((str(r.get("name")), site_aap.vars_of(r.get("variables"))) for r in rows if r.get("name")) if wr.get("vars") else {}
+        gv = dict((str(g.get("name")), site_aap.vars_of(g.get("variables"))) for g in grows if g.get("name")) if wr.get("vars") else {}
+        return windows_hosts(wr, hosts, hv, groups, gv, inv_vars)
 
     def listing_max_age(self):
         """How old a listing may be to stand for the inventory - kept through failed reads, and used to check a pick: one value for both."""
@@ -1208,23 +1350,29 @@ class Aap(object):
                 return True
         return False                                    # none, a part, or one too old to stand for the inventory: the new read serves
 
-    def expand(self, items, iid=None):
+    def expand(self, items, iid=None, os_=""):
         """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
-        portal_inventory (or of the inventory iid, 1.78.4): a free-typed name is refused."""
+        portal_inventory (or of the inventory iid, 1.78.4): a free-typed name is refused. 1.130.0: os_ windows - a group stands for its
+        Windows hosts only, and a host must be one (when portal_windows_hosts_from finds any in the inventory)."""
         inv = self.inventory_listing(iid=iid)
         if inv is None:
             return None, "could not be looked up in AAP's inventory just now - try again"
         if time.time() - inv["at"] > self.listing_max_age():                       # an old read serves the list, never a check
             return None, "could not be checked against the inventory just now - try again"
         hostset, out, seen = set(inv["hosts"]), [], set()
+        win = inv.get("win") if os_ == "windows" and inv.get("win") else None
         for name in items:
             if name in inv.get("bad", ()):
                 return None, "is a group whose hosts could not be read completely just now - pick its hosts, or try again"
             members = inv["groups"].get(name)
             if members is None and name in hostset:
+                if win is not None and name not in win:
+                    return None, "is not a Windows host (portal_windows_hosts_from)"
                 members = [name]
             if members is None:
                 return None, "is not a host or a group of the portal's inventory"
+            if win is not None:
+                members = [h for h in members if h in win]
             for h in members:
                 if not rules.host_usable(h) or h in inv["groups"]:
                     return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
@@ -1233,12 +1381,17 @@ class Aap(object):
                     out.append(h)
         return out, ""
 
-    def expand_now(self, items, iid=None):
+    def expand_now(self, items, iid=None, os_=""):
         """Like expand, but asks AAP now - the groups (names and members) and each host - and trusts no kept list: the launch's final expansion.
-        Every name that will be sent is checked against the current group names too."""
+        Every name that will be sent is checked against the current group names too. 1.130.0: os_ windows - a host the kept listing knows
+        as not Windows is left out of a group (one it does not know yet is kept: the playbook skips a host of the other OS itself)."""
         iid = self._inventory_id() if iid is None else iid
         if iid is None:
             return None, "could not be looked up in the inventory just now - try again"
+        lst = self.inventory_listing(iid=iid) if os_ == "windows" else None
+        win = lst.get("win") if lst and lst.get("win") else None
+        known = set(lst["hosts"]) if win is not None else set()
+        notwin = lambda h: h in known and h not in win            # noqa: E731
         grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
         if gwhy:
             return None, "could not be looked up in the inventory just now - try again"
@@ -1251,7 +1404,10 @@ class Aap(object):
                 if w:
                     return None, "is a group whose hosts could not be read just now - try again"
                 members = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
+                members = [h for h in members if not notwin(h)]
             else:
+                if notwin(name):
+                    return None, "is not a Windows host (portal_windows_hosts_from)"
                 code, data = self.call("GET", "inventories/%d/hosts/?name=%s&enabled=true&page_size=2" % (iid, urllib.parse.quote(name)))
                 if code != 200:
                     return None, "could not be looked up in the inventory just now - try again"
@@ -1284,16 +1440,47 @@ class Aap(object):
                 sorted(r.get("always_nodes") or []), r.get("limit"), r.get("extra_data"), r.get("all_parents_must_converge")] for r in rows]
         return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False, step_ids(rows)
 
-    def inventory_items(self, text="", limit=200, iid=None):
-        """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}."""
+    GROUP_LIST_MAX = 500           # 1.130.0: the picker's group drop-down lists this many groups at most (by name)
+
+    def inventory_items(self, text="", limit=200, iid=None, os_="", group="", with_groups=False):
+        """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}.
+        1.130.0: os_ windows - only the Windows hosts (portal_windows_hosts_from), a group counted by them, one with none left out; group -
+        only the hosts of that group (to pick some of them); with_groups - also groups: [{name, count}] for the group drop-down."""
         inv = self.inventory_listing(iid=iid)
         if inv is None:
             return {"items": [], "matches": 0, "total": 0, "error": "The inventory could not be read just now."}
         t = str(text or "").strip().lower()[:64]
-        rows = [(h, "host", 1) for h in inv["hosts"]] + [(g, "group", len(m)) for g, m in inv["groups"].items()]
-        rows = sorted((r for r in rows if t in r[0].lower()), key=lambda r: (r[0].lower(), r[1]))
-        out = {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows), "total": len(inv["hosts"]) + len(inv["groups"]),
-               "truncated": bool(inv["truncated"])}
+        win = inv.get("win") if os_ == "windows" else None
+        note = ""
+        if os_ == "windows" and not win:
+            win = None
+            note = ("The Windows filter is not set (portal_windows_hosts_from): every host is listed. The job skips hosts that are not Windows."
+                    if not self.cfg.windows_from else
+                    "The Windows filter (portal_windows_hosts_from) matches no host of this inventory: every host is listed. The job skips hosts that are not Windows.")
+        hosts = [h for h in inv["hosts"] if win is None or h in win]
+        groups = dict((g, [h for h in m if win is None or h in win]) for g, m in inv["groups"].items())
+        groups = dict((g, m) for g, m in groups.items() if m or win is None)
+        grp = str(group or "")[:200]
+        if grp:
+            if grp not in groups:
+                return {"items": [], "matches": 0, "total": 0, "error": "There is no group %s in this inventory%s." % (grp, " with Windows hosts" if win else "")}
+            rows = [(h, "host", 1) for h in groups[grp]]
+        else:
+            rows = [(h, "host", 1) for h in hosts] + [(g, "group", len(m)) for g, m in groups.items()]
+        rows = sorted((r for r in rows if t in r[0].lower()), key=lambda r: (r[1] != "group", r[0].lower()))       # groups first, then hosts
+        out = {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows),
+               "total": len(hosts) + (0 if grp else len(groups)), "truncated": bool(inv["truncated"]),
+               "hosts": sum(1 for r in rows if r[1] == "host"), "groups_n": sum(1 for r in rows if r[1] == "group")}
+        if grp:
+            out["group"] = {"name": grp, "count": len(groups[grp])}
+        if with_groups:
+            gl = sorted(groups.items(), key=lambda x: x[0].lower())
+            out["groups"] = [{"name": g, "count": len(m)} for g, m in gl[:self.GROUP_LIST_MAX]]
+            out["groups_more"] = max(0, len(gl) - self.GROUP_LIST_MAX)
+        if os_ == "windows":
+            out["os"] = "windows" if win is not None else ""
+            if note:
+                out["os_note"] = note
         if inv.get("fails"):                                    # reads are failing: what is shown is the last one, and says when it is from
             out["stale"] = "Host list from %s, AAP not answering." % time.strftime("%H:%M", time.localtime(inv["at"]))
         return out
@@ -2303,7 +2490,8 @@ class Portal(object):
     def check(self, name, sent, a=None):
         a = a or self.actions[name]
         inv = a.get("limit_inv")                        # 1.78.4: a found template's Limit is checked against its own inventory
-        expand = (lambda items: self.aap.expand(items, inv)) if inv else (self.aap.expand if self.cfg.inventory else None)
+        os_ = a.get("os") or ""                         # 1.130.0: a Windows job's group stands for its Windows hosts
+        expand = (lambda items: self.aap.expand(items, inv, os_)) if inv else ((lambda items: self.aap.expand(items, None, os_)) if self.cfg.inventory else None)
         return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, expand)
 
     def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None):
@@ -2382,7 +2570,7 @@ class Portal(object):
     def limit_hosts(self, a, values):
         """The concrete hosts of a found template's Limit - one expansion, counted, never empty, never over the cap -> (hosts or None, '' or why)."""
         items = values.get(a["limit_from"])
-        hosts, why = self.aap.expand_now(items if isinstance(items, list) else [], a.get("limit_inv"))
+        hosts, why = self.aap.expand_now(items if isinstance(items, list) else [], a.get("limit_inv"), a.get("os") or "")
         if why or hosts is None:
             return None, why or "could not be looked up in the inventory just now - try again"
         cap = int(a["vars"][a["limit_from"]].get("max") or self.cfg.action_max_hosts)
@@ -3663,7 +3851,8 @@ def action_page(cfg, portal, cn, name, query, embed=False):
                 for c in var["values"]))
         elif var["kind"] == "hosts":
             ctl = picker_html(portal, vn, v if isinstance(v, list) else parse_hosts(v), int(var.get("max") or portal.cfg.action_max_hosts), "l-" + vn, pid if p else "",
-                              "portal_limit_max" if a.get("discovered") else "portal_action_max_hosts", a.get("limit_inv"), a.get("limit_inv_name", ""), allowed)
+                              var.get("setting") or ("portal_limit_max" if a.get("discovered") else "portal_action_max_hosts"), a.get("limit_inv"), a.get("limit_inv_name", ""),
+                              allowed, a.get("os") or "")
         elif var["kind"] == "text" and var.get("multiline"):
             ctl = '<textarea id="f-%s" name="%s" rows="6" maxlength="%d"%s>%s</textarea>' % (esc(vn), esc(vn), var["max"], dby, esc(v))
         elif var["kind"] == "choice":
@@ -3725,23 +3914,35 @@ def action_page(cfg, portal, cn, name, query, embed=False):
 PICK_SHOWN = 200                                    # the list shows this many matches; "N more - type to narrow" for the rest
 
 
-def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts", inv=None, inv_name="", allowed=True):
+def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts", inv=None, inv_name="", allowed=True, os_=""):
     """1.78.0: the one host picker - a searchable list of portal_inventory's hosts and groups, to tick one or many. Without scripts it is
-    this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list."""
+    this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list.
+    1.130.0: groups and hosts in two parts of the list (optgroups); os_ windows - a Windows job's: Windows hosts only (portal_windows_hosts_from),
+    else one muted line says the filter is not set; portal.js adds the group drop-down (a group's hosts, to pick the group or some of them)."""
     iid, inv = inv, ({"items": [], "matches": 0, "error": "You may not run this action, so its hosts are not listed."} if not allowed else
-                     portal.aap.inventory_items("", PICK_SHOWN, iid=inv) if inv else
-                     (portal.aap.inventory_items("", PICK_SHOWN) if portal.cfg.inventory else {"items": [], "matches": 0, "error": "portal_inventory is not set."}))
+                     portal.aap.inventory_items("", PICK_SHOWN, iid=inv, os_=os_) if inv else
+                     (portal.aap.inventory_items("", PICK_SHOWN, os_=os_) if portal.cfg.inventory else {"items": [], "matches": 0, "error": "portal_inventory is not set."}))
     chosen = set(selected)
-    opts = "".join('<option value="%s"%s>%s</option>' % (esc(i["name"]), " selected" if i["name"] in chosen else "",
-                                                           esc(i["name"] if i["kind"] == "host" else "%s (%d host%s)" % (i["name"], i["count"], "" if i["count"] == 1 else "s")))
-                   for i in inv["items"])
+
+    def opt(i):
+        return '<option value="%s"%s>%s</option>' % (esc(i["name"]), " selected" if i["name"] in chosen else "",
+                                                     esc(i["name"] if i["kind"] == "host" else "%s (%d host%s)" % (i["name"], i["count"], "" if i["count"] == 1 else "s")))
+    gs = [i for i in inv["items"] if i["kind"] == "group"]
+    hs = [i for i in inv["items"] if i["kind"] != "group"]
+    opts = "".join('<optgroup label="%s (%d)">%s</optgroup>' % (lab, len(part), "".join(opt(i) for i in part))
+                   for lab, part in (("Groups", gs), ("Hosts", hs)) if part)
     extra = "".join('<option value="%s" selected>%s</option>' % (esc(n), esc(n)) for n in selected if n not in set(i["name"] for i in inv["items"]))
     more = ('<p class="help">The first %d of %d are listed. With scripts on, the search box finds the rest.</p>' % (PICK_SHOWN, inv["matches"])) if inv["matches"] > PICK_SHOWN else ""
     err = ('<p class="help bad">%s</p>' % esc(inv["error"])) if inv.get("error") else ""
-    return ('<div class="picker" data-picker="%s" data-max="%d" data-setting="%s" data-src="%sapi/inventory"%s><select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
+    osn = ('<p class="muted-line pk-os">%s</p>' % esc(inv["os_note"])) if inv.get("os_note") else (
+        '<p class="muted-line pk-os">Windows hosts only (portal_windows_hosts_from).</p>' if inv.get("os") == "windows" else "")
+    return ('<div class="picker" data-picker="%s" data-max="%d" data-setting="%s" data-src="%sapi/inventory"%s%s>%s<select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
             '<p class="help">Hosts and groups of the AAP inventory <b>%s</b>; hold Ctrl to pick several. At most %d hosts (a group counts by its hosts; %s).</p></div>'
-            % (esc(field), cap, esc(setting), portal.cfg.path, (' data-inv="%d"' % iid) if iid else "", esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
+            % (esc(field), cap, esc(setting), portal.cfg.path, (' data-inv="%d"' % iid) if iid else "", (' data-os="%s"' % esc(os_)) if os_ else "", osn,
+               esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
                esc(inv_name or portal.cfg.inventory or "of the portal"), cap, esc(setting)))
+
+
 PICK = re.compile(r"^(\d{1,12})~([A-Za-z0-9_.:/@-]{1,200})$")
 
 
@@ -5706,12 +5907,15 @@ def make_handler(cfg, portal, static_dir):
                 qq = urllib.parse.parse_qs(u.query)
                 qs = qq.get("q", [""])[-1]
                 inv = qq.get("inv", [""])[-1]             # 1.78.4: or of the inventory a found template's Limit is checked against (only one some action uses)
+                # 1.130.0: os=windows (a Windows job's picker), group= (that group's hosts only), groups=1 (the group drop-down's list)
+                more = {"os_": "windows" if qq.get("os", [""])[-1] == "windows" else "", "group": qq.get("group", [""])[-1][:200],
+                        "with_groups": qq.get("groups", [""])[-1] == "1"}
                 if inv:
                     ids = set(x.get("limit_inv") for x in portal.mine(cn) if x.get("limit_inv"))
                     if not re.match(r"^\d{1,9}$", inv) or int(inv) not in ids:
                         return self._send(404, {"error": "No action uses that inventory."})
-                    return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN, iid=int(inv)))
-                return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN))
+                    return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN, iid=int(inv), **more))
+                return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN, **more))
             if path == "/api/hosts":                      # 1.75.3: the typeahead of the host field - hosts of portal_inventory that contain what was typed
                 qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
                 return self._send(200, {"hosts": portal.aap.host_search(qs)})

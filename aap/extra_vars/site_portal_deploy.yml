@@ -234,6 +234,28 @@ portal_public_url: https://stigman.example.mil/portal/
 ## 500)
 # portal_limit_max: 50
 
+## 1.130.0: the picker of a Windows job (a found template whose playbook is playbooks/win_*.yml, or
+## a workflow named "Windows ...") lists only the inventory's Windows hosts, and a group there
+## stands for its Windows hosts. A host is Windows when it is in a group whose name matches one of
+## groups (globs, any case), or when one of vars matches: the host's own value, else a group's, else
+## the inventory's (what AAP's API shows - a dynamic source's host variables count;
+## playbooks/group_vars in the project do not). A dotted name reads into a mapping (config.guestId).
+## Nothing matches, or {}: every host is listed, with one line saying so - the job's own check skips
+## a host that is not Windows either way.
+# portal_windows_hosts_from:
+#   groups: ["*windows*"]
+#   vars:
+#     ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]
+#     ansible_shell_type: [powershell, cmd]
+
+## 1.130.0: a playbook's own cap of hosts in one run (its file name): the picker and the launch use
+## it when it is lower than portal_limit_max. var: the template's Variables may set it (then that
+## value counts), max: else this. Windows - schedule a restart and cancel: win_restart_max_hosts
+## (50).
+# portal_limit_max_playbooks:
+#   win_restart_schedule.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts | default(50) }}"}
+#   win_restart_cancel.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts | default(50) }}"}
+
 ## the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones
 ## finding_ref takes a finding from)
 # portal_finding_playbooks: >-
@@ -591,6 +613,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## Manager's nginx) and its nginx lines nginx-stigman-links.conf added (docs/CKL_IMPORT.md, "Links
 ## that open the review"); without them a link opens the home page, as plain.
 # stigman_link_style: plain
+
+# ---- win_restart ---------------------------------------------------------------------------------
+## The most servers one run may schedule (the Limit is required: an empty one is refused).
+# win_restart_max_hosts: 50
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Which enclave this AAP serves: unclassified or classified; empty = found from the job's hosts -

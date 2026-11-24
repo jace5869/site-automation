@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.130.0 — 2026-11-25
+
+**To set up:** run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
+`portal_limit_max_playbooks` need no change when your Windows hosts are in a group whose name has *windows* in it, or have
+`ansible_connection: winrm` in AAP). Then run **AAP - set up job templates** with `aap_templates_label_portal: portal-actions`
+(or `all`) so the Windows reports get the label `portal` and their `portal-area:` label. Nothing else.
+
+- **Windows jobs pick many servers in the site portal, like the Linux ones.** The Hosts box of a Windows job takes several
+  servers, a whole inventory group, or some servers of a group; one pick set is one job (the Limit is the hosts, counted
+  once). Labelled for the portal now (catalog `portal: true`): *Windows connection test*, *Windows health check*, *Windows
+  troubleshoot*, *Windows - local group members*, *Windows certificate report*, *Windows - trust store report*, *Windows STIG
+  drift report*; *Windows - schedule a restart* and *cancel* already were. The restart form keeps its survey (24-hour time,
+  reason, only if pending, change) and offers Check before Run.
+- **Windows hosts only.** A Windows job's picker (playbook `playbooks/win_*.yml`, or a workflow named *Windows ...*) lists only
+  the inventory's Windows hosts, and a group counts by its Windows hosts - by `portal_windows_hosts_from`: a group whose name
+  matches `*windows*`, or `ansible_connection` (winrm, psrp) / `ansible_shell_type` (powershell, cmd) in the host's, a group's
+  or the inventory's Variables in AAP. No match: every host is listed, with one muted line saying the Windows filter is not set.
+- **A playbook's own cap.** `portal_limit_max_playbooks`: the restart and cancel take at most `win_restart_max_hosts` (the
+  template's Variables, else 50); the picker shows it and the launch checks it.
+- **The picker: groups and search.** A **Group** drop-down lists the inventory's groups live from AAP (up to 500); picking one
+  shows its hosts, with **Pick the whole group (n)** or single hosts to tick. The list has two parts, *Groups (n)* and
+  *Hosts (n)*; **Select all shown (n)** says how many. The server sends 200 rows at a time (thousands of hosts are never sent
+  whole). Without scripts the plain multi-select has the same two parts.
+- Not in this release: the Windows jobs that change servers (patch, certificate install and restore, CSRs, ACT install) stay in
+  their workflows with an approval, not labelled for the portal.
+
 ## 1.127.3 — 2026-11-24
 
 **To set up:** for the SolarWinds step, make a credential of the new type **SolarWinds (manage nodes)**

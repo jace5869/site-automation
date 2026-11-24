@@ -79,6 +79,7 @@ def row_of(t):
             "ask_limit_on_launch": t["ask_limit_on_launch"], "ask_variables_on_launch": t["ask_variables_on_launch"],
             "inventory": t.get("inventory", 3), "playbook": t.get("playbook", "a.yml"), "ask_inventory_on_launch": bool(t.get("ask_inventory")),
             "job_slice_count": t.get("slices", 1),
+            "extra_vars": t.get("extra_vars", ""), "ask_job_type_on_launch": bool(t.get("ask_job_type")), "job_type": "run",      # 1.130.0
             "summary_fields": {"labels": {"count": len(labs), "results": labs[:10]}}}
 
 
@@ -382,7 +383,7 @@ class H(BaseHTTPRequestHandler):
         mi = re.match(r"^inventories/(\d+)/$", p)
         if mi:                                                           # 1.78.4: one inventory (the portal reads the name of the one a Limit is checked against)
             inv = next((i for i in STATE["inventories"] if i["id"] == int(mi.group(1)) and not i.get("unreadable")), None)
-            return self._send(200, {"id": inv["id"], "name": inv["name"]}) if inv else self._send(403, {"detail": "You do not have permission to perform this action."})
+            return self._send(200, {"id": inv["id"], "name": inv["name"], "variables": inv.get("variables", "")}) if inv else self._send(403, {"detail": "You do not have permission to perform this action."})
         if p == "inventories/":
             rows = [{"id": i["id"], "name": i["name"]} for i in STATE["inventories"] if i["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
@@ -392,12 +393,14 @@ class H(BaseHTTPRequestHandler):
             if q.get("name") or q.get("name__icontains"):
                 rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
                 return self._send(200, {"count": len(rows), "results": rows})
-            return self._paged_list(q, "inventories/%s/hosts/" % m.group(1), [{"id": 1000 + n, "name": h} for n, h in enumerate(sorted(inv["hosts"]))])
+            hv = inv.get("host_vars") or {}                              # 1.130.0: a host's Variables (JSON or YAML text), as a dynamic source sets them
+            return self._paged_list(q, "inventories/%s/hosts/" % m.group(1), [{"id": 1000 + n, "name": h, "variables": hv.get(h, "")} for n, h in enumerate(sorted(inv["hosts"]))])
         m = re.match(r"^inventories/(\d+)/groups/$", p)
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"groups": {}})
             base = 2000 if inv is STATE["inventories"][0] else 2000 + int(inv.get("id", 0)) * 100               # a group id is its inventory's, so two inventories can have groups
-            rows = [{"id": base + n, "name": g} for n, g in enumerate(sorted(inv.get("groups", {})))]
+            gvars = inv.get("group_vars") or {}                          # 1.130.0: a group's Variables
+            rows = [{"id": base + n, "name": g, "variables": gvars.get(g, "")} for n, g in enumerate(sorted(inv.get("groups", {})))]
             if q.get("name"):
                 rows = [r for r in rows if r["name"] == q["name"]]
             return self._paged_list(q, "inventories/%s/groups/" % m.group(1), rows)

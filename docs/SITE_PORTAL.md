@@ -1069,10 +1069,38 @@ A card appears only when **both** are true: the portal's account has **Execute**
 
 **The host picker.** Every host field is the same: a searchable list of the inventory's hosts **and groups**.
 
-1. Open the list. A group shows its host count: *linux_prod (42 hosts)*.
-2. Type to filter (any case, any part of the name). The list shows the first 200 matches, then *N more - type to narrow*.
-3. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown** adds the shown ones that fit under the limit.
-4. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+1. Open the list. It has two parts, **Groups (n)** and **Hosts (n)**. A group shows its host count: *linux_prod (42 hosts)*.
+2. 1.130.0: **Group** (the drop-down above the search box) lists the inventory's groups as AAP has them now (a synced inventory's
+   too; up to 500, by name). Pick one to see only its hosts: **Pick the whole group (n)** adds the group as one pick, or tick
+   single hosts of it. *All hosts and groups* goes back to the whole list.
+3. Type to filter (any case, any part of the name; with a group picked, its hosts only). The list shows the first 200 matches, then *N more - type to narrow*.
+4. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown (n)** adds the shown ones that fit under the limit.
+5. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+
+The list is read on the server and sent 200 rows at a time: an inventory of thousands of hosts is never sent whole. Without
+scripts the plain multi-select has the same two parts (Groups, Hosts).
+
+**Windows jobs (1.130.0).** A found template whose playbook is `playbooks/win_*.yml` (or a workflow whose name starts with
+*Windows*) lists only the inventory's **Windows hosts**, and a group there stands for its Windows hosts: the count, the cap and
+the job's Limit are the Windows hosts only. A host is Windows by `portal_windows_hosts_from`:
+
+```yaml
+portal_windows_hosts_from:
+  groups: ["*windows*"]                     # a group whose name matches (globs, any case): its hosts are Windows
+  vars:                                     # or a variable: the host's own value, else a group's, else the inventory's
+    ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]
+    ansible_shell_type: [powershell, cmd]
+```
+
+Only what AAP's API shows counts: group names, and the Variables of hosts, groups and the inventory (a dynamic source's host
+variables too; a dotted name reads into a mapping, e.g. `config.guestId: ["*windows*"]`). Settings in the project's
+`playbooks/group_vars` are not seen. When nothing matches (or the setting is `{}`), every host is listed and one muted line says
+*The Windows filter is not set* or *matches no host of this inventory*; the job's own check skips a host that is not Windows.
+
+**A playbook's own cap (1.130.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
+schedule a restart* and *Windows - cancel a scheduled restart* take `win_restart_max_hosts` (from the template's Variables when set
+there, else 50). The picker says it (*at most N (win_restart_max_hosts)*), and the portal checks again when it starts the job;
+the playbook checks it a last time.
 
 The finding steps take up to `portal_pick_max_hosts` (50) hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
 with the same names, and the form posts itself. The server checks every pick against `portal_inventory`: a typed name that is not a host or group is refused.
@@ -1121,6 +1149,8 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+| `portal_windows_hosts_from` | groups `*windows*`; vars `ansible_connection` winrm/psrp, `ansible_shell_type` powershell/cmd | 1.130.0: which hosts a Windows job's picker lists (`{}` = every host) |
+| `portal_limit_max_playbooks` | restart and cancel: `win_restart_max_hosts` (50) | 1.130.0: `{playbook file: {var, max}}` - a playbook's own cap when lower than `portal_limit_max` |
 | `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
 | `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
 

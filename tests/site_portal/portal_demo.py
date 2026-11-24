@@ -38,6 +38,22 @@ fake_aap.add_template("workflow_job_templates", "Rotate the service account pass
                        {"variable": "notes", "question_name": "Notes", "type": "textarea", "required": False, "question_description": "Free text, kept in the ticket.", "max": 600}],
                       description="Changes the account's password on every host of the group and records the ticket.")
 fake_aap.seed_reports()                      # 1.75.3: report jobs 9001 and 9002, for the pick pages
+if os.environ.get("PORTAL_DEMO_WINDOWS"):     # 1.130.0: a synced inventory with Windows and Linux hosts in groups, and the restart template
+    _h = ["srv-app%02d.corp.example.mil" % n for n in range(1, 41)] + ["srv-sql%02d.corp.example.mil" % n for n in range(1, 13)] + \
+         ["srv-dc%02d.corp.example.mil" % n for n in range(1, 5)] + ["lnx-web%02d.corp.example.mil" % n for n in range(1, 21)]
+    fake_aap.STATE["inventories"].append({"id": 71, "name": "Synced hosts", "hosts": _h, "host_vars": {h: "ansible_connection: winrm" for h in _h if h.startswith("srv-")},
+                                          "groups": {"windows_servers": [h for h in _h if h.startswith("srv-")], "site_a_app": _h[:20], "site_b_app": _h[20:40],
+                                                     "sql_servers": [h for h in _h if "-sql" in h], "domain_controllers": [h for h in _h if "-dc" in h],
+                                                     "linux_web": [h for h in _h if h.startswith("lnx-")], "patch_wave_1": _h[::3]}})
+    with open(os.path.join(wt, "aap", "job_templates.yml")) as fh:
+        _cat = dict((t["name"], t) for t in yaml.safe_load(fh)["job_templates"])
+    _sv = [dict(q, **({"choices": "\n".join(q["choices"])} if isinstance(q.get("choices"), list) else {})) for q in _cat["Windows - schedule a restart"]["survey"]]
+    fake_aap.add_template("job_templates", "Windows - schedule a restart", ["portal", "portal-area:Windows"], _sv, limit=True, inventory=71,
+                          description="** Does: Restarts the Windows servers of the Limit at a chosen time (Check = the plan only).")
+    fake_aap.STATE["templates"]["job_templates"][-1].update(playbook="playbooks/win_restart_schedule.yml", ask_job_type=True)
+    fake_aap.add_template("job_templates", "Windows - local group members", ["portal", "portal-area:Windows"], limit=True, inventory=71,
+                          description="** Does: Lists who is in the privileged local groups of each Windows server.")
+    fake_aap.STATE["templates"]["job_templates"][-1]["playbook"] = "playbooks/win_local_groups.yml"
 with open(os.path.join(wt, "roles/site_portal_stack/files/actions.yml")) as fh:
     doc = yaml.safe_load(fh)
 with open(os.path.join(tmp, "actions.json"), "w") as fh:
@@ -49,7 +65,9 @@ cfg = sp.Config({"PORTAL_DATA": os.path.join(tmp, "data"), "PORTAL_REPORTS": rep
                  "PORTAL_BANNER": {"on": False},
                  "PORTAL_MOTION": os.environ.get("PORTAL_DEMO_MOTION", "auto"),
                  "PORTAL_SEASON": os.environ.get("PORTAL_DEMO_SEASON", "none"),                    # 1.115.0: the Christmas theme
-                 "PORTAL_SEASON_STYLE": os.environ.get("PORTAL_DEMO_SEASON_STYLE", "16bit")})          # 1.87.0: auto, always or off
+                 "PORTAL_SEASON_STYLE": os.environ.get("PORTAL_DEMO_SEASON_STYLE", "16bit"),
+                 "PORTAL_WINDOWS_HOSTS_FROM": '{"groups": ["*windows*"], "vars": {"ansible_connection": ["winrm", "psrp"]}}',
+                 "PORTAL_LIMIT_MAX_PLAYBOOKS": '{"win_restart_schedule.yml": {"var": "win_restart_max_hosts", "max": 50}}'})          # 1.87.0: auto, always or off
 real = sys.stdout
 sys.stdout = open(os.devnull, "w")
 if os.environ.get("PORTAL_DEMO_LAST_TTL"):    # 1.79.5: the cards' last run read again sooner (tests/test_portal_interactive.py)

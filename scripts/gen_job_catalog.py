@@ -100,6 +100,14 @@ LAUNCH_DOCS = {
     # one run at a time: two could both find a SolarWinds node without an unmanage window and both write (Concurrent jobs off)
     "Windows - schedule a restart": {"ask_job_type": True, "portal": True, "allow_simultaneous": False},
     "Windows - cancel a scheduled restart": {"ask_job_type": True, "portal": True},
+    # 1.130.0: the Windows reports whose hosts are the Limit - the site portal launches them (its Hosts box: Windows hosts, groups)
+    "Windows connection test": {"portal": True},
+    "Windows health check": {"portal": True},
+    "Windows troubleshoot": {"portal": True},
+    "Windows - local group members": {"portal": True},
+    "Windows certificate report": {"portal": True},
+    "Windows - trust store report": {"portal": True},
+    "Windows STIG drift report": {"portal": True},
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed
 # or taken off): the answers the catalog's workflows give its steps, as each guide names the question
