@@ -13,7 +13,8 @@ NetApp - refresh volume list.
   "argument 'credentials' is of type NoneType". The job now stops at the start and says: check that its lines are
   indented under it, or write it on one line.
 - NetApp - expand a volume: the volume list was hard to read. Each choice is now short: the volume, its SVM, its size
-  and how much is free, plus the LUN or NFS datastore. The site portal's Run dialog widens for a long list and hides the
+  and how much is free, plus the LUN or NFS datastore. Two choices that would read the same (one SVM and volume name
+  on two clusters) also show their cluster. The site portal's Run dialog widens for a long list and hides the
   key at the end of each choice (the job still gets it).
 - STIG - answer file generator: the trial refused to run on a host with podman network namespaces ("a mount of the host
   can be written to in it: /run/netns/netns-..."). Those are namespace handles with no data to write, as /proc and

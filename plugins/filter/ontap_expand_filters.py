@@ -211,6 +211,14 @@ def ontap_expand_choices(choices, found=None, limit=500):
     for i, e in enumerate(choices or []):
         f = found[i] if i < len(found) and found[i] else {}
         out.append(X.choice_text(dict(e, datastore=f.get("datastore") or "")))
+    # Codex 1.123.1: choices a person could not tell apart (the same SVM and volume on two clusters) show their cluster
+    seen = {}
+    for t in out:
+        seen[X.choice_shown(t)] = seen.get(X.choice_shown(t), 0) + 1
+    for i, e in enumerate(choices or []):
+        if seen.get(X.choice_shown(out[i]), 0) > 1:
+            f = found[i] if i < len(found) and found[i] else {}
+            out[i] = X.choice_text(dict(e, datastore=f.get("datastore") or ""), show_cluster=True)
     return {"choices": out[:int(limit)], "more": max(0, len(out) - int(limit))}
 
 

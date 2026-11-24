@@ -220,6 +220,18 @@ class Choices(unittest.TestCase):
         self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
                                              "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
 
+    def test_same_names_on_two_clusters_show_the_cluster(self):
+        sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+        import ontap_expand_filters as XF
+        a = dict(self.E, lun="", luns=0, datastore="")
+        b = dict(a, cluster="cluster2", address="cluster2.example.mil", uuid="v-other")
+        c = dict(a, volume="vol_other", uuid="v-x")
+        got = XF.ontap_expand_choices([a, b, c])["choices"]
+        self.assertTrue(got[0].startswith("vol_ds03 (svm_vmware, cluster1) - "), got[0])
+        self.assertTrue(got[1].startswith("vol_ds03 (svm_vmware, cluster2) - "), got[1])
+        self.assertTrue(got[2].startswith("vol_other (svm_vmware) - "), got[2])
+        self.assertEqual(X.parse_choice(got[1])["address"], "cluster2.example.mil")
+
     def test_plain_and_nfs(self):
         e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")
         t = X.choice_text(e)

@@ -111,7 +111,7 @@ def excluded(vol, patterns=()):
     return ""
 
 
-def choice_text(e):
+def choice_text(e, show_cluster=False):
     """One choice of the survey's Volume list. e: {cluster (its name), address (as in ontap_clusters), svm, volume, lun (its
     path, or ''), luns (how many the volume has), size, used, aggr, aggr_free, datastore ('' or 'DS01'), ds_kind (VMFS/NFS)}.
     The key at the end ([vol|address|svm|volume|lun|bytes|lun bytes|volume uuid|lun uuid]) is what the job reads back: the sizes
@@ -125,10 +125,17 @@ def choice_text(e):
         what = "NFS: datastore " + e["datastore"]
     # 1.123.1 (user): short - the name, its SVM, the size and how much is free; the cluster and aggregate are in the job's
     # plan and the refresh report, the key stays last (the portal hides it)
+    # Codex 1.123.1: two clusters with the same SVM and volume names - the caller asks for the cluster (show_cluster)
     return "%s (%s) - %s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
-        name, e["svm"], human(e["size"]), max(0, 100 - int(round(pct(e["used"], e["size"])))),
+        name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), human(e["size"]), max(0, 100 - int(round(pct(e["used"], e["size"])))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
+
+
+def choice_shown(text):
+    """The part of a choice a person reads: the text before its key."""
+    m = KEY.search(str(text or ""))
+    return str(text or "")[:m.start()] if m else str(text or "")
 
 
 def parse_choice(text):
