@@ -17,8 +17,10 @@ The accounts are given by the caller (the portal's secrets site-portal-vcenter /
 are enough (docs/SITE_PORTAL.md, "The ops-center wall")."""
 import base64
 import collections
+import hashlib
 import http.client
 import json
+import os
 import re
 import ssl
 import threading
@@ -55,6 +57,15 @@ class AuthError(Exception):
 
 class NotAllowed(Exception):
     """A method or verb not on the read-only lists: refused before any network I/O."""
+
+
+def account(user):
+    """Codex 1.129.0: one account, whatever it is called - DOMAIN\\user, user@domain.mil and USER are one (the vCenter and the ONTAP
+    credential may name the same AD account): the collector's back-off key. Two accounts of one name in two domains share a
+    back-off: more careful, never less."""
+    u = str(user or "").strip().lower()
+    u = u.rsplit("\\", 1)[-1]
+    return u.split("@", 1)[0]
 
 
 class Gate(object):
@@ -142,7 +153,7 @@ class VcenterSource(object):
         self.ctx = _ctx(verify, cafile)
         hp = self.host if self.port == 443 else "%s:%d" % (self.host, self.port)
         self.key, self.name = "vcenter:%s" % hp, hp                # the port in the key: two vCenters on one host stay two
-        self.cred = ("vcenter", self.user.lower())                 # sources with one account share one Gate (the collector sets it)
+        self.cred = ("account", account(self.user))                # sources with one account (any kind) share one Gate
         self.gate = Gate()
         self.cookie, self.sc, self.view, self.session_key = "", None, "", ""
         self.logins = 0                                        # how many times this source logged in (a test counts them)
@@ -169,7 +180,7 @@ class VcenterSource(object):
                     self.cookie = v.split(";", 1)[0].strip()
         finally:
             conn.close()
-        if r.status in (401, 403) and b"Fault" not in data:
+        if r.status in (401, 403):                                 # whatever the body (a proxy's SOAP fault too): a refusal
             raise AuthError(AUTH_WHY + " (HTTP %d)" % r.status)
         try:
             root = ET.fromstring(data)
@@ -375,7 +386,7 @@ class OntapSource(object):
         self.timeout = timeout
         self.ctx = _ctx(verify, cafile)
         self.key, self.name = "ontap:%s" % self.address, self.address
-        self.cred = ("ontap", str(user or "").lower())
+        self.cred = ("account", account(user))
         self.gate = Gate()
         self._auth = "Basic " + base64.b64encode(("%s:%s" % (user or "", password or "")).encode("utf-8")).decode("ascii")
         self.lock = threading.Lock()
@@ -470,7 +481,7 @@ class OntapSource(object):
 class Collector(object):
     """Polls every source every `seconds`, each in its own thread; view() -> what the wall draws from (the module's doc)."""
 
-    def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time):
+    def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time, state_file=None):
         self.sources = list(sources)
         self.seconds, self.auth_retry, self.keep = max(1, int(seconds)), max(1, int(auth_retry)), int(keep_seconds)
         self.log = log or (lambda d: None)
@@ -481,6 +492,8 @@ class Collector(object):
         self.hist = {}
         self.running = {}
         self.started = {}
+        self.stop_ev = threading.Event()
+        self.thread = None
         # 1.129.0 review: the sources of one account (kind, user) share one bucket: a refused login backs them ALL off; after the
         # start and after each back-off one source tries first (the probe) and the others wait for its answer
         self.buckets = {}
@@ -491,8 +504,44 @@ class Collector(object):
             b["keys"].append(s.key)
             s.gate = b["gate"]
             s._bucket = cred
-        self.stop_ev = threading.Event()
-        self.thread = None
+        # Codex 1.129.0: an active back-off outlives a restart of the portal (the account's key hashed, the deadline) - a restart
+        # never brings a second bad login sooner than auth_retry
+        self.state_file = state_file
+        for cred, until in self._load().items():
+            for c, b in self.buckets.items():
+                if self._hkey(c) == cred and until > self.clock():
+                    b.update(next_try=until, since=self.clock())
+                    b["gate"].bad = True
+                    for k in b["keys"]:
+                        self.st[k].update(state="auth", why=AUTH_WHY + " (backed off before the portal restarted)", next_try=until)
+
+    @staticmethod
+    def _hkey(cred):
+        return hashlib.sha256(("%s|%s" % cred).encode("utf-8")).hexdigest()[:24]
+
+    def _load(self):
+        if not self.state_file:
+            return {}
+        try:
+            with open(self.state_file, encoding="utf-8") as fh:
+                d = json.load(fh)
+            return dict((str(k), float(v)) for k, v in (d if isinstance(d, dict) else {}).items())
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _save(self):
+        """the active back-offs (under self.lock)"""
+        if not self.state_file:
+            return
+        d = dict((self._hkey(c), b["next_try"]) for c, b in self.buckets.items() if b["next_try"])
+        try:
+            tmp = self.state_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(d, fh)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.state_file)
+        except OSError:
+            pass
 
     def start(self):
         if self.thread is not None:
@@ -558,7 +607,10 @@ class Collector(object):
             with self.lock:
                 b = self.buckets[s._bucket]
                 first = b["since"] is None
-                b.update(next_try=now + self.auth_retry, verified=False, since=b["since"] or now)
+                # the deadline from when the refusal came (a read that waited behind another never shortens it); the latest wins
+                until = max(b["next_try"] or 0, self.clock() + self.auth_retry)
+                b.update(next_try=until, verified=False, since=b["since"] or now)
+                self._save()
                 b["gate"].bad = True
                 why = str(e) or AUTH_WHY
                 for k in b["keys"]:                            # every source of this account: stopped, said so
@@ -584,7 +636,10 @@ class Collector(object):
         with self.lock:
             b = self.buckets[s._bucket]
             kick = not b["verified"]
-            b.update(verified=True, since=None, errored=set())
+            gone = b["next_try"] is not None
+            b.update(verified=True, since=None, errored=set(), next_try=None)
+            if gone:
+                self._save()
             st = self.st[s.key]
             was = st["state"]
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)

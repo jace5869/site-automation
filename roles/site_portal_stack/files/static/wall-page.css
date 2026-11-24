@@ -789,3 +789,4 @@ body.kiosk .dsc .kxh{display:none}
 .unreach{display:flex;align-items:center;gap:10px;margin:10px clamp(14px,1.6vw,28px) 0;padding:10px 14px;border:2px dashed var(--l-stale);border-radius:10px;background:var(--unknown-bg);color:var(--ink);font:14px/1.4 var(--sans)}
 .unreach .lamp{--sz:1.6rem}
 .unreach .lamp::after{display:none}
+.sM .empty.nocur b{color:var(--muted)}

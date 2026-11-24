@@ -104,6 +104,7 @@ class Vim(object):
         self.drop_next = False                    # the next RetrievePropertiesEx answers NotAuthenticated (the session is gone)
         self.view_fault = ""                      # CreateContainerView answers this fault, its xsi:type as given (e.g. vim25:NoPermission)
         self.http401 = False                      # every call answers a plain HTTP 401 (a proxy in front of vCenter)
+        self.login401_soap = False                # Login answers HTTP 401 with a SOAP fault and no typed detail (a proxy)
 
 
 def vim_handler(vim):
@@ -132,6 +133,8 @@ def vim_handler(vim):
                 out = ("<returnval><rootFolder type=\"Folder\">group-d1</rootFolder><propertyCollector type=\"PropertyCollector\">propertyCollector"
                        "</propertyCollector><viewManager type=\"ViewManager\">ViewManager</viewManager><sessionManager type=\"SessionManager\">"
                        "SessionManager</sessionManager></returnval>")
+            elif m == "Login" and vim.login401_soap:
+                return self.send(401, '<soapenv:Fault><faultcode>ServerFaultCode</faultcode><faultstring>Unauthorized</faultstring></soapenv:Fault>')
             elif m == "Login":
                 if call.findtext("{urn:vim25}password") != vim.password:
                     return self.fault("InvalidLogin", "Cannot complete login due to an incorrect user name or password.")
@@ -637,6 +640,73 @@ class Faults(unittest.TestCase):
         self.assertEqual(out[0].port, 443)
         self.assertEqual(len(logs), 5)
         self.assertTrue(all(x["state"] == "left out" for x in logs))
+
+
+class Codex(unittest.TestCase):
+    """Codex 1.129.0 pre-release review: one back-off per account across vCenter and ONTAP, kept over a restart; the deadline
+    from the refusal; a 401 on Login whatever its body"""
+
+    def test_one_account_across_vcenter_and_ontap(self):
+        self.assertEqual({W.account("CORP\\svc-wall"), W.account("svc-wall@corp.example.mil"), W.account("SVC-Wall")}, {"svc-wall"})
+        vim, vp = vim_stub(self)
+        o = Ontap("right")
+        so, op = serve(ontap_handler(o))
+        self.addCleanup(so.server_close)
+        self.addCleanup(so.shutdown)
+        srcs = [W.VcenterSource("127.0.0.1", "CORP\\svc-wall", "old", verify=False, port=vp),
+                W.OntapSource("127.0.0.1:%d" % op, "svc-wall@corp.example.mil", "old", verify=False)]
+        c, clock, _logs = SharedAccount.make(self, srcs)
+        for _ in range(10):
+            SharedAccount.step(self, c, clock)
+        self.assertEqual(vim.methods.count("Login") + len(o.paths), 1)              # one bad login for the one account
+        self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"auth"})
+
+    def test_the_back_off_outlives_a_restart(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        state = os.path.join(d, "wall-backoff.json")
+        vim, vp = vim_stub(self)
+        mk = lambda: W.VcenterSource("127.0.0.1", "svc-wall", "old", verify=False, port=vp)    # noqa: E731
+        clock = Clock()
+        c = W.Collector([mk()], seconds=60, auth_retry=900, clock=clock, state_file=state)
+        c.cycle()
+        c.wait(10)
+        self.assertEqual(vim.methods.count("Login"), 1)
+        self.assertEqual(oct(os.stat(state).st_mode & 0o777), "0o600")
+        self.assertNotIn("svc-wall", open(state).read())                          # the account's key hashed
+        clock.t += 300                                                            # the portal restarts 5 minutes later
+        c2 = W.Collector([mk()], seconds=60, auth_retry=900, clock=clock, state_file=state)
+        self.assertEqual(list(c2.view()["sources"].values())[0]["state"], "auth")
+        for _ in range(9):                                                        # to 14 minutes after the refusal: no login
+            c2.cycle()
+            c2.wait(10)
+            clock.t += 60
+        self.assertEqual(vim.methods.count("Login"), 1)
+        clock.t += 120
+        c2.cycle()
+        c2.wait(10)
+        self.assertEqual(vim.methods.count("Login"), 2)                           # after the window: one try
+
+    def test_the_deadline_is_from_the_refusal(self):
+        clock = Clock()
+
+        class Slow(Fake):
+            def poll(self):
+                self.calls += 1
+                clock.t += 840                                                    # it waited 14 min behind another read
+                raise W.AuthError(W.AUTH_WHY)
+        f = Slow()
+        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock)
+        start = clock.t
+        c.cycle()
+        c.wait(10)
+        self.assertEqual(c.view()["sources"][f.key]["next_try"], start + 840 + 900)
+
+    def test_a_401_on_login_is_a_refusal_whatever_the_body(self):
+        vim, port = vim_stub(self)
+        vim.login401_soap = True
+        with self.assertRaises(W.AuthError):
+            W.VcenterSource("127.0.0.1", "u", "p", verify=False, port=port).poll()
 
 
 def closed_port():

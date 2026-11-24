@@ -272,13 +272,15 @@
       - portal_wall_site_places is mapping
       - portal_wall_feedback_groups is sequence and portal_wall_feedback_groups is not string
       - portal_wall_feedback_readers is sequence and portal_wall_feedback_readers is not string
+      - portal_wall_feedback_groups | map('string') | map('trim') | select('equalto', '') | list | length == 0
+      - portal_wall_feedback_readers | map('string') | map('trim') | select('equalto', '') | list | length == 0
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0)
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_host | length > 0 or portal_wall_vcenters | default([], true) | length > 0)
       - not (_portal_wall_ontap | bool) or (portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0 and portal_wall_ontap_clusters | length > 0)
     fail_msg: >-
       The wall's settings (docs/SITE_PORTAL.md, "The ops-center wall"): portal_wall_title 1 to 40 characters; portal_wall_seconds 30 to 3600;
       portal_wall_auth_retry_minutes 5 to 1440; each warning under its critical, both 1 to 100; portal_wall_high_minutes 1 to 240; the lists
-      as lists and portal_wall_site_places a mapping; portal_wall_vcenter: true needs the "VMware vCenter" credential on this deploy (or
+      as lists (no blank group names in portal_wall_feedback_groups / _readers) and portal_wall_site_places a mapping; portal_wall_vcenter: true needs the "VMware vCenter" credential on this deploy (or
       portal_wall_vcenter_host / _username / _password), portal_wall_ontap: true the "NetApp ONTAP" one and ontap_clusters - nothing was changed.
     quiet: true
 
@@ -481,6 +483,12 @@
     - {src: netapp_live.py, dest: netapp_live.py}
     - {src: static/netapp-page.js, dest: static/netapp-page.js}
     - {src: static/netapp-page.css, dest: static/netapp-page.css}
+    # 1.129.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
+    - {src: wall_model.py, dest: wall_model.py}
+    - {src: wall_live.py, dest: wall_live.py}
+    - {src: static/wall-page.js, dest: static/wall-page.js}
+    - {src: static/wall-page.css, dest: static/wall-page.css}
+    - {src: static/wall-land.js, dest: static/wall-land.js}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files

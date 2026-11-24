@@ -108,7 +108,7 @@ def netapp_db(minutes_old=11):
     return T.fill(now=now)
 
 
-def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None):
+def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True):
     """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it"""
     import json
     import shutil
@@ -118,13 +118,16 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector
     tmp = tempfile.mkdtemp(prefix="wall-demo-")
     T = __import__("test_netapp_live")
     env = {"PORTAL_WALL_OPTS": json.dumps(dict(OPTS, **(opts or {}))), "PORTAL_WALL_TITLE": "Ops center", "PORTAL_WALL_ENCLAVE": "SITEA-UNCLASS",
-           "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_APPROVERS": json.dumps([CN])}
+           "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_APPROVERS": json.dumps([CN]),
+           "PORTAL_WALL_TEST": "1"}   # the test harness: ?freeze= and ?pull= honoured
     cfg = T.cfg_for(tmp, **env)
     p = sp.Portal(cfg)
     p.aap.ready = ""
-    db = netapp_db(netapp_minutes_old)
-    nal = sp.NetappLive(cfg, p.log, p, db=nl.Database(lambda: db, mark="?"))
-    nal.refresh()
+    nal = None
+    if netapp:                                       # netapp=False: a portal with no NetApp read at all
+        db = netapp_db(netapp_minutes_old)
+        nal = sp.NetappLive(cfg, p.log, p, db=nl.Database(lambda: db, mark="?"))
+        nal.refresh()
     cfg.netapp_tab = True
     wall = sp.WallLive(cfg, p.log, nal, collector=collector or FakeCollector(lambda: view(vc2_state=vc2_state)))
     if collector is None:

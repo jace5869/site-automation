@@ -132,6 +132,19 @@ def now_iso(t=None):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() if t is None else t))
 
 
+def _set_but_empty(v):
+    """a list setting given with entries that are all blank ([" "], ","): set, and empty once trimmed"""
+    if isinstance(v, list):
+        raw = v
+    else:
+        t = str(v or "").strip()
+        try:
+            raw = json.loads(t) if t.startswith("[") else re.split(r"[,\n]", t) if t else []
+        except ValueError:
+            raw = [t]
+    return bool(raw) and not names(v)
+
+
 def names(v):
     """A list setting (JSON list, or names split by commas or line ends) -> [name]."""
     if isinstance(v, list):
@@ -323,6 +336,10 @@ class Config(object):
         self.wall_feedback = flag(g("PORTAL_WALL_FEEDBACK", "1"))
         self.wall_feedback_groups = names(g("PORTAL_WALL_FEEDBACK_GROUPS", "[]")) if self.wall_feedback else []
         self.wall_feedback_readers = names(g("PORTAL_WALL_FEEDBACK_READERS", "[]")) if self.wall_feedback else []
+        # Codex 1.129.0: a list that was set but holds no name (blanks only) is "nobody", never "everyone" or "the approvers"
+        self.wall_feedback_closed = set(k for k, env in (("groups", "PORTAL_WALL_FEEDBACK_GROUPS"), ("readers", "PORTAL_WALL_FEEDBACK_READERS"))
+                                        if self.wall_feedback and _set_but_empty(g(env, "[]")))
+        self.wall_test = flag(g("PORTAL_WALL_TEST", "0"))      # the test harness only: ?freeze= is honoured (a still clock for screenshots)
         self.ad_groups = (site_ad_groups.Groups({"approvers": self.approver_groups, "requesters": self.requester_groups,
                                                  "wall_feedback": self.wall_feedback_groups, "wall_readers": self.wall_feedback_readers}, self.ldap_opts,
                                                 self.card_match, self.ad_groups_seconds)
@@ -5516,7 +5533,8 @@ class WallLive(object):
                 # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
                 keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
                 self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
-                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep)
+                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep,
+                                                     state_file=os.path.join(cfg.data, "wall-backoff.json"))
                 self.collector.start()
                 # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
                 threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()
@@ -5581,7 +5599,7 @@ FEEDBACK_KEEP = 5000            # the newest this many are kept
 def wall_may_feedback(cfg, cn):
     """the Feedback button: on, and the person in portal_wall_feedback_groups (none set: everyone who may open the wall).
     Fails closed: groups set but AD not read -> nobody."""
-    if not (cfg.wall and cfg.wall_feedback and cn):
+    if not (cfg.wall and cfg.wall_feedback and cn) or "groups" in getattr(cfg, "wall_feedback_closed", ()):
         return False
     if not cfg.wall_feedback_groups:
         return True
@@ -5590,7 +5608,7 @@ def wall_may_feedback(cfg, cn):
 
 def wall_may_read_feedback(cfg, cn):
     """the feedback list: portal_wall_feedback_readers (none set: the approvers - portal_approvers and portal_approver_groups)"""
-    if not (cfg.wall and cfg.wall_feedback and cn):
+    if not (cfg.wall and cfg.wall_feedback and cn) or "readers" in getattr(cfg, "wall_feedback_closed", ()):
         return False
     if cfg.wall_feedback_readers:
         return bool(cfg.ad_groups is not None and cfg.ad_groups.has("wall_readers", cn))
@@ -5688,11 +5706,12 @@ def feedback_page(cfg, cn, fb, area=""):
 def wall_page(cfg, cn, statics, token=""):
     """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
     v = lambda n: statics.get(n, "")
-    body = ('<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s">'
+    body = ('<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s"%s>'
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
-            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), cfg.path, v("wall-land.js"), cfg.path, v("wall-page.js")))
+            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
                  head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s">' % (cfg.path, v("wall-page.css")))
 

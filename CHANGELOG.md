@@ -35,12 +35,18 @@ the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); th
   first refusal stops them all, one source tries first after the start and after each window, the others wait: one
   failed login per window however many share the account. NoPermission and a proxy's 401 / 403 count as refusals; the
   session is logged out. A `vmware_vcenters` / `ontap_clusters` entry that is no host is left out and logged, never a stop.
+- **One account is one account:** a vCenter and an ONTAP credential naming one AD account (DOMAIN\user, user@domain)
+  share the back-off; its deadline counts from the refusal and survives a portal restart (`wall-backoff.json` in the
+  portal's data volume); any HTTP 401 / 403 is a refusal.
 - **The page never stays green on old data:** it redraws when a source goes LATE / STALE, says "Portal not reachable"
   (everything grey) after two failed reads, keeps a condition from a current source Critical while another source is
   stale, never shows a stale site as a green dot on the Map; an inaccessible datastore is Critical whatever its fill.
 - **Freshness:** every source shows *as of*; LATE after 3 min, STALE after 10 min; stale is never green (a hollow grey
   ?, "Not current", the last values grey). Storage from the NetApp run is as old as that run, and says so.
 - **What the wall watches** lists each wall condition with the thresholds in force. No "days until full" on the wall.
+- Nothing green without a current read: a host state not read is unknown, the NetApp counters are grey with no NetApp
+  read, a wall with nothing read says "No current data"; a failed first read is tried again; `?freeze` (screenshots)
+  works only in the test harness, never on a production wall URL.
 - **Feedback** button on the wall (and "Feedback on this card"), kept on the portal server with the card name and the
   time; the list for its readers at `/portal/wall/feedback` (area filter, CSV). Who may send and who may read: AD groups,
   checked on the server (the button hidden and the send refused for others; the list 403).

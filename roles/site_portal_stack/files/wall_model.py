@@ -216,13 +216,14 @@ def vmware_part(view, o, now):
         for h in hosts:
             by_cluster.setdefault(h.get("cluster") or "(standalone)", []).append(h)
         for cn, hs in by_cluster.items():
-            up = [h for h in hs if h.get("state") not in DOWN_STATES]
+            up = [h for h in hs if h.get("state") == "connected"]          # Codex 1.129.0: only a host vCenter says is connected is up
             cpus = [h["cpu_pct"] for h in up if h.get("cpu_pct") is not None]
             mems = [h["mem_pct"] for h in up if h.get("mem_pct") is not None]
             part["clusters"].append({"n": cn, "vc": name, "feed": fk, "up": len(up), "of": len(hs),
                                      "cpu": round(sum(cpus) / len(cpus), 1) if cpus else None,
                                      "mem": round(sum(mems) / len(mems), 1) if mems else None,
                                      "down": [h["name"] for h in hs if h.get("state") in DOWN_STATES],
+                                     "unknown": [h["name"] for h in hs if h.get("state") not in DOWN_STATES + ("connected",)],
                                      "maint": [h["name"] for h in hs if h.get("maint")], "site": site_of(rx, cn, hs[0].get("name"))})
         for h in hosts:
             hn, st = h.get("name") or "", h.get("state") or ""
@@ -235,6 +236,8 @@ def vmware_part(view, o, now):
                 conds.append({"id": "host:%s:%s" % (name, hn), "kind": "host", "t": "%s %s" % (hn, "not responding" if st == "notResponding" else "disconnected"),
                               "obj": "cluster %s · %d VMs on it" % (row["cluster"] or "-", row["nvms"]), "feed": fk, "vc": name, "host": hn,
                               "cluster": row["cluster"], "site": row["site"]})
+            elif st != "connected":
+                row["st"] = "stale"                    # its state not read (a property missing): unknown - never counted up, never green
             elif row["maint"] and not any(fnmatch.fnmatch(hn.lower(), p.lower()) for p in o["maintenance_expected"]):
                 row["st"] = "warn"
                 conds.append({"id": "maint:%s:%s" % (name, hn), "kind": "maint", "t": "%s in maintenance mode" % hn,
@@ -412,7 +415,8 @@ def ontap_live(view, o, rx, part, conds, feeds):
             continue
         live_cl.add(cl)
         part["aggr"] = [a for a in part["aggr"] if a["c"] != cl]
-        conds[:] = [c for c in conds if not (c.get("feed") == "ontap" and c.get("cluster") == cl)]
+        # the run's conditions of a cluster read live now are superseded (whatever the run's feed is called by now)
+        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and c.get("cluster") == cl)]
         part["smBroken"] = [b for b in part["smBroken"] if b.get("c") != cl]
         for a in snap.get("aggrs") or []:
             size_b, used = int(a.get("size") or 0), int(a.get("used") or 0)

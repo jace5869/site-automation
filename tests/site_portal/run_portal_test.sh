@@ -489,6 +489,13 @@ if echo "$r" | grep -q 'id=\\"ad\\" data-src=\\"/portal/api/ad\\"' && echo "$a" 
     pass "the Active Directory page and its answer, from the container (the database login on, no SolarWinds login)"
 else fail "the Active Directory page" "$(echo "$r" | head -c 600)
 $a"; fi
+# 1.129.0: the ops-center wall, from the container (its files deployed: the page, its answer, its static files)
+r="$(c "$k/jdoe" get /portal/wall)"; a="$(c "$k/jdoe" get /portal/api/wall)"; js="$(c "$k/jdoe" get /portal/static/wall-page.js)"; land="$(c "$k/jdoe" get /portal/static/wall-land.js)"
+if echo "$r" | grep -q 'id=\\"wall\\"' && echo "$a" | jq_ 'd["json"]["areas"][1]["id"]' | grep -q vmware \
+    && echo "$js" | jq_ 'd["code"]' | grep -q 200 && echo "$land" | jq_ 'd["code"]' | grep -q 200; then
+    pass "the ops-center wall: its page, its answer and its files, from the container (no vCenter login: VMware not on)"
+else fail "the ops-center wall" "$(echo "$r" | head -c 600)
+$(echo "$a" | head -c 600)"; fi
 for _ in $(seq 1 20); do a="$(c "$k/jdoe" get /portal/api/ad)"; echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -q . && break; sleep 1; done
 if echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -Eq "PyMySQL is not in the portal's image|Can't connect|refused"; then
     pass "the database not read (here: $(echo "$a" | jq_ 'd["json"]["db"]["stale"]' | cut -c1-60)): said, no rows shown as current"

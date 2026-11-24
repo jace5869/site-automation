@@ -205,6 +205,37 @@ class Review(unittest.TestCase):
         self.assertTrue(all("age" not in f for f in m["feeds"].values()))   # no per-second age in the answer (the ETag)
 
 
+class CodexModel(unittest.TestCase):
+    """Codex 1.129.0 pre-release review: the model's part"""
+
+    def test_a_host_state_not_read_is_never_up(self):
+        v = demo.view(NOW)
+        v["sources"]["vcenter:" + demo.VC1]["snap"]["hosts"][0]["state"] = ""
+        m = model(v)
+        h = m["vmware"]["hosts"][0]
+        self.assertEqual(h["st"], "stale")
+        cl = [c for c in m["vmware"]["clusters"] if c["n"] == h["cluster"]][0]
+        self.assertIn(h["n"], cl["unknown"])
+        self.assertEqual(cl["up"], cl["of"] - 1 - len(cl["down"]))
+
+    def test_a_live_ontap_read_clears_the_runs_conditions_of_its_cluster(self):
+        import netapp_live as nl
+        db = demo.netapp_db(25)
+        nm = nl.Database(lambda: db, mark="?").read()
+        nm["parts"].setdefault("nodes", {"rows": []})["rows"] = [{"cluster": "cluster1", "node": "cluster1-01", "state": "down"}]
+        v = demo.view(NOW)
+        v["sources"]["ontap:cluster1.example.mil"] = {"kind": "ontap", "name": "cluster1.example.mil", "state": "ok", "why": "", "at": NOW - 20,
+                                                      "snap": {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [],
+                                                               "volumes": [], "luns": [], "snapmirror": []}}
+        m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], [])     # the run said down, the live read says up
+        self.assertEqual(m["storage"]["nodes"], [1, 1])
+
+    def test_nothing_read_nothing_on(self):
+        m = M.build({"sources": {}, "history": {}}, None, None, {}, M.Tracker(), NOW)
+        self.assertEqual([a["id"] for a in m["areas"] if a["on"]], [])
+
+
 # ---- the portal: the page, the answer, the Feedback ------------------------------------------------------------------------
 JDOE, JDOE_CN = demo.DN, demo.CN
 OTHER = "CN=ROE.RICHARD.A.2234567890,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US"
@@ -301,6 +332,23 @@ class Portal(unittest.TestCase):
         self.assertEqual(sorted(c[1] for c in cells), sorted(["'=HYPERLINK(\"http://x\")", "'+1", "'@SUM(A1)", "'-2", "plain"]))
         self.assertTrue(all(c[0] == "'=ref" for c in cells))
 
+    def test_blank_group_lists_close_the_feedback(self):
+        cfg, p, call, base = serve(self, PORTAL_WALL_FEEDBACK_GROUPS='[" "]', PORTAL_WALL_FEEDBACK_READERS='["  "]', PORTAL_APPROVERS=json.dumps([JDOE_CN]))
+        self.assertEqual(post_feedback(call, base, portal=p)[0], 403)                 # set, but no name: nobody - never everyone
+        self.assertEqual(call("/wall/feedback")[0], 403)                               # ... and never "the approvers"
+        self.assertEqual(json.loads(call("/api/wall")[1])["me"], dict(json.loads(call("/api/wall")[1])["me"], feedback=False, reader=False))
+        t = open(os.path.join(ROLE, "tasks", "main.yml")).read()
+        self.assertIn("portal_wall_feedback_groups | map('string') | map('trim') | select('equalto', '') | list | length == 0", t)
+
+    def test_freeze_only_in_the_test_harness(self):
+        _cfg, _p, call, _b = serve(self)
+        self.assertNotIn('data-test="1"', call("/wall")[1])
+        _cfg, _p, call, _b = serve(self, PORTAL_WALL_TEST="1")
+        self.assertIn('data-test="1"', call("/wall")[1])
+        js = open(os.path.join(FILES, "static", "wall-page.js")).read()
+        self.assertIn('var FREEZE = TEST && QS.get("freeze") === "1";', js)
+        self.assertIn('var PULL = TEST && QS.get("pull")', js)
+
     def test_off(self):
         _cfg, _p, call, _b = serve(self, PORTAL_WALL="0")
         self.assertEqual(call("/wall")[0], 404)
@@ -385,6 +433,69 @@ class Role(unittest.TestCase):
         u = open(os.path.join(ROLE, "templates", "site-portal-app.container.j2")).read()
         self.assertIn("Secret=site-portal-vcenter,type=env,target=PORTAL_WALL_VCENTER_LOGIN", u)
         self.assertIn("Secret=site-portal-ontap,type=env,target=PORTAL_WALL_ONTAP_LOGIN", u)
+
+
+class DeployCopiesEverything(unittest.TestCase):
+    """Codex 1.129.0: the deploy copied site_portal.py but not wall_model.py - the portal could not start. Every module the service
+    imports (and theirs, all the way down) and every static file its pages name must be in the role's copy loop."""
+
+    def copied(self):
+        import yaml
+        t = yaml.safe_load(open(os.path.join(ROLE, "tasks", "main.yml")))
+        task = [x for x in t if x.get("name") == "Files | the service, its pages, the actions' rules, AAP's client"][0]
+        return dict((i["dest"], i["src"]) for i in task["loop"])
+
+    def local_modules(self):
+        """every .py the service could import from this repo: the role's files and plugins/{module_utils,filter}"""
+        out = {}
+        for d in (FILES, os.path.join(ROOT, "plugins", "module_utils"), os.path.join(ROOT, "plugins", "filter")):
+            for n in os.listdir(d):
+                if n.endswith(".py"):
+                    out.setdefault(n[:-3], os.path.join(d, n))
+        return out
+
+    def test_modules(self):
+        import ast
+        cp, local = self.copied(), self.local_modules()
+        todo, seen = ["site_portal"], set()
+        while todo:
+            m = todo.pop()
+            if m in seen:
+                continue
+            seen.add(m)
+            tree = ast.parse(open(local[m]).read())
+
+            def top(body):
+                """the module's own statements (and its try / if blocks) - an import inside a function runs only when that is called"""
+                for st in body:
+                    yield st
+                    for sub in ("body", "orelse", "finalbody"):
+                        if isinstance(st, (ast.Try, ast.If)) and getattr(st, sub, None):
+                            yield from top(getattr(st, sub))
+                    if isinstance(st, ast.Try):
+                        for hd in st.handlers:
+                            yield from top(hd.body)
+            for node in top(tree.body):
+                names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
+                for n in names:
+                    n = n.split(".")[-1] if n.startswith("ansible.module_utils.") else n.split(".")[0]
+                    if n in local and n not in seen:
+                        todo.append(n)
+        missing = sorted(m + ".py" for m in seen if m + ".py" not in cp)
+        self.assertEqual(missing, [], "imported by the service but not copied by the deploy")
+
+    def test_static_files(self):
+        cp = self.copied()
+        src = open(os.path.join(FILES, "site_portal.py")).read()
+        named = set(re.findall(r'static/([A-Za-z0-9_.-]+\.(?:js|css|html))', src))
+        for tup in re.findall(r'^[A-Z_]+_STATIC = \(([^)]*)\)', src, re.M):
+            named |= set(re.findall(r'"([^"]+)"', tup))
+        named -= {"festive.css", "festive.js", "banner.css"}           # made by the service itself (site_festive, the banner)
+        missing = sorted(n for n in named if "static/" + n not in cp)
+        self.assertEqual(missing, [], "named by the pages but not copied by the deploy")
+        for dest, srcf in cp.items():                                   # and every source is there
+            path = srcf.replace("{{ role_path }}", ROLE) if "{{" in srcf else os.path.join(FILES, srcf)
+            self.assertTrue(os.path.isfile(os.path.normpath(path)), (dest, srcf))
 
 
 def browser():
@@ -509,6 +620,56 @@ class Browser(unittest.TestCase):
     def test_feedback_on_a_host_card_keeps_its_ref(self):
         out = self.dom("style=cockpit&freeze=1&open=" + urllib.request.quote("host:%s|sita01-esx02.corp.example.mil" % demo.VC1))
         self.assertIn('data-fb="host:%s|sita01-esx02.corp.example.mil" data-fb-area="vmware"' % demo.VC1, out)
+
+    def test_no_netapp_storage_counters_are_grey(self):
+        url, stop = demo.portal(netapp=False, collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1")
+        self.assertRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken: no NetApp read')
+        self.assertRegex(out, r'<div class="ctr off"[^>]*title="Storage nodes down: no NetApp read')
+        self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes)"')
+
+    def test_nothing_read_is_never_green(self):
+        url, stop = demo.portal(netapp=False, collector=demo.FakeCollector(lambda: {"sources": {}, "history": {}}))
+        self.addCleanup(stop)
+        for st in ("lights", "cockpit", "map"):
+            out = self.run_page(url, "style=%s&freeze=1" % st)
+            self.assertIn('data-ready="1"', out, st)
+            self.assertNotIn('class="lamp s-ok"', out, st)
+            self.assertNotIn('class="word ok"', out, st)
+
+    def test_datastore_card_inaccessible_and_two_of_a_name(self):
+        def view():
+            v = demo.view(vc2_state="ok")
+            d1 = v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"][1]          # DS-SITEA-01, 83 % - inaccessible
+            d1["accessible"] = False
+            d1["free"] = int(d1["capacity"] * 0.6)                                        # 40 % used: the fill alone would be green
+            v["sources"]["vcenter:" + demo.VC2]["snap"]["datastores"] = [dict(d1, accessible=True, free=d1["capacity"] // 10, hosts=[], vms=3)]
+            return v
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("ds:%s|DS-SITEA-01" % demo.VC1))
+        card = out.split('id="dsCard"', 1)[1]
+        self.assertIn('class="wd crit"', card)
+        self.assertNotIn('class="wd ok"', card.split('class="sec"')[1].split('class="sec"')[0])  # the datastore row: not green
+        self.assertIn("vCenter marks this datastore inaccessible", card)
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("ds:%s|DS-SITEA-01" % demo.VC2))
+        card = out.split('id="dsCard"', 1)[1]
+        self.assertIn("vCenter " + demo.VC2, card)                                       # the namesake of the other vCenter
+        self.assertIn("90 %", card)
+
+    def test_a_failed_first_read_is_tried_again(self):
+        calls = {"n": 0}
+
+        def view():
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise RuntimeError("not yet")
+            return demo.view(vc2_state="ok")
+        url, stop = demo.portal(collector=demo.FakeCollector(view))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&pull=2", budget=20000)
+        self.assertIn('data-ready="1"', out)
 
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):

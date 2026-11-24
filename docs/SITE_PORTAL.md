@@ -1035,12 +1035,15 @@ condition needs the full window again).
   credential", and is tried again no sooner than `portal_wall_auth_retry_minutes` (15). One log line per episode, not
   one a minute. Other faults (timeout, refused connection) are tried again the next cycle, one log line when they start
   and one when they end.
-- **One account, one back-off:** every source that uses the same account (all the vCenters of `vmware_vcenters`, all the
-  clusters of `ontap_clusters`) shares it. The first refusal stops **all** of them; after the start and after each
+- **One account, one back-off:** every source that uses the same account shares it - all the vCenters of
+  `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
+  (`CORP\svc-wall`, `svc-wall@corp.example.mil` and `SVC-Wall` are one). The deadline counts from the refusal itself, and
+  an active back-off is kept in the portal's data volume (`wall-backoff.json`, the account's name hashed), so restarting
+  the portal never brings the next login sooner. The first refusal stops **all** of them; after the start and after each
   back-off **one** source tries the login first and the others wait for its answer (a source that does not answer at all
   passes the turn to the next). So a wrong or expired password costs exactly one failed login per back-off window,
-  however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or a plain HTTP 401 / 403 from a
-  proxy in front of it, counts as a refusal too; the session is logged out, never left open.
+  however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or any HTTP 401 / 403 (a proxy
+  in front of it, whatever the body), counts as a refusal too; the session is logged out, never left open.
 - An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
   the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
 - **No overlap:** a source still being read when the next cycle comes is skipped for that cycle.
@@ -1048,6 +1051,9 @@ condition needs the full window again).
   answer), and when the portal itself does not answer two reads in a row it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
+- Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), the
+  NetApp counters are grey "Not on the wall" when the portal has no NetApp read at all, and a wall with nothing read yet
+  shows "No current data".
 - With live ONTAP, the NetApp run in the report database is used only for the storage path card; its age is shown there
   and never makes the live storage look stale.
 
@@ -1092,7 +1098,8 @@ a cluster, host or datastore is `portal_wall_site_pattern`'s first group (defaul
   the button; empty = everyone who may open the wall. `portal_wall_feedback_readers` - AD groups that may open the list;
   default `portal_approver_groups` (empty: the approvers, `portal_approvers`). Both are checked on the server with the
   same LDAP read as the approvers' groups: the button is hidden and the send refused for others, the list answers 403.
-  Groups set but AD not read: nobody (closed).
+  Groups set but AD not read: nobody (closed). A list given with blank names only is refused by the deploy and, in the
+  service, means nobody (never "everyone" or "the approvers").
 
 ## What is on and what is off
 
