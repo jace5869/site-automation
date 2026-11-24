@@ -206,13 +206,13 @@ portal_wall_auth_retry_minutes: 15                  # a refused login: that sour
 # vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the VMware jobs use; read-only calls only).
 # The credential's vCenter and these (vmware_vcenters: names, or name:port) are read with that account.
 portal_wall_vcenter: auto                           # auto | true | false
-portal_wall_vcenters: "{{ vmware_vcenters | default([], true) }}"
+portal_wall_vcenters: "{{ vmware_vcenters | default([], true) }}"   # more vCenters read with the same account (names, or name:port)
 portal_wall_vcenter_validate_certs: "{{ vmware_validate_certs | default(true) }}"   # vCenter's certificate checked (the CAs: portal_trust_host_cas)
 # ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is set (GET only). Off: the wall's
 # storage comes from the NetApp page's run in the report database (as old as that run).
 portal_wall_ontap: auto                             # auto | true | false
-portal_wall_ontap_clusters: "{{ ontap_clusters | default([], true) }}"
-portal_wall_ontap_validate_certs: "{{ ontap_validate_certs | default(true) }}"
+portal_wall_ontap_clusters: "{{ ontap_clusters | default([], true) }}"   # the clusters read live (management names or addresses)
+portal_wall_ontap_validate_certs: "{{ ontap_validate_certs | default(true) }}"   # ONTAP's certificate checked (the CAs: portal_trust_host_cas)
 # The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall watches" shows the ones in force
 portal_wall_datastore_warn: 85                      # a datastore this % used or more: warning (VMware / Storage team)
 portal_wall_datastore_crit: 95                      # ... critical

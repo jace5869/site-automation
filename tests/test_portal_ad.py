@@ -672,7 +672,7 @@ class Routes1012(unittest.TestCase):
         import yaml
         cat = yaml.safe_load(open(os.path.join(ROOT, "aap", "job_templates.yml")))["job_templates"]
         t = dict((e["name"], e) for e in cat)
-        self.assertEqual(t["Site portal - deploy"]["optional_credentials"], ["report_db_reader", "report_db"])
+        self.assertEqual(t["Site portal - deploy"]["optional_credentials"], ["report_db_reader", "report_db", "vmware", "ontap"])   # 1.129.0: the wall's live reads
         self.assertIn("report_db", t["Active Directory health report"]["optional_credentials"])
 
 

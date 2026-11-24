@@ -2253,11 +2253,11 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_seconds` | `60` | the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks |
 | `portal_wall_auth_retry_minutes` | `15` | a refused login: that source stops at once and is tried again no sooner than this (5 to 1440) - the accounts are shared with the AAP jobs, a lockout would stop them too |
 | `portal_wall_vcenter` | `auto` | vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the VMware jobs use; read-only calls only). The credential's vCenter and these (vmware_vcenters: names, or name:port) are read with that account. auto \| true \| false |
-| `portal_wall_vcenters` | `"{{ vmware_vcenters \| default([], true) }}"` |  |
+| `portal_wall_vcenters` | `"{{ vmware_vcenters \| default([], true) }}"` | more vCenters read with the same account (names, or name:port) |
 | `portal_wall_vcenter_validate_certs` | `"{{ vmware_validate_certs \| default(true) }}"` | vCenter's certificate checked (the CAs: portal_trust_host_cas) |
 | `portal_wall_ontap` | `auto` | ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is set (GET only). Off: the wall's storage comes from the NetApp page's run in the report database (as old as that run). auto \| true \| false |
-| `portal_wall_ontap_clusters` | `"{{ ontap_clusters \| default([], true) }}"` |  |
-| `portal_wall_ontap_validate_certs` | `"{{ ontap_validate_certs \| default(true) }}"` |  |
+| `portal_wall_ontap_clusters` | `"{{ ontap_clusters \| default([], true) }}"` | the clusters read live (management names or addresses) |
+| `portal_wall_ontap_validate_certs` | `"{{ ontap_validate_certs \| default(true) }}"` | ONTAP's certificate checked (the CAs: portal_trust_host_cas) |
 | `portal_wall_datastore_warn` | `85` | The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall watches" shows the ones in force a datastore this % used or more: warning (VMware / Storage team) |
 | `portal_wall_datastore_crit` | `95` | ... critical |
 | `portal_wall_aggr_warn` | `85` | an aggregate this % used or more: warning (Storage team) |

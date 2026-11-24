@@ -395,6 +395,7 @@ portal_public_url: https://stigman.example.mil/portal/
 ## names, or name:port) are read with that account. auto | true | false
 # portal_wall_vcenter: auto
 
+## more vCenters read with the same account (names, or name:port)
 # portal_wall_vcenters: "{{ vmware_vcenters | default([], true) }}"
 
 ## vCenter's certificate checked (the CAs: portal_trust_host_cas)
@@ -405,8 +406,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## (as old as that run). auto | true | false
 # portal_wall_ontap: auto
 
+## the clusters read live (management names or addresses)
 # portal_wall_ontap_clusters: "{{ ontap_clusters | default([], true) }}"
 
+## ONTAP's certificate checked (the CAs: portal_trust_host_cas)
 # portal_wall_ontap_validate_certs: "{{ ontap_validate_certs | default(true) }}"
 
 ## The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall
