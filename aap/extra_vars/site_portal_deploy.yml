@@ -90,8 +90,19 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_reports_mount: ro,z
 
 ## ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890)
-## ------------------------------- who may run the actions (an action's own who overrides); [] = any
-## person with a verified card
+## ------------------------------- card CNs allowed to view. With both reader lists empty, any
+## verified card may view.
+# portal_readers: []
+
+## AD groups allowed to view (names or DNs). Named and AD requesters and approvers always have
+## reader access.
+# portal_reader_groups: []
+
+## contact shown on reader refusal. Empty uses "your portal administrator".
+# portal_access_contact: ""
+
+## card CNs allowed to run actions. Both requester lists empty = any reader. An action's own who
+## overrides.
 # portal_requesters: []
 
 ## one person's launches in an hour, at most
@@ -103,14 +114,15 @@ portal_public_url: https://stigman.example.mil/portal/
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 
-## 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A
+## Readers, approvers and requesters from AD groups (each person still needs a verified card). A
 ## group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled
 ## account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template
-## (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only portal_approvers /
-## portal_requesters count (with groups set, an empty portal_requesters is nobody - never everyone).
-## 1.129.1: DOMAIN\Group works too (the DOMAIN\ part is dropped) - in YAML write it in SINGLE quotes
-## ('CORP\Group'): in double quotes a backslash starts an escape (\U, \x ...) and all.yml no longer
-## loads. e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
+## (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only explicitly named card
+## CNs count for those roles (with groups set, an empty portal_requesters is nobody - never
+## everyone). 1.129.1: DOMAIN\Group works too (the DOMAIN\ part is dropped) - in YAML write it in
+## SINGLE quotes ('CORP\Group'): in double quotes a backslash starts an escape (\U, \x ...) and
+## all.yml no longer loads. e.g. [AAP-Approvers] or ["CN=AAP-
+## Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
 # portal_approver_groups: []
 
 ## the same for who may run the actions (with portal_requesters); [] = none

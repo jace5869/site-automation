@@ -12,8 +12,13 @@ by default (`portal_wall: true`); its tab is named by `portal_wall_title`. Thres
 `portal_wall_datastore_warn` / `_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90)
 and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
 `portal_wall_seconds` (60). The wall's logins run on ONE portal host per site. After any unclear or refused login they stay
-stopped: fix the cause, then run Site portal - deploy (every run lets the wall try once).
+stopped: fix the cause, then run Site portal - deploy (every run lets the wall try once). Viewing the portal: nothing to
+set (any verified card may view); to limit it, `portal_reader_groups: ["<readers group>"]` (admins and approvers are readers).
 
+- **Viewing the portal no longer needs the run list** (1.129.1 gated the whole portal on portal_requesters / approvers and
+  their groups: anyone not in them could not even view): with both reader lists empty, any verified card may VIEW the
+  portal; running and approving still need their lists. Optional `portal_reader_groups` / `portal_readers` (card CNs)
+  limit who may view; admins and approvers are readers; `portal_access_contact` is the contact shown on a refusal.
 - **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
   amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
   before acting."

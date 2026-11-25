@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""1.120.0: the site portal's approvers and requesters from AD groups (portal_approver_groups, portal_requester_groups):
+"""The site portal's readers, approvers and requesters from AD groups:
 each group's members - nested groups too (LDAP_MATCHING_RULE_IN_CHAIN), never a disabled account - read over LDAP,
 read-only, with the "LDAP Bind Account" login, in ONE shared read every few minutes and kept. A person's card CN
 (LAST.FIRST.MI.1234567890) is matched to their AD account by its EDIPI: userPrincipalName = <EDIPI>@mil by default
 (portal_ad_card_attribute, portal_ad_card_match). When AD cannot be read - or has not been yet - nobody is a member:
-the portal falls back to the named lists only (portal_approvers, portal_requesters), never open. The connection is
+the portal falls back to the named lists only for group-based access. The connection is
 the AD report's (site_ldap). Standard library and ldap3 (dnspython for the DCs of a domain, when it is here)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -31,7 +31,7 @@ except ImportError:
 IN_CHAIN = "1.2.840.113556.1.4.1941"               # LDAP_MATCHING_RULE_IN_CHAIN: a member of a member ... counts
 BIT_AND = "1.2.840.113556.1.4.803"                 # LDAP_MATCHING_RULE_BIT_AND
 DISABLED = 0x2                                     # userAccountControl ACCOUNTDISABLE
-ROLES = ("approvers", "requesters", "wall_feedback", "wall_readers")   # 1.130.0: the wall's Feedback button and list
+ROLES = ("approvers", "requesters", "readers", "wall_feedback", "wall_readers")   # 1.130.0: portal readers; the wall's Feedback button and list
 SECONDS, RETRY = 300, 60                           # read every 5 minutes; 60 s after a failure
 
 

@@ -335,7 +335,7 @@ class Live(unittest.TestCase):
         self.assertLess(t.index('id="f-target"'), t.index('id="f-report_job"'))   # the file's order
         code, raw, _ = self.req("/actions/act_triage?target=web01.example.mil", dn=RROE)
         self.assertIn(b"Not for you", raw)
-        self.assertIn(b" disabled>Run", raw)
+        self.assertNotIn(b'id="go"', raw)                                 # 1.130.0: no Run button at all for someone who may not run it
         code, raw, _ = self.req("/actions/no_prompts?target=web01.example.mil")
         self.assertIn(b"Off.", raw)
         code, raw, _ = self.req("/actions/nothing_here")
@@ -2364,7 +2364,7 @@ class Found(unittest.TestCase):
         self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)
         self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890"]
         try:
-            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 403)                     # not on the list of people: refused
+            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 404)                     # a reader cannot see a job its action does not allow
             self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890", "ROE.RICHARD.A.2345678901"]
             self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)                     # on the list: may see what the action allows (as every job page)
             self.assertEqual(self.get("/api/jobs/999999/progress", dn=RROE)[0], 404)                       # a job the portal did not start: not even said to exist
