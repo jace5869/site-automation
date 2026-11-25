@@ -29,6 +29,11 @@ ROWS_MAX = 50                           # rows of a health part kept (problems f
 SEV = {"emergency": ("critical", "Emergency"), "alert": ("critical", "Alert"), "error": ("warning", "Error")}
 
 
+
+def _opt(v):
+    """a size that may not have been read: None stays None (1.129.0: never 0 - "all of it free" or "0 % used")"""
+    return None if v is None else int(v)
+
 def _recs(c, key):
     return ((c.get("data") or {}).get(key) or {}).get("records") or []
 
@@ -308,16 +313,17 @@ def ontap_live_payload(r):
         fsize, fused, src = X.lun_fullness(dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free")))
         vols.append({"address": e.get("address") or "", "cluster": e.get("cluster") or "", "svm": e.get("svm") or "", "volume": e.get("volume") or "",
                      "lun": e.get("lun") or "", "luns": int(e.get("luns") or 0), "size": int(e.get("size") or 0), "used": int(e.get("used") or 0),
-                     "aggr": e.get("aggr") or "", "aggr_free": int(e.get("aggr_free") or 0), "datastore": ds, "ds_kind": f.get("kind") or "",
-                     "full_size": int(fsize), "full_used": None if fused is None else int(fused), "full_src": src if fused is not None else "unknown",
+                     "aggr": e.get("aggr") or "", "aggr_free": _opt(e.get("aggr_free")), "datastore": ds, "ds_kind": f.get("kind") or "",
+                     "full_size": int(fsize or 0), "full_used": None if fused is None else int(fused), "full_src": src if fused is not None else "unknown",
                      "thick": bool(e.get("lun_thick")),
                      "uid": e.get("lun_uuid") or e.get("uuid") or "",
                      "offered": bool(t), "why": "" if t else "not in the survey's list (ontap_expand_max_choices)", "choice": t, "root": False})
     for x in lst.get("excluded") or []:
         vols.append({"address": x.get("address") or "", "cluster": x.get("cluster") or "", "svm": "" if x.get("svm") == "(node)" else x.get("svm") or "",
                      "volume": x.get("volume") or "", "lun": "", "luns": 0, "size": int(x.get("size") or 0), "used": int(x.get("used") or 0),
-                     "aggr": x.get("aggr") or "", "aggr_free": int(x.get("aggr_free") or 0), "datastore": "", "ds_kind": "", "offered": False,
-                     "full_size": int(x.get("size") or 0), "full_used": int(x.get("used") or 0), "full_src": "volume", "thick": False,
+                     "aggr": x.get("aggr") or "", "aggr_free": _opt(x.get("aggr_free")), "datastore": "", "ds_kind": "", "offered": False,
+                     "full_size": int(x.get("size") or 0), "full_used": _opt(x.get("used")),
+                     "full_src": "volume" if x.get("used") is not None else "unknown", "thick": False,
                      "uid": x.get("uuid") or "",
                      "why": x.get("why") or "", "choice": "", "root": bool(x.get("root"))})
     aggrs = [{"address": a.get("address") or "", "cluster": a.get("cluster") or "", "name": a.get("name") or "", "node": a.get("node") or "",

@@ -81,6 +81,7 @@
     const vols = m.volumes || [];
     const warn = vols.filter((v) => v.pct >= (o.volume_warn_pct || 85));
     const crit = vols.filter((v) => v.pct >= (o.volume_crit_pct || 90));
+    const unk = vols.filter((v) => v.pct == null);          // 1.129.0: use not read - never counted as under a threshold (no OK chip)
     const least = vols.filter((v) => v.pct != null).sort((a, b) => (b.pct - a.pct) || (a.name < b.name ? -1 : 1))[0];   // 1.129.0: use unknown is never "least free"
     const t = [];
     const cl = (P.clusters || {}).rows;
@@ -92,14 +93,14 @@
       t.push(tile("Clusters read", [el("span", "big", String((m.run.clusters || []).filter((c) => !c.error).length) + " of " + (m.run.clusters || []).length)],
                   "health not read (ontap_live_health)"));
     }
-    t.push(tile("How full over " + fmt(o.volume_warn_pct || 85) + " %", [el("span", "big", String(warn.length)), chip(warn.length ? "warning" : "ok")],
-                "of " + vols.length + " LUNs and volumes"));
-    t.push(tile("How full over " + fmt(o.volume_crit_pct || 90) + " %", [el("span", "big", String(crit.length)), chip(crit.length ? "critical" : "ok")],
-                crit.slice(0, 3).map((v) => v.name).join(", ") + (crit.length > 3 ? " …" : "")));
+    t.push(tile("How full over " + fmt(o.volume_warn_pct || 85) + " %", [el("span", "big", String(warn.length)), chip(warn.length ? "warning" : unk.length ? "unknown" : "ok")],
+                "of " + vols.length + " LUNs and volumes" + (unk.length ? " · " + unk.length + " with their use unknown" : "")));
+    t.push(tile("How full over " + fmt(o.volume_crit_pct || 90) + " %", [el("span", "big", String(crit.length)), chip(crit.length ? "critical" : unk.length ? "unknown" : "ok")],
+                crit.slice(0, 3).map((v) => v.name).join(", ") + (crit.length > 3 ? " …" : "") + (unk.length ? (crit.length ? " · " : "") + unk.length + " with their use unknown" : "")));
     // 1.127.2 (user): the least free one, not the days until full
     t.push(tile("Least free", least ? [el("span", "big", fmt(Math.max(0, 100 - Math.min(100, least.pct)), 1) + " % free"),
-                chip(least.pct >= (o.volume_crit_pct || 90) ? "critical" : least.pct >= (o.volume_warn_pct || 85) ? "warning" : "ok")] : [el("span", "big", "-")],
-                least ? least.name + (least.ds ? " (" + least.ds + ")" : "") + ", " + gb(least.free) + " GB free" : "nothing read"));
+                chip(least.pct >= (o.volume_crit_pct || 90) ? "critical" : least.pct >= (o.volume_warn_pct || 85) ? "warning" : unk.length ? "unknown" : "ok")] : [el("span", "big", "-")],
+                least ? least.name + (least.ds ? " (" + least.ds + ")" : "") + ", " + gb(least.free) + " GB free" + (unk.length ? " · " + unk.length + " not read" : "") : "nothing read"));
     const sm = P.snapmirror;
     if (sm) {
       const b = sm.rows.filter((x) => x.st === "critical")[0], w = sm.rows.filter((x) => x.st === "warning")[0];

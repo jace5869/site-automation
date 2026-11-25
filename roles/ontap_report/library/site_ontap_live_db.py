@@ -225,7 +225,8 @@ def write(conn, now, job, template_id, run, expand_template="", expand_question=
     rid = int(cur.lastrowid or 0)
     rows = [(rid, L.row_key(v["address"].lower(), v.get("svm"), v["volume"], v.get("lun")), str(v["address"])[:191], str(v.get("cluster") or "")[:191],
              str(v.get("svm") or "")[:191], str(v["volume"])[:191], str(v.get("lun") or "")[:255], int(v.get("luns") or 0), int(v.get("size") or 0),
-             int(v.get("used") or 0), str(v.get("aggr") or "")[:191], int(v.get("aggr_free") or 0), str(v.get("datastore") or "")[:255],
+             int(v.get("used") or 0), str(v.get("aggr") or "")[:191], -1 if v.get("aggr_free") is None else int(v["aggr_free"]),     # -1: not read
+             str(v.get("datastore") or "")[:255],
              str(v.get("ds_kind") or "")[:8], 1 if v.get("offered") else 0, str(v.get("why") or "")[:300], str(v.get("choice") or ""),
              1 if v.get("root") else 0, int(v.get("full_size") or v.get("size") or 0), int(v.get("full_used") if v.get("full_used") is not None else v.get("used") or 0),
              str(v.get("full_src") or "volume")[:16], 1 if v.get("thick") else 0, _vol_obj(v)) for v in vols]

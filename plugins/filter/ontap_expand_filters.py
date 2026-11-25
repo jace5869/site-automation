@@ -266,9 +266,10 @@ def ontap_expand_list_doc(r):
         fe = dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free"))
         fsize, fused, _src = X.lun_fullness(fe)
         used = 100.0 if fused is None else X.pct(fused, fsize)              # use unknown: marked as if full
-        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], X.human(e["aggr_free"]),
+        afree = e.get("aggr_free")                                          # None: the aggregate's use not read - never "all free"
+        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], "?" if afree is None else X.human(afree),
                      ("%s %s" % (f.get("kind"), f.get("datastore"))) if f.get("datastore") else ("LUN" if e.get("lun") else "-")])
-        cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if e["aggr_free"] < X.TB else "", ""])
+        cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if afree is None or afree < X.TB else "", ""])
     sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Volume size", "How full", "Aggregate", "Aggr free", "Datastore"],
                      "rows": rows, "cell_status": cells, "keep_case": True})
     if r.get("more"):

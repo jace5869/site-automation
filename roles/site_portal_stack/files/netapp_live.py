@@ -128,11 +128,11 @@ def model(run, vrows, arows, prow):
         pct = round(100.0 * fused / fsize, 1) if fsize else 0.0
         vols.append({"k": "%s|%s|%s|%s" % (str(addr).lower(), svm, vol, lun or ""), "addr": addr, "c": cl, "svm": svm, "v": vol, "lun": lname,
                      "name": vol + (("/" + lname) if lun and int(luns or 0) > 1 else ""), "luns": int(luns or 0), "aggr": aggr,
-                     "aggr_free": int(afree or 0), "ds": ds or "", "kind": kind or "", "thick": bool(int(thick or 0)),
+                     "aggr_free": None if afree is None or int(afree) < 0 else int(afree), "ds": ds or "", "kind": kind or "", "thick": bool(int(thick or 0)),
                      "vol_size": int(size or 0), "size": fsize, "used": None if unknown else fused, "pct": None if unknown else pct,
                      "free": None if unknown else max(0, fsize - fused),
-                     "src": "LUN use unknown" if unknown else SRC_WORD.get(fsrc or "volume", "volume used"),
-                     "full_text": "LUN use unknown" if unknown else "%s %d%% %s" % ((fsrc or "volume"), int(round(pct)), "written" if fsrc == "LUN" else "used"),
+                     "src": "use unknown" if unknown else SRC_WORD.get(fsrc or "volume", "volume used"),
+                     "full_text": ("LUN" if lun else "volume") + " use unknown" if unknown else "%s %d%% %s" % ((fsrc or "volume"), int(round(pct)), "written" if fsrc == "LUN" else "used"),
                      "g": _f(g), "days": _f(days), "rate_why": rwhy or "", "st": "unknown" if unknown else (st or "ok"), "offered": bool(int(offered or 0)) and bool(choice),
                      "why": why or "", "choice": choice or ""})
     # (user 1.127.0) the ones on a VMware datastore first, then the rest; each least free first (the fullness of the list:

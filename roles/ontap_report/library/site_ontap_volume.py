@@ -177,13 +177,18 @@ def opt_of(rec, *path):
 def vol_in(rec):
     return {"name": rec.get("name"), "svm": (rec.get("svm") or {}).get("name") or "", "size": gb_of(rec, "space", "size"),
             "uuid": rec.get("uuid"),
-            "used": gb_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
+            "used": opt_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
             "is_svm_root": rec.get("is_svm_root"), "aggregates": [a.get("name") for a in rec.get("aggregates") or []]}
 
 
 def aggr_in(rec):
     bs = (rec.get("space") or {}).get("block_storage") or {}
     return {"name": rec.get("name"), "size": int(bs.get("size") or 0), "used": None if bs.get("used") is None else int(bs["used"])}
+
+
+def aggr_free(a):
+    """an aggregate's free space for the list - None when its use was not read (1.129.0: never the whole aggregate as free)"""
+    return None if a.get("used") is None else max(0, int(a.get("size") or 0) - int(a["used"]))
 
 
 def lun_thick(rec):
@@ -238,11 +243,11 @@ def list_cluster(c, opts):
         if why:
             # the sizes too (the portal's NetApp page shows a volume not offered with its reason)
             excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why, "address": c.address,
-                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)),
+                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": aggr_free(a),
                              "uuid": v.get("uuid") or "", "root": bool(v.get("is_svm_root")) or v.get("name") == "vol0" or not svm})
             continue
         base = {"cluster": name, "address": c.address, "svm": svm, "volume": vi["name"], "size": vi["size"], "used": vi["used"],
-                "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
+                "aggr": a["name"], "aggr_free": aggr_free(a), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
                 "nfs_ips": addr.get(svm, []), "lun": "", "luns": 0, "naa": ""}
         mine = sorted(luns.get((svm, vi["name"]), []), key=lambda x: x.get("name") or "")
         for l_ in mine or [None]:
