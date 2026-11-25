@@ -2,8 +2,11 @@
 
 ## 1.130.1 — 2026-11-25
 
-**To set up:** run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)
+**To set up:** if your all.yml has `portal_ad_card_match: "{edipi}*@mil"`, change it to your exact form (for example `"{edipi}.ctr@mil"`). Then run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)
 
+- **The card match is exact again.** 1.130.0's default `{edipi}*@mil` also matched the same person's other accounts (for
+  example a privileged `1234567890.adm@mil`) and longer numbers. The default is `{edipi}@mil` again; a site whose
+  accounts carry a suffix sets it exactly: `portal_ad_card_match: "{edipi}.ctr@mil"`.
 - **The wall's VMware and Storage stayed "Not on the wall yet" although both logins were attached.** On ansible-core 2.16
   the deploy wrote the logins' secrets as Python's dict text (single quotes); the portal read them as JSON, failed, and said
   "no vCenter login" with nothing in its log. The deploy now writes JSON (after one space, so 2.16 cannot turn it back into
