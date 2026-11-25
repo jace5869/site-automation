@@ -759,6 +759,48 @@ class CodexVerify(unittest.TestCase):
             W.OntapSource("127.0.0.1:%d" % port, "u", "p", verify=False, timeout=5).poll()
 
 
+class BackoffFile(unittest.TestCase):
+    """Codex verify 2: the back-off file - a failed write is said once and the deadline kept; a file that cannot be read or
+    written at the start holds every account for one window"""
+
+    def test_a_failed_write_is_said_once_and_kept(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        f = Fake(result=W.AuthError(W.AUTH_WHY))
+        logs, clock = [], Clock()
+        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock, log=logs.append, state_file=os.path.join(d, "wall-backoff.json"))
+        os.chmod(d, 0o500)                                                # the folder turns read-only after the start
+        self.addCleanup(os.chmod, d, 0o700)
+        c.cycle()
+        c.wait(10)
+        self.assertEqual(c.view()["sources"][f.key]["next_try"], clock.t + 900)
+        self.assertEqual(len([x for x in logs if x.get("state") == "not written"]), 1)
+        clock.t += 901
+        c.cycle()
+        c.wait(10)
+        self.assertEqual(len([x for x in logs if x.get("state") == "not written"]), 1)      # said once, not at every refusal
+
+    def test_an_unreadable_file_holds_every_account(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        state = os.path.join(d, "wall-backoff.json")
+        with open(state, "w") as fh:
+            fh.write("{not json")
+        f = Fake()
+        clock = Clock()
+        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock, state_file=state)
+        for _ in range(14):
+            c.cycle()
+            c.wait(10)
+            clock.t += 60
+        self.assertEqual(f.calls, 0)                                       # held for the whole window: nobody logs in
+        self.assertEqual(c.view()["sources"][f.key]["state"], "auth")
+        clock.t += 120
+        c.cycle()
+        c.wait(10)
+        self.assertEqual(f.calls, 1)
+
+
 def closed_port():
     import socket
     sk = socket.socket()

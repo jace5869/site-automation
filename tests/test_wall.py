@@ -262,6 +262,55 @@ class CodexVerifyModel(unittest.TestCase):
         self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": False, "nodes": False})
 
 
+class CodexVerify2Model(unittest.TestCase):
+    def live(self, name, cl, state="up"):
+        return {"kind": "ontap", "name": name, "state": "ok", "why": "", "at": NOW - 20,
+                "snap": {"cluster": cl, "nodes": [{"name": cl + "-01", "state": state}], "aggrs": [], "volumes": [], "luns": [], "snapmirror": []}}
+
+    def test_two_clusters_of_one_short_name_never_collide(self):
+        import netapp_live as nl
+        db = demo.netapp_db(25)
+        nm = nl.Database(lambda: db, mark="?").read()
+        nm["parts"]["clusters"] = {"rows": [{"name": "array.west.example.mil", "why": "not read: timed out"},
+                                            {"name": "array.east.example.mil", "why": "not read: timed out"}]}
+        v = demo.view(NOW)
+        v["sources"]["ontap:array.east.example.mil"] = self.live("array.east.example.mil", "array")
+        m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+        ids = [c["id"] for c in m["conds"] if c["kind"] == "node"]
+        self.assertIn("node:array.west.example.mil", ids)                      # the west alert stays
+        self.assertNotIn("node:array.east.example.mil", ids)                   # the east one: its exact name was read live
+
+    def test_unknown_numbers(self):
+        v = demo.view(NOW)
+        v["sources"]["ontap:c9"] = self.live("c9", "c9")
+        v["sources"]["ontap:c9"]["snap"]["aggrs"] = [{"name": "a1", "node": "n", "size": None, "used": 5}, {"name": "a2", "node": "n", "size": 0, "used": None}]
+        v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"][0]["free"] = None
+        m = model(v)
+        self.assertEqual([a["v"] for a in m["storage"]["aggr"] if a["c"] == "c9"], [None, None])          # never 0 %
+        d = [x for x in m["vmware"]["datastores"] if x["n"] == "DS-SITEA-07"][0]
+        self.assertIsNone(d["v"])                                                                       # never 100 %
+        st = dict((a["id"], a) for a in m["areas"])
+        self.assertFalse(st["storage"]["complete"])
+        self.assertFalse(st["vmware"]["complete"])
+        self.assertTrue(any("DS-SITEA-07" in x for x in st["vmware"]["incomplete"]))
+
+    def test_a_failed_health_collection_is_not_run(self):
+        import netapp_live as nl
+        db = demo.netapp_db(5)
+        nm = nl.Database(lambda: db, mark="?").read()
+        nm["parts"]["snapmirror"]["errors"] = ["cluster1.example.mil: not reached"]
+        self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"]["sm"], False)
+
+    def test_unread_lun_usage_is_never_zero_upstream(self):
+        import site_ontap_expand as X
+        import test_ontap_expand as TE
+        V = TE.volume_module()                                  # the module with its module_utils as Ansible gives them
+        e = {"lun": "/vol/v/l", "lun_size": 100, "lun_used": None, "size": 110, "used": 99}
+        self.assertEqual(X.lun_fullness(e), (110, 99, "volume"))                                       # not "LUN 0 % written"
+        self.assertIsNone(V.opt_of({"space": {"size": 1}}, "space", "used"))
+        self.assertEqual(V.opt_of({"space": {"used": 0}}, "space", "used"), 0)
+
+
 # ---- the portal: the page, the answer, the Feedback ------------------------------------------------------------------------
 JDOE, JDOE_CN = demo.DN, demo.CN
 OTHER = "CN=ROE.RICHARD.A.2234567890,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US"
