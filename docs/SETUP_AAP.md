@@ -678,10 +678,12 @@ and checks the ones already there. It never deletes a template.
    (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`; 1.123.0:
    `ontap_write`, the NetApp ONTAP credential that may grow volumes, for *NetApp - expand a volume*; `solarwinds_manage`,
    a credential of the type SolarWinds (manage nodes) (`aap/credential_types/solarwinds_manage.yml`) whose account may manage nodes, for *Windows - schedule a restart*). A template
-   that needs a kind you did not name is skipped, and the job says which kind. The project, the inventory and the
-   credentials are looked up in `aap_templates_organization` only (an execution environment of no organization too):
-   one of another organization, or a personal credential, is never used. The inventory is needed only to make a
-   template. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
+   that needs a kind you did not name is skipped, and the job says which kind. Set `aap_templates_inventory_organization` if the default inventory belongs to another organization.
+   For a separate Windows inventory, set `aap_templates_inventory_windows` to its AAP name. Check lists the current and
+   proposed inventories for existing Windows templates. Run applies the change and uses that inventory for new Windows
+   templates. This covers `playbooks/win_*.yml` and catalog entries that require `machine_windows`. Set
+   `aap_templates_inventory_windows_organization` if the Windows inventory belongs to another organization. Both inventory
+   organization settings default to `aap_templates_organization`. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
 3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
    (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels). With it, a
    `portal-area:` label of an area the catalog used before one section per platform (Reports, Disk & services,

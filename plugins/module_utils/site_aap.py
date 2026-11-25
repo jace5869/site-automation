@@ -12,8 +12,12 @@ import json
 import os
 import socket
 import ssl
+import time
+from concurrent.futures import Future, TimeoutError as FutureTimeout
+from threading import Lock, Thread, local
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+from urllib.parse import quote
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 # the credential's variables, by their NAMES: CONTROLLER_* (AAP 2.4 and later), AAP_* (2.5 and later), TOWER_* (older)
 VARS = {"host": ("CONTROLLER_HOST", "AAP_HOSTNAME", "TOWER_HOST"),
@@ -28,6 +32,76 @@ class _NoRedirect(HTTPRedirectHandler):
     """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+_read_context = local()
+
+
+class ReadDeadline:
+    """One wall-clock budget for a background inventory lookup, HTTP response and parsing."""
+
+    def __init__(self, seconds):
+        self.end = time.monotonic() + seconds
+        self.lock = Lock()
+        self.sock = None
+
+    def remaining(self):
+        left = self.end - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("inventory read deadline exceeded")
+        return left
+
+    def watch(self, sock):
+        with self.lock:
+            self.remaining()
+            self.sock = sock
+
+    def run(self, read, *args):
+        # Only the caller publishes the result. A late DNS lookup or parser cannot replace a retry.
+        result = Future()
+
+        def worker():
+            _read_context.deadline = self
+            try:
+                result.set_result(read(*args))
+            except Exception as exc:
+                result.set_exception(exc)
+            finally:
+                del _read_context.deadline
+
+        Thread(target=worker, daemon=True).start()
+        try:
+            value = result.result(timeout=self.remaining())
+        except FutureTimeout:
+            if time.monotonic() < self.end:
+                raise  # A shorter socket timeout from the worker.
+            with self.lock:
+                if self.sock is not None:
+                    # Interrupt even a peer that trickles headers or body bytes inside every socket timeout.
+                    try:
+                        self.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+            raise TimeoutError("inventory read deadline exceeded") from None
+        self.remaining()
+        return value
+
+
+class _DeadlineHandler(HTTPHandler, HTTPSHandler):
+    """Capture the connected socket before urllib starts reading the response headers."""
+    def __init__(self, deadline, context):
+        HTTPSHandler.__init__(self, context=context)
+        self.deadline = deadline
+
+    def do_open(self, http_class, req, **kwargs):
+        deadline = self.deadline
+
+        class Connection(http_class):
+            def getresponse(self):
+                deadline.watch(self.sock)
+                return super().getresponse()
+
+        return super().do_open(Connection, req, **kwargs)
 
 
 def connection(env=None):
@@ -88,17 +162,23 @@ class Api(object):
             req.add_header("Authorization", "Basic " + base64.b64encode(pair).decode())
         # a redirect is an answer, never a path to follow: followed, the Authorization header would go wherever it
         # points (a proxy's login page, another host, plain http)
-        opener = build_opener(_NoRedirect(), HTTPSHandler(context=self.ctx)) if self.conn["host"].startswith("https") \
-            else build_opener(_NoRedirect())
+        deadline = getattr(_read_context, "deadline", None)
+        handlers = [_NoRedirect()]
+        if deadline:
+            handlers.append(_DeadlineHandler(deadline, self.ctx))
+        elif self.conn["host"].startswith("https"):
+            handlers.append(HTTPSHandler(context=self.ctx))
+        opener = build_opener(*handlers)
         try:
-            r = opener.open(req, timeout=self.timeout)
-            raw = r.read()
+            timeout = min(self.timeout, deadline.remaining()) if deadline else self.timeout
+            with opener.open(req, timeout=timeout) as r:
+                raw, status = r.read(), r.getcode()
             try:
                 data = json.loads(raw) if raw else {}
             except ValueError:
                 return -1, {"detail": "the answer to %s %s is not AAP's (HTTP %d, not JSON): the credential's URL must be AAP's own address"
-                                      % (method, path.split("?")[0], r.getcode())}
-            return r.getcode(), data if isinstance(data, dict) else {"results": data}
+                                      % (method, path.split("?")[0], status)}
+            return status, data if isinstance(data, dict) else {"results": data}
         except HTTPError as e:
             try:
                 if 300 <= e.code < 400:
@@ -142,6 +222,52 @@ class Api(object):
         if code == 404:
             return "AAP has no API at %s/api/controller/v2/ or /api/v2/ (HTTP 404): the credential's URL must be AAP's own address" % self.conn["host"]
         return "AAP answered HTTP %d: %s" % (code, error_text(data))
+
+
+def portal_inventory_warnings(read_all, username, targets, users=None):
+    """Check (template name or None for all Windows templates, inventory ID, inventory name) targets."""
+    if not targets:
+        return []
+    if not username:
+        return ["Portal inventory access was not checked because the portal account name is unset."]
+    if users is None:
+        try:
+            users = read_all("users/?username=%s" % quote(username, safe=""))
+        except RuntimeError as exc:
+            return ["Portal inventory access was not checked for %s: %s" % (username, exc)]
+    matches = [u for u in users if u.get("username") == username]
+    if len(matches) != 1:
+        return ["Portal inventory access was not checked because AAP could not identify the portal account %s." % username]
+    user = matches[0]
+    if user.get("is_superuser") or user.get("is_system_auditor"):
+        return []
+
+    warnings = []
+    by_inventory = {}
+    for template, iid, name in targets:
+        by_inventory.setdefault(iid, []).append((template, name))
+    for iid, cards in by_inventory.items():
+        name = next((name for _, name in cards if name), None)
+        try:
+            # AAP lists users with effective access, including grants inherited from teams and the inventory's organization.
+            access = read_all("inventories/%d/access_list/?id=%d" % (iid, user["id"]))
+            if any(row.get("id") == user["id"] for row in access):
+                continue
+        except RuntimeError as exc:
+            warnings.append("Portal inventory access was not checked for %s on inventory %s: %s" % (username, name or iid, exc))
+            continue
+        if not name:
+            try:
+                rows = read_all("inventories/?id=%d" % iid)
+                name = next((r.get("name") for r in rows if r.get("id") == iid), None)
+            except RuntimeError:
+                pass  # Access is known even if the setup account cannot resolve the display name.
+            name = name or "ID %d" % iid
+        for template, _ in cards:
+            card = "its card stays hidden" if template else "their cards stay hidden"
+            warnings.append("%s: the portal's account %s cannot read inventory %s - %s; give it Read on that inventory"
+                            % (template or "Windows templates", username, name, card))
+    return warnings
 
 
 # 1.79.11: a template's or workflow's description in five short labeled lines (aap/job_templates.yml's description, and the

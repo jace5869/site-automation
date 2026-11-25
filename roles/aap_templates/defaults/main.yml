@@ -13,6 +13,9 @@ aap_templates_organization: Default            # the organization the templates 
 aap_templates_project: site-automation         # your site-automation project in AAP (its name)
 aap_templates_inventory: ""                    # the inventory a template is made with (its name) - needed only to make one
 aap_templates_inventory_organization: ""     # the inventory's organization when it is another one ("" = aap_templates_organization); the credential's user needs Use on it
+aap_templates_inventory_windows: ""           # inventory name for new and existing Windows templates (playbooks/win_*.yml or required machine_windows credential)
+aap_templates_inventory_windows_organization: ""  # Windows inventory organization ("" = aap_templates_organization)
+aap_templates_portal_user: "{{ portal_setup_portal_user | default('') }}"  # When portal_setup_portal_user is undefined, use this account. Check and Run warn once if it cannot read aap_templates_inventory_windows. Give it Read in AAP.
 # the execution environment of each kind the catalog names (all, windows, network); a kind left out: the project's
 #   {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
 aap_templates_ee: {}

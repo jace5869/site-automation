@@ -16,7 +16,7 @@ portal_setup_inventories:
 # the AAP credential of each kind workflows.yml names: machine, machine_windows, aap, act_model_key, stigman_api,
 # stigman_api_writer, windows_share ... A template with a kind not named here is skipped, said.
 portal_setup_credentials: {}
-portal_setup_portal_user: ""                     # the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given
+portal_setup_portal_user: ""                     # The portal's AAP account for Execute and Approve. Check and Run warn for each portal_publish_templates match whose inventory it cannot read. Give it Read on that inventory in AAP. Empty skips account checks and grants.
 portal_setup_overwrite: false                    # true = also bring up to date what was made or changed by hand (never deletes)
 # 1.79.11: the templates and workflows get the catalog's five-line descriptions (aap/job_templates.yml; Contact from
 # aap_templates_description_owner / _contact) - false = workflows.yml's one line, as before

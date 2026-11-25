@@ -69,7 +69,7 @@ import json
 import re
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, setup_description, connection
+from ansible.module_utils.site_aap import Api, setup_description, connection, portal_inventory_warnings
 from ansible.module_utils.site_aap_workflows import Sync, _q, _norm, fingerprint, NEVER_ALONE  # noqa: F401 - fingerprint: as before, for its callers
 
 MARK = re.compile(r" \[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\Z")
@@ -82,6 +82,7 @@ class Setup(Sync):
     job templates")."""
     def __init__(self, api, p, check):
         Sync.__init__(self, api, p, check, MARK, "portal_setup_overwrite")
+        self.warnings = []
 
     # ---- job templates
     def template(self, t, refs, copy=None, with_action=False):
@@ -333,8 +334,13 @@ class Setup(Sync):
         steps = steps or {}
         uid = None
         if plan["publish"]:
+            users = []
             if p["portal_user"]:
                 uid = self.one_id("users", p["portal_user"], "User")
+                users = self.by_name("users", p["portal_user"])
+            targets = [(row["name"], row["inventory"], ((row.get("summary_fields") or {}).get("inventory") or {}).get("name"))
+                       for _, row in plan["publish"] if row.get("inventory")]
+            self.warnings.extend(portal_inventory_warnings(self.all, p["portal_user"], targets, users))
             for api_kind, row in plan["publish"]:
                 name, oid = str(row.get("name")), int(row["id"])
                 # 1.92.0: the portal shows the workflow, never its parts - a step (or a playbook that only runs a
@@ -643,6 +649,8 @@ def main():
     except RuntimeError as e:
         s.problems.append(str(e))
     changed = any(r["action"] in ("create", "update", "remove") for r in s.results) and not module.check_mode
+    for warning in s.warnings:
+        module.warn(warning)
     module.exit_json(changed=changed, results=s.results, problems=s.problems, api=api.base, fingerprints=s.out)
 
 

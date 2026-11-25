@@ -12,6 +12,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -72,7 +73,7 @@ class Rules(unittest.TestCase):
         self.assertIsNone(sp.windows_hosts({}, self.script(inventory())))
         vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
         # the inventory's own Variables, when neither the host nor a group sets it; a dotted name reads into a mapping
-        doc = {"all": {"vars": {"ansible_connection": "winrm"}, "hosts": ["a", "b"]}, "_meta": {"hostvars": {"b": {"ansible_connection": "ssh"}}}}
+        doc = {"all": {"vars": {"ansible_connection": "winrm"}, "hosts": ["a", "b"]}, "_meta": {"hostvars": {"a": {}, "b": {"ansible_connection": "ssh"}}}}
         self.assertEqual(sp.windows_hosts(vr, doc), {"a"})
         doc = {"all": {"hosts": ["a", "b"]}, "_meta": {"hostvars": {"a": {"config": {"guestId": "windows2019srv_64Guest"}},
                                                                     "b": {"config": {"guestId": "rhel9_64Guest"}}}}}
@@ -96,6 +97,33 @@ class Rules(unittest.TestCase):
         self.assertEqual(sp.action_os("playbooks/fapolicyd.yml", "Windows-ish name"), "")          # a job's playbook decides
         self.assertEqual(sp.action_os("", "Windows patch with a dry run first"), "windows")          # a workflow: its name
         self.assertEqual(sp.action_os("", "Patch with checks"), "")
+
+
+class NoPyYaml(unittest.TestCase):
+    """1.129.1 e2e: the stand-in AAP runs in python:3.12-slim (no PyYAML). Its inventory script read imported yaml, the handler died and
+    the portal's picker said 'Remote end closed connection without response'. The script must answer without PyYAML."""
+
+    def test_script_read_without_pyyaml(self):
+        keep = list(fake_aap.STATE["inventories"])
+        fake_aap.STATE["inventories"].append(inventory())
+        aap = fake_aap.serve(0, stop=True)
+        log = fake_aap.LOG
+        fake_aap.LOG = ""                                                   # another class may have left it in a removed temp dir
+        try:
+            with patch.dict(sys.modules, {"yaml": None}):
+                req = urllib.request.Request("http://127.0.0.1:%d%sinventories/%d/script/?hostvars=1&towervars=0" % (aap.server_address[1], fake_aap.BASE, INV),
+                                             headers={"Authorization": "Bearer " + fake_aap.TOKEN})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    doc = json.loads(r.read())
+                self.assertEqual(fake_aap.variables_dict("---\nansible_connection: winrm\n"), {"ansible_connection": "winrm"})
+            self.assertEqual(doc["_meta"]["hostvars"]["srv-app01.corp.example.mil"], {"ansible_connection": "winrm"})
+            self.assertEqual(doc["sql"]["vars"], {"ansible_connection": "psrp"})
+            self.assertIn("srv-db02.corp.example.mil", doc["sql"]["hosts"])
+        finally:
+            aap.shutdown()
+            aap.server_close()
+            fake_aap.LOG = log
+            fake_aap.STATE["inventories"][:] = keep
 
 
 class Live(unittest.TestCase):
@@ -137,6 +165,7 @@ class Live(unittest.TestCase):
         p = sp.Portal(sp.Config(env))
         p.aap.connect()
         p.refresh(force=True)
+        p.aap.inventory_listing(iid=INV)  # tests using a populated picker
         return p
 
     @classmethod
@@ -154,6 +183,53 @@ class Live(unittest.TestCase):
 
     def items(self, **kw):
         return self.portal.aap.inventory_items(kw.pop("q", ""), 200, iid=INV, **kw)
+
+    def test_builtin_checks_enabled_host_in_template_inventory(self):
+        a = self.portal.actions["disk_space_request"]
+        tid = 818
+        sent = dict(report_job="907", finding_id="disk_full:test")
+        enabled = {"prod-only": True, "disabled": False}
+
+        def route(method, path, body=None):
+            if path == "job_templates/%d/" % tid:
+                return 200, {"id": tid, "inventory": INV}
+            parts = urllib.parse.urlsplit(path)
+            query = urllib.parse.parse_qs(parts.query)
+            if parts.path == "inventories/%d/hosts/" % INV:
+                self.assertEqual(query.get("enabled"), ["true"])
+                host = query["name"][0]
+                rows = [{"name": host, "enabled": enabled[host]}] if host in enabled else []
+                return 200, {"count": len(rows), "results": rows}
+            if parts.path == "inventories/3/hosts/":
+                return 200, {"count": 1, "results": [{"name": "site-only", "enabled": True}]}
+            raise AssertionError(path)
+
+        with patch.object(self.portal, "state", return_value=(tid, "")), patch.object(self.portal.aap, "call", side_effect=route), \
+                patch.object(self.portal.aap, "inv_id", 3):
+            for host, allowed in (("site-only", False), ("disabled", False), ("prod-only", True)):
+                _, problems = self.portal.check("disk_space_request", dict(sent, target=host), a)
+                self.assertEqual("target" not in problems, allowed, host)
+
+    def test_inventory_move_during_live_check_refuses_launch(self):
+        a = self.act("Windows - schedule a restart")
+        template = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == a["tid"])
+        expand = self.portal.aap.expand_now
+
+        def move(*args):
+            checked = expand(*args)
+            template["inventory"] = INV + 1
+            return checked
+
+        try:
+            with patch.object(self.portal.aap, "expand_now", side_effect=move), patch.object(self.portal.aap, "call", wraps=self.portal.aap.call) as api:
+                code, out = self.launch(a, ["all_app"])
+                self.assertEqual(code, 409, out)
+                self.assertIn("this job changed in AAP - open it again", out["error"])
+                self.assertFalse(any(c.args[0] == "POST" for c in api.call_args_list))
+        finally:
+            template["inventory"] = INV
+            self.portal.aap.changed_templates.add(("job_templates", a["tid"]))
+            self.portal.refresh(force=True)
 
     def test_a_restart_is_a_windows_job_with_its_own_cap(self):
         a = self.act("Windows - schedule a restart")
@@ -271,14 +347,15 @@ class Live(unittest.TestCase):
     def test_k_a_failed_windows_read_refuses_the_launch(self):
         """1.129.0 (Codex): AAP not answering which hosts are Windows is never "no filter": the list says so, the launch is refused."""
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
-        p = self.make(self.env)
         inv["script_fail"] = True
         try:
+            p = self.make(self.env)
             r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
-            self.assertIn("could not be read just now", r["os_note"])
-            self.assertIn("could not check which hosts are Windows", p.aap.expand(["all_app"], INV, "windows")[1])
+            self.assertIn("could not be read just now", r["error"])
+            self.assertEqual(r["items"], [])
+            self.assertIsNone(p.aap.expand(["all_app"], INV, "windows")[0])
             self.assertIn("could not check which hosts are Windows", p.aap.expand_now(["all_app"], INV, "windows")[1])
-            self.assertEqual(len(p.aap.expand(["all_app"], INV)[0]), 3)              # a Linux job does not need it
+            self.assertIsNone(p.aap.expand(["all_app"], INV)[0])
         finally:
             inv.pop("script_fail")
 
@@ -304,20 +381,13 @@ class Live(unittest.TestCase):
             inv["groups"].pop("dept")
             inv["groups"].pop("pool")
 
-    def test_m_groups_past_the_read_limit(self):
-        """1.129.0 (Codex): past GROUPS_MAX a group keeps its name (drop-down, search) and its hosts are read when it is opened or picked."""
-        keep = sp.Aap.GROUPS_MAX
-        sp.Aap.GROUPS_MAX = 1
-        try:
-            p = self.make(self.env)
-            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", with_groups=True)
-            self.assertEqual(len(r["groups"]), 4)                                 # all_app read; linux, sql, windows_servers by name
-            self.assertIn({"name": "windows_servers", "count": None}, r["groups"])
-            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", group="sql")
-            self.assertEqual([i["name"] for i in r["items"]], ["srv-db02.corp.example.mil"])
-            self.assertEqual(p.aap.expand(["windows_servers"], INV, "windows"), (["srv-app02.corp.example.mil"], ""))
-        finally:
-            sp.Aap.GROUPS_MAX = keep
+    def test_m_search_reaches_groups_beyond_the_rows_shown(self):
+        from unittest import mock
+        with mock.patch.object(sp.Aap, "GROUPS_SHOWN", 1):
+            r = self.items(os_="windows", with_groups=True)
+            self.assertEqual(sum(row["kind"] == "group" for row in r["items"]), 1)
+            self.assertIn({"name": "windows_servers", "count": 1}, r["groups"])
+            self.assertEqual(self.items(q="windows_servers", os_="windows")["items"][0]["count"], 1)
 
     def test_n_a_capped_playbook_without_a_limit_prompt_is_not_offered(self):
         tid = fake_aap.add_template("job_templates", "Windows - cancel a scheduled restart", ["portal"], limit=False, inventory=INV)
@@ -369,7 +439,9 @@ class Live(unittest.TestCase):
         from unittest import mock
         for doc in ({}, {"all": {}}, {"_meta": {}}, {"_meta": {"hostvars": []}, "all": {}}, []):
             with mock.patch.object(self.portal.aap, "call", return_value=(200, doc)):
-                self.assertEqual(self.portal.aap.classify(INV), (None, "could not check which hosts are Windows just now - try again"), doc)
+                win, why = self.portal.aap.classify(INV)
+                self.assertIsNone(win, doc)
+                self.assertIn("try again", why)
 
     def test_r_group_priority_between_depth_and_name(self):
         """1.129.0 (Codex verify): siblings - a higher ansible_group_priority wins over a later name (Ansible's sort_groups)."""

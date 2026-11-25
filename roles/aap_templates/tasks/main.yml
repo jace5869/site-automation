@@ -110,6 +110,9 @@
     project: "{{ aap_templates_project }}"
     inventory: "{{ aap_templates_inventory }}"
     inventory_organization: "{{ aap_templates_inventory_organization }}"
+    inventory_windows: "{{ aap_templates_inventory_windows }}"
+    inventory_windows_organization: "{{ aap_templates_inventory_windows_organization }}"
+    portal_user: "{{ portal_setup_portal_user | default(aap_templates_portal_user) }}"
     ee: "{{ aap_templates_ee }}"
     credentials: "{{ aap_templates_credentials }}"
     only: "{{ aap_templates_only }}"
@@ -146,6 +149,9 @@
       {#- 1.79.19: not made with aap_templates_create_missing: false - counted in short only -#}
       {%- for r in _at.results if r.action != 'missing' -%}
       {%-   set _ = out.append(verb[r.action] ~ " - '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why and r.action not in ['create', 'fix'] else '')) -%}
+      {%-   if r.inventory_change | default('') -%}
+      {%-     set _ = out.append('    ' ~ r.inventory_change) -%}
+      {%-   endif -%}
       {%-   if r.also | default('') -%}
       {%-     set _ = out.append('    ' ~ r.also) -%}
       {%-   endif -%}

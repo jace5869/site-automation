@@ -165,6 +165,20 @@ class Read(unittest.TestCase):
                          [("Platform-Leads", 3, True), ("No-Such-Group", 0, False), ("a*)(cn=*", 0, False)])   # Jo, Deep and - round the loop - Alex
         self.assertIn("(cn=a\\2a\\29\\28cn=\\2a)", " ".join(f for _b, f in conn.searches))         # never a filter injection
 
+    def test_4b_domain_backslash_group_is_its_name(self):
+        """1.129.1: DOMAIN\\Group (as Windows writes it) is looked up as Group; a DN is kept as it is."""
+        self.assertEqual(G.account_name("CORP\\AAP-Approvers"), "AAP-Approvers")
+        self.assertEqual(G.account_name(" AAP-Approvers "), "AAP-Approvers")
+        self.assertEqual(G.short_name("CORP\\AAP-Approvers"), "AAP-Approvers")
+        self.assertEqual(G.account_name(dn("AAP-Approvers")), dn("AAP-Approvers").strip())
+        conn = FakeConn()
+        g = G.Groups({"approvers": ["CORP\\AAP-Approvers"]}, {"base": BASE}, opener=opener(conn))
+        g.refresh()
+        st = g.status("approvers")
+        self.assertEqual([(x["name"], x["found"]) for x in st["groups"]], [("AAP-Approvers", True)])
+        self.assertTrue(g.has("approvers", "APPROVER.ALEX.B.3456789012"))
+        self.assertNotIn("CORP", " ".join(f for _b, f in conn.searches))                          # the domain part is never searched
+
     def test_5_ad_down_fails_closed_and_comes_back(self):
         said = []
         g = G.Groups(WANT, {"base": BASE}, opener=opener(down=True), on_change=said.append)

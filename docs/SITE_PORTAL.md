@@ -431,9 +431,9 @@ The portal launches as one AAP account (step 100 makes it). Give it only this:
 |---|---|
 | Workflows 44, 45 and 40 (and every workflow of `workflows.yml` an action launches) | **Execute** |
 | Workflow 40 (its approval node) | **Approve** |
+| Inventory used by a published template | **Read**, if the account lacks it |
 
-Nothing else: no Admin, no other template, no inventory or credential roles. Step 102 (*Setting it up in AAP*) gives
-exactly these roles.
+Step 102 gives the workflow roles. Give the account inventory **Read** in AAP when setup reports a hidden card.
 
 ### AAP's setting for templates in extra variables
 
@@ -459,6 +459,11 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
 - **Upgrading from an older release.** When the managed fields still match their old fingerprint, Check says
   *would remove the old fingerprint text* and Run takes it off the description. A hand-edited object is left alone.
 - **Check first.** With Job type **Check** it only reads, and lists field by field what it would change.
+- **Hidden cards.** In Check and Run, **AAP - set up portal actions** warns for each `portal_publish_templates` match
+  whose inventory `portal_setup_portal_user` cannot read. **AAP - set up job templates** checks
+  `aap_templates_inventory_windows` once, using the same account. If that job's variables omit
+  `portal_setup_portal_user`, set `aap_templates_portal_user` to the portal's AAP username there.
+  Give the account **Read** on the named inventory in its owning organization. Both checks only report access.
 - **The gate.** A workflow with an approval gets the step *Workflow gate - has a plan* between its check and the
   approval. Only a check that handed on a plan reaches the approval; one that failed on an error ends there.
   [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670).
@@ -1268,8 +1273,9 @@ Windows - try again*); it never falls back to every host.
 it greyed out (*also a group's name - cannot be picked*), and the portal refuses it, and a group that holds it. Rename one in
 the inventory.
 
-**Many groups.** The portal reads the hosts of the first 400 groups with the list. Every other group keeps its name in the
-**Group** drop-down and the search, and its hosts are read when it is opened or picked.
+**Many groups.** The portal reads the enabled hosts and all group memberships in one AAP call. Group counts include
+hosts in child groups. While the first read runs, the Hosts picker shows *Reading the inventory (the first time can take
+a minute)...* and checks every three seconds for up to two minutes. Without scripts, refresh the form to see the list.
 
 **A playbook's own cap (1.129.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
 schedule a restart* and *Windows - cancel a scheduled restart* take `win_restart_max_hosts` (from the template's Variables when set

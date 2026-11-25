@@ -384,7 +384,7 @@ def check_values(action, sent, host_known=None, expand=None):
             if known is None:
                 why = "could not be looked up in AAP's inventory just now - try again"
             elif not known:
-                why = "is not a host of the portal's inventory"
+                why = "is not an enabled %shost of this job's inventory" % ("Windows " if action.get("os") == "windows" else "")
         if why:
             problems[vn] = why
         else:

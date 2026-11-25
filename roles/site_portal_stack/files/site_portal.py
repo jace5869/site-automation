@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -228,80 +229,163 @@ def _var_hits(value, globs):
     return value is not None and not isinstance(value, (dict, list)) and any(fnmatch.fnmatchcase(str(value).strip().lower(), g) for g in globs)
 
 
-def windows_hosts(win_rules, script):
-    """The Windows hosts of an inventory (a set), or None when there is no rule. script: the inventory as Ansible reads it
-    (AAP's inventories/<id>/script/?hostvars=1&all=1: {group: {hosts, children, vars}, _meta: {hostvars}}). A host is Windows
-    when a group it is in (or one above it) matches a name glob, or when a rule's variable matches its value as Ansible
-    would see it: the inventory's (all), then its groups as Ansible sorts them - by depth (a child over its parent), then
-    ansible_group_priority (higher wins), then name - then the host's own."""
-    if not win_rules:
-        return None
-    doc = script if isinstance(script, dict) else {}
-    hv = (doc.get("_meta") or {}).get("hostvars") or {}
-    groups, parents = {}, {}
-    for g, v in doc.items():
-        if g == "_meta":
+SCRIPT_MAX_HOSTS = 50_000
+SCRIPT_MAX_MEMBERSHIPS = 2_000_000
+
+
+def script_groups(doc):
+    """Normalize AAP's inventory script, including empty groups named only in children."""
+    meta = doc.get("_meta") if isinstance(doc, dict) else None
+    if not isinstance(meta, dict) or not isinstance(meta.get("hostvars"), dict) or "all" not in doc:
+        raise ValueError("inventory script is missing all or _meta.hostvars")
+    hostvars = meta["hostvars"]
+    if len(hostvars) > SCRIPT_MAX_HOSTS:
+        raise ValueError("inventory script exceeds the host limit (%d)" % SCRIPT_MAX_HOSTS)
+    if any(not isinstance(v, dict) for v in hostvars.values()):
+        raise ValueError("invalid host variables in inventory script")
+    groups, children = {}, set()
+    for name, group in doc.items():
+        if name == "_meta":
             continue
-        if isinstance(v, list):                     # the short form: group: [hosts]
-            v = {"hosts": v}
-        v = v if isinstance(v, dict) else {}
-        groups[g] = {"hosts": [str(h) for h in v.get("hosts") or []], "children": [str(c) for c in v.get("children") or []],
-                     "vars": v.get("vars") if isinstance(v.get("vars"), dict) else {}}
-    for g, v in groups.items():
-        for c in v["children"]:
-            parents.setdefault(c, set()).add(g)
-    depth = {}
+        if isinstance(group, list):
+            group = {"hosts": group}
+        if not isinstance(group, dict) or not isinstance(group.get("vars", {}), dict):
+            raise ValueError("invalid group in inventory script")
+        for key in ("hosts", "children"):
+            names = group.get(key, [])
+            if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+                raise ValueError("invalid group %s in inventory script" % key)
+        for host in group.get("hosts", ()):
+            if host not in hostvars:
+                raise ValueError("inventory script is missing _meta.hostvars for %.80r in group %.80r" % (host, name))
+        if "_meta" in group.get("children", []):
+            raise ValueError("invalid child group in inventory script")
+        children.update(group.get("children", []))
+        groups[name] = group
+    for child in children:
+        groups.setdefault(child, {})
+    return groups, hostvars
 
-    def dep(g, seen=()):
-        if g in depth:
-            return depth[g]
-        if g == "all" or g in seen:
-            return 0
-        ps = [p for p in parents.get(g, ()) if p in groups]
-        depth[g] = 1 + max([dep(p, seen + (g,)) for p in ps] or [0])
-        return depth[g]
-    member = {}
-    for g, v in groups.items():
-        for h in v["hosts"]:
-            member.setdefault(h, set()).add(g)
-    hosts = set(member) | set(hv)
 
-    def up(gs):
-        out, todo = set(), list(gs)
+def script_hierarchy(groups):
+    """Validate every child edge, including disconnected groups and edges to all."""
+    parents = collections.defaultdict(set)
+    for g, v in groups.items():
+        for child in v.get("children", ()):
+            parents[child].add(g)
+    remaining = {g: len(parents[g]) for g in groups}
+    todo = collections.deque(g for g in groups if not remaining[g])
+    depth = dict.fromkeys(groups, 0)
+    visited = 0
+    while todo:
+        g = todo.popleft()
+        visited += 1
+        for child in set(groups[g].get("children", ())):
+            remaining[child] -= 1
+            if g != "all":
+                depth[child] = max(depth[child], depth[g] + 1)
+            if not remaining[child]:
+                todo.append(child)
+    if visited != len(groups):
+        raise ValueError("inventory script contains a cycle in group children")
+    return parents, depth
+
+
+def membership_batches(groups, hv, parents):
+    """Hosts with the same direct groups share one ancestor traversal and one group order."""
+    direct = collections.defaultdict(list)
+    count = 0
+    for group, spec in groups.items():
+        if group == "all":
+            continue
+        hosts = set(spec.get("hosts", ()))
+        count += len(hosts)
+        if count > SCRIPT_MAX_MEMBERSHIPS:
+            raise ValueError("inventory script exceeds the membership limit (%d)" % SCRIPT_MAX_MEMBERSHIPS)
+        for h in hosts:
+            direct[h].append(group)
+    batches = collections.defaultdict(list)
+    for h in hv:
+        batches[tuple(direct.pop(h, ()))].append(h)
+    total = 0
+    for initial, hosts in batches.items():
+        ancestors, todo = set(initial), list(initial)
         while todo:
-            g = todo.pop()
-            if g in out:
-                continue
-            out.add(g)
-            todo.extend(parents.get(g, ()))
-        return out
-    def prio(g):
+            for parent in parents[todo.pop()]:
+                if parent != "all" and parent not in ancestors:
+                    ancestors.add(parent)
+                    todo.append(parent)
+        total += len(ancestors) * len(hosts)
+        if total > SCRIPT_MAX_MEMBERSHIPS:
+            raise ValueError("inventory script exceeds the membership limit (%d)" % SCRIPT_MAX_MEMBERSHIPS)
+        yield hosts, ancestors
+
+
+def _parse_script(win_rules, doc, limit=None):
+    groups, hv = script_groups(doc)
+    parents, depth = script_hierarchy(groups)
+    names = sorted((g for g in groups if g != "all"), key=str.lower)
+    grouped = {g: [] for g in names[:limit]} if limit is not None else {}
+    bad = set()
+    win = set() if win_rules else None
+    patterns = (win_rules or {}).get("groups", ())
+    named = {g for g in groups if any(fnmatch.fnmatchcase(g.lower(), p) for p in patterns)}
+
+    def order(g):
         try:
-            return int(((groups.get(g) or {}).get("vars") or {}).get("ansible_group_priority", 1))
+            priority = int(groups[g].get("vars", {}).get("ansible_group_priority", 1))
         except (TypeError, ValueError):
-            return 1
-    out = set()
-    globs = win_rules.get("groups") or []
-    for h in hosts:
-        gs = up(member.get(h, set())) - {"all"}
-        if any(fnmatch.fnmatchcase(g.lower(), p) for g in gs for p in globs):
-            out.add(h)
+            priority = 1
+        return depth[g], priority, g
+
+    for hosts, ancestors in membership_batches(groups, hv, parents):
+        for g in ancestors:
+            if g in grouped:
+                if len(grouped[g]) + len(hosts) > limit:
+                    bad.add(g)
+                    del grouped[g]
+                else:
+                    grouped[g].extend(hosts)
+        if not win_rules:
             continue
-        if not win_rules.get("vars"):
-            continue
-        eff = dict((groups.get("all") or {}).get("vars") or {})
-        for g in sorted(gs, key=lambda x: (dep(x), prio(x), x)):
-            eff.update((groups.get(g) or {}).get("vars") or {})
-        eff.update(hv.get(h) if isinstance(hv.get(h), dict) else {})
-        if any(_var_hits(_var_value(eff, k), vals) for k, vals in win_rules["vars"].items()):
-            out.add(h)
-    return out
+        if not ancestors.isdisjoint(named):
+            win.update(hosts)
+        elif win_rules.get("vars"):
+            inherited = dict(groups["all"].get("vars", {}))
+            for g in sorted(ancestors, key=order):
+                inherited.update(groups[g].get("vars", {}))
+            for h in hosts:
+                effective = dict(inherited, **hv[h])
+                if any(_var_hits(_var_value(effective, k), vals) for k, vals in win_rules["vars"].items()):
+                    win.add(h)
+
+    if limit is None:
+        return win
+    for rows in grouped.values():
+        rows.sort(key=str.lower)
+    hosts = sorted(hv, key=str.lower)
+    win_groups = {}
+    if win:
+        for g, rows in grouped.items():
+            matches = [h for h in rows if h in win]
+            if matches:
+                win_groups[g] = matches
+    return {"hosts": hosts[:limit], "groups": grouped, "bad": bad, "ambiguous": hv.keys() & names,
+            "truncated": len(hosts) > limit or len(names) > limit or bool(bad), "win": win, "win_groups": win_groups}
 
 
-def action_os(playbook, name):
-    """1.129.0: 'windows' for a Windows job (its playbook is playbooks/win_*.yml, or a workflow named Windows ...), else ''."""
+def windows_hosts(win_rules, doc):
+    return _parse_script(win_rules, doc)
+
+
+def script_listing(win_rules, doc, limit):
+    return _parse_script(win_rules, doc, limit)
+
+
+def action_os(playbook, name, windows_playbooks=()):
+    """Windows jobs use win_* or a playbook requiring machine_windows. Workflows use their name."""
     pb = os.path.basename(str(playbook or ""))
-    if pb.startswith("win_"):
+    if pb.startswith("win_") or playbook in windows_playbooks:
         return "windows"
     return "windows" if not pb and re.match(r"(?i)^windows\b", str(name or "").strip()) else ""
 
@@ -408,6 +492,7 @@ class Config(object):
         if self.motion not in ("auto", "always", "off"):
             self.motion = "auto"
         ar = g("PORTAL_AREA_RULES", "[]")
+        self.windows_playbooks = frozenset(names(g("PORTAL_WINDOWS_PLAYBOOKS", "[]")))
         pa = g("PORTAL_PLAYBOOK_AREAS", "{}")
         wa = g("PORTAL_WORKFLOW_AREAS", "{}")                   # a catalog workflow's area, by its name (a workflow has no playbook)
         try:                                                    # 1.78.4: where a found template without a label gets its area (the deploy checked them; here a wrong one is dropped)
@@ -755,9 +840,9 @@ class Aap(object):
         self.ids = {}                   # action name -> (id, why off)
         self.resolve_seen = {}          # 1.92.0: action name -> (when it was last looked up, whether AAP did not really answer)
         self.inv_id = None
-        self.hosts = {}                 # host name -> (known, when asked)
-        self.listings = {}              # 1.78.0: the inventories' hosts and groups (inventory_listing); "default" is portal_inventory, an id is another inventory (1.78.4)
-        self.listing_locks = {}
+        self.listings = {}              # inventory id -> last usable listing
+        self.listing_reads = set()
+        self.listing_failures = {}
         self.estimates = {}             # template id -> (tasks of its last good run, when asked)
         self.listing_lock = threading.Lock()
         self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead, monotonic due time)
@@ -1097,7 +1182,7 @@ class Aap(object):
             "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area, "area_from": area_from,
             "described": lines,
             "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
-            "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "limit_inv_name": "", "who": None, "discovered": True, "tid": tid, "started_by": named,
+            "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "template_inventory": r.get("inventory"), "limit_inv_name": "", "who": None, "discovered": True, "tid": tid, "started_by": named,
             "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
                              and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
             "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
@@ -1105,7 +1190,7 @@ class Aap(object):
             # a job template that asks its Job type at launch (Prompt on launch): the Run dialog offers Check and Run
             "job_type": {"ask": typ == "job" and bool(r.get("ask_job_type_on_launch")), "default": "check" if str(r.get("job_type")) == "check" else "run"},
             # 1.129.0: a Windows job's picker lists Windows hosts only; a playbook with its own cap of hosts (portal_limit_max_playbooks)
-            "os": action_os(r.get("playbook") if typ == "job" else "", tname), "cap": own_cap}
+            "os": action_os(r.get("playbook") if typ == "job" else "", tname, cfg.windows_playbooks), "cap": own_cap}
         return TemplateRead(action=action, inventory=limit_inv, steps=steps)
 
     def _playbook_cap(self, r):
@@ -1258,34 +1343,37 @@ class Aap(object):
             out["no_execute"] += [str(r.get("name") or "") for r in rows if (kind, int(r.get("id") or 0)) not in have]
         out["no_execute"].sort(key=str.lower)
 
-    def host_known(self, name):
-        """True / False, or None when AAP could not be asked. Kept 5 minutes."""
-        t = time.time()
-        with self.lock:
-            hit = self.hosts.get(name)
-            if hit and t - hit[1] < 300:
-                return hit[0]
-        if self.inv_id is None:
-            code, data = self.call("GET", "inventories/?name=%s" % urllib.parse.quote(self.cfg.inventory))
-            rows = [r for r in (data.get("results") or []) if r.get("name") == self.cfg.inventory] if code == 200 else []
-            if len(rows) != 1:
-                return None
-            self.inv_id = int(rows[0]["id"])
-        code, data = self.call("GET", "inventories/%d/hosts/?name=%s" % (self.inv_id, urllib.parse.quote(name)))
-        if code != 200:
+    def host_known(self, name, iid=None):
+        """True or False for a complete enabled-host lookup, None for an unreadable answer."""
+        iid = self._inventory_id() if iid is None else iid
+        if iid is None:
             return None
-        known = any(r.get("name") == name for r in (data.get("results") or []))
-        with self.lock:
-            self.hosts[name] = (known, t)
-        return known
+        path = "inventories/%d/hosts/?name=%s&enabled=true&page_size=2" % (iid, urllib.parse.quote(name))
+        rows, why = self._paged(path, 1)
+        if why or len(rows) > 1:
+            return None
+        if not rows:
+            return False
+        row = rows[0]
+        if not isinstance(row, dict) or row.get("name") != name or not isinstance(row.get("enabled", True), bool):
+            return None
+        return row.get("enabled", True)
+
+    def _lookup_inventory_id(self):
+        code, data = self.call("GET", "inventories/?name=%s" % urllib.parse.quote(self.cfg.inventory))
+        if code != 200:
+            raise ValueError("HTTP %s" % code if code > 0 else site_aap.error_text(data))
+        rows = [r for r in data.get("results") or [] if r.get("name") == self.cfg.inventory]
+        if len(rows) != 1:
+            raise ValueError("configured inventory name matched %d inventories" % len(rows))
+        return int(rows[0]["id"])
 
     def _inventory_id(self):
         if self.inv_id is None:
-            code, data = self.call("GET", "inventories/?name=%s" % urllib.parse.quote(self.cfg.inventory))
-            rows = [r for r in (data.get("results") or []) if r.get("name") == self.cfg.inventory] if code == 200 else []
-            if len(rows) != 1:
+            try:
+                self.inv_id = self._lookup_inventory_id()
+            except ValueError:
                 return None
-            self.inv_id = int(rows[0]["id"])
         return self.inv_id
 
     def last_info(self, tids):
@@ -1347,145 +1435,122 @@ class Aap(object):
         return n
 
     # ---- 1.78.0: the inventory's hosts and groups, read once and kept with the discovery cache (the picker's list, and what every pick is checked against)
-    GROUPS_MAX = 400
     HOST_PAGES_MAX = 100
 
     @property
     def listing(self):
-        return self.listings.get("default")
+        return self.listings.get(self.inv_id)
 
     @listing.setter
     def listing(self, v):
-        self.listings["default"] = v
+        self.listings[self.inv_id] = v
 
-    def _lkey(self, iid):
-        """The slot of an inventory's listing: "default" for portal_inventory (also when its id is given), else the id."""
-        if iid is None:
-            return "default"
-        return "default" if self.cfg.inventory and self._inventory_id() == iid else int(iid)
+    LISTING_TIMEOUT = 120
+
+    def _read_script(self, iid, parse, *args):
+        # Omitting "all" makes AWX filter enabled hosts in both hostvars and group membership.
+        code, doc = self.call("GET", "inventories/%d/script/?hostvars=1&towervars=0" % iid)
+        if code != 200:
+            raise ValueError("HTTP %s" % code if code > 0 else site_aap.error_text(doc))
+        return parse(self.cfg.windows_from, doc, *args)
 
     def inventory_listing(self, force=False, iid=None):
-        """{'hosts': [names], 'groups': {name: [member hosts]}, 'truncated': bool} of portal_inventory (iid None) or of the inventory iid, kept
-        portal_discover_seconds - or None when it was never read. A failed read keeps the last good one. One listing, one lock, one set of
-        keep and back-off rules for each inventory (1.78.4)."""
+        """Read the listing for a pick check or an explicit refresh."""
+        return self._listing(iid, force, background=False)[0]
+
+    def _listing(self, iid, force=False, background=True, deadline=None):
+        """Return (last good listing, reading). Picker requests never wait for AAP."""
         if iid is None and not self.cfg.inventory:
-            return None
-        key = self._lkey(iid)
-        t = time.time()
-        with self.lock:
+            return None, False
+        key = self.inv_id if iid is None else int(iid)
+        with self.listing_lock:
             hit = self.listings.get(key)
-            lock = self.listing_locks.setdefault(key, threading.Lock())
-            if hit and not force and (t - hit["at"] < self.cfg.discover_seconds or t < hit.get("retry", 0)):
-                return hit
-        if not lock.acquire(blocking=False):
-            return self.listings.get(key)                       # someone is reading it: this one uses what there is
+            if key in self.listing_reads:
+                return hit, True
+            fresh_until = hit["at"] + self.cfg.discover_seconds if hit else 0
+            due = self.listing_failures.get(key, (0, fresh_until, ""))[1]
+            if not force and time.time() < due:
+                return hit, False
+            self.listing_reads.add(key)
+        if background:
+            try:
+                deadline = site_aap.ReadDeadline(self.LISTING_TIMEOUT)
+                threading.Thread(target=self._read_listing, args=(key, force, deadline), daemon=True).start()
+            except RuntimeError as exc:
+                return self._finish_listing(key, None, str(exc)), False
+            return hit, True
+        return self._read_listing(key, force, deadline)
+
+    def _read_listing(self, key, force, deadline):
+        started = time.monotonic()
         try:
-            if iid is None or key == "default":
-                iid = self._inventory_id()
-            if iid is None:
-                return self.listings.get(key)
-            rows, why, tr = self._paged_t("inventories/%d/hosts/?enabled=true&order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
-            if why and not self._capped(why) and self._keep_listing(key):  # a failed read: the last whole listing stays (for a while)
-                return self.listings.get(key)
-            if why and not rows and self.listings.get(key):                 # nothing could be read: an old listing still serves the picker (never a check)
-                with self.lock:
-                    cur = self.listings[key]
-                    cur["fails"] = cur.get("fails", 0) + 1
-                    cur["retry"] = time.time() + backoff(cur["fails"], self.cfg.discover_seconds)
-                return self.listings.get(key)
-            hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name") and r.get("enabled", True) is not False), key=str.lower)
-            grows, gwhy, gtr = self._paged_t("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
-            if gwhy and not self._capped(gwhy) and self._keep_listing(key):
-                return self.listings.get(key)
-            groups, trunc, bad = {}, bool(why or gwhy), set()
-            for g in grows[:self.GROUPS_MAX]:
-                mem, w, wtr = self._paged_t("groups/%d/all_hosts/?enabled=true&page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
-                if w:                                           # a group read in part is no group: never counted short, never launched
-                    if not self._capped(w) and self._keep_listing(key):
-                        return self.listings.get(key)
-                    bad.add(str(g.get("name")))
-                    continue
-                groups[str(g.get("name"))] = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
-            # 1.129.0: a group past GROUPS_MAX keeps its name (the list, the drop-down, the search); its hosts are read when it is
-            # picked or opened (_members)
-            lazy = dict((str(g.get("name")), int(g["id"])) for g in grows[self.GROUPS_MAX:] if g.get("name"))
-            trunc = trunc or bool(bad)
-            got = {"hosts": hosts, "groups": groups, "bad": bad, "lazy": lazy, "truncated": trunc, "at": time.time(),
-                   "gids": dict((str(g.get("name")), int(g["id"])) for g in grows)}
-            got["win"], got["win_error"] = self.classify(iid)                     # 1.129.0: None = no rule, or not read (win_error)
-            if got["win"]:                                                           # each group by its Windows hosts, once per read
-                got["win_groups"] = dict((g, [h for h in m if h in got["win"]]) for g, m in groups.items())
-                got["win_groups"] = dict((g, m) for g, m in got["win_groups"].items() if m)
-            with self.lock:
+            if key is None:
+                # Claim the numeric slot only after the name lookup succeeds, within the same deadline.
+                iid = deadline.run(self._lookup_inventory_id) if deadline else self._lookup_inventory_id()
+                with self.listing_lock:
+                    self.inv_id = iid
+                    self.listing_reads.remove(None)
+                    self.listing_failures.pop(None, None)
+            else:
+                args = key, script_listing, 200 * self.HOST_PAGES_MAX
+                got = deadline.run(self._read_script, *args) if deadline else self._read_script(*args)
+        except Exception as exc:
+            reason = " ".join(str(exc).splitlines())[:240] or type(exc).__name__
+            logging.getLogger(__name__).info("inventory id=%s duration=%.3fs outcome=%s", key, time.monotonic() - started, reason)
+            return self._finish_listing(key, None, reason), False
+        if key is None:
+            return self._listing(iid, force, background=False, deadline=deadline)
+        logging.getLogger(__name__).info("inventory id=%s duration=%.3fs outcome=ok", key, time.monotonic() - started)
+        return self._finish_listing(key, got, ""), False
+
+    def _finish_listing(self, key, got, reason):
+        with self.listing_lock:
+            if got is None:
+                fails = self.listing_failures.get(key, (0, 0, ""))[0] + 1
+                retry = time.time() + backoff(fails, self.cfg.discover_seconds)
+                self.listing_failures[key] = fails, retry, reason
+                if self.listings.get(key):
+                    self.listings[key].update(fails=fails, retry=retry, reason=reason)
+            else:
+                got["at"] = time.time()
                 self.listings[key] = got
-            return got
-        finally:
-            lock.release()
+                self.listing_failures.pop(key, None)
+            self.listing_reads.remove(key)
+            return self.listings.get(key)
 
     def classify(self, iid):
-        """1.129.0: the Windows hosts of an inventory by portal_windows_hosts_from, read now -> (set, '') or (None, '') when the setting is
-        empty, or (None, why) when AAP did not answer: never taken for "no filter". One call: the inventory as Ansible reads it
-        (inventories/<id>/script/), so the variables follow Ansible's order (all, parent groups, child groups, the host)."""
+        """Check the live inventory again for a Windows launch."""
         if not self.cfg.windows_from:
             return None, ""
-        code, doc = self.call("GET", "inventories/%d/script/?hostvars=1&towervars=0&all=1" % int(iid))
-        meta = doc.get("_meta") if isinstance(doc, dict) else None
-        if code != 200 or not isinstance(meta, dict) or not isinstance(meta.get("hostvars"), dict) or not isinstance(doc.get("all"), (dict, list)):
-            return None, "could not check which hosts are Windows just now - try again"          # an empty or odd answer too
-        return windows_hosts(self.cfg.windows_from, doc), ""
+        try:
+            return self._read_script(iid, windows_hosts), ""
+        except Exception as exc:
+            logging.getLogger(__name__).info("inventory id=%s classification failed: %s", iid, exc)
+            return None, "could not check which hosts are Windows just now (%s) - try again" % exc
 
     def listing_max_age(self):
-        """How old a listing may be to stand for the inventory - kept through failed reads, and used to check a pick: one value for both."""
+        """Maximum age for using a successful listing in host search or a pick check."""
         return max(300, KEEP_WHOLE * self.cfg.discover_seconds)
-
-    @staticmethod
-    def _capped(why):
-        """The read stopped at the page limit: it will stop there again, so a whole listing is not waited for."""
-        return "more than" in str(why) and "pages" in str(why)
-
-    def _keep_listing(self, key="default"):
-        """A read of the inventory failed: when a whole listing is kept it stays (asked again in a little while); True then. With none, the
-        part that was read serves, said to be a part (truncated)."""
-        with self.lock:
-            hit = self.listings.get(key)
-            if hit and not hit.get("truncated") and time.time() - hit["at"] < self.listing_max_age():
-                hit["fails"] = hit.get("fails", 0) + 1                  # asked again later each time: 15 s, 30, 60 ... up to portal_discover_seconds
-                hit["retry"] = time.time() + backoff(hit["fails"], self.cfg.discover_seconds)
-                return True
-        return False                                    # none, a part, or one too old to stand for the inventory: the new read serves
 
     NO_WINDOWS = ("stands for no Windows host: no host matches the Windows rule (portal_windows_hosts_from) - set it to your "
                   "inventory's Windows group or variable")
     AMBIGUOUS = "is both a host's and a group's name in the inventory - a Limit cannot tell them apart: rename one, or pick the hosts another way"
 
-    def _members(self, inv, name):
-        """A group's hosts from a listing - 1.129.0: a group past GROUPS_MAX (inv['lazy']) is read now, on demand, and kept with the listing."""
-        if name in inv["groups"]:
-            return inv["groups"][name]
-        gid = (inv.get("lazy") or {}).get(name)
-        if gid is None:
-            return None
-        mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=200" % gid, self.HOST_PAGES_MAX)
-        if w:
-            return False
-        got = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
-        inv["groups"][name] = got
-        if inv.get("win"):
-            inv.setdefault("win_groups", {})[name] = [h for h in got if h in inv["win"]]
-        return got
+    @staticmethod
+    def _members(inv, name):
+        return inv["groups"].get(name)
 
     def expand(self, items, iid=None, os_=""):
         """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
         portal_inventory (or of the inventory iid, 1.78.4): a free-typed name is refused. 1.129.0: os_ windows - a group stands for its
         Windows hosts only, and a host must be one (when portal_windows_hosts_from finds any in the inventory); a name that is a host's
         and a group's is refused."""
-        inv = self.inventory_listing(iid=iid)
+        inv, reading = self._listing(iid, background=False)
         if inv is None:
             return None, "could not be looked up in AAP's inventory just now - try again"
-        if time.time() - inv["at"] > self.listing_max_age():                       # an old read serves the list, never a check
-            return None, "could not be checked against the inventory just now - try again"
-        if os_ == "windows" and inv.get("win_error"):
-            return None, inv["win_error"]
+        if reading or inv.get("fails") or time.time() - inv["at"] > self.listing_max_age():
+            detail = " (%s)" % inv["reason"] if inv.get("reason") else ""
+            return None, "could not be checked against the inventory just now%s - try again" % detail
         hostset, out, seen = set(inv["hosts"]), [], set()
         win = inv.get("win") if os_ == "windows" else None          # None only when portal_windows_hosts_from is {}
         if win is not None and not win:
@@ -1494,20 +1559,20 @@ class Aap(object):
             if name in inv.get("bad", ()):
                 return None, "is a group whose hosts could not be read completely just now - pick its hosts, or try again"
             members = self._members(inv, name)
-            if members is False:
-                return None, "is a group whose hosts could not be read just now - try again"
-            if members is not None and name in hostset:
+            if name in inv.get("ambiguous", ()):
                 return None, self.AMBIGUOUS
             if members is None and name in hostset:
                 if win is not None and name not in win:
                     return None, "is not a Windows host (portal_windows_hosts_from)"
                 members = [name]
             if members is None:
+                if inv.get("truncated"):
+                    return None, "could not be checked in the incomplete host list - try again"
                 return None, "is not a host or a group of the portal's inventory"
             if win is not None:
                 members = [h for h in members if h in win]
             for h in members:
-                if not rules.host_usable(h) or h in inv["groups"] or h in (inv.get("lazy") or {}):
+                if not rules.host_usable(h) or h in inv["groups"] or h in inv.get("ambiguous", ()):
                     return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
                 if h not in seen:
                     seen.add(h)
@@ -1532,34 +1597,26 @@ class Aap(object):
         grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
         if gwhy:
             return None, "could not be looked up in the inventory just now - try again"
-        gids = dict((str(g.get("name")), int(g["id"])) for g in grows)
+        if any(not isinstance(g, dict) or not isinstance(g.get("name"), str) or not g["name"] or type(g.get("id")) is not int for g in grows):
+            return None, "could not read the inventory groups just now - try again"
+        gids = {g["name"]: g["id"] for g in grows}
         out, seen = [], set()
 
-        def host_there(name):
-            code, data = self.call("GET", "inventories/%d/hosts/?name=%s&enabled=true&page_size=2" % (iid, urllib.parse.quote(name)))
-            if code == 404:
-                return False
-            if code != 200:
-                return None
-            return any(r.get("name") == name and r.get("enabled", True) is not False for r in (data.get("results") or []))
         for name in items:
             gid = gids.get(name)
+            there = self.host_known(name, iid)
+            if there is None:
+                return None, "could not be looked up in the inventory just now - try again"
             if gid is not None:
-                there = host_there(name)
-                if there is None:
-                    return None, "could not be looked up in the inventory just now - try again"
                 if there:
                     return None, self.AMBIGUOUS
-                mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=200" % gid, self.HOST_PAGES_MAX)
-                if w:
+                mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=20" % gid, self.HOST_PAGES_MAX)
+                if w or any(not isinstance(m, dict) or not isinstance(m.get("name"), str) or not m["name"] for m in mem):
                     return None, "is a group whose hosts could not be read just now - try again"
-                members = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
+                members = sorted({m["name"] for m in mem if m.get("enabled", True) is True}, key=str.lower)
                 if win is not None:
                     members = [h for h in members if h in win]
             else:
-                there = host_there(name)
-                if there is None:
-                    return None, "could not be looked up in the inventory just now - try again"
                 if not there:
                     return None, "is not a host or a group of the portal's inventory"
                 if win is not None and name not in win:
@@ -1593,41 +1650,42 @@ class Aap(object):
 
     GROUP_LIST_MAX = 5000          # 1.129.0: the picker's group drop-down lists this many groups at most (by name)
     GROUPS_SHOWN = 50              # 1.129.0: the groups the list itself shows at most (the hosts follow them)
-    LAZY_READ = 10                 # 1.129.0: groups past GROUPS_MAX read on demand for one answer of the list, at most
 
     def inventory_items(self, text="", limit=200, iid=None, os_="", group="", with_groups=False):
-        """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}.
-        1.129.0: os_ windows - only the Windows hosts (portal_windows_hosts_from), a group counted by them, one with none left out; group -
-        only the hosts of that group (to pick some of them); with_groups - also groups: [{name, count}] for the group drop-down (count
-        None: a group past GROUPS_MAX not read yet). A name that is a host's and a group's is ambiguous: listed, never pickable."""
-        inv = self.inventory_listing(iid=iid)
+        """Picker rows and counts, optionally restricted to Windows hosts or one group."""
+        inv, reading = self._listing(iid)
         if inv is None:
-            return {"items": [], "matches": 0, "total": 0, "error": "The inventory could not be read just now."}
+            out = {"items": [], "matches": 0, "total": 0}
+            if reading:
+                out["reading"] = True
+            else:
+                key = self.inv_id if iid is None else int(iid)
+                reason = self.listing_failures.get(key, (0, 0, ""))[2]
+                out["error"] = "The inventory could not be read just now%s - try again." % (" (%s)" % reason if reason else "")
+            return out
+        status = {}
+        if reading:
+            status.update(reading=True, stale=True)
+        elif inv.get("fails"):
+            status["stale"] = "Host list from %s, refresh failed (%s)." % (time.strftime("%H:%M", time.localtime(inv["at"])), inv["reason"])
+            status["error"] = "Inventory refresh failed (%s) - try again." % inv["reason"]
         t = str(text or "").strip().lower()[:64]
         win = inv.get("win") if os_ == "windows" else None
         note = ""
-        if os_ == "windows" and inv.get("win_error"):           # never every host instead: nothing to pick until it can be read
-            return {"items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
-                    "os_note": "Which hosts are Windows could not be read just now - try again in a minute."}
         if os_ == "windows" and win is None:
             note = "The Windows filter is off (portal_windows_hosts_from: {}): every host is listed. The job skips hosts that are not Windows."
         elif os_ == "windows" and not win:          # 1.129.0: a rule that matches nothing lists nothing (never every host)
-            return {"items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
+            return {**status, "items": [], "matches": 0, "total": 0, "os": "windows", "groups": [], "groups_more": 0, "hosts": 0, "groups_n": 0,
                     "os_note": "No host matches the Windows rule (portal_windows_hosts_from) - set it to your inventory's Windows group or variable."}
-        lazy = inv.get("lazy") or {}
         grp = str(group or "")[:200]
-        if grp and grp in lazy:
-            self._members(inv, grp)
-        if t:                                           # a search: a few groups past GROUPS_MAX that match are read now
-            for g in [g for g in lazy if t in g.lower() and g not in inv["groups"]][:self.LAZY_READ]:
-                self._members(inv, g)
         hosts = inv["hosts"] if win is None else [h for h in inv["hosts"] if h in win]
         groups = inv["groups"] if win is None else (inv.get("win_groups") or {})
-        unread = [g for g in lazy if g not in inv["groups"]]
-        both = set(inv["hosts"]) & (set(inv["groups"]) | set(lazy))
+        both = inv.get("ambiguous", ())
         if grp:
             if grp not in groups:
-                return {"items": [], "matches": 0, "total": 0, "error": "There is no group %s in this inventory%s." % (grp, " with Windows hosts" if win else "")}
+                if not status:
+                    status["error"] = "There is no group %s in this inventory%s." % (grp, " with Windows hosts" if win else "")
+                return {"items": [], "matches": 0, "total": 0, **status}
             rows = [(h, "host", 1) for h in groups[grp]]
         else:
             rows = [(h, "host", 1) for h in hosts] + [(g, "group", len(m)) for g, m in groups.items()]
@@ -1647,27 +1705,26 @@ class Aap(object):
         if grp:
             out["group"] = {"name": grp, "count": len(groups[grp]), "ambiguous": grp in both}
         if with_groups:
-            gl = sorted([(g, len(m)) for g, m in groups.items()] + [(g, None) for g in unread], key=lambda x: x[0].lower())
+            gl = sorted([(g, len(m)) for g, m in groups.items()], key=lambda x: x[0].lower())
             out["groups"] = [{"name": g, "count": c} for g, c in gl[:self.GROUP_LIST_MAX]]
             out["groups_more"] = max(0, len(gl) - self.GROUP_LIST_MAX)
         if os_ == "windows":
             out["os"] = "windows" if win is not None else ""
             if note:
                 out["os_note"] = note
-        if inv.get("fails"):                                    # reads are failing: what is shown is the last one, and says when it is from
-            out["stale"] = "Host list from %s, AAP not answering." % time.strftime("%H:%M", time.localtime(inv["at"]))
+        out.update(status)
         return out
 
     def host_search(self, text, limit=8):
-        """Host names of portal_inventory that contain text (the typeahead): [] when AAP cannot be asked or the text is too short."""
+        """Return matching host names from the configured inventory's script listing."""
         text = str(text or "").strip()
         if len(text) < 2 or not re.match(r"^[A-Za-z0-9._-]{2,64}$", text) or not self.cfg.inventory:
             return []
-        iid = self._inventory_id()
-        if iid is None:
+        inv, reading = self._listing(None, background=False)
+        if inv is None or reading or inv.get("fails") or time.time() - inv["at"] > self.listing_max_age():
             return []
-        code, data = self.call("GET", "inventories/%d/hosts/?name__icontains=%s&order_by=name&page_size=%d" % (iid, urllib.parse.quote(text), limit))
-        return [str(r.get("name")) for r in (data.get("results") or [])][:limit] if code == 200 else []
+        needle = text.lower()
+        return list(islice((name for name in inv["hosts"] if needle in name.lower()), limit))
 
     # ---- 1.75.3: the findings of the report jobs ----------------------------------------------------------------------
     @staticmethod
@@ -2417,9 +2474,8 @@ class Portal(object):
                 except OSError:
                     self.catalog_file = None
                     return
-            # 1.129.0: schema 4 - a playbook's own cap and the Windows rule are part of the saved forms (a tightened cap never
-            # comes back from an older catalog)
-            scope = [4, cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
+            # The saved forms depend on the catalog's Windows playbooks and the picker rules.
+            scope = [5, sorted(cfg.windows_playbooks), cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.workflow_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
@@ -2662,12 +2718,40 @@ class Portal(object):
                 mine.remove(t)
 
     # -- an action
+    def _action_inventory(self, name, a):
+        """Bind a built-in action to the AAP template and inventory for this request."""
+        if a.get("discovered") or "limit_inv" in a or not any(v["kind"] in ("hosts", "inventory_host") for v in a["vars"].values()):
+            return a, ""
+        tid, off = self.state(name, a)
+        if off or not tid:
+            return a, off or "template not found in AAP"
+        kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+        code, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
+        iid = row.get("inventory") if code == 200 and isinstance(row, dict) else None
+        if kind == "workflow_job_templates" and code == 200 and isinstance(row, dict) and iid is None:
+            iid = self.aap._inventory_id()         # a built-in workflow keeps its inventory on its steps: portal_inventory, as in 1.129.0
+        if type(iid) is not int or iid <= 0:
+            return a, "could not check this template's inventory in AAP - try again"
+        os_ = action_os(row.get("playbook") if kind == "job_templates" else "", a["aap"]["name"], self.cfg.windows_playbooks)
+        inv_name = ((row.get("summary_fields") or {}).get("inventory") or {}).get("name") or "ID %d" % iid
+        return dict(a, tid=tid, limit_inv=iid, limit_inv_name=inv_name, template_inventory=iid, os=os_), ""
+
     def check(self, name, sent, a=None):
-        a = a or self.actions[name]
-        inv = a.get("limit_inv")                        # 1.78.4: a found template's Limit is checked against its own inventory
-        os_ = a.get("os") or ""                         # 1.129.0: a Windows job's group stands for its Windows hosts
-        expand = (lambda items: self.aap.expand(items, inv, os_)) if inv else ((lambda items: self.aap.expand(items, None, os_)) if self.cfg.inventory else None)
-        return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, expand)
+        a, why = self._action_inventory(name, a or self.actions[name])
+        if why:
+            return {}, {a.get("limit_from") or "": why}
+        inv = a.get("limit_inv")
+        os_ = a.get("os") or ""
+
+        def known(host):
+            there = self.aap.host_known(host, inv)
+            if there and os_ == "windows" and self.cfg.windows_from:
+                win, error = self.aap.classify(inv)
+                return None if error else host in win
+            return there
+
+        expand = (lambda items: self.aap.expand(items, inv, os_)) if inv or self.cfg.inventory else None
+        return rules.check_values(a, sent, known if inv or self.cfg.inventory else None, expand)
 
     def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None):
         """-> (HTTP code, answer). sig: the fingerprint of the template the form was drawn from (a found template): a different one is not started."""
@@ -2705,6 +2789,10 @@ class Portal(object):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name,
                               "why": "Expand: Job type %s, the template's %s" % (job_type or "not given", "asked" if info.get("ask") else "fixed to " + str(info.get("default") or "run"))})
                 return 409, {"error": "Not started: " + CHECK_GONE + "."}
+        a, why = self._action_inventory(name, a)
+        if why:
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": why})
+            return 503, {"error": "Not started: %s." % why}
         values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
@@ -2800,17 +2888,21 @@ class Portal(object):
             return "its approval mark changed"
         return ""
 
+    def _changed_template(self, cn, ip, name, a, why):
+        self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed: " + why})
+        if a.get("discovered"):
+            kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+            with self.aap.lock:
+                self.aap.changed_templates.add((kind, a["tid"]))
+            self.refresh(force=True)
+        detail = "" if why == "changed" else " (%s)" % why
+        return 409, {"error": "Not started: this job changed in AAP%s - open it again from the Actions page." % detail}
+
     def _start(self, cn, ip, name, a, values, job_type=None):
         if a.get("discovered"):
             why = self.same_template(a)
             if why:
-                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed: " + why})
-                kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
-                with self.aap.lock:
-                    self.aap.changed_templates.add((kind, a["tid"]))
-                self.refresh(force=True)                # the cards follow what AAP has now
-                return 409, {"error": "Not started: this job changed in AAP (%s) - open it again from the Actions page." % why
-                             if why != "changed" else "Not started: this job changed in AAP - open it again from the Actions page."}
+                return self._changed_template(cn, ip, name, a, why)
         tid, off = self.state(name, a)
         if tid is None or off:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "off: " + (off or "")})
@@ -2835,6 +2927,18 @@ class Portal(object):
             body["job_type"] = job_type
         shown_values = rules.mask(a, values)
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+        if "template_inventory" in a:
+            raw_inventory = a["template_inventory"]
+            # Workflow steps may supply the checked Limit inventory even when the workflow has none.
+            if kind == "workflow_job_templates" and a.get("discovered") and a.get("limit_inv"):
+                effective, _, _ = self.aap.workflow_inventory(tid, {"inventory": raw_inventory})
+                if effective != a["limit_inv"]:
+                    return self._changed_template(cn, ip, name, a, "changed")
+            status, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
+            if status != 200 or not isinstance(row, dict) or "inventory" not in row:
+                return self._changed_template(cn, ip, name, a, "its inventory could not be read")
+            if tid != a["tid"] or row["inventory"] != raw_inventory:
+                return self._changed_template(cn, ip, name, a, "changed")
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
         if code not in (200, 201):
             self.log.add({"event": "launch_failed", "user": cn, "ip": ip, "action": name, "values": shown_values,
@@ -4009,8 +4113,10 @@ def action_page(cfg, portal, cn, name, query, embed=False):
             if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
     allowed = rules.may_run(a, cn, cfg.requesters)
     fresh = bool(a.get("discovered")) and not sent               # a form opened empty: no "is required" before the person typed
-    values, problems = portal.check(name, sent, a) if allowed and not fresh else ({}, {})
+    a, inventory_error = portal._action_inventory(name, a) if allowed else (a, "")
+    values, problems = portal.check(name, sent, a) if allowed and not fresh and not inventory_error else ({}, {})
     _, off = portal.state(name, a) if allowed else (None, "")
+    off = off or inventory_error
     fields = []
     for vn, var in a["vars"].items():
         if vn == REQUIRE_CHECK_VAR:                 # the portal's own (Expand's Check): never shown, never typed
@@ -4038,7 +4144,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
         elif var["kind"] == "hosts":
             ctl = picker_html(portal, vn, v if isinstance(v, list) else parse_hosts(v), int(var.get("max") or portal.cfg.action_max_hosts), "l-" + vn, pid if p else "",
                               var.get("setting") or ("portal_limit_max" if a.get("discovered") else "portal_action_max_hosts"), a.get("limit_inv"), a.get("limit_inv_name", ""),
-                              allowed, a.get("os") or "")
+                              allowed and not inventory_error, a.get("os") or "", name if not a.get("discovered") else "")
         elif var["kind"] == "text" and var.get("multiline"):
             ctl = '<textarea id="f-%s" name="%s" rows="6" maxlength="%d"%s>%s</textarea>' % (esc(vn), esc(vn), var["max"], dby, esc(v))
         elif var["kind"] == "choice":
@@ -4100,7 +4206,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
 PICK_SHOWN = 200                                    # the list shows this many matches; "N more - type to narrow" for the rest
 
 
-def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts", inv=None, inv_name="", allowed=True, os_=""):
+def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts", inv=None, inv_name="", allowed=True, os_="", action=""):
     """1.78.0: the one host picker - a searchable list of portal_inventory's hosts and groups, to tick one or many. Without scripts it is
     this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list.
     1.129.0: groups and hosts in two parts of the list (optgroups); os_ windows - a Windows job's: Windows hosts only (portal_windows_hosts_from),
@@ -4114,8 +4220,9 @@ def picker_html(portal, field, selected, cap, label_id="", described="", setting
         if i.get("ambiguous"):                  # 1.129.0: a host's and a group's name - a Limit cannot tell them apart
             return '<option value="%s" disabled>%s (also a %s name - cannot be picked)</option>' % (
                 esc(i["name"]), esc(i["name"]), "host's" if i["kind"] == "group" else "group's")
-        label = i["name"] if i["kind"] == "host" else ("%s (hosts counted when picked)" % i["name"] if i["count"] is None else
-                                                      "%s (%d host%s)" % (i["name"], i["count"], "" if i["count"] == 1 else "s"))
+        label = i["name"]
+        if i["kind"] == "group":
+            label += " (%d host%s)" % (i["count"], "" if i["count"] == 1 else "s")
         return '<option value="%s"%s>%s</option>' % (esc(i["name"]), " selected" if i["name"] in chosen else "", esc(label))
     gs = [i for i in inv["items"] if i["kind"] == "group"]
     hs = [i for i in inv["items"] if i["kind"] != "group"]
@@ -4124,11 +4231,14 @@ def picker_html(portal, field, selected, cap, label_id="", described="", setting
     extra = "".join('<option value="%s" selected>%s</option>' % (esc(n), esc(n)) for n in selected if n not in set(i["name"] for i in inv["items"]))
     more = ('<p class="help">The first %d of %d are listed. With scripts on, the search box finds the rest.</p>' % (PICK_SHOWN, inv["matches"])) if inv["matches"] > PICK_SHOWN else ""
     err = ('<p class="help bad">%s</p>' % esc(inv["error"])) if inv.get("error") else ""
+    if inv.get("reading"):
+        err = '<p class="help">Reading the inventory (the first time can take a minute)... Refresh to see the hosts.</p>'
     osn = ('<p class="muted-line pk-os">%s</p>' % esc(inv["os_note"])) if inv.get("os_note") else (
-        '<p class="muted-line pk-os">Windows hosts only (portal_windows_hosts_from).</p>' if inv.get("os") == "windows" else "")
-    return ('<div class="picker" data-picker="%s" data-max="%d" data-setting="%s" data-src="%sapi/inventory"%s%s>%s<select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
+        '<p class="muted-line pk-os">Windows hosts only (portal_windows_hosts_from).</p>' if os_ == "windows" else "")
+    return ('<div class="picker" data-picker="%s" data-max="%d" data-setting="%s" data-src="%sapi/inventory"%s%s%s>%s<select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
             '<p class="help">Hosts and groups of the AAP inventory <b>%s</b>; hold Ctrl to pick several. At most %d hosts (a group counts by its hosts; %s).</p></div>'
-            % (esc(field), cap, esc(setting), portal.cfg.path, (' data-inv="%d"' % iid) if iid else "", (' data-os="%s"' % esc(os_)) if os_ else "", osn,
+            % (esc(field), cap, esc(setting), portal.cfg.path, (' data-inv="%d"' % iid) if iid else "", (' data-os="%s"' % esc(os_)) if os_ else "",
+               (' data-action="%s"' % esc(action)) if action else "", osn,
                esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
                esc(inv_name or portal.cfg.inventory or "of the portal"), cap, esc(setting)))
 
@@ -4176,7 +4286,8 @@ def pick_step1(cfg, portal, cn, name, a, hv, texts="", problems=None):
             '<p class="help">Nothing is started yet.</p></div></form></div>'
             '<div class="card panel"><h2>What happens next</h2><dl class="def"><dt>1. Host</dt><dd>you pick it here</dd>'
             '<dt>2. Finding</dt><dd>the portal lists what the reports found on it, newest first</dd><dt>3. Confirm</dt><dd>the usual page: the values, then <b>Run</b></dd></dl></div></div>'
-            % (cfg.path, esc(name), picker_html(portal, "hosts", parse_hosts(texts), cfg.pick_max_hosts, setting="portal_pick_max_hosts")))
+            % (cfg.path, esc(name), picker_html(portal, "hosts", parse_hosts(texts), cfg.pick_max_hosts, setting="portal_pick_max_hosts",
+                                               inv=a.get("limit_inv"), inv_name=a.get("limit_inv_name"), os_=a.get("os", ""), action=name)))
     return shell(cfg, a["title"], body, cn, page="action")
 
 
@@ -4264,6 +4375,9 @@ def picker_route(cfg, portal, cn, name, query):
     q = {k: v[-1].strip() for k, v in query.items()}
     if q.get("report_job") or q.get("finding_id"):
         return None
+    a, why = portal._action_inventory(name, a)
+    if why:
+        return "page", message_page(cfg, a["title"], why, cn)
     texts = ",".join(query.get("hosts") or query.get(hv) or [])
     given = parse_hosts(texts)
     if not given:
@@ -4274,12 +4388,12 @@ def picker_route(cfg, portal, cn, name, query):
         why = rules.value_problem(var, h)
         if why:
             problems[h] = why
-    if not problems and portal.cfg.inventory:                 # 1.78.0: a group stands for its hosts; every name is a host or a group of the inventory
-        hosts, why = portal.aap.expand(given)
+    if not problems and a.get("limit_inv"):
+        hosts, why = portal.aap.expand(given, a["limit_inv"], a["os"])
         if why:
             hosts = list(given)
             for h in given:
-                one, w = portal.aap.expand([h])
+                one, w = portal.aap.expand([h], a["limit_inv"], a["os"])
                 if w:
                     problems[h] = w
             if not problems:
@@ -6367,6 +6481,16 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 # 1.129.0: os=windows (a Windows job's picker), group= (that group's hosts only), groups=1 (the group drop-down's list)
                 more = {"os_": "windows" if qq.get("os", [""])[-1] == "windows" else "", "group": qq.get("group", [""])[-1][:200],
                         "with_groups": qq.get("groups", [""])[-1] == "1"}
+                action = qq.get("action", [""])[-1]
+                if action:
+                    a = portal.builtin.get(action)
+                    if not a or not rules.may_run(a, cn, cfg.requesters):
+                        return self._send(404, {"error": "No action uses that inventory."})
+                    a, why = portal._action_inventory(action, a)
+                    if why or not a.get("limit_inv") or str(a["limit_inv"]) != inv:
+                        return self._send(409, {"error": why or "This job changed in AAP - open it again."})
+                    more["os_"] = a["os"]
+                    return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN, iid=a["limit_inv"], **more))
                 if inv:
                     ids = set(x.get("limit_inv") for x in portal.mine(cn) if x.get("limit_inv"))
                     if not re.match(r"^\d{1,9}$", inv) or int(inv) not in ids:
@@ -6666,4 +6790,5 @@ if __name__ == "__main__":
         res = aap_check(Config())
         sys.__stdout__.write(json.dumps(res) + "\n")
     else:
+        logging.basicConfig(level=logging.INFO)
         serve(Config())

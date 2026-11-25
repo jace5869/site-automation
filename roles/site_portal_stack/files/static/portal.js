@@ -416,10 +416,10 @@ function hostPickers() {
       note.textContent = "About " + total() + " of " + cap + " hosts";
     }
     // the server counts the distinct hosts of the groups and says when it is too many; a name that is a host's and a group's is never
-    // picked (a Limit cannot tell them apart); a group past the first 400 has no count until it is opened (null)
-    function fits(r) { return picked.has(r.name) || (!r.ambiguous && (r.count == null || r.count <= cap)); }
+    // picked (a Limit cannot tell them apart).
+    function fits(r) { return picked.has(r.name) || (!r.ambiguous && r.count <= cap); }
     function why(r) { return r.ambiguous ? "Also a group's name in the inventory: a Limit cannot tell them apart" : "Too big: at most " + cap + " hosts (" + setting + ")"; }
-    let gInfo = null, nHosts = 0, nGroups = 0;
+    let gInfo = null, nHosts = 0, nGroups = 0, emptyText = "Nothing matches.";
     function head(text, extra) {
       const li = el("li", "pk-head"); li.setAttribute("role", "presentation");
       li.append(el("span", "pk-htext", text));
@@ -445,13 +445,13 @@ function hostPickers() {
         if (!fits(r)) { li.setAttribute("aria-disabled", "true"); li.title = why(r); }
         const mark = el("span", "pk-box"); mark.setAttribute("aria-hidden", "true"); mark.textContent = picked.has(r.name) ? "✓" : "";
         const kind = r.ambiguous ? r.kind + " · also a " + (r.kind === "group" ? "host's" : "group's") + " name - cannot be picked"
-          : r.kind !== "group" ? "host" : r.count == null ? "group · hosts counted when picked"
+          : r.kind !== "group" ? "host"
           : "group · " + r.count + " host" + (r.count === 1 ? "" : "s") + " · " + (fits(r) ? "fits" : "too big: at most " + cap + " (" + setting + ")");
         li.append(mark, el("span", "pk-name", r.name), el("span", "pk-kind", kind));
         li.addEventListener("mousedown", (ev) => { ev.preventDefault(); on = i; toggle(r); });
         list.append(li);
       });
-      if (!rows.length) list.append(el("li", "pk-empty", "Nothing matches."));
+      if (!rows.length) list.append(el("li", "pk-empty", emptyText));
       foot.textContent = (stale ? stale + " " : "") + (matches > rows.length ? (matches - rows.length) + " more - type to narrow." : "");
       const free = rows.filter((r) => !picked.has(r.name) && fits(r)).length;
       all.textContent = "Select all shown" + (free ? " (" + free + ")" : "");
@@ -462,27 +462,49 @@ function hostPickers() {
       sync(); draw();
     }
     function clear(text) {                          // 1.129.0: nothing of the last answer stays pickable while the next one is asked
-      rows = []; gInfo = null; matches = 0; on = 0;
+      rows = []; gInfo = null; matches = 0; on = 0; emptyText = text; stale = "";
       list.replaceChildren(el("li", "pk-empty", text));
       all.disabled = true;
     }
-    async function ask() {
-      const my = ++seq;
+    const readingText = "Reading the inventory (the first time can take a minute)...";
+    function failed() {
+      clear("The inventory could not be read just now - pick the group again, or type to try again.");
+      foot.textContent = "The inventory could not be read just now.";
+    }
+    async function ask(my = ++seq, deadline = Date.now() + 120000, failures = 0) {
+      if (my !== seq || !box.isConnected) return;
+      const left = deadline - Date.now();
+      if (left <= 0) { failed(); return; }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), Math.min(15000, left));
+      function retry(errors) {
+        clear(readingText);
+        foot.textContent = "";
+        timer = setTimeout(() => ask(my, deadline, errors), Math.min(3000, Math.max(0, deadline - Date.now())));
+      }
       let r;
       const wantGroups = !groupsAsked;
       try {
         r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim()) + (box.dataset.inv ? "&inv=" + encodeURIComponent(box.dataset.inv) : "")
-          + (box.dataset.os ? "&os=" + encodeURIComponent(box.dataset.os) : "") + (group ? "&group=" + encodeURIComponent(group) : "") + (wantGroups ? "&groups=1" : ""));
+          + (box.dataset.action ? "&action=" + encodeURIComponent(box.dataset.action) : "")
+          + (box.dataset.os ? "&os=" + encodeURIComponent(box.dataset.os) : "") + (group ? "&group=" + encodeURIComponent(group) : "") + (wantGroups ? "&groups=1" : ""),
+          {signal: controller.signal});
+        if (!Array.isArray(r.items)) throw new Error("Incomplete inventory response");
       } catch (e) {
         if (my !== seq) return;
-        clear("The inventory could not be read just now - pick the group again, or type to try again.");
-        foot.textContent = "The inventory could not be read just now.";
+        if (failures < 2 && Date.now() < deadline) retry(failures + 1); else failed();
         return;
+      } finally {
+        clearTimeout(timeout);
       }
       if (my !== seq) return;
+      if (r.reading) { retry(0); return; }
+      emptyText = "Nothing matches.";
+      const osNote = box.querySelector(".pk-os");
+      if (osNote) osNote.textContent = r.os_note || (r.os === "windows" ? "Windows hosts only (portal_windows_hosts_from)." : "");
       if (wantGroups && r.groups) {
         groupsAsked = true;
-        for (const g of r.groups) gsel.append(new Option(g.count == null ? g.name : g.name + " (" + g.count + ")", g.name));
+        for (const g of r.groups) gsel.append(new Option(g.name + " (" + g.count + ")", g.name));
         if (r.groups_more) { const o = new Option(r.groups_more + " more groups - type a group's name in the search", ""); o.disabled = true; gsel.append(o); }
         gwrap.hidden = !r.groups.length;
       }
@@ -495,7 +517,7 @@ function hostPickers() {
       for (const r of rows) if (!picked.has(r.name) && fits(r) && total(entry(r)) <= cap) picked.set(r.name, entry(r));
       sync(); draw();
     });
-    q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(ask, 150); });
+    q.addEventListener("input", () => { seq++; clearTimeout(timer); timer = setTimeout(ask, 150); });
     gsel.addEventListener("change", () => {
       group = gsel.value; q.placeholder = group ? "Search the hosts of " + group : "Search hosts and groups";
       clearTimeout(timer); seq++; clear("Reading " + (group || "the inventory") + " …"); foot.textContent = ""; ask();

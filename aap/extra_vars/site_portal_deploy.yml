@@ -108,7 +108,9 @@ portal_public_url: https://stigman.example.mil/portal/
 ## account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template
 ## (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only portal_approvers /
 ## portal_requesters count (with groups set, an empty portal_requesters is nobody - never everyone).
-## e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
+## 1.129.1: DOMAIN\Group works too (the DOMAIN\ part is dropped) - in YAML write it in SINGLE quotes
+## ('CORP\Group'): in double quotes a backslash starts an escape (\U, \x ...) and all.yml no longer
+## loads. e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
 # portal_approver_groups: []
 
 ## the same for who may run the actions (with portal_requesters); [] = none

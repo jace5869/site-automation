@@ -250,6 +250,28 @@ def events(j):
     return out[:max(3, int(frac * len(out)))]
 
 
+def variables_dict(text):
+    """A Variables text (JSON or YAML) as a dict. The e2e runs this file in python:3.12-slim, which has no PyYAML: an import there killed
+    the handler and the portal saw 'Remote end closed connection without response'. JSON first; YAML only when PyYAML is there; else plain
+    'key: value' lines."""
+    if not text:
+        return {}
+    try:
+        return json.loads(text) or {}
+    except ValueError:
+        pass
+    try:
+        import yaml
+    except ImportError:
+        out = {}
+        for line in str(text).splitlines():
+            k, sep, v = line.partition(":")
+            if sep and k.strip() and not line.startswith((" ", "#", "-")):
+                out[k.strip()] = v.strip().strip("'\"")
+        return out
+    return yaml.safe_load(text) or {}
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -283,6 +305,8 @@ class H(BaseHTTPRequestHandler):
         if not self._auth():
             return None
         log({"method": "GET", "path": p, "query": q})
+        if p.rstrip("/").split("/")[-1] in ("hosts", "all_hosts") and int(q.get("page_size", "25")) > 20:
+            return self._send(503, {"detail": "Host list gateway timeout"})
         if p == "me/":
             return self._send(200, {"results": [{"username": "svc_portal", "id": 77, "is_system_auditor": False}]})
         if p == "users/77/roles/":
@@ -362,7 +386,7 @@ class H(BaseHTTPRequestHandler):
             return self._paged_list(q, p, list((t or {}).get("nodes", [])))
         md = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
         if md:                                                           # 1.78.0: one template (the portal asks again before it launches)
-            t = next((t for t in STATE["templates"][md.group(1)] if t["id"] == int(md.group(2)) and t.get("labels") is not None), None)
+            t = next((t for t in STATE["templates"][md.group(1)] if t["id"] == int(md.group(2))), None)
             return self._send(200, row_of(t)) if t else self._send(404, {"detail": "Not found."})
         m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/(launch|survey_spec)/$", p)
         if m:
@@ -385,8 +409,7 @@ class H(BaseHTTPRequestHandler):
             inv = next((i for i in STATE["inventories"] if i["id"] == int(ms.group(1))), None)
             if not inv or inv.get("script_fail"):
                 return self._send(503 if inv else 404, {"detail": "not now"})
-            import yaml as _y
-            vo = lambda t: (_y.safe_load(t) if t else {}) or {}            # noqa: E731
+            vo = variables_dict
             kids = inv.get("children") or {}
             inner = set(c for cs in kids.values() for c in cs)
             doc = {"all": {"hosts": [], "children": sorted(g for g in inv.get("groups", {}) if g not in inner), "vars": vo(inv.get("variables"))},

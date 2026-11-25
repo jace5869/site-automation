@@ -134,5 +134,124 @@ class Areas(unittest.TestCase):
             self.assertIn("_at.stale_labels", fh.read())
 
 
+class WindowsInventory(unittest.TestCase):
+    """Run the role's planner and writer against an in-memory AAP."""
+    def setUp(self):
+        self.catalog = [{"name": "Restart", "playbook": "playbooks/win_restart_schedule.yml"},
+                        {"name": "Report", "playbook": "playbooks/report.yml", "credentials": ["machine_windows"]},
+                        {"name": "Linux", "playbook": "playbooks/health_check.yml", "optional_credentials": ["machine_windows"]}]
+        self.params = dict(catalog=self.catalog, organization="Site", project="Project", inventory="Site hosts",
+                           inventory_windows="Windows hosts", ee={}, credentials={"machine_windows": "Windows machine"},
+                           label_portal="none", only=[], overwrite=False, create_alias=False)
+        self.templates = []
+        self.writes = []
+        self.rows = {"organizations": [{"id": 1, "name": "Site"}, {"id": 2, "name": "Other"}],
+                     "projects": [{"id": 3, "name": "Project", "organization": 1}],
+                     "inventories": [{"id": 4, "name": "Site hosts", "organization": 1},
+                                     {"id": 5, "name": "Windows hosts", "organization": 1},
+                                     {"id": 6, "name": "Windows hosts", "organization": 2}],
+                     "credentials": [{"id": 7, "name": "Windows machine", "credential_type": 1, "organization": 1}],
+                     "job_templates": self.templates}
+
+    def call(self, method, path, body=None):
+        path = path.split("?")[0].strip("/")
+        if method != "GET":
+            self.writes.append((method, path, body))
+            if path == "job_templates":
+                row = dict(body, id=10 + len(self.templates))
+                self.templates.append(row)
+                return 201, row
+            if method == "PATCH":
+                next(t for t in self.templates if t["id"] == int(path.split("/")[1])).update(body)
+            return 204, {}
+        if path == "projects/3/playbooks":
+            return 200, {"results": [e["playbook"] for e in self.catalog]}
+        if path.endswith("/credentials"):
+            return 200, {"results": self.rows["credentials"]}
+        return 200, {"results": self.rows[path]}
+
+    def setup_templates(self, check=False, **params):
+        role = T.Templates(self, dict(self.params, **params), check)
+        role.run()
+        self.assertEqual(role.problems, [])
+        self.warnings = role.warnings
+        return role.results
+
+    def test_create_and_organization(self):
+        self.setup_templates(inventory_windows_organization="Other")
+        self.assertEqual([r["inventory"] for r in self.templates], [6, 6, 4])
+
+    def test_portal_access_uses_the_windows_inventory_in_its_own_organization(self):
+        user = {"id": 20, "username": "svc_portal"}
+        self.rows.update({"users": [user], "inventories/5/access_list": [user], "inventories/6/access_list": []})
+        params = dict(portal_user="svc_portal", inventory_windows_organization="Other")
+        for check in (True, False):
+            self.setup_templates(check=check, **params)
+            self.assertEqual(self.warnings, ["Windows templates: the portal's account svc_portal cannot read inventory "
+                                             "Windows hosts - their cards stay hidden; give it Read on that inventory"])
+            if check:
+                self.assertEqual(self.writes, [])
+        self.writes.clear()
+        self.rows["inventories/6/access_list"] = [user]
+        self.setup_templates(**params)
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.warnings, [])
+
+    def test_unknown_account_is_reported_once_without_blocking_setup(self):
+        self.rows["users"] = []
+        self.setup_templates(portal_user="unknown")
+        self.assertEqual(len(self.templates), 3)
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn("not checked", self.warnings[0])
+        self.setup_templates(portal_user="unknown", inventory_windows="")
+        self.assertEqual(self.warnings, [])
+
+    def test_check_run_and_repeat(self):
+        self.setup_templates(inventory_windows="")
+        self.templates[-1]["inventory"] = 6      # keep a Linux template's site-specific inventory
+        self.writes.clear()
+        rows = self.setup_templates(check=True)
+        self.assertEqual(self.writes, [])
+        self.assertEqual([r["inventory"] for r in self.templates], [4, 4, 6])
+        self.assertEqual([r["inventory_change"] for r in rows if "inventory_change" in r],
+                         ["would set inventory of Restart from Site hosts to Windows hosts",
+                          "would set inventory of Report from Site hosts to Windows hosts"])
+        self.setup_templates()
+        self.assertEqual(self.writes, [("PATCH", "job_templates/10", {"inventory": 5}),
+                                       ("PATCH", "job_templates/11", {"inventory": 5})])
+        self.assertEqual([r["inventory"] for r in self.templates], [5, 5, 6])
+        self.writes.clear()
+        self.setup_templates()
+        self.assertEqual(self.writes, [])
+
+    def test_inventory_move_requires_setup_project(self):
+        self.setup_templates(inventory_windows="")
+        report = self.templates[1]
+        report["project"] = 99
+        self.writes.clear()
+        rows = self.setup_templates(check=True, only=["Report"])
+        self.assertFalse(any("inventory_change" in row for row in rows))
+        self.setup_templates(only=["Report"])
+        self.assertEqual(self.writes, [])
+        self.assertEqual(report["inventory"], 4)
+
+    def test_empty_setting_preserves_existing_inventory(self):
+        self.setup_templates()
+        self.writes.clear()
+        self.setup_templates(inventory_windows="")
+        self.assertEqual(self.writes, [])
+
+    def test_a_linux_job_with_a_windows_catalog_name(self):
+        self.setup_templates(inventory_windows="")
+        self.templates[0]["playbook"] = "playbooks/health_check.yml"
+        self.writes.clear()
+        self.setup_templates(only=["Restart"])
+        self.assertEqual(self.writes, [])
+
+    def test_only_windows_can_be_created_without_general_inventory(self):
+        self.setup_templates(only=["Restart"], inventory="")
+        self.assertEqual(self.templates[0]["inventory"], 5)
+
+
 if __name__ == "__main__":
     unittest.main()

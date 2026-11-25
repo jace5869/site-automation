@@ -96,6 +96,29 @@ stopped: fix the cause, then run Site portal - deploy (every run lets the wall t
   - after a password was accepted, a read error later in the cycle still stops every wall login (stricter than needed:
     run Site portal - deploy to start them again).
 
+## 1.129.1 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,
+then run **AAP - set up job templates** (Check, then Run).
+
+```yaml
+aap_templates_inventory_windows: "<your Windows inventory>"
+```
+
+- **Portal AD groups written DOMAIN\Group** (as Windows shows them) are found: the DOMAIN\ part is dropped (one domain). In all.yml write such a name in single quotes ('CORP\Group' - in double quotes a backslash is an escape and the file no longer loads), or the name alone.
+- The Hosts picker loads the inventory in one AAP request and shows progress during a slow first read.
+- Windows template setup creates or moves matching templates in the setup project to the configured Windows inventory.
+- Setup warns when the portal account needs Read access to a published template’s inventory.
+- Catalog jobs that require `machine_windows`, including Active Directory health report, use the Windows filter for picks and launches.
+- Built-in actions check single hosts against enabled hosts in the template’s inventory.
+- If a template changes inventories during a host check, the portal asks you to reopen the job.
+- Missing host variables or cyclic groups stop an inventory refresh. The picker keeps the last good list and shows the reason.
+- While an expired list refreshes, the picker keeps polling and waits for current data to validate a pick.
+- Host search withholds suggestions after a failed refresh or when the listing exceeds its maximum age.
+- A background inventory read times out after two minutes so a later refresh can retry.
+- The portal refuses inventories above 50,000 hosts or 2,000,000 group memberships and reports which limit was exceeded.
+- If AAP returns groups but incomplete host data, the portal asks you to try again.
+
 ## 1.129.0 — 2026-11-25
 
 **To set up:** (1) run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
