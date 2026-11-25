@@ -800,3 +800,13 @@ body.kiosk .dsc .kxh{display:none}
   background:linear-gradient(var(--warning-bg),var(--warning-bg)),var(--card-strong);color:var(--ink);border-bottom:1px solid var(--warning-bd)}
 .wall-preview b{color:var(--warning);font-weight:700;margin-right:2px}
 .fl.f-info{fill:var(--muted);opacity:.55}
+
+.wall .grey-reason {
+  color: var(--muted);
+  font-size: .85em;
+  overflow-wrap: anywhere;
+}
+.sK .gauge.stale .why {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

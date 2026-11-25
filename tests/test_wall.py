@@ -1056,7 +1056,7 @@ class Browser(unittest.TestCase):
         self.addCleanup(stop)
         db = None
         out = self.run_page(url, "style=cockpit&freeze=1")
-        self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken')              # the run has the health parts
+        self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror health and lag')              # the run has the health parts
         def unread():                                          # the live reads: SnapMirror and nodes not read (their checks did not run)
             v = demo.view(vc2_state="ok")
             for k in [k for k in v["sources"] if k.startswith("ontap:")]:
@@ -1066,7 +1066,7 @@ class Browser(unittest.TestCase):
         self.addCleanup(stop2)
         for st, area in (("cockpit", "overview"), ("cockpit", "storage"), ("lights", "storage")):
             out = self.run_page(url2, "style=%s&area=%s&freeze=1" % (st, area))
-            self.assertNotIn("None broken", out, (st, area))
+            self.assertNotIn("None over threshold or unhealthy", out, (st, area))
             self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes)"', (st, area))
         out = self.run_page(url2, "style=cockpit&freeze=1&open=ctr:sm")
         self.assertEqual(self.greens(out.split('id="dsCard"', 1)[1]), [])
@@ -1176,7 +1176,7 @@ class Browser(unittest.TestCase):
                         d["free"] = d["capacity"] // 2
             snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
             cut = rng.choice(["stale", "late", "never", "error_recent", "auth_recent", "host_state", "host_cpu", "host_mem", "host_maint",
-                              "ds_cap", "ds_free", "vm_cpu", "vm_heartbeat"])
+                              "ds_cap", "ds_free", "ds_shared", "host_hardware", "vm_template", "vm_tools_seen", "vm_cpu", "vm_heartbeat"])
             src = v["sources"]["vcenter:" + rng.choice([demo.VC1, demo.VC2])]
             if cut == "stale":
                 src["at"] = now - 900
@@ -1188,17 +1188,17 @@ class Browser(unittest.TestCase):
                 src.update(at=now - 20, state="error" if cut == "error_recent" else "auth", why="timed out", fail_since=now - 5)
             elif cut.startswith("host"):
                 h = rng.choice([x for x in snap["hosts"] if x["state"] == "connected"])
-                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct", "host_maint": "maint"}[cut]
+                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct", "host_maint": "maint", "host_hardware": "hardware"}[cut]
                 if rng.random() < 0.5:
                     h.pop(key)
                 else:
                     h[key] = None
             elif cut.startswith("vm"):
                 vm = rng.choice([x for x in snap["vms"] if x.get("power") == "poweredOn"])
-                vm[{"vm_cpu": "cpu_pct", "vm_heartbeat": "heartbeat"}[cut]] = None
+                vm[{"vm_cpu": "cpu_pct", "vm_heartbeat": "heartbeat", "vm_template": "template", "vm_tools_seen": "tools_seen"}[cut]] = None
             else:
-                d = rng.choice(snap["datastores"])
-                d[{"ds_cap": "capacity", "ds_free": "free"}[cut]] = None
+                d = rng.choice([x for x in snap["datastores"] if x["shared"]])
+                d[{"ds_cap": "capacity", "ds_free": "free", "ds_shared": "shared"}[cut]] = None
             # Storage: live ONTAP only (Codex verify 4) - the report database is information on the path card, never a cut that matters
             nm, at = json.loads(json.dumps(base_nm)), now - 60
             ons = [x for k, x in v["sources"].items() if k.startswith("ontap:")]
@@ -1209,7 +1209,7 @@ class Browser(unittest.TestCase):
                     for r in x["snap"]["snapmirror"]:
                         r.update(state="snapmirrored", healthy=True)
             scut = rng.choice(["none", "stale", "late", "never", "error_recent", "auth_recent", "aggr_null", "aggr_size0", "node_state",
-                               "sm_health", "sm_state", "vol_state", "lun_state", "failed_sm", "failed_nodes", "failed_aggrs"])
+                               "sm_health", "sm_state", "sm_lag", "vol_state", "lun_state", "failed_sm", "failed_nodes", "failed_aggrs"])
             on = rng.choice(ons)
             osnap = on["snap"]
             if scut == "none":
@@ -1229,6 +1229,8 @@ class Browser(unittest.TestCase):
                 rng.choice(osnap["aggrs"])["size"] = 0
             elif scut == "node_state":
                 rng.choice(osnap["nodes"])["state"] = rng.choice([None, "booting", "unknown", ""])
+            elif scut == "sm_lag":
+                osnap["snapmirror"][0].update(healthy=True, state="snapmirrored", lag_s=rng.choice([None, -1, "unknown", False]))
             elif scut == "sm_health":
                 osnap["snapmirror"][0].update(state="snapmirrored", healthy=rng.choice([None, "true", {}]))
             elif scut == "sm_state":
@@ -1297,7 +1299,7 @@ class Browser(unittest.TestCase):
         with open(os.path.join(d, "stub.js"), "w") as fh:
             fh.write("(function(){window.fetch=function(){return Promise.resolve({status:200,ok:true,headers:{get:function(){return ''}},"
                      "json:function(){return Promise.resolve(JSON.parse(JSON.stringify(window.ANS[0].a)))}})}})();")
-        refs = ["ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
+        refs = ["ctr:hardware", "kind:vmhung", "ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
                 "grp:ds", "grp:dsvm", "grp:load", "grp:aggr", "feed:vc:" + demo.VC1, "feed:ontap", "feed:netapp-run"]
         with open(os.path.join(d, "t.js"), "w") as fh:
             fh.write("""setTimeout(function(){var T=window.__wallTest,bad=[],add=function(p,r,map){
@@ -1310,7 +1312,7 @@ window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
    if(ctl)bad.push('control: green seen');return;}
  (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
  (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
- (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.c+'|'+g.n)});
+ (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.ref)});
  (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
  T.set(JSON.parse(JSON.stringify(a)));
  ['lights','cockpit','map'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.131.1 — 2026-11-25
+
+**To set up:** Site portal - deploy; optional `portal_wall_exclude`, `portal_wall_ds_ignore`, SnapMirror lag thresholds.
+
+The wall learns which VMs have running Tools, merges duplicate vCenters and filters infrastructure objects before capacity
+alerts and rankings. Host hardware and SnapMirror lag now light the wall. Grey tiles and gauges identify the source,
+and the Now strip groups repeated conditions into a single detail link.
+
 ## 1.131.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional. The guides (PDFs) moved

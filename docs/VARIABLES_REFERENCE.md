@@ -2267,17 +2267,21 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_vcenter` | `auto` | vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the VMware jobs use; read-only calls only). The credential's vCenter and these (vmware_vcenters: names, or name:port) are read with that account. auto \| true \| false |
 | `portal_wall_vcenters` | `"{{ vmware_vcenters \| default([], true) }}"` | more vCenters read with the same account (names, or name:port) |
 | `portal_wall_vcenter_validate_certs` | `"{{ vmware_validate_certs \| default(true) }}"` | vCenter's certificate checked (the CAs: portal_trust_host_cas) |
-| `portal_wall_ontap` | `auto` | ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is set (GET only). Off: the wall's storage comes from the NetApp page's run in the report database (as old as that run). auto \| true \| false |
+| `portal_wall_ontap` | `auto` | ONTAP live: auto enables Storage when the deploy has the "NetApp ONTAP" credential and ontap_clusters is set (GET only). auto \| true \| false |
 | `portal_wall_ontap_clusters` | `"{{ ontap_clusters \| default([], true) }}"` | the clusters read live (management names or addresses) |
 | `portal_wall_ontap_validate_certs` | `"{{ ontap_validate_certs \| default(true) }}"` | ONTAP's certificate checked (the CAs: portal_trust_host_cas) |
-| `portal_wall_datastore_warn` | `85` | The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall watches" shows the ones in force a datastore this % used or more: warning (VMware / Storage team) |
+| `portal_wall_exclude` | `{}` | case-insensitive name globs by kind (vms, hosts, datastores, volumes, aggregates), before alerts and rankings |
+| `portal_wall_ds_ignore` | `['*iso*', '*library*', '*content*']` | ignore these datastore names for capacity only, like local datastores |
+| `portal_wall_snapmirror_lag_warn_hours` | `24` | healthy relationship with measured lag above this many hours is amber |
+| `portal_wall_snapmirror_lag_crit_hours` | `72` | healthy relationship with measured lag above this many hours is red |
+| `portal_wall_datastore_warn` | `85` | a datastore this % used or more: warning (VMware / Storage team) |
 | `portal_wall_datastore_crit` | `95` | ... critical |
 | `portal_wall_aggr_warn` | `85` | an aggregate this % used or more: warning (Storage team) |
 | `portal_wall_aggr_crit` | `97` | ... critical |
 | `portal_wall_high_pct` | `90` | a host's or VM's CPU or memory at this % or more ... |
 | `portal_wall_high_minutes` | `15` | ... for this many minutes or longer: warning (shorter spikes stay off the wall) |
 | `portal_wall_maintenance_expected` | `[]` | hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in maintenance: warning |
-| `portal_wall_vm_heartbeat` | `true` | a powered-on VM whose VMware Tools heartbeat is red: critical (false = off) |
+| `portal_wall_vm_heartbeat` | `true` | previously running Tools stop or heartbeat turns red on a powered-on workload VM |
 | `portal_wall_site_pattern` | `"{{ netmap_site_pattern \| default('', true) }}"` | the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01) |
 | `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |

@@ -29,7 +29,7 @@ DN = "CN=%s,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US" % CN
 
 
 def host(n, cl, cpu, mem, vms, ds, state="connected", maint=False):
-    return {"name": n, "cluster": cl, "state": state, "maint": maint, "power": "poweredOn" if state == "connected" else "unknown",
+    return {"name": n, "cluster": cl, "state": state, "maint": maint, "hardware": "green", "power": "poweredOn" if state == "connected" else "unknown",
             "cpu_pct": None if state != "connected" else cpu, "mem_pct": None if state != "connected" else mem, "vms": vms, "datastores": ds}
 
 
@@ -57,7 +57,9 @@ def vcenter_snap():
     vms.append({"name": "sita01-db02", "host": "sita01-esx05.corp.example.mil", "power": "poweredOn", "cpu_pct": 93.0, "mem_pct": 50.0, "heartbeat": "green"})
     dss = [("DS-SITEA-07", 15.6, 1.1, "NFS"), ("DS-SITEA-01", 16.0, 2.6, "VMFS"), ("DS-SITEA-03", 16.5, 3.4, "VMFS"), ("DS-SITEA-05", 16.5, 4.8, "VMFS"),
            ("DS-SITEA-04", 12.0, 4.1, "VMFS"), ("DS-SITEA-06", 10.0, 4.4, "NFS"), ("DS-SITEA-08", 8.0, 5.9, "VMFS"), ("DS-SITEB-LOCAL", 2.0, 1.6, "VMFS")]
-    datastores = [{"name": n, "type": t, "capacity": int(c * TB), "free": int(f * TB), "accessible": True,
+    for vm in vms:
+        vm.update(template=False, tools_seen=True)
+    datastores = [{"name": n, "shared": n != "DS-SITEB-LOCAL", "type": t, "capacity": int(c * TB), "free": int(f * TB), "accessible": True,
                    "hosts": [h["name"] for h in hosts if n in h["datastores"]], "vms": 12 + i} for i, (n, c, f, t) in enumerate(dss)]
     return {"hosts": hosts, "clusters": [{"name": c, "hosts": [h["name"] for h in hosts if h["cluster"] == c]} for c in loads],
             "datastores": datastores, "vms": vms}

@@ -11,6 +11,7 @@ settings (the thresholds). Its answer: the wall conditions open now and cleared 
 Standard library only; no I/O (the caller reads, this works it out), so the tests drive it with made-up reads."""
 import collections
 import fnmatch
+import math
 import re
 
 try:
@@ -41,12 +42,13 @@ AREAS = (
 BUILT = ("storage", "vmware")    # stage 1: the others are grey tiles "not on the wall yet"
 STORAGE_OFF = "not on the wall yet: no live ONTAP cluster (portal_wall_ontap_clusters) - the wall's Storage is read live only"
 NOT_ON_WALL = {
-    "storage": "EMS informational events, snapshot counts, autosupport, lagging but healthy SnapMirror.",
+    "storage": "EMS informational events, snapshot counts, autosupport.",
     "vmware": "vCenter informational alarms, short spikes (under the sustained window), snapshot age, tools out of date.",
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
 }
 
 DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97.0, "high_pct": 90.0, "high_minutes": 15,
+            "exclude": {}, "ds_ignore": ["*iso*", "*library*", "*content*"], "snapmirror_lag_warn_hours": 24.0, "snapmirror_lag_crit_hours": 72.0,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
             "netmap_sites": {}, "late": LATE_S, "stale": STALE_S}
 
@@ -66,7 +68,7 @@ def opts_of(o):
             elif isinstance(d, int):
                 out[k] = int(v)
             elif isinstance(d, list):
-                out[k] = [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+                out[k] = [str(x) for x in v] if isinstance(v, (list, tuple)) else list(d)
             elif isinstance(d, dict):
                 out[k] = dict(v) if isinstance(v, dict) else {}
             else:
@@ -77,6 +79,9 @@ def opts_of(o):
         out["ds_warn"], out["ds_crit"] = DEFAULTS["ds_warn"], DEFAULTS["ds_crit"]
     if not 0 < out["aggr_warn"] < out["aggr_crit"] <= 100:
         out["aggr_warn"], out["aggr_crit"] = DEFAULTS["aggr_warn"], DEFAULTS["aggr_crit"]
+    if not 0 <= out["snapmirror_lag_warn_hours"] < out["snapmirror_lag_crit_hours"] < math.inf:
+        for k in ("snapmirror_lag_warn_hours", "snapmirror_lag_crit_hours"):
+            out[k] = DEFAULTS[k]
     out["high_pct"] = min(100.0, max(1.0, out["high_pct"]))
     out["high_minutes"] = max(1, min(240, out["high_minutes"]))
     out["seconds"] = max(30, min(3600, out["seconds"]))
@@ -86,12 +91,14 @@ def opts_of(o):
 def kinds(o):
     """the wall conditions with the thresholds in force: what lights the wall, said on "What the wall watches"."""
     hp, hm = _n(o["high_pct"]), o["high_minutes"]
+    lag_hours = (_n(o["snapmirror_lag_warn_hours"]), _n(o["snapmirror_lag_crit_hours"]))
     return {
         "vc": {"area": "vmware", "sev": "crit", "label": "vCenter not answering, or its login failed", "grp": "hostvc"},
         "host": {"area": "vmware", "sev": "crit", "label": "Host not responding or disconnected", "grp": "hostvc"},
+        "hardware": {"area": "vmware", "sev": "crit", "levels": "warning / critical", "label": "Host hardware (overall status red or yellow)", "grp": "hostvc"},
         "maint": {"area": "vmware", "sev": "warn", "label": "Host in maintenance mode (not listed as expected)", "grp": "hostvc"},
         "dsi": {"area": "vmware", "sev": "crit", "label": "Datastore inaccessible", "grp": "dsvm"},
-        "vmhung": {"area": "vmware", "sev": "crit", "label": "VM powered on with no heartbeat (red)", "grp": "dsvm"},
+        "vmhung": {"area": "vmware", "sev": "crit", "label": "Watched VM lost its Tools heartbeat or Tools stopped", "grp": "dsvm"},
         "cpu": {"area": "vmware", "sev": "warn", "label": "Host or VM CPU %s %% or more for %d min or more" % (hp, hm), "grp": "load"},
         "mem": {"area": "vmware", "sev": "warn", "label": "Host or VM memory %s %% or more for %d min or more" % (hp, hm), "grp": "load"},
         "dsfull": {"area": "storage", "sev": "crit", "label": "Datastore %s %% used or more" % _n(o["ds_crit"]), "grp": "ds"},
@@ -100,7 +107,8 @@ def kinds(o):
         "aggrwarn": {"area": "storage", "sev": "warn", "label": "Aggregate %s %% used or more" % _n(o["aggr_warn"]), "grp": "aggr"},
         "voloff": {"area": "storage", "sev": "crit", "label": "Volume or LUN offline", "grp": "aggr"},
         "node": {"area": "storage", "sev": "crit", "label": "Storage node down or cluster not answering", "grp": "aggr"},
-        "sm": {"area": "storage", "sev": "warn", "label": "SnapMirror relationship broken or unhealthy", "grp": "sm"},
+        "sm": {"area": "storage", "sev": "warn", "levels": "warning / critical", "grp": "sm",
+               "label": "SnapMirror broken, unhealthy or lag over %s / %s hours" % lag_hours},
     }
 
 
@@ -238,7 +246,32 @@ class Tracker(object):
 
     def __init__(self, keep=KEEP_CLEARED_S):
         self.keep, self.open, self.cleared = keep, {}, collections.OrderedDict()
+        self.aliases = set()
         self.first = None                      # the first read it saw: "watching since" (memory only)
+
+    def merge_vcenter(self, alias, name):
+        """Rekey prior observations when two authenticated endpoints prove to be the same inventory."""
+        if (alias, name) in self.aliases:
+            return
+        self.aliases.add((alias, name))
+        for conditions in (self.open, self.cleared):
+            for old_id, c in list(conditions.items()):
+                if c.get("vc") != alias:
+                    continue
+                prefix = c["kind"] + ":"
+                if c["kind"] in ("cpu", "mem"):
+                    prefix += c["obj_kind"] + ":"
+                elif c["kind"] in ("dswarn", "dsfull"):
+                    prefix = "ds:"
+                cid = prefix + name + old_id[len(prefix + alias):]
+                previous = conditions.get(cid)
+                c = dict(c, vc=name, id=cid)
+                if c.get("feed"):
+                    c["feed"] = "vc:" + name
+                if previous:
+                    c["start"] = min(previous["start"], c["start"])
+                del conditions[old_id]
+                conditions[cid] = c
 
     def update(self, conds, now, ok=()):
         ok = set(ok or ())
@@ -273,11 +306,23 @@ def _vc_feed(src):
     return "vc:" + str(src.get("name") or "")
 
 
+def matches(name, patterns):
+    return isinstance(patterns, list) and any(isinstance(p, str) and fnmatch.fnmatchcase(str(name).casefold(), p.casefold()) for p in patterns)
+
+
+def excluded(part, o, kind, name, source, reason=""):
+    if matches(name, o["exclude"].get(kind)):
+        reason = "excluded by portal_wall_exclude"
+    if reason:
+        part["excluded"].append({"kind": kind, "name": name, "source": source, "reason": reason})
+    return bool(reason)
+
+
 def vmware_part(view, o, now):
     """the vCenters' last good reads -> (part, conds, feeds, ok): ok = [(feed, condition id)] of the objects seen OK"""
     conds, feeds, ok = [], {}, []
     part = {"configured": False, "vcenters": [], "clusters": [], "hosts": [], "datastores": [], "hot": [], "building": [], "vms": 0,
-            "incomplete": []}                       # what this read lacks: the area is never green while it lacks anything
+            "incomplete": [], "excluded": [], "heartbeat_unwatched": 0, "heartbeat_watched": 0}
     srcs = [dict(s, key=k) for k, s in ((view or {}).get("sources") or {}).items() if s.get("kind") == "vcenter"]
     hist = (view or {}).get("history") or {}
     if not srcs:
@@ -298,9 +343,10 @@ def vmware_part(view, o, now):
             conds.append({"id": "vc:" + name, "kind": "vc", "t": "vCenter %s %s" % (name, "login failed" if state == "auth" else "not answering"),
                           "obj": why, "start": src.get("fail_since") or now, "feed": "", "vc": name, "site": site_of(rx, name)})
         snap = src.get("snap") or {}
+        initial = len(part["incomplete"])
         if not src.get("snap"):
             part["incomplete"].append("vCenter %s: no inventory read yet" % name)
-        hosts = snap.get("hosts") or []
+        hosts = [h for h in snap.get("hosts") or [] if not excluded(part, o, "hosts", h.get("name"), name)]
         by_cluster = collections.OrderedDict()
         for h in hosts:
             by_cluster.setdefault(h.get("cluster") or "(standalone)", []).append(h)
@@ -347,69 +393,115 @@ def vmware_part(view, o, now):
                 part["incomplete"].append("host %s: state not read" % hn)
             elif st == "connected" and (row["cpu"] is None or row["mem"] is None):
                 part["incomplete"].append("host %s: CPU or memory not read" % hn)
+            hardware = h.get("hardware")
+            hid = "hardware:%s:%s" % (name, hn)
+            if hardware == "green":
+                ok.append((fk, hid))
+            elif hardware in ("red", "yellow"):
+                severity = "crit" if hardware == "red" else "warn"
+                conds.append({"id": hid, "kind": "hardware", "sev": severity, "t": "Host hardware: " + hn,
+                              "obj": "overallStatus " + hardware + (" · " + ", ".join(h["alarms"]) if h.get("alarms") else ""),
+                              "host": hn, "vc": name, "feed": fk, "cluster": row["cluster"], "site": row["site"]})
+                if severity == "crit" or row["st"] == "ok":
+                    row["st"] = severity
+            else:
+                part["incomplete"].append("host %s: overallStatus %s" % (hn, hardware or "not read"))
+                if row["st"] == "ok":
+                    row["st"] = "stale"
             part["hosts"].append(row)
         dsrows = []
         for d in snap.get("datastores") or []:
+            dn = d.get("name") or ""
+            if excluded(part, o, "datastores", dn, name):
+                continue
+            shared = d.get("shared")
+            local = shared is False or matches(dn, o["ds_ignore"])
+            if local:
+                excluded(part, o, "datastores", dn, name, "local - not watched")
+            elif shared is not True:
+                part["incomplete"].append("datastore %s: multipleHostAccess not read" % dn)
+            capacity_watched = shared is True and not local
             cap, free = int(d.get("capacity") or 0), d.get("free")
             # not read, or impossible (free below 0 or over the capacity): unknown - never 100 %, never OK (Codex r5 #14)
             pct = round(100.0 * (cap - int(free)) / cap, 1) if cap and free is not None and 0 <= int(free) <= cap else None
             free = int(free or 0)
-            if pct is None:
+            if capacity_watched and pct is None:
                 part["incomplete"].append("datastore %s: capacity or free space not read" % (d.get("name") or "?"))
             acc = d.get("accessible") if isinstance(d.get("accessible"), bool) else None
             r = {"n": d.get("name") or "", "vc": name, "feed": fk, "type": d.get("type") or "", "size": cap, "free": free, "v": pct,
-                 "accessible": acc, "hosts": sorted(d.get("hosts") or []), "nvms": int(d.get("vms") or 0)}
+                 "accessible": acc, "capacity_watched": capacity_watched, "hosts": sorted(d.get("hosts") or []), "nvms": int(d.get("vms") or 0)}
             r["site"] = site_of(rx, r["n"], (r["hosts"] or [""])[0])
+            if not capacity_watched:
+                r["watch_reason"] = "local - not watched" if local else "multipleHostAccess not read"
             dsrows.append(r)
             if acc is None:
                 part["incomplete"].append("datastore %s: accessibility not read" % r["n"])
             elif acc:
                 ok.append((fk, "dsi:%s:%s" % (name, r["n"])))
-                if pct is not None and pct < o["ds_warn"]:
+                if capacity_watched and pct is not None and pct < o["ds_warn"]:
                     ok.append((fk, "ds:%s:%s" % (name, r["n"])))
             if acc is False:
                 conds.append({"id": "dsi:%s:%s" % (name, r["n"]), "kind": "dsi", "t": "Datastore %s inaccessible" % r["n"],
                               "obj": "mounted on %d hosts · %d VMs" % (len(r["hosts"]), r["nvms"]), "feed": fk, "vc": name, "ds": r["n"], "site": r["site"]})
-            elif acc and pct is not None and pct >= o["ds_warn"]:
+            elif capacity_watched and acc and pct is not None and pct >= o["ds_warn"]:
                 k = "dsfull" if pct >= o["ds_crit"] else "dswarn"
                 conds.append({"id": "ds:%s:%s" % (name, r["n"]), "kind": k, "t": "%s %s %% full" % (r["n"], _n(round(pct))),
                               "obj": "%s free · warning %s, critical %s" % (gb(free), _n(o["ds_warn"]), _n(o["ds_crit"])),
                               "feed": fk, "vc": name, "ds": r["n"], "v": pct, "site": r["site"]})
         part["datastores"].extend(dsrows)
         vms = snap.get("vms") or []
-        part["vms"] += len(vms)
+        vm_host = {}
         for v in vms:
             vn, power = v.get("name"), v.get("power")
+            if excluded(part, o, "vms", vn, name):
+                continue
+            part["vms"] += 1
+            if v.get("vcls") is True or str(vn).startswith("vCLS-") or v.get("template") is True:
+                continue
             if power not in POWER_KNOWN:
                 part["incomplete"].append("VM %s: power state not read" % vn)
                 continue
+            heartbeat_id = "vmhung:%s:%s" % (name, v.get("id") or vn)
             if power != "poweredOn":                   # off or suspended, known: none of its conditions holds
-                ok.extend((fk, x % (name, vn)) for x in ("vmhung:%s:%s", "cpu:vm:%s:%s", "mem:vm:%s:%s"))
+                ok.append((fk, heartbeat_id))
+                ok.extend((fk, x % (name, vn)) for x in ("cpu:vm:%s:%s", "mem:vm:%s:%s"))
                 continue
+            if v.get("template") is not False:
+                part["incomplete"].append("VM %s: template flag not read" % vn)
+                continue
+            vm_host[vn] = v.get("host") or ""
             if v.get("cpu_pct") is None or v.get("mem_pct") is None:
                 part["incomplete"].append("VM %s: CPU or memory not read" % vn)
             for metric in ("cpu", "mem"):
                 if v.get(metric + "_pct") is not None and v[metric + "_pct"] < thr:
                     ok.append((fk, "%s:vm:%s:%s" % (metric, name, vn)))
             if o["vm_heartbeat"]:
-                hb = v.get("heartbeat")
-                if hb == "green":
-                    ok.append((fk, "vmhung:%s:%s" % (name, vn)))
-                elif hb != "red":                      # gray, yellow, not read: unknown - never a recovery
-                    part["incomplete"].append("VM %s: heartbeat %s" % (vn, "not read" if not hb else "%s (not green or red)" % hb))
-        if o["vm_heartbeat"]:
-            for v in vms:
-                if v.get("power") == "poweredOn" and v.get("heartbeat") == "red":
-                    conds.append({"id": "vmhung:%s:%s" % (name, v.get("name")), "kind": "vmhung", "t": "VM %s no heartbeat" % v.get("name"),
-                                  "obj": "powered on, VMware Tools heartbeat red · host %s" % (v.get("host") or "-"), "feed": fk, "vc": name,
-                                  "vm": v.get("name"), "host": v.get("host") or "", "site": site_of(rx, v.get("host"))})
-        # sustained high: this vCenter's series
-        vm_host = dict((v.get("name"), v.get("host") or "") for v in vms)
+                hb, tools = v.get("heartbeat"), v.get("tools")
+                if v.get("tools_version") == "guestToolsNotInstalled" or v.get("tools_seen") is False:
+                    part["heartbeat_unwatched"] += 1
+                    if not (hb or tools or v.get("tools_version")):
+                        part["incomplete"].append("VM %s: Tools and heartbeat not read" % vn)
+                    continue
+                if v.get("tools_seen") is not True:
+                    part["incomplete"].append("VM %s: Tools history not read" % vn)
+                    continue
+                part["heartbeat_watched"] += 1
+                if hb == "red" or tools == "guestToolsNotRunning":
+                    conds.append({"id": heartbeat_id, "kind": "vmhung", "t": "VM %s no heartbeat" % vn,
+                                  "obj": ("VMware Tools heartbeat red" if hb == "red" else "VMware Tools stopped") + " · host " + (v.get("host") or "-"),
+                                  "feed": fk, "vc": name, "vm": vn, "host": vm_host[vn], "site": site_of(rx, vm_host[vn])})
+                elif hb == "green":
+                    ok.append((fk, heartbeat_id))
+                else:
+                    part["incomplete"].append("VM %s: heartbeat %s" % (vn, hb or "not read"))
+        # Only objects eligible in this read can contribute a load condition.
         host_cluster = dict((h.get("name"), h.get("cluster") or "") for h in hosts)
         for key, samples in hist.items():
             if not (isinstance(key, (tuple, list)) and len(key) == 4 and key[0] == src["key"]):
                 continue
             _k, kind, oname, metric = key
+            if oname not in (vm_host if kind == "vm" else host_cluster):
+                continue
             samples = [(float(t), v) for t, v in samples]
             v_now, start = run_of(samples, thr, sec)
             if start is None or not samples or (src.get("at") and samples[-1][0] < float(src["at"]) - 1):
@@ -428,6 +520,7 @@ def vmware_part(view, o, now):
                                     "host": host, "vc": name, "feed": fk})
             else:
                 part["building"].append({"n": oname, "k": label, "m": m, "v": round(v_now, 1), "min": int(long_s // 60), "vc": name})
+        feeds[fk]["unread"] = part["incomplete"][initial:initial + 3]
     part["hot"].sort(key=lambda x: -x["v"])
     part["building"].sort(key=lambda x: -x["v"])
     part["datastores"].sort(key=lambda d: (-(d["v"] or 0), d["n"]))
@@ -448,8 +541,8 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     rx = site_rule(o["site_pattern"])
     srcs = sorted([dict(x, key=k) for k, x in ((view or {}).get("sources") or {}).items() if x.get("kind") == "ontap"], key=lambda x: str(x.get("name")))
     part = {"configured": bool(srcs), "why": "" if srcs else STORAGE_OFF, "incomplete": [], "ran": {"sm": False, "nodes": False}, "clusters": [],
-            "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0, "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "paths": {},
-            "source": "live", "paths_why": why or ""}
+            "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0, "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "smUnknown": [], "paths": {},
+            "source": "live", "paths_why": why or "", "excluded": []}
     ran = {"sm": [], "nodes": []}
     for src in srcs:
         fk, snap, state = src["key"], src.get("snap") or {}, src.get("state") or "never"
@@ -472,11 +565,15 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             continue
         if cl not in part["clusters"]:
             part["clusters"].append(cl)
+        initial = len(part["incomplete"])
         for k, why_ in (snap.get("failed") or {}).items():
             part["incomplete"].append("ONTAP %s: %s not read whole (%s)" % (addr, k, why_))
         if snap.get("aggrs") is None:
             part["incomplete"].append("ONTAP %s: aggregates not read" % addr)
+        root_aggregates = {a["name"] for a in snap.get("aggrs") or [] if a.get("name") and a.get("is_root") is True}
         for a in snap.get("aggrs") or []:
+            if excluded(part, o, "aggregates", a.get("name"), addr, "root aggregate" if a.get("name") in root_aggregates else ""):
+                continue
             size_b, used = a.get("size"), a.get("used")
             pct = round(100.0 * used / size_b, 1) if size_b and used is not None and 0 <= used <= size_b else None    # not read or impossible: unknown
             cid = "aggr:%s:%s" % (addr, a.get("name") or "")
@@ -501,18 +598,34 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             elif ns in NODE_BAD:
                 conds.append({"id": cid, "kind": "node", "t": "Storage node %s %s" % (n.get("name"), ns),
                               "obj": "cluster %s · takeover %s" % (cl, {True: "possible", False: "not possible"}.get(n.get("takeover"), "?")), "feed": fk,
-                              "cluster": cl, "site": site})
+                              "cluster": cl, "site": site, "obj_name": n.get("name")})
             else:
                 known = False
                 part["incomplete"].append("node %s: state %s" % (n.get("name"), "not read" if ns is None else "%r not known" % (ns,)))
         ran["nodes"].append(nodes is not None and known)
         part["nodes"] = [part["nodes"][0] + sum(1 for n in nodes or [] if n.get("state") == "up"), part["nodes"][1] + len(nodes or [])]
         off = 0
+        ls_destinations = {r.get("dst") for r in snap.get("snapmirror") or [] if str(r.get("type")).lower() == "ls"}
+        skipped_volumes = set()
         for coll, label in (("volumes", "Volume"), ("luns", "LUN")):
             if snap.get(coll) is None:
                 part["incomplete"].append("ONTAP %s: %s not read" % (addr, coll))
             for v in snap.get(coll) or []:
                 nm_ = v.get("name") if coll == "volumes" else v.get("path")
+                if coll == "volumes":
+                    identity = (v.get("svm"), nm_)
+                    dest = "%s:%s" % identity
+                    reason = ""
+                    if v.get("is_svm_root") is True or v.get("is_node_root") is True or v.get("aggr") in root_aggregates:
+                        reason = "root volume"
+                    elif v.get("type") == "ls" or (v.get("type") == "dp" and (dest in ls_destinations or v.get("destination_type") == "ls")):
+                        reason = "load-sharing mirror destination"
+                    if excluded(part, o, "volumes", nm_, addr, reason):
+                        skipped_volumes.add(identity)
+                        continue
+                    part["volumes"] += 1
+                elif (v.get("svm"), v.get("volume")) in skipped_volumes or matches(v.get("volume"), o["exclude"].get("volumes")):
+                    continue
                 vs, cid = v.get("state"), "voloff:%s:%s:%s" % (addr, v.get("svm"), nm_)
                 if vs == "online":
                     ok.append((fk, cid))
@@ -520,10 +633,9 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                     off += 1
                     conds.append({"id": cid, "kind": "voloff", "t": "%s %s %s" % (label, nm_, vs),
                                   "obj": "SVM %s · %s" % (v.get("svm"), "cluster " + cl if coll == "volumes" else "volume %s" % v.get("volume")), "feed": fk,
-                                  "cluster": cl, "site": site})
+                                  "cluster": cl, "site": site, "obj_name": nm_})
                 else:
                     part["incomplete"].append("%s %s: state %s" % (label.lower(), nm_, "not read" if vs is None else "%r not known" % (vs,)))
-        part["volumes"] += len(snap.get("volumes") or [])
         if snap.get("volumes") is not None or snap.get("luns") is not None:
             part["volOffline"] = (part["volOffline"] or 0) + off
         sm = snap.get("snapmirror")
@@ -532,21 +644,45 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
         for r in sm or []:
             st_ = str(r.get("state") or "").replace("-", "_")
             cid = "sm:%s:%s" % (addr, r.get("dst"))
+            severity = "warn"
             if r.get("healthy") is False or st_ == "broken_off":
                 word = "broken off" if st_ == "broken_off" else "unhealthy"
-                part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or "", "word": word.capitalize(), "cond": cid, "c": cl})
-                conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), word),
-                              "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": fk, "cluster": cl, "site": site})
             elif r.get("healthy") is True and st_ in SM_GOOD:
-                ok.append((fk, cid))
+                lag = r.get("lag_s")
+                if type(lag) not in (float, int) or not (0 <= lag < math.inf):
+                    known = False
+                    part["smUnknown"].append("%s · %s: lag_time unknown" % (addr, r.get("dst")))
+                    part["incomplete"].append("SnapMirror %s: lag_time unknown" % r.get("dst"))
+                    continue
+                if lag <= o["snapmirror_lag_warn_hours"] * 3600:
+                    ok.append((fk, cid))
+                    continue
+                word = "lag %.2f h" % (lag / 3600)
+                if lag > o["snapmirror_lag_crit_hours"] * 3600:
+                    severity = "crit"
             else:
                 known = False
                 part["incomplete"].append("SnapMirror %s: health or state not known (healthy %s, state %s)" % (r.get("dst"), r.get("healthy"), r.get("state")))
+                continue
+            part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or "", "word": word.capitalize(),
+                                     "cond": cid, "c": cl, "feed": fk, "sev": severity})
+            conds.append({"id": cid, "kind": "sm", "sev": severity, "t": "SnapMirror %s %s" % (r.get("dst"), word),
+                          "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": fk,
+                          "cluster": cl, "obj_name": r.get("dst"), "site": site})
+        if sm is None and "snapmirror" not in (snap.get("failed") or {}):
+            part["incomplete"].append("ONTAP %s: SnapMirror not read" % addr)
+        if nodes is None and "nodes" not in (snap.get("failed") or {}):
+            part["incomplete"].append("ONTAP %s: nodes not read" % addr)
+        feeds[fk]["unread"] = part["incomplete"][initial:initial + 3]
         ran["sm"].append(sm is not None and known)
     if srcs:
         # the datastores (Storage's fill gauges): the vCenters' live reads
-        part["ds"] = [dict(d) for d in vm.get("datastores") or []]
-        for d in part["ds"]:
+        for d in vm.get("datastores") or []:
+            if not d["capacity_watched"]:
+                if d.get("watch_reason") == "multipleHostAccess not read":
+                    part["incomplete"].append("vCenter %s: datastore %s: multipleHostAccess not read" % (d["vc"], d["n"]))
+                continue
+            part["ds"].append(dict(d))
             if d.get("v") is None:
                 part["incomplete"].append("datastore %s: capacity or free space not read" % d["n"])
             if d.get("accessible") is None:
@@ -581,11 +717,15 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     fall.update(f2)
     for c in c1 + c2:
         k = ks[c["kind"]]
-        c.update(area=k["area"], sev=k["sev"], end=None)
+        c.update(area=k["area"], sev=c.get("sev", k["sev"]), end=None)
         c["seen"] = (fall.get(c.get("feed")) or {}).get("asof") or c.get("start")     # when its data was read (a last-known one: last seen)
     # what clears a condition: its object seen OK in a fresh read (its feed's latest read worked, within the stale limit)
     cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= o["stale"]) for k, f in fall.items())
     ok_ids = set(cid for fk, cid in ok1 + ok2 if cur.get(fk))
+    if tracker is not None:
+        for src in ((view or {}).get("sources") or {}).values():
+            for alias in src.get("aliases", []):
+                tracker.merge_vcenter(alias, src["name"])
     conds = tracker.update(c1 + c2, now, ok_ids) if tracker is not None else [dict(c, start=c.get("start") or now) for c in c1 + c2]
     # a datastore / aggregate row points at its condition
     by = {}
@@ -620,6 +760,6 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
     return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
-            "thresholds": {"ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
+            "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
