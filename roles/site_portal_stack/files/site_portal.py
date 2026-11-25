@@ -6618,48 +6618,44 @@ def pick_check(portal):
 
 def write_wall_token(data_dir, text):
     """--wall-token: Site portal - deploy's reset token (32 lowercase hex, on stdin) into the data volume, durably - a new one
-    starts stopped wall logins again, once (wall_live.Collector)"""
+    starts stopped wall logins again, once (wall_live.Collector). The journal first, the token last: a collector still
+    running sees the new token only after the journal is settled, so a refusal it records with that token is never
+    replaced by the clear record below (one deploy, at most one refused login)."""
     tok = str(text or "").strip()
-    if not re.match(r"^[0-9a-f]{32}$", tok):
+    if not wall_live.TOKEN_RX.match(tok) if wall_live is not None else not re.fullmatch(r"[0-9a-f]{32}", tok):
         raise ValueError("not a token (32 lowercase hex)")
-    fd, tmp = tempfile.mkstemp(prefix="wall-reset-token.", suffix=".tmp", dir=data_dir)
-    try:
-        os.write(fd, (tok + "\n").encode("ascii"))
-        os.fsync(fd)
-        os.close(fd)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, os.path.join(data_dir, "wall-reset-token"))
-    except BaseException:
+
+    def put(name, body):
+        fd, tmp = tempfile.mkstemp(prefix=name + ".", suffix=".tmp", dir=data_dir)
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    dfd = os.open(data_dir, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+            os.write(fd, body)
+            os.fsync(fd)
+            os.close(fd)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, os.path.join(data_dir, name))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        dfd = os.open(data_dir, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     # the journal missing (a first deploy, an emptied volume) or in doubt: a person ran the deploy - a clear one (a valid stop
-    # record is never touched: the new token above is what starts it, once)
+    # record is never touched: the new token below is what starts it, once)
     if wall_live is not None:
         jp = os.path.join(data_dir, "wall-backoff.json")
         try:
             wall_live._parse_journal(wall_live._read_regular(jp, wall_live.JOURNAL_MAX))
         except (OSError, ValueError):
-            fd, tmp = tempfile.mkstemp(prefix="wall-backoff.json.", suffix=".tmp", dir=data_dir)
             try:
-                os.write(fd, json.dumps({"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}).encode("ascii"))
-                os.fsync(fd)
-                os.close(fd)
-                os.chmod(tmp, 0o600)
-                os.replace(tmp, jp)
+                put("wall-backoff.json", json.dumps({"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}).encode("ascii"))
             except OSError:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
-
+                pass                                    # left in doubt: the collector stays stopped (fails closed)
+    put("wall-reset-token", (tok + "\n").encode("ascii"))
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--wall-token"]:

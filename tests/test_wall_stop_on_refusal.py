@@ -985,5 +985,39 @@ class Shutdown(Base):
         self.assertEqual(len(srcs), 1)
 
 
+
+class NeonR8(unittest.TestCase):
+    """Neon r8: a token with a trailing newline is no token; the deploy settles the journal before it publishes the token."""
+
+    def test_neon_r8_1_a_token_with_a_newline_is_doubt(self):
+        good = "a" * 32
+        self.assertTrue(W.TOKEN_RX.match(good))
+        for bad in (good + "\n", good + " ", "A" * 32, good[:-1], good + "0"):
+            self.assertFalse(W.TOKEN_RX.match(bad), repr(bad))
+            rec = {"v": 5, "stopped": True, "at": 1700000000, "why": "refused", "token": bad, "inflight": []}
+            with self.assertRaises(ValueError):
+                W._parse_journal(json.dumps(rec).encode("ascii"))
+
+    def test_neon_r8_2_the_journal_first_the_token_last(self):
+        import test_netapp_live  # noqa: F401  (its paths: the portal's modules)
+        import site_portal as sp
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "wall-backoff.json"), "w") as fh:
+            fh.write("{not json")                                         # in doubt: the writer gives it a clear start
+        order, real = [], os.replace
+
+        def spy(src, dst):
+            order.append(os.path.basename(dst))
+            return real(src, dst)
+        os.replace = spy
+        try:
+            sp.write_wall_token(d, "b" * 32)
+        finally:
+            os.replace = real
+        self.assertEqual(order, ["wall-backoff.json", "wall-reset-token"])
+        with self.assertRaises(ValueError):
+            sp.write_wall_token(d, "b" * 32 + "x")
+
 if __name__ == "__main__":
     unittest.main()

@@ -627,7 +627,7 @@ class OntapSource(object):
 # ---- the collector --------------------------------------------------------------------------------------------------------
 JOURNAL_MAX = 64 * 1024                 # bytes: a bigger journal is not trusted (stop)
 JOURNAL_KEYS = {"v", "stopped", "at", "why", "token", "inflight"}
-TOKEN_RX = re.compile(r"^[0-9a-f]{32}$")
+TOKEN_RX = re.compile(r"[0-9a-f]{32}\Z")           # used with match: exactly 32 hex, nothing after (not even a newline)
 TOKEN_FILE = "wall-reset-token"         # written by Site portal - deploy on every run (32 hex): a new one starts stopped logins
 UNREADABLE = "unreadable"               # the token file was there but not readable when the stop was written: only a person
 

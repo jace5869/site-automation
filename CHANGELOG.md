@@ -90,6 +90,11 @@ stopped: fix the cause, then run Site portal - deploy (every run lets the wall t
     the wall's).
   - a deleted object's alert stays "last seen" until the portal restarts; a paused or uninitialized but healthy
     SnapMirror relationship is grey; one unreachable source delays the others by up to its timeout each cycle.
+- **Wall logins - known limits** (the wall never sends a refused password twice on its own; these need a person's hand):
+  - restoring an older copy of the portal's data volume (or of its wall-reset-token file) can allow one more login try;
+  - two portal hosts each running the wall with the same account can each fail it once - run the wall on one host;
+  - after a password was accepted, a read error later in the cycle still stops every wall login (stricter than needed:
+    run Site portal - deploy to start them again).
 
 ## 1.129.0 — 2026-11-25
 
