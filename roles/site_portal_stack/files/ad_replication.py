@@ -5,7 +5,7 @@ from html import escape
 import ad_repl_filters as report
 import site_ad_layer as layer
 import site_swis
-import site_time
+from site_time import local as local_time
 
 
 def map_data(dcs, links, at, opts, scale):
@@ -110,8 +110,8 @@ def details(pair, tz, stale):
            '<th>Failures in a row</th><th>Error code and text</th></tr></thead><tbody>' %
            (panel_id(src, dst), escape(pair["frm"]), escape(pair["to"]))]
     for x in pair["partitions"]:
-        last = site_time.local(x["last_success"], tz) if x["last_success"] else "Never"
-        failure = site_time.local(x["last_failure"], tz) if x["last_failure"] else "—"
+        last = local_time(x["last_success"], tz) if x["last_success"] else "Never"
+        failure = local_time(x["last_failure"], tz) if x["last_failure"] else "—"
         error = report._err(x["error"]) or x["error"] or "—"
         if error.isdecimal() and error != "0":
             error += " (description unavailable)"
