@@ -405,14 +405,16 @@ class NamedOnly(list):
         return list(self)
 
 
+def card_person(cn):
+    """The EDIPI survives a card name change. For cards without one, use the full CN."""
+    cn = str(cn or "").strip()
+    number = re.search(r"(?:^|\.)(\d{10})$", cn)
+    return number.group(1) if number else cn
+
+
 def same_person(a, b):
-    """1.120.0: two card CNs of one person - the same CN, or the same EDIPI (a new card after a name change): who started
-    a run never approves it under another CN."""
-    a, b = str(a or "").strip(), str(b or "").strip()
-    if not a or not b:
-        return False
-    ea, eb = re.search(r"(?:^|\.)(\d{10})$", a), re.search(r"(?:^|\.)(\d{10})$", b)
-    return a == b or bool(ea and eb and ea.group(1) == eb.group(1))
+    person = card_person(a)
+    return bool(person) and person == card_person(b)
 
 
 class Config(object):
@@ -442,6 +444,9 @@ class Config(object):
         self.aap_token = g("PORTAL_AAP_TOKEN")
         self.aap_timeout = int(g("PORTAL_AAP_TIMEOUT", "30"))
         self.inventory = g("PORTAL_INVENTORY")
+        self.readers = names(g("PORTAL_READERS", "[]"))
+        self.reader_groups = names(g("PORTAL_READER_GROUPS", "[]"))
+        self.access_contact = str(g("PORTAL_ACCESS_CONTACT")).strip() or "your portal administrator"
         self.requesters = names(g("PORTAL_REQUESTERS", "[]"))      # 1.120.0: made People below (the named + the AD groups')
         self.limit_max = max(1, min(500, int(g("PORTAL_LIMIT_MAX", "50"))))          # 1.78.0: hosts a discovered template's Limit may stand for (groups counted by their hosts)
         self.approvers = names(g("PORTAL_APPROVERS", "[]"))
@@ -550,16 +555,16 @@ class Config(object):
                           "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
         self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
         self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
-        self.ad_groups = (site_ad_groups.Groups({"approvers": self.approver_groups, "requesters": self.requester_groups}, self.ldap_opts,
-                                                self.card_match, self.ad_groups_seconds)
-                          if site_ad_groups and (self.approver_groups or self.requester_groups) else None)
+        groups = {"readers": self.reader_groups, "approvers": self.approver_groups, "requesters": self.requester_groups}
+        self.ad_groups = (site_ad_groups.Groups(groups, self.ldap_opts, self.card_match, self.ad_groups_seconds)
+                          if site_ad_groups and any(groups.values()) else None)
         if site_ad_groups:
             self.approvers = site_ad_groups.People(self.approvers, "approvers", self.ad_groups)
             self.requesters = site_ad_groups.People(self.requesters, "requesters", self.ad_groups)
         else:                                             # no reader: the named only - with groups set, an empty list is nobody
             self.approvers = NamedOnly(self.approvers, bool(self.approver_groups))
             self.requesters = NamedOnly(self.requesters, bool(self.requester_groups))
-        self.ad_groups_why = ("" if not (self.approver_groups or self.requester_groups) or site_ad_groups else
+        self.ad_groups_why = ("" if not any(groups.values()) or site_ad_groups else
                               "The portal's AD groups reader (site_ad_groups.py) is not in the service's files - deploy again; the named lists only.")
         # 1.85.0: the live network map - SolarWinds' address and its read-only login (the secret PORTAL_SWIS_LOGIN: JSON
         # {user, password}), read every netmap_live_seconds (30 at least) while someone has the page open
@@ -614,6 +619,22 @@ class Config(object):
         sp = "/" + raw_sp.strip("/")
         self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*\Z", sp) and not raw_sp.startswith("//")
                              and "//" not in sp and ".." not in sp else "/")
+
+    @property
+    def readers_restricted(self):
+        return bool(self.readers or self.reader_groups)
+
+    def reader_match(self, cn):
+        """The setting that grants this card access, or an empty string on refusal."""
+        for role, people in (("readers", self.readers), ("requesters", self.requesters), ("approvers", self.approvers)):
+            if list.__contains__(people, cn):  # named CNs only (People also checks AD)
+                return "portal_" + role
+        if self.ad_groups:
+            for role, setting in (("readers", "portal_reader_groups"), ("requesters", "portal_requester_groups"),
+                                  ("approvers", "portal_approver_groups")):
+                if self.ad_groups.has(role, cn):
+                    return setting
+        return "" if self.readers_restricted else "any verified card"
 
 
 # ---- who: the client certificate nginx verified (as vmware_ask.py) ---------------------------------------------------
@@ -2481,7 +2502,7 @@ class Portal(object):
                           "groups": dict((role, ["%s: %d" % (g["name"], g["count"]) if g["found"] else "%s: %s" % (g["name"], g.get("why") or "not found")
                                                  for g in gs]) for role, gs in (r.get("groups") or {}).items())})
         else:
-            self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_approvers, portal_requesters): " + str(r.get("error") or "")[:300]})
+            self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_readers, portal_approvers, portal_requesters): " + str(r.get("error") or "")[:300]})
 
     def __init__(self, cfg, aap=None, log=None, cache_catalog=True, start_ad=True):
         self.cfg = cfg
@@ -2524,6 +2545,7 @@ class Portal(object):
         self.placement_results = {r["job"]: r["result"] for r in self.log.read("placement_result", limit=0)}
         self.recent = {}                # CN -> [launch times]
         self.prog = collections.OrderedDict()           # 1.78.0: job id -> Progress (the last 60 jobs followed)
+        self.reader_refusals = collections.OrderedDict()
         self.polls = {}                 # CN -> [times of its progress calls]
         self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
 
@@ -2730,8 +2752,20 @@ class Portal(object):
 
     # -- who may do what
     def may_use(self, cn):
-        return not self.cfg.requesters or cn in self.cfg.requesters or cn in self.cfg.approvers \
-            or any(isinstance(a["who"], list) and cn in a["who"] for a in self.actions.values())
+        """Whether a verified card with this CN can open the portal."""
+        return bool(cn) and (not self.cfg.readers_restricted or bool(self.cfg.reader_match(cn)))
+
+    def log_reader_refusal(self, cn, ip, path):
+        # Keep one audit entry across all routes and concurrent requests in a rolling hour.
+        person = card_person(cn)
+        with self.lock:
+            now = time.monotonic()
+            while self.reader_refusals and next(iter(self.reader_refusals.values())) <= now - 3600:
+                self.reader_refusals.popitem(last=False)
+            if person in self.reader_refusals:
+                return
+            self.reader_refusals[person] = now
+        self.log.add({"event": "refused", "why": "not on the portal readers list", "user": cn, "ip": ip, "path": path[:200]})
 
     def mine(self, cn):
         """The actions this person may run."""
@@ -4001,6 +4035,23 @@ def message_page(cfg, title, text, user="", kind="info"):
     return shell(cfg, title, body, user, page="message")
 
 
+def reader_refusal_page(cfg, cn):
+    """Only the stylesheets used here need to be reachable before reader authorization."""
+    banner = style = note = ""
+    if cfg.banner["on"]:
+        banner = '<div class="banner">%s</div>' % esc(cfg.banner["text"])
+        style = '<link rel="stylesheet" href="%sstatic/banner.css">' % esc(cfg.path)
+    if cfg.ad_groups_why or (cfg.ad_groups and not cfg.ad_groups.status("readers")["ok"]):
+        note = ("<p>AD groups have not been read or are unavailable. Only card names listed in "
+                "portal_readers, portal_requesters or portal_approvers may view the portal.</p>")
+    return ("""<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
+<link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
+<div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
+<p>Card CN: <b>%s</b></p>%s</div></main>%s</body></html>""" %
+            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, banner))
+
+
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
 LOGO_MAX = 1024 * 1024
 
@@ -5198,12 +5249,12 @@ def deciders_html(cfg):
 def approvals_page(cfg, portal, cn):
     approver = cn in cfg.approvers
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Approvals</h1><p class="lede">Every workflow waiting for a decision that the portal\'s account can see.%s</p></div>'
-            '%s<p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
+            '%s<p>Your reader access comes from <b>%s</b>.</p><p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
             'your name, the decision and the time.</p><p class="status" id="a-status" aria-live="polite">Asking AAP…</p>'
             '<div id="approvals" data-approver="%s"></div>'
             % ((" You may approve or deny - not a run you started yourself." if not cfg.self_approval else " You may approve or deny.")
                if approver else " You can see them; only the approvers may decide.",
-               deciders_html(cfg), "1" if approver else "0"))
+               deciders_html(cfg), esc(cfg.reader_match(cn)), "1" if approver else "0"))
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
 
@@ -6349,9 +6400,8 @@ def make_handler(cfg, portal, static_dir):
                 self._deny(why, api)
                 return None
             if not portal.may_use(user):
-                portal.log.add({"event": "refused", "user": user, "ip": self._ip(), "why": "not on portal_requesters or portal_approvers (nor in their AD groups)",
-                                "path": urllib.parse.urlsplit(self.path).path[:200]})
-                self._deny("You are not on the list of people who may use this portal (portal_requesters, portal_requester_groups).", api)
+                portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
+                self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
                 return None
             return user
 
@@ -6384,6 +6434,17 @@ def make_handler(cfg, portal, static_dir):
         def do_GET(self):
             u = urllib.parse.urlsplit(self.path)
             path = u.path
+            api = path.startswith("/api/")
+            cn = None
+            if cfg.readers_restricted:
+                refusal_asset = path == "/static/portal.css" or (cfg.banner["on"] and path == "/static/banner.css")
+                # The deploy probes /healthz inside the app container. nginx sets X-Forwarded-Proto on every request.
+                local_probe = (path == "/healthz" and self.client_address[0] == "127.0.0.1"
+                               and "X-Forwarded-Proto" not in self.headers and VERIFY_HEADER not in self.headers)
+                if not refusal_asset and not local_probe:
+                    cn = self._who(api)
+                    if not cn:
+                        return
             if path == "/healthz":
                 return self._send(200, {"ok": True, "actions": len(portal.actions), "aap": portal.aap.ready or "ok",
                                         "logo": ("on" if cfg.logo else cfg.logo_why) if (cfg.logo or cfg.logo_why) else "",
@@ -6392,8 +6453,7 @@ def make_handler(cfg, portal, static_dir):
             if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
                 css = ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"])
                 return self._static(css.encode(), TYPES[".css"])
-            # 1.68.1: a scorecard link's go page and the script nginx adds to STIG Manager's page - no sign-in here: they
-            # carry only ids, and STIG Manager checks who may read what
+            # With open reader access, the STIG scorecard bridge can carry IDs without a portal sign-in.
             if path == "/stigman/go":
                 t = stigman_target(u.query)
                 if not t:
@@ -6402,7 +6462,8 @@ def make_handler(cfg, portal, static_dir):
             if path == "/static/logo" and cfg.logo:       # the site's logo (portal_logo): the file's type was checked when the service started
                 try:
                     with open(cfg.logo, "rb") as fh:
-                        return self._static(fh.read(LOGO_MAX + 1)[:LOGO_MAX], cfg.logo_type, cache="max-age=3600")
+                        return self._static(fh.read(LOGO_MAX + 1)[:LOGO_MAX], cfg.logo_type,
+                                            cache="no-cache" if cfg.readers_restricted else "max-age=3600")
                 except OSError:
                     return self._send(404, b"", "text/plain")
             if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js"):
@@ -6417,8 +6478,7 @@ def make_handler(cfg, portal, static_dir):
                     return self._static(fh.read(), TYPES[os.path.splitext(path)[1]])
             if path.startswith("/static/"):
                 return self._send(404, b"", "text/plain")
-            api = path.startswith("/api/")
-            cn = self._who(api)
+            cn = cn or self._who(api)
             if not cn:
                 return None
             # 1.79.9: the report website's files need nothing of AAP - served before the actions are looked at
@@ -6569,7 +6629,7 @@ def make_handler(cfg, portal, static_dir):
                 qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
                 return self._send(200, {"hosts": portal.aap.host_search(qs)})
             if path == "/api/me":
-                return self._send(200, {"user": cn, "approver": cn in cfg.approvers,
+                return self._send(200, {"user": cn, "approver": cn in cfg.approvers, "reader_match": cfg.reader_match(cn),
                                         "actions": [a["name"] for a in portal.mine(cn)]})
             return self._send(404, {"error": "not found"} if api else message_page(cfg, "Not here", "There is nothing at this address.", cn),
                               "application/json" if api else "text/html; charset=utf-8")
@@ -6609,11 +6669,8 @@ def make_handler(cfg, portal, static_dir):
                      if parent.endswith("-files") else [])
             return self._send(200, data, ctype, meta + extra, csp=REPORT_CSP, cache="no-cache")
 
-        def _form_post(self, name):
+        def _form_post(self, name, cn):
             """1.78.0: the confirm page without scripts - the form posts itself (same checks: the token, the origin, every value again)."""
-            cn = self._who(api=False)
-            if not cn:
-                return None
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             try:
                 n = int(self.headers.get("Content-Length") or 0)
@@ -6653,10 +6710,7 @@ def make_handler(cfg, portal, static_dir):
             return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
                               message_page(cfg, "Not started", out.get("error", "Not started."), cn, "bad"), "text/html; charset=utf-8")
 
-        def _refresh_post(self):
-            cn = self._who(api=False)
-            if not cn:
-                return None
+        def _refresh_post(self, cn):
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             try:
                 n = int(self.headers.get("Content-Length") or 0)
@@ -6674,18 +6728,18 @@ def make_handler(cfg, portal, static_dir):
 
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
+            cn = self._who(api=path.startswith("/api/"))
+            if not cn:
+                return
             m_form = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
             if m_form:
-                return self._form_post(m_form.group(1))
+                return self._form_post(m_form.group(1), cn)
             if path == "/refresh":                      # 1.78.0: read AAP again now (the Actions page's Refresh)
-                return self._refresh_post()
+                return self._refresh_post(cn)
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
             m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny|placement)$", path)
             if not m_act and not m_dec:
                 return self._send(404, {"error": "not found"})
-            cn = self._who(api=True)
-            if not cn:
-                return None
             # CSRF: a page of this site sent it (same origin), with this person's token, as JSON
             if not self._same_origin() or not portal.token_ok(cn, self.headers.get("X-Portal-Token")) \
                     or (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":

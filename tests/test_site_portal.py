@@ -2475,7 +2475,7 @@ class Found(unittest.TestCase):
         self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)
         self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890"]
         try:
-            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 403)                     # not on the list of people: refused
+            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 404)                     # a reader cannot see a job its action does not allow
             self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890", "ROE.RICHARD.A.2345678901"]
             self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)                     # on the list: may see what the action allows (as every job page)
             self.assertEqual(self.get("/api/jobs/999999/progress", dn=RROE)[0], 404)                       # a job the portal did not start: not even said to exist
