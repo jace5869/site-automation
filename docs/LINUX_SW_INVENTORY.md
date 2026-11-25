@@ -50,14 +50,17 @@ One read-only script per host (`roles/sw_inventory/files/sw_read.sh`), sent to i
 | Export | Files | Where |
 |---|---|---|
 | `shield` | `<short host name>.txt` per host (*The shield file*) | `sw_inventory_dir/shield/`, the share |
-| `csv` | `sw-inventory-YYYYMMDD-HHMM.csv`, `sw-inventory-latest.csv`: a row per host and package | `sw_inventory_dir`, the share, the email |
-| `json` | `sw-inventory-YYYYMMDD-HHMM.json`, `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, the share, the email |
+| `csv` | `sw-inventory-YYYYMMDD-HHMMSS-job<ID>.csv`, `sw-inventory-latest.csv`: a row per host and package | `sw_inventory_dir`, the share, the email |
+| `json` | `sw-inventory-YYYYMMDD-HHMMSS-job<ID>.json`, `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, the share, the email |
 
 - **CSV columns:** `host, os, kernel, read_at, name, epoch, version, release, arch, vendor, installed_at, repo,
   source_rpm`. Times UTC. An epoch of none is empty.
 - **What changed** comes from `sw-inventory-state.json`, beside the files and on the share: each host's last list.
   A host not read this run keeps its own. A host seen for the first time has no changes until the next run.
-- **Dated files** older than `sw_inventory_keep_days` (90) are deleted, here and on the share - only those.
+- **Dated files** (one pair per run: the time to the second and the AAP job) older than `sw_inventory_keep_days` (90)
+  are deleted, here and on the share - only those. A folder that cannot be listed is a warning: nothing deleted.
+- **The state file** that cannot be read (not missing: no access, an I/O error) is never written over: the run says
+  so (SA-SWI-32) and shows no changes; one that cannot be written is said too (SA-SWI-33).
 - `sw_inventory_dir: ''` (the default) writes in the job's own folder, gone after the job: set it, or the share.
 
 ## The shield file
@@ -88,8 +91,10 @@ In the file one TAB separates the fields of a row (the PDF of this guide shows i
 | each row | name, epoch (`0` for none), version, release, arch, source RPM, separated by a TAB, as `rpm -qa --qf '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\n'` prints them (`gpg-pubkey`'s arch and source are `(none)`) |
 
 The rows are sorted by name, then version and release in rpm's order; every installed instance is kept. Unix line
-ends, one at the end, UTF-8, no blank line. A host not read keeps its last file. Two hosts with the same short name:
-only the first gets a file, and the job output says so.
+ends, one at the end, UTF-8, no blank line. A host not read keeps its last file. Two hosts of one run with the same
+short name, in any case (`APP01`, `app01.corp.example.mil`): only the first gets a file, and the job output says so.
+Give such hosts distinct names: across runs the file is the last one read. An address as the inventory name gives its
+first number (`192`), as Ansible's `inventory_hostname_short` does.
 
 ## The share
 
@@ -102,16 +107,17 @@ nodes (`/mnt/inventory`) works too.
 - `sw_inventory_share_auth` follows `report_web_smb_auth` (`negotiate`: Kerberos first, the only way under FIPS).
 - The folder must be there; the job makes `sw_inventory_share_subdir` and `shield` inside it.
 - Each file is copied on its own; a file open on the share is tried again for a few seconds. The job lists every file
-  that could not be copied.
+  that could not be copied (the email: the first 50).
 
 ## The email and the report
 
 With `report_email_to`, the report goes out like the other reports with the run's **CSV**, **JSON**, a zip of the
 shield files (`sw-inventory-shield-YYYYMMDD.zip`) and the workbook (sheets **Packages** and **Changed since last
-run**). A file bigger than `sw_inventory_email_max_mb` (10) is left off; the email says where it is - on the share
-when the copy worked. `sw_inventory_email: false`: no email; the website still has the CSV and the JSON.
+run**). A CSV, JSON or zip bigger than `sw_inventory_email_max_mb` (10) is left off; the email says where it is - on
+the share when the copy worked. The workbook always goes (its Packages sheet stops at `sw_inventory_xlsx_max_rows`). `sw_inventory_email: false`: no email; the website still has the CSV and the JSON.
 
-The website and the email are sent on their own: one failing never stops the other.
+The website and the email are sent on their own: one failing never stops the other, and a page not written fails the
+job at its end like an export.
 
 The report, results first, empty sections left off: **Hosts not read** (with why), **Outputs not written**,
 **Software changes (last night)** (added, removed, updated per host), **Top changed packages**, **Notes**.
@@ -129,7 +135,7 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | `sw_inventory_share_encrypt` | `report_web_smb_encrypt` | SMB 3 encryption always |
 | `sw_inventory_keep_days` | `90` | Dated files kept. `0`: all |
 | `sw_inventory_email` | `true` | Email the report with the files (`report_email_to`) |
-| `sw_inventory_email_max_mb` | `10` | Each attachment at most |
+| `sw_inventory_email_max_mb` | `10` | The CSV, the JSON and the shield zip each at most (the workbook always goes) |
 | `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most (the CSV has all) |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
 | `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |
@@ -152,6 +158,8 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | SA-SWI-29 | another SMB error | read the error line |
 | SA-SWI-30 | a path or folder name not valid | an absolute `sw_inventory_dir`; plain sub folder names |
 | SA-SWI-31 | `sw_inventory_dir` cannot be written | a folder the job's user may write |
+| SA-SWI-32 | the state file cannot be read (no access, an I/O error) | read access for the job's user; it is left as it is |
+| SA-SWI-33 | the state file cannot be written | write access for the job's user |
 
 A host that cannot be reached is listed with the reason and never fails the job (`site_unreachable_fails: true`
 fails it). The report goes out even when no host was reached.

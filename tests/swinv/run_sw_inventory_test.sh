@@ -121,7 +121,7 @@ mailvars() { echo "{\"sw_inventory_dir\": \"$out\", \"report_email_to\": [\"ops@
 vars="$(mailvars 10)"
 play --limit 'rhel*'; check "email: green" "$?" 0
 att() { "$py" -c 'import email, sys; m = email.message_from_binary_file(open(sys.argv[1], "rb")); print(" ".join(sorted(p.get_filename() for p in m.walk() if p.get_filename())))' "$(ls -t "$work"/mail/*.eml | head -n 1)"; }
-check "email (default outputs): the CSV, the JSON, the zip and the workbook attached" "$(att | sed -E 's/[0-9]{8}-[0-9]{4}/STAMP/g; s/[0-9]{8}\.zip/DAY.zip/; s/[0-9]{4}-[0-9]{2}-[0-9]{2}/DATE/')" "sw-inventory-DATE.xlsx sw-inventory-STAMP.csv sw-inventory-STAMP.json sw-inventory-shield-DAY.zip"
+check "email (default outputs): the CSV, the JSON, the zip and the workbook attached" "$(att | sed -E 's/[0-9]{8}-[0-9]{6}-job[0-9]+/STAMP/g; s/[0-9]{8}\.zip/DAY.zip/; s/[0-9]{4}-[0-9]{2}-[0-9]{2}/DATE/')" "sw-inventory-DATE.xlsx sw-inventory-STAMP.csv sw-inventory-STAMP.json sw-inventory-shield-DAY.zip"
 has "email (default outputs): shield, csv and json written" "json: 2 files in"
 vars="$(mailvars 0.001)"
 play --limit 'rhel*'; check "email (tiny limit): green" "$?" 0
@@ -134,7 +134,7 @@ mkdir -p "$work/site"
 play --limit 'rhel*'; rc=$?
 check "2c: the job fails at its end" "$([ $rc -ne 0 ] && echo failed)" failed
 check "2c: the website written anyway" "$(test -s "$work/site/linux-software-inventory/latest.html" && echo yes)" yes
-check "2c: the website hosts the CSV and the JSON" "$(ls "$work"/site/linux-software-inventory/*-files/ | grep -c -E 'sw-inventory-[0-9]{8}-[0-9]{4}\.(csv|json)$')" 2
+check "2c: the website hosts the CSV and the JSON" "$(ls "$work"/site/linux-software-inventory/*-files/ | grep -c -E 'sw-inventory-[0-9]{8}-[0-9]{6}-job[0-9]+\.(csv|json)$')" 2
 has "2c: the email said failed" "Not done: email:"
 kill "$relay" 2>/dev/null
 

@@ -2,7 +2,7 @@
 galaxy_info:
   author: site automation
   role_name: sw_inventory
-  description: "Linux software inventory (read-only): every installed RPM package of the hosts, to text files per host, the report database, CSV / JSON, SQL Server and a file share, with what changed since the last run."
+  description: "Linux software inventory (read-only): every installed RPM package of the hosts as a text file per host, a CSV and a JSON, copied to a file share and emailed, with what changed since the last run."
   license: MIT
   min_ansible_version: "2.16"
 dependencies: []

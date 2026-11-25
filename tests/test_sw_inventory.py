@@ -104,7 +104,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(sw.os_label('"centos"', "9"), "centos 9")
         self.assertEqual(sw.os_label("RHEL", "8.10.1"), "rhel 8.10")
         self.assertEqual(sw.short_name("rhel-app01.corp.example.mil"), "rhel-app01")
-        self.assertEqual(sw.short_name("192.0.2.10"), "192.0.2.10")
+        self.assertEqual(sw.short_name("192.0.2.10"), "192")                 # as inventory_hostname_short
 
 
 class Shield(unittest.TestCase):
@@ -200,7 +200,8 @@ class Files(unittest.TestCase):
         st = sw.state_merge({"hosts": {"old01": {"read_at": "x", "packages": [["a", "0", "1", "1", "noarch"]]}}}, self.hosts())
         self.assertEqual(sorted(st["hosts"]), ["old01", "rhel-app01.corp.example.mil"])
         self.assertEqual(st["hosts"]["rhel-app01.corp.example.mil"]["packages"][0], ["nginx", "2", "1.20.1", "16.el9_4.1", "x86_64"])
-        self.assertEqual(sw.stamp_name("2026-11-25T02:00:05Z"), "20261125-0200")
+        self.assertEqual(sw.stamp_name("2026-11-25T02:00:05Z"), "20261125-020005-job0")
+        self.assertEqual(sw.stamp_name("2026-11-25T02:00:05Z", 77), "20261125-020005-job77")
 
 
 # ---- the module: every output on its own, the share, the email's files ------------------------------------------------
@@ -291,11 +292,11 @@ class Module(ModuleBase):
         out = os.path.join(self.tmp, "out")
         self.assertEqual(sorted(os.listdir(os.path.join(out, "shield"))), ["rhel-app01.txt", "rhel-db01.txt"])
         self.assertEqual(text(os.path.join(out, "shield", "rhel-db01.txt")).encode().replace(b"rhel-db01", b"rhel-app01"), SHIELD.encode())
-        self.assertTrue(os.path.isfile(os.path.join(out, "sw-inventory-20261125-0200.csv")))
+        self.assertTrue(os.path.isfile(os.path.join(out, "sw-inventory-20261125-020005-job77.csv")))
         self.assertTrue(os.path.isfile(os.path.join(out, "sw-inventory-latest.json")))
         self.assertEqual([x["host"] for x in res["not_read"]], ["gone01.corp.example.mil"])
         self.assertEqual([a["filename"] for a in res["attachments"]],
-                         ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json", "sw-inventory-shield-20261125.zip"])
+                         ["sw-inventory-20261125-020005-job77.csv", "sw-inventory-20261125-020005-job77.json", "sw-inventory-shield-20261125.zip"])
         with zipfile.ZipFile(res["attachments"][2]["path"]) as z:
             self.assertEqual(sorted(z.namelist()), ["rhel-app01.txt", "rhel-db01.txt"])
         titles = [s["title"] for s in res["report"]["sections"]]
@@ -317,16 +318,16 @@ class Module(ModuleBase):
         out = ["shield", "csv", "json"]
         mod.run(self.params(outputs=out))
         size = dict((k, os.path.getsize(os.path.join(self.work, n))) for k, n in (
-            ("csv", "sw-inventory-20261125-0200.csv"), ("json", "sw-inventory-20261125-0200.json"), ("zip", "sw-inventory-shield-20261125.zip")))
+            ("csv", "sw-inventory-20261125-020005-job77.csv"), ("json", "sw-inventory-20261125-020005-job77.json"), ("zip", "sw-inventory-shield-20261125.zip")))
         self.assertTrue(size["zip"] < size["csv"] < size["json"], size)
         names = lambda r: [a["filename"] for a in r["attachments"]]     # noqa: E731
         notes = lambda r: [s for s in r["report"]["sections"] if s["title"] == "Notes"][0]["lines"]     # noqa: E731
         res = mod.run(self.params(outputs=out, email_max_mb=size["json"] / mb))
-        self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json", "sw-inventory-shield-20261125.zip"])
+        self.assertEqual(names(res), ["sw-inventory-20261125-020005-job77.csv", "sw-inventory-20261125-020005-job77.json", "sw-inventory-shield-20261125.zip"])
         # the JSON over: the CSV and the zip kept; where the JSON is: sw_inventory_dir, written
         res = mod.run(self.params(outputs=out, email_max_mb=(size["json"] - 1) / mb))
-        self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-shield-20261125.zip"])
-        self.assertTrue(notes(res)[0].startswith("sw-inventory-20261125-0200.json ("), notes(res)[0])
+        self.assertEqual(names(res), ["sw-inventory-20261125-020005-job77.csv", "sw-inventory-shield-20261125.zip"])
+        self.assertTrue(notes(res)[0].startswith("sw-inventory-20261125-020005-job77.json ("), notes(res)[0])
         self.assertTrue(notes(res)[0].endswith("- it is in %s on the execution node" % os.path.join(self.tmp, "out")), notes(res)[0])
         # review 22: no share, the job's own folder - never "on the share" nor a folder that is gone
         res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, dir=""))
@@ -342,7 +343,7 @@ class Module(ModuleBase):
             res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, share=unc))
         self.assertNotIn("on the share", " ".join(notes(res)[:3]))
         # review 23: the website's CSV and JSON whatever the email's limit
-        self.assertEqual([f["filename"] for f in res["web_files"]], ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json"])
+        self.assertEqual([f["filename"] for f in res["web_files"]], ["sw-inventory-20261125-020005-job77.csv", "sw-inventory-20261125-020005-job77.json"])
 
     def test_share_copy_paths(self):
         fake = FakeSmb()
@@ -355,7 +356,7 @@ class Module(ModuleBase):
         self.assertEqual(fake.calls[0], ("login", "fs01.corp.example.mil", "svc_aap_inv@CORP.EXAMPLE.MIL", "negotiate"))
         written = sorted(c[1] for c in fake.calls if c[0] == "write")
         self.assertEqual(written, [unc + "\\linux\\shield\\rhel-app01.txt", unc + "\\linux\\shield\\rhel-db01.txt",
-                                   unc + "\\linux\\sw-inventory-20261125-0200.csv", unc + "\\linux\\sw-inventory-latest.csv",
+                                   unc + "\\linux\\sw-inventory-20261125-020005-job77.csv", unc + "\\linux\\sw-inventory-latest.csv",
                                    unc + "\\linux\\sw-inventory-state.json"])
         self.assertEqual([c[1] for c in fake.calls if c[0] == "remove"], [unc + "\\linux\\sw-inventory-20250101-0200.csv"])
         self.assertIn(unc + "\\linux\\notes.csv", fake.files)
@@ -525,6 +526,114 @@ class ReviewFixes(ModuleBase):
         res = mod.run(self.params(share=there), check=True)
         self.assertEqual(self.state(res, "share")["state"], "ok")
         self.assertEqual(os.listdir(there), [])
+
+
+class ReviewFixes2(ModuleBase):
+    """1.133.0 review pass 2 (Codex): a test per finding fixed."""
+
+    def test_r2_12_a_failed_zip_keeps_the_csv_and_the_json(self):
+        with unittest.mock.patch.object(mod.zipfile, "ZipFile", side_effect=OSError(28, "No space left on device")):
+            res = mod.run(self.params(outputs=["shield", "csv", "json"]))
+        self.assertEqual([a["filename"] for a in res["attachments"]],
+                         ["sw-inventory-20261125-020005-job77.csv", "sw-inventory-20261125-020005-job77.json"])
+        self.assertTrue(res["sheets_file"])
+        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
+        self.assertTrue(any("The shield zip could not be made" in n for n in notes), notes)
+
+    def test_r2_15_16_a_state_file_that_cannot_be_read_or_written(self):
+        out = os.path.join(self.tmp, "out")
+        mod.run(self.params(outputs=["csv"]))
+        st = os.path.join(out, mod.STATE)
+        before = text(st)
+        os.chmod(st, 0)
+        self.addCleanup(os.chmod, st, 0o644)
+        if os.access(st, os.R_OK):
+            self.skipTest("running as root: a file cannot be made unreadable")
+        res = mod.run(self.params(outputs=["csv"]))
+        self.assertEqual(self.state(res, "baseline")["code"], "SA-SWI-32")
+        self.assertEqual(self.state(res, "csv")["state"], "ok")
+        os.chmod(st, 0o644)
+        self.assertEqual(text(st), before)                                   # never written over
+        real = mod.LocalFolder.write
+
+        def write(self_, rel, body):
+            if rel == mod.STATE:
+                raise mod.Fail("SA-SWI-31", "cannot write %s: Read-only file system" % rel, "write access")
+            return real(self_, rel, body)
+        with unittest.mock.patch.object(mod.LocalFolder, "write", write):
+            res = mod.run(self.params(outputs=["csv"]))
+        self.assertEqual(self.state(res, "baseline")["code"], "SA-SWI-33")
+        self.assertEqual(self.state(res, "csv")["state"], "ok")
+
+    def test_r2_17_a_folder_that_cannot_be_listed_is_a_retention_warning(self):
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        fake = FakeSmb()
+
+        def listdir(p, **kw):
+            raise OSError("STATUS_ACCESS_DENIED")
+        fake.listdir = listdir
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(share=unc, outputs=["csv"]))
+        self.assertEqual(self.state(res, "share")["state"], "ok")
+        self.assertTrue(any("the folder could not be listed" in l for l in res["lines"]), res["lines"])
+
+    def test_r2_18_smb_temporary_files_are_new_and_unique(self):
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        fake = FakeSmb()
+        modes, real_open = [], fake.open_file
+
+        def open_file(p, mode="rb", **kw):
+            modes.append((p, mode))
+            return real_open(p, mode, **kw)
+        fake.open_file = open_file
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            mod.run(self.params(share=unc, outputs=["csv"]))
+        tmps = [p for p, m in modes if p.endswith(".tmp")]
+        self.assertTrue(tmps)
+        self.assertEqual(set(m for p, m in modes if p.endswith(".tmp")), {"xb"})
+        self.assertEqual(len(set(tmps)), len(tmps))
+        self.assertTrue(all(re.search(r"\.[0-9a-f]{32}\.tmp$", p) for p in tmps), tmps)
+
+    def test_r2_19_short_names_that_differ_only_in_case_are_one_file(self):
+        with open(os.path.join(self.work, mod.read_name("RHEL-APP01.other.example.mil")), "w") as f:
+            f.write(read_text(EXAMPLE_ROWS))
+        res = mod.run(self.params(hosts=[{"host": "rhel-app01.corp.example.mil"}, {"host": "RHEL-APP01.other.example.mil"}],
+                                  outputs=["shield"]))
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "out", "shield")), ["rhel-app01.txt"])
+        self.assertTrue(any("have the same short name" in l for l in res["lines"]), res["lines"])
+
+    def test_r2_21_a_failed_dnf_gives_no_repository(self):
+        r = sw.parse_read(read_text([row("nginx", "2", "1.20.1", "1")], repos=[("nginx", "x86_64", "2", "1.20.1", "1", "@appstream")],
+                                    repo_rc="124 dnf"))
+        self.assertEqual(r["packages"][0]["repo"], "")
+        self.assertIn("exit 124", r["repo_note"])
+
+    def test_r2_23_every_failed_file_in_the_job_output_fifty_in_the_report(self):
+        hosts = []
+        for i in range(60):
+            h = "srv-app%02d.corp.example.mil" % i
+            hosts.append({"host": h})
+            with open(os.path.join(self.work, mod.read_name(h)), "w") as f:
+                f.write(read_text(EXAMPLE_ROWS))
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        fake = FakeSmb()
+
+        def replace(a, b, **kw):
+            fake.files.pop(a, None)
+            raise OSError("STATUS_DISK_FULL")
+        fake.replace = replace
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}), unittest.mock.patch.object(mod, "WAIT", ()):
+            res = mod.run(self.params(hosts=hosts, share=unc, outputs=["shield"]))
+        s = self.state(res, "share")
+        self.assertIn("61 of 61 files not copied", s["error"])
+        self.assertIn("and 11 more (the job output lists them all)", s["error"])
+        self.assertEqual(len([l for l in res["lines"] if l.startswith("share: not copied")]), 61)
+
+    def test_r2_25_no_database_left_in_the_settings(self):
+        for f in ("roles/sw_inventory/meta/main.yml", "roles/sw_inventory/defaults/main.yml", "docs/LINUX_SW_INVENTORY.md"):
+            t = text(os.path.join(ROOT, f)).lower()
+            self.assertNotIn("database", t.replace("rpm database", ""), f)
+            self.assertNotIn("sql", t, f)
 
 
 class Catalog(unittest.TestCase):

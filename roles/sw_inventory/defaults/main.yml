@@ -29,18 +29,18 @@ sw_inventory_share_auth: "{{ report_web_smb_auth | default('negotiate') }}"
 # Encrypt every byte (SMB 3), also on a share that does not require it
 sw_inventory_share_encrypt: "{{ report_web_smb_encrypt | default(false) }}"
 
-# Days the dated files (sw-inventory-YYYYMMDD-HHMM.csv / .json) are kept, here and on the share. 0 = all
+# Days the dated files (sw-inventory-YYYYMMDD-HHMMSS-job<ID>.csv / .json) are kept, here and on the share. 0 = all
 sw_inventory_keep_days: 90
 
 # The email (report_email_to): the report with the CSV, the JSON and a zip of the shield files attached. false = no email from
 # this job (the report website page stays)
 sw_inventory_email: true
 
-# Each attachment at most (MB): the CSV, the JSON and the shield zip each go when not bigger; one that is, is left off and
-# the email says where it is
+# The CSV, the JSON and the shield zip each at most (MB): one bigger is left off and the email says where it is. The
+# workbook always goes (its Packages sheet stops at sw_inventory_xlsx_max_rows)
 sw_inventory_email_max_mb: 10
 
-# The workbook's Packages sheet at most this many rows (0 = all); the CSV and the databases have them all
+# The workbook's Packages sheet at most this many rows (0 = all); the CSV has them all
 sw_inventory_xlsx_max_rows: 20000
 
 # The report's top changed packages

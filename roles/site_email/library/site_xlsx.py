@@ -28,7 +28,8 @@ options:
       leaves it in the table's order). A row with fewer than 2 numbers gets no line."
     type: list
     elements: dict
-    required: true
+    default: []
+  sheets_file: {description: "1.133.0 - a JSON file with the sheets instead of sheets (large tables: never in the task's arguments).", type: str, default: ''}
   path: {description: "The file to write ('' = a new temporary file).", type: str, default: ''}
   banner: {description: "The classification banner, {on, text, bg, fg} (roles/site_email): each sheet's first row, across the
       table, in its colours; the column names under it. {} = none.", type: dict, default: {}}
@@ -40,6 +41,7 @@ path: {description: The workbook written., type: str}
 sheets: {description: "Each sheet's name in the workbook and its number of rows: [[name, rows]].", type: list}
 '''
 
+import json
 import os
 import re
 import tempfile
@@ -305,11 +307,18 @@ def write_xlsx(path, sheets, banner=None):
 
 
 def main():
-    module = AnsibleModule(argument_spec=dict(sheets=dict(type="list", elements="dict", required=True),
+    module = AnsibleModule(argument_spec=dict(sheets=dict(type="list", elements="dict", default=[]),
+                                              sheets_file=dict(type="str", default=""),
                                               path=dict(type="str", default=""),
                                               banner=dict(type="dict", default={})),
                            supports_check_mode=True)
     p = module.params
+    if p["sheets_file"]:            # 1.133.0: the sheets from a file - large rows never in the task's arguments (job events)
+        try:
+            with open(p["sheets_file"]) as f:
+                p["sheets"] = json.load(f)
+        except (IOError, OSError, ValueError) as e:
+            module.fail_json(msg="the workbook's sheets could not be read from %s: %s" % (p["sheets_file"], e))
     if module.check_mode:
         module.exit_json(changed=False, path="", sheets=[[n, len(s.get("rows") or [])] for n, s in
                                                           zip(sheet_names([s.get("name") for s in p["sheets"]]), p["sheets"])])

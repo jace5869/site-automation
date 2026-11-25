@@ -63,13 +63,14 @@ import os
 import re
 import tempfile
 import time
+import uuid
 import zipfile
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_sw_inventory as sw
 
 STATE = "sw-inventory-state.json"
-DATED = re.compile(r"^sw-inventory-(\d{8})-\d{4}\.(csv|json)$")
+DATED = re.compile(r"^sw-inventory-(\d{8})-\d{4,6}(?:-job\d+)?\.(csv|json)$")
 WAIT = (0.5, 1, 2, 3, 4)                # a file in use on the share: tried again after these seconds (as the report website's)
 
 
@@ -189,20 +190,24 @@ class SmbFolder(object):
         return self.root + ("\\" + rel.replace("/", "\\") if rel else "")
 
     def read(self, rel):
+        """The file, None when it is not there; any other error raises (a baseline never taken for missing)."""
         try:
             with self.smb.open_file(self.path(rel), mode="rb", **self.kw) as f:
                 return f.read()
-        except Exception:                       # noqa: BLE001 - not there, or not readable: no baseline from it
-            return None
+        except Exception as e:                  # noqa: BLE001
+            low = str(e).lower()
+            if getattr(e, "errno", None) == 2 or "object_name_not_found" in low or "0xc0000034" in low or "no such file" in low:
+                return None
+            raise Fail(*why_smb("reading %s" % self.path(rel), e, self.auth, self.port, self.secret))
 
     def write(self, rel, body):
         p = self.path(rel)
         folder = p.rsplit("\\", 1)[0]
-        tmp = "%s\\.%s.%d.tmp" % (folder, p.rsplit("\\", 1)[1], os.getpid())
+        tmp = "%s\\.%s.%s.tmp" % (folder, p.rsplit("\\", 1)[1], uuid.uuid4().hex)   # never another run's
         try:
             if folder != self.root:
                 self.smb.makedirs(folder, exist_ok=True, **self.kw)
-            with self.smb.open_file(tmp, mode="wb", **self.kw) as f:
+            with self.smb.open_file(tmp, mode="xb", **self.kw) as f:      # made new, never an existing file
                 f.write(body)
             again(lambda: self.smb.replace(tmp, p, **self.kw), smb_in_use)  # replaced whole; a file open just then: again
         except Exception as e:                  # noqa: BLE001
@@ -213,10 +218,11 @@ class SmbFolder(object):
             raise Fail(*why_smb("writing %s" % p, e, self.auth, self.port, self.secret))
 
     def listdir(self, rel):
+        """The names, or None when the folder cannot be listed (said as a retention warning)."""
         try:
             return list(self.smb.listdir(self.path(rel), **self.kw))
         except Exception:                       # noqa: BLE001
-            return []
+            return None
 
     def remove(self, rel):
         """True when it is gone; False when it stays (the next run tries again)."""
@@ -254,11 +260,15 @@ class LocalFolder(object):
         return os.path.join(self.root, *rel.split("/")) if rel else self.root
 
     def read(self, rel):
+        """The file, None when it is not there; any other error raises (a baseline never taken for missing)."""
         try:
             with open(self.path(rel), "rb") as f:
                 return f.read()
-        except (IOError, OSError):
-            return None
+        except (IOError, OSError) as e:
+            if getattr(e, "errno", None) == 2:
+                return None
+            raise Fail("SA-SWI-32", "cannot read %s: %s" % (self.path(rel), e.strerror or e),
+                       "give the job's user read access to it (it is the last list of each host)")
 
     def write(self, rel, body):
         p = self.path(rel)
@@ -271,16 +281,19 @@ class LocalFolder(object):
             os.chmod(tmp, 0o644)
             os.replace(tmp, p)
         except (IOError, OSError) as e:
-            if tmp and os.path.exists(tmp):
-                os.remove(tmp)
+            try:
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
             raise Fail("SA-SWI-31", "cannot write %s: %s" % (p, e.strerror or e),
                        "give the job's user write access there, or another sw_inventory_dir")
 
     def listdir(self, rel):
         try:
             return os.listdir(self.path(rel))
-        except OSError:
-            return []
+        except OSError as e:
+            return [] if getattr(e, "errno", None) == 2 else None
 
     def remove(self, rel):
         try:
@@ -310,12 +323,16 @@ def safe_sub(name, what):
 
 
 def prune_dated(target, base, keep_days, now):
-    """This job's dated files older than keep_days, deleted -> (deleted, left)."""
+    """This job's dated files older than keep_days, deleted -> (deleted, left); left is ['(the folder could not be
+    listed)'] when it could not be read."""
     gone, left = 0, []
     if keep_days <= 0:
         return gone, left
     cut = (now - datetime.timedelta(days=keep_days)).strftime("%Y%m%d")
-    for name in target.listdir(base):
+    names = target.listdir(base)
+    if names is None:
+        return gone, ["(the folder could not be listed: old dated files not deleted)"]
+    for name in names:
         m = DATED.match(name)
         if m and m.group(1) < cut:
             if target.remove(join(base, name)):
@@ -418,11 +435,16 @@ def run(p, check=False, warn=lambda m: None):
             share = None
 
     # ---- the baseline: sw-inventory-state.json (dir, else the share) ----
-    state_doc, base_from, baseline, damaged = None, "", {}, []
+    state_doc, base_from, baseline, damaged, state_ok = None, "", {}, [], True
     if want:
-        raw, src = (local.read(STATE) if local else None), "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
-        if raw is None and share is not None:
-            raw, src = share.read(join(share_sub, STATE)), "sw-inventory-state.json on the share"
+        raw, src = None, "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
+        try:
+            raw = local.read(STATE) if local else None
+            if raw is None and share is not None:
+                raw, src = share.read(join(share_sub, STATE)), "sw-inventory-state.json on the share"
+        except Fail as e:                       # not "missing": never written over, said
+            state_ok = False
+            said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
         if raw is not None:
             try:
                 state_doc = json.loads(raw.decode("utf-8"))
@@ -438,17 +460,17 @@ def run(p, check=False, warn=lambda m: None):
             first.append(h["host"])
 
     # ---- the files ----
-    stamp = sw.stamp_name(p["read_at"])
+    stamp = sw.stamp_name(p["read_at"], p["job"])
     files = {"shield": [], "csv": [], "json": [], "state": []}
     if "shield" in want:
         names = {}
         for h in ok:
             n = sw.safe_file(sw.short_name(h["host"]))
-            if n in names:
+            if n.lower() in names:              # APP01 and app01 are one file on a Windows share
                 res["lines"].append("shield: %s and %s have the same short name %s - only %s's file is written"
-                                    % (names[n], h["host"], n, names[n]))
+                                    % (names[n.lower()], h["host"], n, names[n.lower()]))
                 continue
-            names[n] = h["host"]
+            names[n.lower()] = h["host"]
             files["shield"].append({"rel": join(shield_sub, n + ".txt"), "body": sw.shield_text(sw.short_name(h["host"]), h).encode("utf-8")})
     if "csv" in want:
         body = sw.csv_text(ok).encode("utf-8")
@@ -457,7 +479,7 @@ def run(p, check=False, warn=lambda m: None):
         body = (json.dumps(sw.json_doc({"read_at": p["read_at"], "job": p["job"]}, ok, bad,
                                        [dict(c, host=h) for h in sorted(chg) for c in chg[h]]), indent=1) + "\n").encode("utf-8")
         files["json"] = [{"rel": "sw-inventory-%s.json" % stamp, "body": body}, {"rel": "sw-inventory-latest.json", "body": body}]
-    if want and ok:                             # every host's last list: a host not read this run keeps its own
+    if want and ok and state_ok:                # every host's last list: a host not read this run keeps its own
         files["state"] = [{"rel": STATE, "body": json.dumps(sw.state_merge(state_doc, ok), separators=(",", ":")).encode("utf-8")}]
     kept_here = bool(p["dir"])
     for o in want:
@@ -484,8 +506,9 @@ def run(p, check=False, warn=lambda m: None):
     if files["state"] and local is not None and file_outs and not check:
         try:
             local.write(STATE, files["state"][0]["body"])
-        except Fail:
-            pass
+        except Fail as e:
+            said("baseline", "failed", code="SA-SWI-33", error=e.what + " - the next run compares with the older list",
+                 fix=e.fix)
     if not kept_here and want and not p["share"]:
         res["lines"].append("The files are only in the job's own folder (gone after the job): set sw_inventory_share or sw_inventory_dir.")
 
@@ -507,9 +530,12 @@ def run(p, check=False, warn=lambda m: None):
             if left:
                 res["lines"].append("share: %d old dated files could not be deleted: %s" % (len(left), ", ".join(left[:5])))
             if failed:
+                for e in failed:                # every one in the job output
+                    res["lines"].append("share: not copied - %s %s" % (e.code, e.what))
+                more = " and %d more (the job output lists them all)" % (len(failed) - 50) if len(failed) > 50 else ""
                 said("share", "failed", code=failed[0].code,
-                     error="%d of %d files not copied to %s - %s" % (len(failed), len(todo), where,
-                                                                    "; ".join(e.what for e in failed[:5])), fix=failed[0].fix)
+                     error="%d of %d files not copied to %s - %s%s" % (len(failed), len(todo), where,
+                                                                      "; ".join(e.what for e in failed[:50]), more), fix=failed[0].fix)
             else:
                 share_ok = True
                 said("share", "ok", where="%d files in %s%s" % (len(todo), where, ("; %d old dated files deleted" % gone) if gone else ""))
@@ -522,36 +548,47 @@ def run(p, check=False, warn=lambda m: None):
             "repo_notes": [h["host"] for h in ok if h["repo_note"]], "baseline": base_from, "state_damaged": damaged}
     res["report"] = sw.report_doc(view, {"top": p["top"]})
     notes = []
-    try:
+    work = p["work_dir"]
+    try:                                        # the workbook's sheets: written whole, or none (never a half file)
         sheets = sw.xlsx_sheets({"pkg_rows": list(sw.csv_rows(ok)), "changes_by_host": chg}, p["xlsx_max_rows"])
-        res["sheets_file"] = os.path.join(p["work_dir"], "sheets.json")
-        with open(res["sheets_file"], "w") as f:
-            json.dump(sheets, f)
-        if share_ok:
-            elsewhere = "it is on the share, %s" % (share.path(share_sub) if share_sub else share.root)
-        elif kept_here and not check:
-            elsewhere = "it is in %s on the execution node" % p["dir"]
-        else:
-            elsewhere = "it was not kept anywhere else (set sw_inventory_share)"
-        mail = []
-        for kind, desc in (("csv", "CSV - every package of every host read"),
-                           ("json", "JSON - every host's packages, the hosts not read, what changed")):
-            if files[kind]:
-                mp = os.path.join(p["work_dir"], files[kind][0]["rel"])
-                with open(mp, "wb") as f:
-                    f.write(files[kind][0]["body"])
-                mail.append({"path": mp, "filename": os.path.basename(mp), "desc": desc, "elsewhere": elsewhere})
-        res["web_files"] = [dict((k, m[k]) for k in ("path", "filename", "desc")) for m in mail]
-        if files["shield"]:
-            zp = os.path.join(p["work_dir"], "sw-inventory-shield-%s.zip" % stamp[:8])
+        LocalFolder(work).write("sheets.json", json.dumps(sheets).encode("utf-8"))
+        res["sheets_file"] = os.path.join(work, "sheets.json")
+    except (Fail, IOError, OSError, ValueError) as e:
+        notes.append("The workbook could not be made (%s): the report goes without it." % getattr(e, "what", e))
+    if share_ok:
+        elsewhere = "it is on the share, %s" % (share.path(share_sub) if share_sub else share.root)
+    elif kept_here and not check:
+        elsewhere = "it is in %s on the execution node" % p["dir"]
+    else:
+        elsewhere = "it was not kept anywhere else (set sw_inventory_share)"
+    written = set(x["name"] for x in res["outputs"] if x["state"] == "ok")
+    mail = []
+    for kind, desc in (("csv", "CSV - every package of every host read"),
+                       ("json", "JSON - every host's packages, the hosts not read, what changed")):
+        if not files[kind]:
+            continue
+        try:
+            LocalFolder(work).write(files[kind][0]["rel"], files[kind][0]["body"])
+        except Fail as e:
+            notes.append("The %s could not be attached (%s)." % (kind.upper(), e.what))
+            continue
+        where_k = elsewhere if (share_ok or kind in written) else "it was not kept anywhere else (set sw_inventory_share)"
+        mail.append({"path": os.path.join(work, files[kind][0]["rel"]), "filename": files[kind][0]["rel"], "desc": desc,
+                     "elsewhere": where_k})
+    res["web_files"] = [dict((k, m[k]) for k in ("path", "filename", "desc")) for m in mail]
+    if files["shield"]:
+        zp = os.path.join(work, "sw-inventory-shield-%s.zip" % stamp[:8])
+        try:
             with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
                 for f in files["shield"]:
                     z.writestr(f["rel"].rsplit("/", 1)[-1], f["body"])
+            where_z = elsewhere if (share_ok or "shield" in written) else "it was not kept anywhere else (set sw_inventory_share)"
             mail.append({"path": zp, "filename": os.path.basename(zp), "desc": "Zip - the shield text file of each host read",
-                         "elsewhere": elsewhere.replace("it is", "the shield files are", 1).replace("it was", "they were", 1)})
-        res["attachments"], notes = email_attachments(mail, p["email_max_mb"])
-    except (IOError, OSError) as e:             # the job's own folder: the report still goes, without its files
-        notes = ["The email's and the website's files could not be made (%s): the report goes without them." % (e.strerror or e)]
+                         "elsewhere": where_z.replace("it is", "the shield files are", 1).replace("it was", "they were", 1)})
+        except (IOError, OSError) as e:
+            notes.append("The shield zip could not be made (%s)." % (e.strerror or e))
+    att, more = email_attachments(mail, p["email_max_mb"])
+    res["attachments"], notes = att, more + notes
     if notes:
         for s in res["report"]["sections"]:
             if s.get("title") == "Notes":

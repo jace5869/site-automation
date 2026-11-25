@@ -94,8 +94,9 @@ def parse_read(text):
             f = line.split(SEP)
             if len(f) == 6:                         # name arch epoch version release from_repo
                 repos.setdefault((f[0], f[1], f[2] if f[2].isdigit() else "0", f[3], f[4]), repo_name(f[5]))
+    ok_repo = out["repo_rc"] in (None, 0)           # a dnf that failed (a timeout half-way): none of its rows used
     for p in out["packages"]:                       # only the very instance: never another kernel's repository
-        p["repo"] = repos.get((p["name"], p["arch"], p["epochnum"], p["version"], p["release"]), "")
+        p["repo"] = repos.get((p["name"], p["arch"], p["epochnum"], p["version"], p["release"]), "") if ok_repo else ""
     out["os"] = os_label(out["os_id"], out["version_id"])
     if out["error"]:
         return out
@@ -227,9 +228,8 @@ def changes(old, new):
 # ---- the files -----------------------------------------------------------------------------------------------------
 
 def short_name(host):
-    """inventory_hostname_short: the part before the first dot (an address stays whole)."""
-    h = str(host or "")
-    return h if re.match(r"^[0-9.]+$|:", h) else h.split(".")[0]
+    """inventory_hostname_short, exactly as Ansible makes it: the part before the first dot (an address too: 192)."""
+    return str(host or "").split(".")[0]
 
 
 def safe_file(name):
@@ -250,10 +250,11 @@ def shield_text(name, h):
     return "\n".join(lines) + "\n"
 
 
-def stamp_name(read_at):
-    """'2026-11-25T02:00:05Z' -> '20261125-0200' (the run's files)."""
-    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)", str(read_at or ""))
-    return "%s%s%s-%s%s" % m.groups() if m else "00000000-0000"
+def stamp_name(read_at, job=0):
+    """'2026-11-25T02:00:05Z', job 77 -> '20261125-020005-job77' (a run's own files: two runs never share one)."""
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):?(\d\d)?", str(read_at or ""))
+    base = "%s%s%s-%s%s%s" % (m.groups()[:5] + (m.group(6) or "00",)) if m else "00000000-000000"
+    return "%s-job%d" % (base, int(job or 0))
 
 
 def csv_rows(hosts):
@@ -446,8 +447,8 @@ def xlsx_sheets(res, max_rows=20000):
     cols = list(CSV_COLUMNS)
     sheets = [{"name": "Packages", "columns": cols, "rows": pk[:max_rows] if max_rows > 0 else pk}]
     if cut:
-        sheets[0]["rows"] = sheets[0]["rows"] + [["(%d more rows not in the workbook: sw_inventory_xlsx_max_rows - the CSV and "
-                                                  "the database have them all)" % (len(pk) - max_rows)] + [""] * (len(cols) - 1)]
+        sheets[0]["rows"] = sheets[0]["rows"] + [["(%d more rows not in the workbook: sw_inventory_xlsx_max_rows - the CSV has "
+                                                  "them all)" % (len(pk) - max_rows)] + [""] * (len(cols) - 1)]
     ch = []
     for h in sorted(res.get("changes_by_host") or {}):
         for c in res["changes_by_host"][h]:

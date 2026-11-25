@@ -65,13 +65,19 @@
             name: site_email
           vars:
             _report: "{{ _sw.report }}"
-            _report_xlsx: "{{ (lookup('ansible.builtin.file', _sw.sheets_file) | from_json) if _sw.sheets_file else [] }}"
+            _report_xlsx_file: "{{ _sw.sheets_file }}"     # a file: the packages never in the job events
             _report_xlsx_optional: true
             _report_xlsx_desc: "Excel workbook - Packages (every host's) and Changed since last run"
             _report_workbook_stem: "sw-inventory-{{ _sw.read_at[:10] }}"
             _report_attachments: "{{ _sw.web_files }}"     # the CSV and the JSON, whatever the email's limit
             _report_web_files_more: [.json]                 # the JSON hosted too (text)
             _report_email_skip: true
+
+        # report_web_required: false - a page not written is no failed task, only _web_failed: said and counted here
+        - name: Software inventory | the website not written
+          ansible.builtin.set_fact:
+            _sw_delivery_failed: "{{ _sw_delivery_failed | default([]) + ['website: ' ~ _web_failed] }}"
+          when: _web_failed | default('') | length > 0
       rescue:
         - name: Software inventory | the website failed
           ansible.builtin.set_fact:
@@ -87,7 +93,7 @@
             name: site_email
           vars:
             _report: "{{ _sw.report }}"
-            _report_xlsx: "{{ (lookup('ansible.builtin.file', _sw.sheets_file) | from_json) if _sw.sheets_file else [] }}"
+            _report_xlsx_file: "{{ _sw.sheets_file }}"     # a file: the packages never in the job events
             _report_xlsx_optional: true
             _report_xlsx_desc: "Excel workbook - Packages (every host's) and Changed since last run"
             _report_workbook_stem: "sw-inventory-{{ _sw.read_at[:10] }}"

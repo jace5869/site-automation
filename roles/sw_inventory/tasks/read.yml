@@ -53,12 +53,16 @@
   become: false
   check_mode: false                     # a temporary folder, deleted at the end
   no_log: true
-  when: site_host_unreached | length == 0 and _sw_read.rc | default(1) == 0 and '@@end' in _sw_read.stdout | default('')
+  # a read that ended, or one that said why it stopped (@@error: no rpm, rpm failed) - the controller says it
+  when: >-
+    site_host_unreached | length == 0 and _sw_read.rc | default(1) == 0
+    and ('@@end' in _sw_read.stdout | default('') or '@@error' in _sw_read.stdout | default(''))
 
 - name: Software inventory | why a host was not read
   ansible.builtin.set_fact:
     _sw_fail: >-
-      {{ '' if site_host_unreached | length > 0 or (_sw_read.rc | default(1) == 0 and '@@end' in _sw_read.stdout | default('')) else
+      {{ '' if site_host_unreached | length > 0 or (_sw_read.rc | default(1) == 0 and ('@@end' in _sw_read.stdout | default('')
+                                                    or '@@error' in _sw_read.stdout | default(''))) else
          ('the read failed (exit ' ~ (_sw_read.rc | default('?')) ~ '): '
           ~ ((_sw_read.stderr | default(_sw_read.msg | default(''), true) | string | trim | regex_replace('\s+', ' '))[-300:]
              or 'no output')) }}

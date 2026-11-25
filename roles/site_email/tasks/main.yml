@@ -31,6 +31,7 @@
 #       # as it is (EFI, BIOS; else an upper-case one - FAIL - is shown as Fail)
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body. _report_attachments: files the email attaches, [{path, filename}].
+# _report_xlsx_file (1.133.0): the workbook's sheets as a JSON file instead of _report_xlsx - large tables never in the job events.
 # The report website hosts them too, with the workbook, beside the run's page (1.79.8, report_web_files) - or
 # _report_files: [{path, filename}], its own list for the website.
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
@@ -325,12 +326,15 @@
 
     - name: Email | the report's tables as a workbook - attached, and on the website (report_email_xlsx, or the report's own _report_xlsx)
       site_xlsx:
-        sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
+        # 1.133.0: _report_xlsx_file - the sheets as a JSON file (the software inventory's packages: never in the job events)
+        sheets: "{{ [] if _report_xlsx_file | default('') | length > 0 else (_report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets) }}"
+        sheets_file: "{{ _report_xlsx_file | default('') }}"
         banner: "{{ _banner if _banner.on else {} }}"
       register: _email_xlsx
       ignore_errors: "{{ _report_xlsx_optional | default(false) | bool }}"
       when: >-
-        _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not _email_dry
+        _report is defined and (_report_xlsx_file | default('') | length > 0 or _report_xlsx | default([]) | length > 0
+        or report_email_xlsx | bool) and not _email_dry
         and (_email_to | length > 0 or (_web_on | bool and report_web_files | default(true) | bool))
 
     - name: Email | publish the report on the report website ({{ report_web_dest | default('') }})
@@ -407,7 +411,9 @@
         downloads: >-
           {{ (_report_files if _report_files is defined else
               _report_attachments | default([]) + ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name,
-                                                      'desc': _report_xlsx_desc | default('', true) if _report_xlsx | default([]) | length > 0 else ''}] if _email_xlsx is succeeded and _email_xlsx.path | default('') else []))
+                                                      'desc': _report_xlsx_desc | default('', true) if _report_xlsx | default([]) | length > 0
+                                                              or _report_xlsx_file | default('') | length > 0 else ''}]
+                                                    if _email_xlsx is succeeded and _email_xlsx.path | default('') else []))
              if report_web_files | default(true) | bool else [] }}
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
         # 1.122.2: and the types a report hands over itself (_report_web_files_more: the Windows local groups job's .json, .yml, .ps1)
