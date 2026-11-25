@@ -790,3 +790,5 @@ body.kiosk .dsc .kxh{display:none}
 .unreach .lamp{--sz:1.6rem}
 .unreach .lamp::after{display:none}
 .sM .empty.nocur b{color:var(--muted)}
+.sK .now.nocur{background:var(--card-strong);border-bottom-color:var(--edge)}
+.sK .now.nocur .lab{color:var(--muted)}

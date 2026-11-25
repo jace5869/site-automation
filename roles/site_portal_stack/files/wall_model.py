@@ -192,7 +192,8 @@ def _vc_feed(src):
 def vmware_part(view, o, now):
     """the vCenters' last good reads -> (part, conds, feeds)"""
     conds, feeds = [], {}
-    part = {"configured": False, "vcenters": [], "clusters": [], "hosts": [], "datastores": [], "hot": [], "building": [], "vms": 0}
+    part = {"configured": False, "vcenters": [], "clusters": [], "hosts": [], "datastores": [], "hot": [], "building": [], "vms": 0,
+            "incomplete": []}                       # what this read lacks: the area is never green while it lacks anything
     srcs = [dict(s, key=k) for k, s in ((view or {}).get("sources") or {}).items() if s.get("kind") == "vcenter"]
     hist = (view or {}).get("history") or {}
     if not srcs:
@@ -211,6 +212,8 @@ def vmware_part(view, o, now):
             conds.append({"id": "vc:" + name, "kind": "vc", "t": "vCenter %s %s" % (name, "login failed" if state == "auth" else "not answering"),
                           "obj": why, "start": src.get("fail_since") or now, "feed": "", "vc": name, "site": site_of(rx, name)})
         snap = src.get("snap") or {}
+        if not src.get("snap"):
+            part["incomplete"].append("vCenter %s: no inventory read yet" % name)
         hosts = snap.get("hosts") or []
         by_cluster = collections.OrderedDict()
         for h in hosts:
@@ -243,11 +246,18 @@ def vmware_part(view, o, now):
                 conds.append({"id": "maint:%s:%s" % (name, hn), "kind": "maint", "t": "%s in maintenance mode" % hn,
                               "obj": "cluster %s · not listed in portal_wall_maintenance_expected" % (row["cluster"] or "-"), "feed": fk, "vc": name,
                               "host": hn, "cluster": row["cluster"], "site": row["site"]})
+            if st not in DOWN_STATES + ("connected",):
+                part["incomplete"].append("host %s: state not read" % hn)
+            elif st == "connected" and (row["cpu"] is None or row["mem"] is None):
+                part["incomplete"].append("host %s: CPU or memory not read" % hn)
             part["hosts"].append(row)
         dsrows = []
         for d in snap.get("datastores") or []:
-            cap, free = int(d.get("capacity") or 0), int(d.get("free") or 0)
-            pct = round(100.0 * (cap - free) / cap, 1) if cap else None
+            cap, free = int(d.get("capacity") or 0), d.get("free")
+            pct = round(100.0 * (cap - int(free)) / cap, 1) if cap and free is not None else None     # not read: unknown, never 100 %
+            free = int(free or 0)
+            if pct is None:
+                part["incomplete"].append("datastore %s: capacity or free space not read" % (d.get("name") or "?"))
             r = {"n": d.get("name") or "", "vc": name, "feed": fk, "type": d.get("type") or "", "size": cap, "free": free, "v": pct,
                  "accessible": d.get("accessible") is not False, "hosts": sorted(d.get("hosts") or []), "nvms": int(d.get("vms") or 0)}
             r["site"] = site_of(rx, r["n"], (r["hosts"] or [""])[0])
@@ -308,7 +318,7 @@ def gb(b):
 def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     """the NetApp page's newest run (netapp_live's model) + the vCenters' datastores -> (part, conds, feeds)"""
     conds, feeds = [], {}
-    part = {"configured": bool(nm), "why": why, "ran": {"sm": False, "nodes": False}, "clusters": [], "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0,
+    part = {"configured": bool(nm), "why": why, "incomplete": [], "ran": {"sm": False, "nodes": False}, "clusters": [], "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0,
             "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "paths": {}, "source": "report database"}
     rx = site_rule(o["site_pattern"])
     if nm:
@@ -317,10 +327,12 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                           "why": "", "src": "the refresh job's newest run in the report database (job %s)" % (run.get("job") or "-")}
         part["clusters"] = sorted(set(str(x.get("c") or "") for x in nm.get("aggrs") or [] if x.get("c")))
         for a in nm.get("aggrs") or []:
-            pct = float(a.get("pct") or 0)
+            pct = float(a["pct"]) if a.get("size") and a.get("pct") is not None else None      # not read: unknown
             r = {"n": a.get("a") or "", "node": a.get("node") or "", "c": a.get("c") or "", "v": pct, "size": int(a.get("size") or 0),
                  "free": int(a.get("free") or 0), "feed": "ontap", "site": a.get("site") or site_of(rx, a.get("c"))}
-            if pct >= o["aggr_warn"]:
+            if pct is None:
+                part["incomplete"].append("aggregate %s: size or use not read" % r["n"])
+            elif pct >= o["aggr_warn"]:
                 k = "aggrfull" if pct >= o["aggr_crit"] else "aggrwarn"
                 cid = "aggr:%s:%s" % (r["c"], r["n"])
                 r["cond"] = cid
@@ -328,10 +340,11 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                               % (gb(r["free"]), r["c"], _n(o["aggr_warn"]), _n(o["aggr_crit"])), "feed": "ontap", "aggr": r["n"], "cluster": r["c"],
                               "v": pct, "site": r["site"]})
             part["aggr"].append(r)
-        part["aggr"].sort(key=lambda a: -a["v"])
+        part["aggr"].sort(key=lambda a: -(a["v"] if a["v"] is not None else 101))
         parts = nm.get("parts") or {}
         # the health checks run only with ontap_live_health on NetApp - refresh volume list: without them, no "None broken" in green
-        part["ran"] = {"sm": "snapmirror" in parts, "nodes": "nodes" in parts}
+        part["ran"] = dict((k, p in parts and isinstance(parts[p], dict) and not (parts[p].get("errors") or []))
+                           for k, p in (("sm", "snapmirror"), ("nodes", "nodes")))
         sm = parts.get("snapmirror") or {}
         part["smRel"] = int((sm.get("counts") or {}).get("all") or 0)
         for r in sm.get("rows") or []:
@@ -402,6 +415,18 @@ def cluster_ids(*names):
     return out
 
 
+def same_cluster(name, live, unique_short):
+    """Codex verify 2: a run's name for a cluster is the live one's only by the exact name or address (normalized), or by the
+    short name when no other known cluster has that short name (array.east and array.west never collide)"""
+    n = str(name or "").strip().lower().strip("[]")
+    if not n:
+        return False
+    if n in live:
+        return True
+    short = n if IP.search(n) else n.split(".", 1)[0]
+    return short in unique_short and any((x if IP.search(x) else x.split(".", 1)[0]) == short for x in live)
+
+
 def ontap_live(view, o, rx, part, conds, feeds):
     """the live ONTAP reads (wall_live.OntapSource, when the portal has the "NetApp ONTAP" login): they take the place of the
     NetApp run's aggregates, nodes and SnapMirror for their clusters, and add volumes / LUNs offline. -> True when there is one"""
@@ -409,6 +434,14 @@ def ontap_live(view, o, rx, part, conds, feeds):
     if not srcs:
         return False
     live_cl = set()
+    # every name a cluster is known by (the run's and the live reads'): a short name that two of them share matches neither
+    known = set(str(x or "").strip().lower() for x in part["clusters"] + [c.get("cluster") for c in conds] + [b.get("c") for b in part["smBroken"]]
+                + [x.get("name") for x in srcs] + [(x.get("snap") or {}).get("cluster") for x in srcs] if x)
+    fqdns = collections.defaultdict(set)
+    for k in known:
+        if "." in k and not IP.search(k):
+            fqdns[k.split(".", 1)[0]].add(k)
+    unique_short = set((k if IP.search(k) else k.split(".", 1)[0]) for k in known) - set(sh for sh, fs in fqdns.items() if len(fs) > 1)
     if any(x.get("snap") for x in srcs):
         part["nodes"] = [0, 0]                  # the live reads count the nodes and the relationships (the run's count would double them)
         part["smRel"] = 0
@@ -433,16 +466,20 @@ def ontap_live(view, o, rx, part, conds, feeds):
         if not snap:
             continue
         live_cl.add(cl)
-        ids = cluster_ids(cl, src.get("name"))
-        part["aggr"] = [a for a in part["aggr"] if not (cluster_ids(a["c"]) & ids)]
+        live = set(str(x or "").strip().lower().strip("[]") for x in (cl, src.get("name")) if x)
+        same = lambda n: same_cluster(n, live, unique_short)          # noqa: E731
+        part["aggr"] = [a for a in part["aggr"] if not same(a["c"])]
         # the run's conditions of a cluster read live now are superseded (whatever the run's feed is called by now)
-        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and cluster_ids(c.get("cluster")) & ids)]
-        part["smBroken"] = [b for b in part["smBroken"] if not (cluster_ids(b.get("c")) & ids)]
+        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and same(c.get("cluster")))]
+        part["smBroken"] = [b for b in part["smBroken"] if not same(b.get("c"))]
         for a in snap.get("aggrs") or []:
-            size_b, used = int(a.get("size") or 0), int(a.get("used") or 0)
-            pct = round(100.0 * used / size_b, 1) if size_b else 0.0
-            r = {"n": a.get("name") or "", "node": a.get("node") or "", "c": cl, "v": pct, "size": size_b, "free": max(0, size_b - used), "feed": fk, "site": site_of(rx, cl)}
-            if pct >= o["aggr_warn"]:
+            size_b, used = a.get("size"), a.get("used")
+            pct = round(100.0 * used / size_b, 1) if size_b and used is not None else None     # not read: unknown, never 0 %
+            r = {"n": a.get("name") or "", "node": a.get("node") or "", "c": cl, "v": pct, "size": size_b or 0,
+                 "free": max(0, size_b - used) if pct is not None else None, "feed": fk, "site": site_of(rx, cl)}
+            if pct is None:
+                part["incomplete"].append("aggregate %s: size or use not read" % r["n"])
+            elif pct >= o["aggr_warn"]:
                 cid = "aggr:%s:%s" % (cl, r["n"])
                 r["cond"] = cid
                 conds.append({"id": cid, "kind": "aggrfull" if pct >= o["aggr_crit"] else "aggrwarn", "t": "%s %s %% used" % (r["n"], _n(round(pct))),
@@ -477,7 +514,7 @@ def ontap_live(view, o, rx, part, conds, feeds):
                 part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or "", "word": word.capitalize(), "cond": cid, "c": cl})
                 conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), word), "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""),
                               "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
-    part["aggr"].sort(key=lambda a: -a["v"])
+    part["aggr"].sort(key=lambda a: -(a["v"] if a["v"] is not None else 101))
     if live_cl:
         part["ran"] = {"sm": True, "nodes": True}            # the live read reads both every time
     part["clusters"] = sorted(set(part["clusters"]) | live_cl)
@@ -517,6 +554,8 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         x["built"] = a["id"] in BUILT
         x["feeds"] = area_feeds.get(a["id"], [])
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
+        inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else [])
+        x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         if a["id"] == "storage" and not st["configured"] and not vm["configured"]:
             x["why"] = st["why"] or "no NetApp run in the report database and no vCenter read"
         elif a["id"] == "vmware" and not vm["configured"]:

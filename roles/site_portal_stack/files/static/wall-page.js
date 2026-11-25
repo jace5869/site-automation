@@ -133,7 +133,7 @@
   function ageS(asof) { return asof == null ? null : Math.max(0, Math.round((NOW() - asof) / 1000)); }
   function fstate(sec) { return sec == null ? "stale" : sec > STALE() ? "stale" : sec > LATE() ? "late" : "ok"; }
   function feed(k) { return (W && W.feeds[k]) || null; }
-  function feedFresh(k) { if (UNREACH) return "stale"; if (k === "-live-") return "ok"; var f = feed(k); return f ? fstate(ageS(f.asof)) : "ok"; }
+  function feedFresh(k) { if (UNREACH) return "stale"; if (k === "-live-") return "ok"; var f = feed(k); return f ? fstate(ageS(f.asof)) : "stale"; }
   function areaOf(id) { return W.areaById[id]; }
   function areaOn(id) { var a = areaOf(id); return !!(a && a.on); }
   function areaList() { return W.areas.filter(function (a) { return a.built; }); }
@@ -141,7 +141,8 @@
   function areaFeeds(id) { var a = areaOf(id); return a ? a.feeds : []; }
   // a feed that never answered (its login failed, or not read yet) stands for itself as a condition; the area's "as of" is the
   // oldest of the feeds that have data - unless none has
-  function liveFeeds(keys) { var d = keys.filter(function (k) { return feed(k) && feed(k).asof != null; }); return d.length ? d : keys; }
+  // Codex verify 2: every feed counts - a vCenter that never returned its inventory is never hidden behind a current one
+  function liveFeeds(keys) { return keys; }
   function areaAsof(id) { var m = null; liveFeeds(areaFeeds(id)).forEach(function (k) { var t = feed(k) ? feed(k).asof : null; if (t != null && (m === null || t < m)) m = t; }); return m; }
   function areaFresh(id) { var w = "ok", r = {ok: 0, late: 1, stale: 2}, fs = liveFeeds(areaFeeds(id)); fs.forEach(function (k) { var f = feedFresh(k); if (r[f] > r[w]) w = f; }); return fs.length ? w : "stale"; }
   function areaFeedName(id) { var fs = liveFeeds(areaFeeds(id)), w = null; fs.forEach(function (k) { if (!w || (feed(k).asof || 0) < (feed(w).asof || 0)) w = k; }); return w ? feed(w).name : "no source"; }
@@ -157,7 +158,7 @@
     var n = areaCounts(id);
     if (n.crit) return "crit";
     if (n.warn) return "warn";
-    return areaFresh(id) === "stale" ? "stale" : "ok";
+    return areaFresh(id) === "stale" || areaOf(id).complete === false ? "stale" : "ok";
   }
   function overallState() {
     // nothing read yet, no area on: never green
@@ -172,12 +173,24 @@
     if (ran === false) return "off";
     if (UNREACH && st !== "off") return "stale";
     if (!fk) return st === "ok" ? "off" : st;
-    return feedFresh(fk) === "stale" ? "stale" : st;
+    if (feedFresh(fk) === "stale") return "stale";
+    if (st === "ok" && fk !== "-live-" && !homeOk(fk)) return "stale";
+    return st;
+  }
+  // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
+  // of its feeds is current (one vCenter not read, one host without a state: nothing of VMware is green)
+  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : (fk === "ontap" || fk === "netapp-run" || fk.indexOf("ontap:") === 0) ? "storage" : ""; }
+  function homeOk(fk) {
+    var a = homeOf(fk);
+    if (!a) return true;
+    var ar = W.areaById[a];
+    if (!ar || ar.complete === false) return false;
+    return Object.keys(W.feeds).every(function (k) { return homeOf(k) !== a || k === "netapp-run" || feedFresh(k) !== "stale"; });
   }
   function withFresh(st, fk) { return status(st, fk); }
   function countText(n) { var p = []; if (n.crit) p.push(n.crit + " critical"); if (n.warn) p.push(n.warn + " warning"); return p.length ? p.join(" · ") : "No wall condition"; }
   function nOpen(kind) { return openConds().filter(function (c) { return (Array.isArray(kind) ? kind.indexOf(c.kind) >= 0 : c.kind === kind); }); }
-  function level(v, w, c) { return v == null ? "ok" : v >= c ? "crit" : v >= w ? "warn" : "ok"; }
+  function level(v, w, c) { return v == null || typeof v !== "number" || isNaN(v) ? "stale" : v >= c ? "crit" : v >= w ? "warn" : "ok"; }
   function thr(name) { return W.thresholds[name]; }
   // the Now list: worst first, then longest; a stale area is an item too ("data not current")
   function nowList(area) {
@@ -640,14 +653,16 @@
     ctr: function (k) {
       var def = CTR_DEF[k];
       if (!def) return null;
-      var list = nOpen(def.kinds), st = list.length ? (list.some(function (c) { return c.sev === "crit" && !condStale(c); }) ? "crit" : list.every(condStale) ? "stale" : "warn") : status("ok", def.feed(), k === "sm" ? W.storage.ran.sm : k === "nodes" ? W.storage.ran.nodes : undefined);
+      var unk = k === "hosts" && W.vmware.hosts.some(function (x) { return x.st === "stale"; });
+      var ranK = k === "sm" ? W.storage.ran.sm : k === "nodes" ? W.storage.ran.nodes : k === "hung" ? W.thresholds.vm_heartbeat : undefined;
+      var list = nOpen(def.kinds), st = !list.length && unk ? "stale" : list.length ? (list.some(function (c) { return c.sev === "crit" && !condStale(c); }) ? "crit" : list.every(condStale) ? "stale" : "warn") : status("ok", def.feed(), ranK);
       return {title: def.l, st: st, chips: [aShort(def.area), list.length + " open"], fk: def.feed(), area: def.area, rows: [
-        ["Counts", def.what], ["Open now", condRows(list, def.feed(), k === "sm" ? W.storage.ran.sm : k === "nodes" ? W.storage.ran.nodes : undefined)], srcRow(def.feed()), ["Where to verify", def.verify]]};
+        ["Counts", def.what], ["Open now", unk && !list.length ? h("span", "", [word("stale", "Not all hosts read")]) : condRows(list, def.feed(), ranK)], srcRow(def.feed()), ["Where to verify", def.verify]]};
     },
     feed: function (k) {
       var f = feed(k);
       if (!f) return null;
-      var x = freshTxt(f.asof), st = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit";
+      var x = freshTxt(f.asof), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
       return {title: f.name, st: st, chips: ["Data source"], fk: k, rows: [
         ["State", f.state === "auth" ? "login failed - check the credential. The wall stopped trying (one try every " + Math.round(((W.auth_retry || 900)) / 60) + " min at most: a locked shared account would stop the AAP jobs too)" :
           f.state === "error" ? "not answering: " + (f.why || "?") : f.state === "never" ? "not read yet" : "answering"],
@@ -665,12 +680,14 @@
     maint: {l: "Hosts in maintenance", kinds: ["maint"], area: "vmware", feed: vcFeed, what: "hosts in maintenance mode not listed as expected (portal_wall_maintenance_expected)", verify: "vSphere Client › the host › Summary"},
     sm: {l: "SnapMirror broken", kinds: ["sm"], area: "storage", feed: ntFeed, what: "relationships the NetApp run marks broken-off, unhealthy or lagging past the critical line", verify: "ONTAP System Manager › Protection › Relationships"},
     nodes: {l: "Storage nodes down", kinds: ["node"], area: "storage", feed: ntFeed, what: "nodes not up, clusters not answering", verify: "ONTAP System Manager › Cluster › Overview"},
-    ds: {l: "Datastores full", kinds: ["dsfull", "dswarn"], area: "storage", feed: vcFeed, what: "datastores at or over the warning line", verify: "vSphere Client › Storage › the datastore › Capacity"},
+    ds: {l: "Datastores full", kinds: ["dsfull", "dswarn"], area: "storage", feed: dsFeed, what: "datastores at or over the warning line", verify: "vSphere Client › Storage › the datastore › Capacity"},
     aggr: {l: "Aggregates full", kinds: ["aggrfull", "aggrwarn"], area: "storage", feed: ntFeed, what: "aggregates at or over the warning line", verify: "ONTAP System Manager › Storage › Tiers"}
   };
   // the NetApp feed (the run in the report database, or the oldest live cluster read)
   function oldest(keys) { var w = null; liveFeeds(keys).forEach(function (k) { if (!w || (feed(k).asof || 0) < (feed(w).asof || 0)) w = k; }); return w; }
   function ntFeed() { return oldest(Object.keys((W && W.feeds) || {}).filter(function (k) { return k === "ontap" || k.indexOf("ontap:") === 0; })); }
+  // the datastores' read: the vCenters', else the NetApp run's datastore rows - live ONTAP alone reads no datastore
+  function dsFeed() { return vcFeed() || (W.feeds.ontap ? "ontap" : W.feeds["netapp-run"] && (W.storage.ds || []).length ? "netapp-run" : null); }
   function vcFeed() { return oldest(W.vmware.vcenters.map(function (x) { return x.feed; })); }
   function openDetail(ref, again) {
     var i = ref.indexOf(":"), kind = ref.slice(0, i), key = ref.slice(i + 1);
@@ -697,7 +714,7 @@
   // ---------------------------------------------------------------- the storage path card: datastore -> LUN / volume -> aggregate
   function pathRow(o) {
     // not read (no fill in this read) or an old source: never green
-    var st = o.stale || o.pct == null ? "stale" : o.crit ? "crit" : level(o.pct, o.w, o.c);
+    var st = o.stale || o.pct == null ? "stale" : o.crit ? "crit" : status(level(o.pct, o.w, o.c), o.fk);
     var svg = s("svg", {viewBox: "0 0 100 10", preserveAspectRatio: "none", "class": "vsb", role: "img", "aria-label": o.title + ": " + pct(o.pct) + " % used, " + WORD[st]});
     svg.appendChild(s("rect", {x: 0, y: 1, width: 100, height: 8, rx: 1.5, "class": "trk"}));
     if (o.pct != null) svg.appendChild(s("rect", {x: 0, y: 1, width: Math.max(0.5, Math.min(100, o.pct)), height: 8, rx: 1.5, "class": "fl f-" + st}));
@@ -718,7 +735,7 @@
     add(card, dHead(name, st, [type, d && d.vc ? "vCenter " + d.vc : null].filter(Boolean), fk));
     var rows = h("div", "rows");
     if (d) {
-      rows.appendChild(pathRow({crit: d.accessible === false, title: "Datastore", sub: [{t: "as vCenter sees it"}, {t: (d.nvms != null ? d.nvms + " VMs · " : "") + (d.hosts ? d.hosts.length + " hosts" : "")}], pct: d.v, w: dt[0], c: dt[1],
+      rows.appendChild(pathRow({fk: fk, crit: d.accessible === false, title: "Datastore", sub: [{t: "as vCenter sees it"}, {t: (d.nvms != null ? d.nvms + " VMs · " : "") + (d.hosts ? d.hosts.length + " hosts" : "")}], pct: d.v, w: dt[0], c: dt[1],
         stale: feedFresh(fk) === "stale", nums: [size(d.size - d.free) + " of " + size(d.size), size(d.free) + " free"]}));
       if (d.accessible === false) rows.appendChild(h("p", "note bad", ["vCenter marks this datastore inaccessible."]));
       var cs = condsOn(function (c) { return c.ds === name; });
@@ -733,13 +750,13 @@
       var pfk = W.feeds["netapp-run"] ? "netapp-run" : ntFeed(), ns = feedFresh(pfk) === "stale";
       var nr = h("div", "rows");
       p.rows.forEach(function (r) {
-        if (r.lun) nr.appendChild(pathRow({title: "LUN", stale: ns, sub: [{t: "/vol/" + r.vol + "/" + r.lun, m: 1}, {t: r.svm + (r.thick ? " · space-reserved" : "")}], pct: r.src === "LUN written" ? r.pct : null, w: dt[0], c: dt[1],
+        if (r.lun) nr.appendChild(pathRow({fk: pfk, title: "LUN", stale: ns, sub: [{t: "/vol/" + r.vol + "/" + r.lun, m: 1}, {t: r.svm + (r.thick ? " · space-reserved" : "")}], pct: r.src === "LUN written" ? r.pct : null, w: dt[0], c: dt[1],
           nums: r.src === "LUN written" ? [size(r.used) + " of " + size(r.size)] : ["the LUN's own fill is not in this read"], note: r.thick ? "A space-reserved LUN always fills its volume; watch the LUN / datastore, not the volume %." : ""}));
-        nr.appendChild(pathRow({title: "Volume", stale: ns, sub: [{t: r.vol, m: 1}, {t: r.svm + " · cluster " + r.cluster}], pct: r.src === "volume used" ? r.pct : null, w: dt[0], c: dt[1],
+        nr.appendChild(pathRow({fk: pfk, title: "Volume", stale: ns, sub: [{t: r.vol, m: 1}, {t: r.svm + " · cluster " + r.cluster}], pct: r.src === "volume used" ? r.pct : null, w: dt[0], c: dt[1],
           nums: [r.src === "volume used" ? size(r.used) + " of " + size(r.size) : "size " + size(r.vol_size)]}));
         var ag = null;
         W.storage.aggr.forEach(function (a) { if (a.n === r.aggr && (!r.cluster || a.c === r.cluster)) ag = a; });
-        if (ag) nr.appendChild(h("div", "", [pathRow({title: "Aggregate", stale: status("ok", ag.feed) !== "ok", sub: [{t: ag.n, m: 1}, {t: "node " + ag.node}], pct: ag.v, w: at[0], c: at[1], nums: [pct(ag.v) + " % used", size(ag.free) + " free"]})], {"data-d": "aggr:" + ag.c + "|" + ag.n}));
+        if (ag) nr.appendChild(h("div", "", [pathRow({fk: ag.feed, title: "Aggregate", stale: status("ok", ag.feed) !== "ok", sub: [{t: ag.n, m: 1}, {t: "node " + ag.node}], pct: ag.v, w: at[0], c: at[1], nums: [pct(ag.v) + " % used", size(ag.free) + " free"]})], {"data-d": "aggr:" + ag.c + "|" + ag.n}));
       });
       add(card, [h("div", "sec", ["NetApp · " + p.rows[0].cluster, freshK(pfk, "fr")]), nr]);
     }
@@ -808,12 +825,12 @@
     },
     vc: function () { var v = W.vmware.vcenters, dn = v.filter(function (x) { return !x.up; }).length; return ctr({k: "vc", kinds: ["vc"], l: "vCenter not answering", v: dn, of: v.length, feed: vcFeed(), live: true, det: dn ? detOf(nOpen("vc")) : v.map(function (x) { return x.name; }).join(", ") + " answering"}); },
     dsi: function () { var l = nOpen("dsi"); return ctr({k: "dsi", kinds: ["dsi"], l: "Datastores inaccessible", v: l.length, feed: vcFeed(), det: detOf(l) || "all " + W.vmware.datastores.length + " accessible"}); },
-    hung: function () { var l = nOpen("vmhung"); return ctr({k: "hung", kinds: ["vmhung"], l: "VMs with no heartbeat", v: l.length, feed: vcFeed(), det: detOf(l) || (W.thresholds.vm_heartbeat ? "no powered-on VM with a red heartbeat" : "off (portal_wall_vm_heartbeat)")}); },
+    hung: function () { var l = nOpen("vmhung"); return ctr({k: "hung", ran: W.thresholds.vm_heartbeat, ranWhy: "off: portal_wall_vm_heartbeat is false", kinds: ["vmhung"], l: "VMs with no heartbeat", v: l.length, feed: vcFeed(), det: detOf(l) || (W.thresholds.vm_heartbeat ? "no powered-on VM with a red heartbeat" : "off (portal_wall_vm_heartbeat)")}); },
     hot: function () { var l = nOpen(["cpu", "mem"]); return ctr({k: "hot", kinds: ["cpu", "mem"], l: "Sustained high (" + thr("high")[1] + " min+)", v: l.length, st: l.length ? "warn" : "ok", word: "Warning", feed: vcFeed(), det: detOf(l) || "no host or VM"}); },
     maint: function () { var l = nOpen("maint"); return ctr({k: "maint", kinds: ["maint"], l: "Hosts in maintenance", v: l.length, st: l.length ? "warn" : "ok", word: "Warning", feed: vcFeed(), det: detOf(l) || "none unexpected"}); },
     sm: function () { var l = nOpen("sm"); return ctr({k: "sm", ran: W.storage.ran.sm, ranWhy: "not checked: ontap_live_health is off on NetApp - refresh volume list", need: true, needWhy: "no NetApp read: the NetApp page's run or the NetApp ONTAP credential", kinds: ["sm"], l: "SnapMirror broken", v: l.length, st: l.length ? "warn" : "ok", word: "Warning", feed: ntFeed(), det: detOf(l) || W.storage.smRel + " relationships healthy"}); },
     nodes: function () { var n = W.storage.nodes, l = nOpen("node"); return ctr({k: "nodes", ran: W.storage.ran.nodes, ranWhy: "not checked: ontap_live_health is off on NetApp - refresh volume list", need: true, needWhy: "no NetApp read: the NetApp page's run or the NetApp ONTAP credential", kinds: ["node"], l: "Storage nodes down", v: l.length, of: n[1] || null, feed: ntFeed(), det: detOf(l) || n[0] + " of " + n[1] + " nodes up"}); },
-    ds: function () { var l = nOpen(["dsfull", "dswarn"]); return ctr({k: "ds", kinds: ["dsfull", "dswarn"], need: true, needWhy: "no vCenter or NetApp read", l: "Datastores full", v: l.length, st: l.some(function (c) { return c.kind === "dsfull"; }) ? "crit" : l.length ? "warn" : "ok", word: l.some(function (c) { return c.kind === "dsfull"; }) ? null : "Warning", feed: vcFeed() || ntFeed(), det: detOf(l) || "all under " + thr("ds")[0] + " %"}); }
+    ds: function () { var l = nOpen(["dsfull", "dswarn"]); return ctr({k: "ds", kinds: ["dsfull", "dswarn"], need: true, needWhy: "no vCenter or NetApp read", l: "Datastores full", v: l.length, st: l.some(function (c) { return c.kind === "dsfull"; }) ? "crit" : l.length ? "warn" : "ok", word: l.some(function (c) { return c.kind === "dsfull"; }) ? null : "Warning", feed: dsFeed(), det: detOf(l) || "all under " + thr("ds")[0] + " %"}); }
   };
   function busiest(m) { var b = null; W.vmware.clusters.forEach(function (c) { if (c[m] != null && (!b || c[m] > b[m])) b = c; }); return b; }
   function hostsUp() { var u = 0, o = 0; W.vmware.clusters.forEach(function (c) { u += c.up; o += c.of; }); return [u, o]; }
@@ -821,7 +838,7 @@
     var items = nowList(area), n = items.length;
     var ok = icon(WORD_IC.ok, "0 0 16 16");
     if (!n && (area ? areaState(area) : overallState()) !== "ok")      // nothing open, but nothing current either: never the green "clear"
-      return h("div", "now clear", [h("span", "lab", [icon(WORD_IC.stale, "0 0 16 16"), "Now"]), h("span", "", ["No current data" + (area ? " for " + aShort(area) : "") + "."])], {role: "status"});
+      return h("div", "now nocur", [h("span", "lab", [icon(WORD_IC.stale, "0 0 16 16"), "Now"]), h("span", "", ["No current data" + (area ? " for " + aShort(area) : "") + "."])], {role: "status"});
     if (!n) return h("div", "now clear", [h("span", "lab", [ok, "Now"]), h("span", "", ["Nothing on the wall" + (area ? " for " + aShort(area) : "") + "."])], {role: "status"});
     var crit = items.filter(function (i) { return i.sev === "crit"; }).length, warn = items.filter(function (i) { return i.sev === "warn"; }).length, stl = items.filter(function (i) { return i.sev === "stale"; }).length;
     var lab = [crit ? crit + " critical" : "", warn ? warn + " warning" : "", stl ? stl + " not current" : ""].filter(Boolean).join(" · ");
@@ -1134,12 +1151,13 @@
     if (cs.length) return {k: "stale", w: "not current", c: cs[0]};
     // nothing open: OK only when the sources that cover the site are current - never a green dot from old data
     var fks = {};
-    W.vmware.hosts.forEach(function (x) { if (x.site === id) fks[x.feed] = 1; });
+    var unknown = false;
+    W.vmware.hosts.forEach(function (x) { if (x.site === id) { fks[x.feed] = 1; if (x.st === "stale") unknown = true; } });
     W.storage.aggr.forEach(function (x) { if (x.site === id && x.feed) fks[x.feed] = 1; });
     var keys = Object.keys(fks);
     if (!keys.length) areaList().forEach(function (a) { if (a.on) a.feeds.forEach(function (k) { fks[k] = 1; }); });
     keys = Object.keys(fks);
-    if (UNREACH || !keys.length || liveFeeds(keys).some(function (k) { return feedFresh(k) === "stale"; })) return {k: "stale", w: "not current"};
+    if (UNREACH || unknown || !keys.length || keys.some(function (k) { return status("ok", k) !== "ok"; })) return {k: "stale", w: "not current"};
     return {k: "ok", w: "ok"};
   }
   function frEl(asof) {
@@ -1288,7 +1306,7 @@
     var ks = Object.keys(W.kinds).filter(function (k) { return W.kinds[k].grp === g; }), list = nOpen(ks), area = W.kinds[ks[0]].area;
     var from = NOW() - 4 * 60 * MIN, cl = W.conds.filter(function (c) { return ks.indexOf(c.kind) >= 0 && c.end != null && c.end >= from; });
     return {title: gr[1], st: list.length ? (list.some(function (c) { return c.sev === "crit"; }) ? "crit" : "warn") : withFresh("ok", area === "storage" ? ntFeed() : vcFeed()), chips: [aShort(area)], area: area, rows: [
-      ["Wall rules", ks.map(function (k) { return W.kinds[k].label; }).join(" · ")], ["Open now", condRows(list, area === "storage" ? ntFeed() : vcFeed())], ["Cleared, last 4 h", cl.length ? condRows(cl, "-live-") : "none"]]};
+      ["Wall rules", ks.map(function (k) { return W.kinds[k].label; }).join(" · ")], ["Open now", condRows(list, area === "storage" ? ntFeed() : vcFeed(), g === "sm" ? W.storage.ran.sm : undefined)], ["Cleared, last 4 h", cl.length ? condRows(cl, "-live-") : "none"]]};
   };
   function siteChips() {
     var cardEl = h("section", "card wide"), g = h("div", "sites");
@@ -1407,6 +1425,22 @@
         if (FAILS >= FAILS_MAX && !UNREACH) { UNREACH = true; UNREACH_SINCE = NOW(); render(); }
       }
     });
+  }
+  // the test harness only (data-test): set an answer, draw a view, open a card, list what is drawn green - the tests' fuzz run
+  if (TEST) {
+    window.__wallTest = {
+      set: function (a) { if (LOADED) closeDetail(); W = adapt(a); setZone(W.zone || "UTC"); if (!LOADED) { LOADED = true; frame(); } render(); },
+      view: function (st, area) { closeDetail(); S.style = st; S.area = area; S.site = ""; render(); },
+      open: function (ref) { closeDetail(); openDetail(ref); },
+      greens: function () {
+        var out = [];
+        root.querySelectorAll(".word.ok,.wd.ok,.lamp.s-ok,.ctr.ok,.fl.f-ok,.val.g-ok,.ln.g-ok,.cell.s-ok,.brow.s-ok,.gauge.s-ok,.k-ok").forEach(function (e) {
+          if (e.closest("#dsBack") && !back.classList.contains("on")) return;
+          var c = e.closest("[data-d]"); out.push(e.getAttribute("class") + " @ " + (c ? c.getAttribute("data-d") : e.textContent.slice(0, 40)));
+        });
+        return out;
+      }
+    };
   }
   load(true);
   if (!FREEZE) {

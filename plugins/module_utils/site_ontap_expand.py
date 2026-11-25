@@ -257,8 +257,8 @@ def lun_fullness(e):
         if cap and free is not None and int(cap) > 0:
             return int(cap), max(0, int(cap) - int(free)), "datastore"
         size = int(e.get("lun_size") or 0)
-        if size:
-            return size, int(e.get("lun_used") or 0), "LUN"
+        if size and e.get("lun_used") is not None:            # 1.129.0 review: a LUN's blocks not read are never "0 % written"
+            return size, int(e.get("lun_used")), "LUN"
     return int(e.get("size") or 0), int(e.get("used") or 0), "volume"
 
 

@@ -814,6 +814,116 @@ class Browser(unittest.TestCase):
         self.assertNotIn("all connected", out)
         self.assertEqual(len([c for c in cells if c[0] == "s-warn"]), 150)                    # every warning shown, none hidden
 
+    FUZZ_SEED = 1290
+    FUZZ_RUNS = 40
+
+    def fuzz_answers(self, seed, runs):
+        """runs answers: the demo with one VMware input and one Storage input taken away or made unknown each (seeded)"""
+        import random
+        import netapp_live as nl
+        rng = random.Random(seed)
+        now = time.time()
+        db = demo.netapp_db(1)
+        base_nm = nl.Database(lambda: db, mark="?").read()
+        out = []
+        for i in range(runs):
+            v = demo.view(now, vc2_state="ok")
+            v["sources"]["vcenter:" + demo.VC2]["snap"] = demo.vcenter_snap()
+            for h in v["sources"]["vcenter:" + demo.VC2]["snap"]["hosts"]:
+                h["name"] = h["name"].replace("sit", "sitz")
+            snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
+            cut = rng.choice(["stale", "never", "host_state", "host_cpu", "host_mem", "ds_cap", "ds_free", "error"])
+            src = v["sources"]["vcenter:" + rng.choice([demo.VC1, demo.VC2])]
+            if cut == "stale":
+                src["at"] = now - 900
+            elif cut == "never":
+                src.update(at=None, snap=None, state="never")
+            elif cut == "error":
+                src.update(at=now - 700, state="error", why="timed out")
+            elif cut.startswith("host"):
+                h = rng.choice([x for x in snap["hosts"] if x["state"] == "connected"])
+                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct"}[cut]
+                if rng.random() < 0.5:
+                    h.pop(key)
+                else:
+                    h[key] = None
+            else:
+                d = rng.choice(snap["datastores"])
+                d[{"ds_cap": "capacity", "ds_free": "free"}[cut]] = None
+            nm, at = json.loads(json.dumps(base_nm)), now - 60
+            scut = rng.choice(["none", "stale", "aggr_null", "aggr_size0", "health_failed"])
+            if scut == "none":
+                nm, at = None, None
+            elif scut == "stale":
+                at = now - 1800
+            elif scut == "aggr_null":
+                rng.choice(nm["aggrs"])["pct"] = None
+            elif scut == "aggr_size0":
+                rng.choice(nm["aggrs"])["size"] = 0
+            else:
+                for k in ("snapmirror", "nodes"):
+                    nm["parts"].setdefault(k, {}).setdefault("errors", []).append("cluster1.example.mil: not reached")
+                at = now - 1800                                  # ... and the run old: nothing of Storage may be green
+            if scut in ("aggr_null", "aggr_size0") and rng.random() < 0.5:
+                nm["parts"].pop("snapmirror", None)
+            a = M.build(v, nm, at, demo.OPTS, M.Tracker(), now, enclave="SITEA", title="Ops center")
+            a.update(zone="Europe/Berlin", poll=30, full={"storage": "/portal/netapp"}, auth_retry=900,
+                     me={"feedback": True, "reader": False, "areas": [["general", "The wall"]], "max": 1000})
+            out.append({"cut": "%s/%s" % (cut, scut), "a": json.loads(json.dumps(a, default=str))})
+        return out
+
+    maxDiff = None
+
+    def test_never_green_fuzz(self):
+        """seeded fuzz: each run takes one VMware input and one Storage input away (or makes it unknown); every style, every area
+        and every kind of detail card is drawn - nothing may be green. On a failure the seed and the cut are said."""
+        seed = int(os.environ.get("WALL_FUZZ_SEED") or self.FUZZ_SEED)
+        answers = self.fuzz_answers(seed, self.FUZZ_RUNS)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        import test_netapp_live as T
+        cfg = T.cfg_for(tmp, PORTAL_WALL_TEST="1")
+        html = sp.wall_page(cfg, JDOE_CN, {}).replace("/portal/static/", "")
+        for n in ("wall-page.js", "wall-page.css", "wall-land.js", "portal.css", "portal-theme.js", "portal.js"):
+            shutil.copy(os.path.join(FILES, "static", n), d)
+        open(os.path.join(d, "banner.css"), "w").close()
+        with open(os.path.join(d, "ans.js"), "w") as fh:
+            fh.write("window.ANS=%s;" % json.dumps(answers))
+        with open(os.path.join(d, "stub.js"), "w") as fh:
+            fh.write("(function(){window.fetch=function(){return Promise.resolve({status:200,ok:true,headers:{get:function(){return ''}},"
+                     "json:function(){return Promise.resolve(JSON.parse(JSON.stringify(window.ANS[0].a)))}})}})();")
+        refs = ["ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
+                "grp:ds", "feed:vc:" + demo.VC1, "feed:ontap"]
+        with open(os.path.join(d, "t.js"), "w") as fh:
+            fh.write("""setTimeout(function(){var T=window.__wallTest,bad=[];
+window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
+ (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
+ (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
+ (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.c+'|'+g.n)});
+ (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
+ T.set(JSON.parse(JSON.stringify(a)));
+ ['lights','cockpit','map'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
+   T.greens().forEach(function(g){bad.push(i+' '+x.cut+' '+st+'/'+ar+': '+g)})})});
+ T.view('cockpit','overview');
+ R.forEach(function(r){T.open(r);T.greens().forEach(function(g){bad.push(i+' '+x.cut+' card '+r+': '+g)})});
+});
+document.getElementById('res').textContent=JSON.stringify(bad.slice(0,30));},1200);""" % json.dumps(refs))
+        html = html.replace("<head>", '<head><script src="ans.js"></script><script src="stub.js"></script>', 1)
+        html = html.replace("</body>", '<pre id="res" hidden></pre><script src="t.js"></script></body>', 1)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write(html)
+        t0 = time.time()
+        args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--window-size=1920,1080",
+                "--virtual-time-budget=60000", "--dump-dom", "file://" + os.path.join(d, "p.html")]
+        out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=300).stdout
+        m = re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S)
+        self.assertIsNotNone(m, "the fuzz page did not finish (seed %d)" % seed)
+        bad = json.loads(sp.html.unescape(m.group(1)))
+        self.assertEqual(bad, [], "green on missing / old inputs - seed %d (WALL_FUZZ_SEED=%d to replay)" % (seed, seed))
+        self.assertLess(time.time() - t0, 90)
+
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):
             for w in (1920, 1280):

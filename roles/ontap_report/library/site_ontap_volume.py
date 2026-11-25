@@ -163,6 +163,17 @@ def gb_of(rec, *path):
     return int(v or 0)
 
 
+def opt_of(rec, *path):
+    """as gb_of, but None when ONTAP did not give it (1.129.0: a LUN's blocks not read are never 0)"""
+    v = rec
+    for k in path:
+        v = (v or {}).get(k)
+    try:
+        return None if v is None else int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def vol_in(rec):
     return {"name": rec.get("name"), "svm": (rec.get("svm") or {}).get("name") or "", "size": gb_of(rec, "space", "size"),
             "uuid": rec.get("uuid"),
@@ -238,7 +249,7 @@ def list_cluster(c, opts):
             e = dict(base)
             if l_:
                 e.update(lun=l_.get("name") or "", luns=len(mine), naa=X.naa(l_.get("serial_number")), lun_size=gb_of(l_, "space", "size"),
-                         lun_uuid=l_.get("uuid") or "", lun_used=gb_of(l_, "space", "used"), lun_thick=lun_thick(l_))
+                         lun_uuid=l_.get("uuid") or "", lun_used=opt_of(l_, "space", "used"), lun_thick=lun_thick(l_))
             e["uuid"] = v.get("uuid") or ""
             choices.append(e)
     ag_out = [{"cluster": name, "address": c.address, "name": r.get("name") or "", "node": (r.get("node") or {}).get("name") or "",

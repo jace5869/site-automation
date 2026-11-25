@@ -455,16 +455,16 @@ class OntapSource(object):
         return {
             "cluster": c.get("name") or self.address, "version": _g(c, "version.full", "") or "",
             "nodes": [{"name": n.get("name") or "", "state": n.get("state") or "", "takeover": tk(n) if isinstance(tk(n), bool) else None} for n in nodes],
-            "aggrs": [{"name": a.get("name") or "", "node": _g(a, "node.name", "") or "", "size": _int(_g(a, "space.block_storage.size")),
-                       "used": _int(_g(a, "space.block_storage.used"))} for a in got["aggrs"]],
+            "aggrs": [{"name": a.get("name") or "", "node": _g(a, "node.name", "") or "", "size": _int(_g(a, "space.block_storage.size"), None),
+                       "used": _int(_g(a, "space.block_storage.used"), None)} for a in got["aggrs"]],
             "volumes": [{"name": v.get("name") or "", "svm": _g(v, "svm.name", "") or "", "state": v.get("state") or "",
-                         "size": _int(_g(v, "space.size")), "used": _int(_g(v, "space.used")),
+                         "size": _int(_g(v, "space.size"), None), "used": _int(_g(v, "space.used"), None),
                          "aggr": ((v.get("aggregates") or [{}])[0] or {}).get("name", "") if v.get("aggregates") else "",
                          "autosize": (_g(v, "autosize.mode", "off") or "off") != "off",
-                         "snap_reserve": _int(_g(v, "space.snapshot.reserve_size")), "snap_used": _int(_g(v, "space.snapshot.used"))}
+                         "snap_reserve": _int(_g(v, "space.snapshot.reserve_size"), None), "snap_used": _int(_g(v, "space.snapshot.used"), None)}
                         for v in got["volumes"]],
             "luns": [{"path": x.get("name") or "", "name": (x.get("name") or "").rsplit("/", 1)[-1], "svm": _g(x, "svm.name", "") or "",
-                      "volume": _g(x, "location.volume.name", "") or "", "size": _int(_g(x, "space.size")), "used": _int(_g(x, "space.used")),
+                      "volume": _g(x, "location.volume.name", "") or "", "size": _int(_g(x, "space.size"), None), "used": _int(_g(x, "space.used"), None),
                       "state": (_g(x, "status.state", "") or "") if (_g(x, "status.container_state", "online") or "online") == "online"
                       else (_g(x, "status.container_state", "") or "")} for x in got["luns"]],
             "snapmirror": [{"src": _g(s, "source.path", "") or "", "dst": _g(s, "destination.path", "") or "", "state": s.get("state") or "",
@@ -507,6 +507,18 @@ class Collector(object):
         # Codex 1.129.0: an active back-off outlives a restart of the portal (the account's key hashed, the deadline) - a restart
         # never brings a second bad login sooner than auth_retry
         self.state_file = state_file
+        self._save_said = False
+        # Codex verify 2: a back-off file that cannot be read or written: every account held for one window (fail closed) -
+        # the portal cannot know whether a refusal just happened before it restarted
+        if state_file and not self._file_ok():
+            until = self.clock() + self.auth_retry
+            for b in self.buckets.values():
+                b.update(next_try=until, since=self.clock())
+                b["gate"].bad = True
+                for k in b["keys"]:
+                    self.st[k].update(state="auth", why="the back-off file (%s) cannot be read or written - every login held for %d s"
+                                      % (os.path.basename(state_file), self.auth_retry), next_try=until)
+            self.log({"event": "wall", "backoff_file": state_file, "state": "not usable", "why": "every account held for one window"})
         for cred, until in self._load().items():
             for c, b in self.buckets.items():
                 if self._hkey(c) == cred and until > self.clock():
@@ -518,6 +530,19 @@ class Collector(object):
     @staticmethod
     def _hkey(cred):
         return hashlib.sha256(("%s|%s" % cred).encode("utf-8")).hexdigest()[:24]
+
+    def _file_ok(self):
+        """the back-off file can be read (or is not there yet) and its folder written"""
+        d = os.path.dirname(os.path.abspath(self.state_file))
+        if not os.access(d, os.W_OK):
+            return False
+        if os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, encoding="utf-8") as fh:
+                    json.load(fh)
+            except (OSError, ValueError):
+                return False
+        return True
 
     def _load(self):
         if not self.state_file:
@@ -545,8 +570,12 @@ class Collector(object):
                 json.dump(d, fh)
             os.chmod(tmp, 0o600)
             os.replace(tmp, self.state_file)
-        except OSError:
-            pass
+            self._save_said = False
+        except OSError as e:
+            # the deadline stays in memory (this run keeps it); said once, not at every refusal
+            if not self._save_said:
+                self._save_said = True
+                self.log({"event": "wall", "backoff_file": self.state_file, "state": "not written", "why": short(e)})
 
     def start(self):
         if self.thread is not None:

@@ -1039,7 +1039,8 @@ condition needs the full window again).
   `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
   (`CORP\svc-wall`, `svc-wall@corp.example.mil` and `SVC-Wall` are one). The deadline counts from the refusal itself, and
   an active back-off is kept in the portal's data volume (`wall-backoff.json`, the account's name hashed), so restarting
-  the portal never brings the next login sooner. The first refusal stops **all** of them; after the start and after each
+  the portal never brings the next login sooner. If that file cannot be written the deadline still holds (said once in the
+  log); if it cannot be read or written when the portal starts, every account waits one window first. The first refusal stops **all** of them; after the start and after each
   back-off **one** source tries the login first and the others wait for its answer (a source that does not answer at all
   passes the turn to the next). So a wrong or expired password costs exactly one failed login per back-off window,
   however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or any HTTP 401 / 403 (a proxy
@@ -1052,7 +1053,11 @@ condition needs the full window again).
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
 - **One rule for every status on the page:** green only when the check ran, its source is there and current, and the
-  value is OK - every counter, gauge, light, list row, map dot and detail-card row follows it (a test walks them all).
+  value is OK - every counter, gauge, light, list row, map dot and detail-card row follows it. It fails closed: a value
+  not read (a capacity, a CPU, an aggregate's size) is "?", never 0 % or OK; a source missing from the answer is not
+  current; while one vCenter has not returned its inventory, or one host or datastore lacks a value, nothing of VMware is
+  green (its criticals and warnings still show) - the same for Storage. A seeded fuzz test takes inputs away at random
+  and draws every style and card: nothing may be green.
   A check that did not run (SnapMirror and the nodes with `ontap_live_health: false` on NetApp - refresh volume list) is
   grey "Not on the wall", never "None broken". On Lights the hosts are listed critical first, then warnings, then the rest;
   none that is not OK is ever left out.
