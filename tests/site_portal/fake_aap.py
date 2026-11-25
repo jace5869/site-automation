@@ -39,8 +39,6 @@ STATE = {
              "survey_enabled": False},
             {"id": 8, "name": "No prompts template", "ask_variables_on_launch": False, "ask_limit_on_launch": False,
              "survey_enabled": False},
-            {"id": 10, "name": "ACT - triage finding", "playbook": "playbooks/act_triage_finding.yml",
-             "ask_variables_on_launch": True, "ask_limit_on_launch": True, "survey_enabled": False},
             {"id": 9, "name": "Disk - clean up one mount", "ask_variables_on_launch": True, "ask_limit_on_launch": True,
              "survey_enabled": False},
         ],
@@ -49,8 +47,7 @@ STATE = {
              "ask_limit_on_launch": False, "survey_enabled": True, "approval": True,
              "survey": ["stigman_ckl_import_mode", "portal_requested_by"]},
             {"id": 44, "name": "ACT - triage finding", "ask_variables_on_launch": True, "ask_limit_on_launch": True,
-             "survey_enabled": False, "approval": False, "inventory": None,
-             "nodes": [{"id": 1, "unified_job_template": 10, "summary_fields": {"unified_job_template": {"unified_job_type": "job"}}}]},
+             "survey_enabled": False, "approval": False},
         ],
     },
     "inventories": [{"id": 3, "name": "Site hosts", "hosts": ["web01.example.mil", "web03.example.mil", "fail01.example.mil"],
@@ -343,7 +340,8 @@ class H(BaseHTTPRequestHandler):
             labs = [{"id": 500 + i, "name": n} for i, n in enumerate((t or {}).get("labels", []))]
             return self._send(200, {"count": len(labs), "next": None, "results": labs})
         if m and not q.get("id__in"):
-            rows = [row_of(t) for t in STATE["templates"][m.group(1)] if t["name"] == q.get("name")]
+            rows = [{k: t[k] for k in ("id", "name", "ask_variables_on_launch", "survey_enabled") if k in t}
+                    for t in STATE["templates"][m.group(1)] if t["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
         mi = re.match(r"^(job_templates|workflow_job_templates)/$", p)
         if mi and q.get("id__in"):                                      # 1.78.0: the cards' last runs, one call per kind
@@ -409,7 +407,7 @@ class H(BaseHTTPRequestHandler):
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"hosts": []})
             if q.get("name") or q.get("name__icontains"):
-                rows = [{"name": h, "enabled": True} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
+                rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
                 return self._send(200, {"count": len(rows), "results": rows})
             hv = inv.get("host_vars") or {}                              # 1.129.0: a host's Variables (JSON or YAML text), as a dynamic source sets them
             return self._paged_list(q, "inventories/%s/hosts/" % m.group(1), [{"id": 1000 + n, "name": h, "variables": hv.get(h, "")} for n, h in enumerate(sorted(inv["hosts"]))])
@@ -431,7 +429,7 @@ class H(BaseHTTPRequestHandler):
                 if 0 <= gid - base < len(names):
                     hosts = sorted(inv["groups"].get(names[gid - base], []))
                     break
-            return self._paged_list(q, p, [{"name": h, "enabled": True} for h in hosts])
+            return self._paged_list(q, p, [{"name": h} for h in hosts])
         if p == "unified_jobs/" and q.get("id__in"):                  # 1.78.0: the Jobs page's list, one call
             rows = [view(STATE["jobs"][int(i)]) for i in q["id__in"].split(",") if i.isdigit() and int(i) in STATE["jobs"]]
             return self._send(200, {"count": len(rows), "results": rows})

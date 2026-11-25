@@ -362,11 +362,6 @@ def script_listing(win_rules, doc, limit):
     return _parse_script(win_rules, doc, limit)
 
 
-def playbook_error(row):
-    playbook = row.get("playbook")
-    return "" if isinstance(playbook, str) and playbook.strip() else "its playbook could not be read from AAP"
-
-
 def action_os(playbook, name, windows_playbooks=()):
     """Windows jobs use win_* or a playbook requiring machine_windows. Workflows use their name."""
     pb = os.path.basename(str(playbook or ""))
@@ -832,8 +827,7 @@ class Aap(object):
                     "is not there" if not rows else "is there %d times" % len(rows)))
                 continue
             tid = int(rows[0]["id"])
-            why = playbook_error(rows[0]) if kind == "job_templates" else ""
-            out[name] = (tid, why or self._takes(kind, tid, a))
+            out[name] = (tid, self._takes(kind, tid, a))
         with self.lock:
             # 1.79.6: merged - a look-up of one action (state(): one that was off) kept every other action's id; it replaced them all,
             # and every other card showed "Never run" until the next full look-up
@@ -1066,10 +1060,6 @@ class Aap(object):
     def _read_labelled(self, typ, kind, r, have, tname, labels):
         """_read_template's part for a template that carries the label."""
         cfg = self.cfg
-        if typ == "job":
-            why = playbook_error(r)
-            if why:
-                return TemplateRead(skipped=why)
         if typ == "job" and (tname == cfg.placement_template or r.get("playbook") == "playbooks/vm_deploy_placement.yml"):
             return TemplateRead(skipped="Choose the placement on the waiting workflow's plan.")
         if (typ, tname) in have:
@@ -1308,9 +1298,9 @@ class Aap(object):
         if not rows:
             return False
         row = rows[0]
-        if not isinstance(row, dict) or row.get("name") != name or not isinstance(row.get("enabled"), bool):
+        if not isinstance(row, dict) or row.get("name") != name or not isinstance(row.get("enabled", True), bool):
             return None
-        return row["enabled"]
+        return row.get("enabled", True)
 
     def _lookup_inventory_id(self):
         code, data = self.call("GET", "inventories/?name=%s" % urllib.parse.quote(self.cfg.inventory))
@@ -1566,7 +1556,7 @@ class Aap(object):
                 mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=20" % gid, self.HOST_PAGES_MAX)
                 if w or any(not isinstance(m, dict) or not isinstance(m.get("name"), str) or not m["name"] for m in mem):
                     return None, "is a group whose hosts could not be read just now - try again"
-                members = sorted({m["name"] for m in mem if m.get("enabled") is True}, key=str.lower)
+                members = sorted({m["name"] for m in mem if m.get("enabled", True) is True}, key=str.lower)
                 if win is not None:
                     members = [h for h in members if h in win]
             else:
@@ -2428,7 +2418,7 @@ class Portal(object):
                     self.catalog_file = None
                     return
             # The saved forms depend on the catalog's Windows playbooks and the picker rules.
-            scope = [6, sorted(cfg.windows_playbooks), cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
+            scope = [5, sorted(cfg.windows_playbooks), cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.workflow_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
@@ -2680,22 +2670,12 @@ class Portal(object):
             return a, off or "template not found in AAP"
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
         code, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
-        if code != 200 or not isinstance(row, dict):
-            return a, "could not check this template's inventory in AAP - try again"
-        raw_inventory = row.get("inventory")
-        if kind == "workflow_job_templates":
-            iid, why, _ = self.aap.workflow_inventory(tid, row)
-        else:
-            iid, why = raw_inventory, playbook_error(row)
-        if why:
-            return a, why
+        iid = row.get("inventory") if code == 200 and isinstance(row, dict) else None
         if type(iid) is not int or iid <= 0:
             return a, "could not check this template's inventory in AAP - try again"
-        os_ = action_os(row["playbook"] if kind == "job_templates" else "", a["aap"]["name"], self.cfg.windows_playbooks)
-        summary = row.get("summary_fields")
-        inventory = summary.get("inventory") if isinstance(summary, dict) and iid == raw_inventory else None
-        inv_name = inventory.get("name") if isinstance(inventory, dict) else None
-        return dict(a, tid=tid, limit_inv=iid, limit_inv_name=inv_name or "ID %d" % iid, template_inventory=raw_inventory, os=os_), ""
+        os_ = action_os(row.get("playbook") if kind == "job_templates" else "", a["aap"]["name"], self.cfg.windows_playbooks)
+        inv_name = ((row.get("summary_fields") or {}).get("inventory") or {}).get("name") or "ID %d" % iid
+        return dict(a, tid=tid, limit_inv=iid, limit_inv_name=inv_name, template_inventory=iid, os=os_), ""
 
     def check(self, name, sent, a=None):
         a, why = self._action_inventory(name, a or self.actions[name])
@@ -2891,17 +2871,13 @@ class Portal(object):
         if "template_inventory" in a:
             raw_inventory = a["template_inventory"]
             # Workflow steps may supply the checked Limit inventory even when the workflow has none.
-            if kind == "workflow_job_templates" and a.get("limit_inv"):
-                effective, why, _ = self.aap.workflow_inventory(tid, {"inventory": raw_inventory})
+            if kind == "workflow_job_templates" and a.get("discovered") and a.get("limit_inv"):
+                effective, _, _ = self.aap.workflow_inventory(tid, {"inventory": raw_inventory})
                 if effective != a["limit_inv"]:
-                    return self._changed_template(cn, ip, name, a, why or "changed")
+                    return self._changed_template(cn, ip, name, a, "changed")
             status, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
             if status != 200 or not isinstance(row, dict) or "inventory" not in row:
                 return self._changed_template(cn, ip, name, a, "its inventory could not be read")
-            if kind == "job_templates":
-                why = playbook_error(row)
-                if why:
-                    return self._changed_template(cn, ip, name, a, why)
             if tid != a["tid"] or row["inventory"] != raw_inventory:
                 return self._changed_template(cn, ip, name, a, "changed")
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
