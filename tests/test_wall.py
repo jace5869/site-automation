@@ -867,7 +867,8 @@ class Browser(unittest.TestCase):
     FUZZ_RUNS = 40
 
     def fuzz_answers(self, seed, runs):
-        """runs answers: the demo with one VMware input and one Storage input taken away or made unknown each (seeded)"""
+        """runs answers: the demo (or a quiet demo: nothing open) with one VMware input and one Storage input taken away, made
+        unknown, aged LATE / STALE, or the source failing now with a recent good read (seeded)"""
         import random
         import netapp_live as nl
         rng = random.Random(seed)
@@ -876,58 +877,87 @@ class Browser(unittest.TestCase):
         base_nm = nl.Database(lambda: db, mark="?").read()
         out = []
         for i in range(runs):
+            quiet = rng.random() < 0.5
             v = demo.view(now, vc2_state="ok")
             v["sources"]["vcenter:" + demo.VC2]["snap"] = demo.vcenter_snap()
             for h in v["sources"]["vcenter:" + demo.VC2]["snap"]["hosts"]:
                 h["name"] = h["name"].replace("sit", "sitz")
+            for k in ("vcenter:" + demo.VC1, "vcenter:" + demo.VC2):
+                v["sources"][k]["snap"]["vms"] = [x for x in v["sources"][k]["snap"]["vms"] if x.get("cpu_pct") is not None]
+            if quiet:                                   # nothing open: the Now strip, the empty timeline, the "None" lines are on show
+                v["history"] = {}
+                for k in ("vcenter:" + demo.VC1, "vcenter:" + demo.VC2):
+                    for h in v["sources"][k]["snap"]["hosts"]:
+                        h.update(state="connected", cpu_pct=30.0, mem_pct=40.0)
+                    for d in v["sources"][k]["snap"]["datastores"]:
+                        d["free"] = d["capacity"] // 2
             snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
-            cut = rng.choice(["stale", "never", "host_state", "host_cpu", "host_mem", "ds_cap", "ds_free", "error"])
+            cut = rng.choice(["stale", "late", "never", "error_recent", "auth_recent", "host_state", "host_cpu", "host_mem", "host_maint",
+                              "ds_cap", "ds_free", "vm_cpu", "vm_heartbeat"])
             src = v["sources"]["vcenter:" + rng.choice([demo.VC1, demo.VC2])]
             if cut == "stale":
                 src["at"] = now - 900
+            elif cut == "late":
+                src["at"] = now - 300
             elif cut == "never":
                 src.update(at=None, snap=None, state="never")
-            elif cut == "error":
-                src.update(at=now - 700, state="error", why="timed out")
+            elif cut in ("error_recent", "auth_recent"):    # failing now - its last good read only 20 s old
+                src.update(at=now - 20, state="error" if cut == "error_recent" else "auth", why="timed out", fail_since=now - 5)
             elif cut.startswith("host"):
                 h = rng.choice([x for x in snap["hosts"] if x["state"] == "connected"])
-                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct"}[cut]
+                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct", "host_maint": "maint"}[cut]
                 if rng.random() < 0.5:
                     h.pop(key)
                 else:
                     h[key] = None
+            elif cut.startswith("vm"):
+                vm = rng.choice([x for x in snap["vms"] if x.get("power") == "poweredOn"])
+                vm[{"vm_cpu": "cpu_pct", "vm_heartbeat": "heartbeat"}[cut]] = None
             else:
                 d = rng.choice(snap["datastores"])
                 d[{"ds_cap": "capacity", "ds_free": "free"}[cut]] = None
             nm, at = json.loads(json.dumps(base_nm)), now - 60
-            scut = rng.choice(["none", "stale", "aggr_null", "aggr_size0", "health_failed"])
+            if quiet:
+                for a in nm["aggrs"]:
+                    a["pct"] = 40.0
+                for k in ("snapmirror", "nodes"):
+                    for r in (nm["parts"].get(k) or {}).get("rows") or []:
+                        r.update(st="ok", state="up") if k == "nodes" else r.update(st="ok", word="Healthy")
+            scut = rng.choice(["none", "stale", "late", "aggr_null", "aggr_size0", "health_failed", "not_read"])
             if scut == "none":
                 nm, at = None, None
             elif scut == "stale":
                 at = now - 1800
+            elif scut == "late":
+                at = now - 300
             elif scut == "aggr_null":
                 rng.choice(nm["aggrs"])["pct"] = None
             elif scut == "aggr_size0":
                 rng.choice(nm["aggrs"])["size"] = 0
+            elif scut == "not_read":
+                nm["run"]["not_read"] = ["cluster1.example.mil: timed out"]
             else:
                 for k in ("snapmirror", "nodes"):
                     nm["parts"].setdefault(k, {}).setdefault("errors", []).append("cluster1.example.mil: not reached")
-                at = now - 1800                                  # ... and the run old: nothing of Storage may be green
-            if scut in ("aggr_null", "aggr_size0") and rng.random() < 0.5:
-                nm["parts"].pop("snapmirror", None)
+                rng.choice(nm["aggrs"])["pct"] = None             # and one aggregate unknown: nothing of Storage may be green
             a = M.build(v, nm, at, demo.OPTS, M.Tracker(), now, enclave="SITEA", title="Ops center")
             a.update(zone="Europe/Berlin", poll=30, full={"storage": "/portal/netapp"}, auth_retry=900,
                      me={"feedback": True, "reader": False, "areas": [["general", "The wall"]], "max": 1000})
-            out.append({"cut": "%s/%s" % (cut, scut), "a": json.loads(json.dumps(a, default=str))})
+            out.append({"cut": "%s%s/%s" % ("quiet:" if quiet else "", cut, scut), "a": json.loads(json.dumps(a, default=str))})
         return out
 
     maxDiff = None
 
     def test_never_green_fuzz(self):
-        """seeded fuzz: each run takes one VMware input and one Storage input away (or makes it unknown); every style, every area
-        and every kind of detail card is drawn - nothing may be green. On a failure the seed and the cut are said."""
+        """seeded fuzz: each run takes one VMware input and one Storage input away (or makes it unknown, old, or failing now);
+        every style, every area and every kind of detail card is drawn and EVERY visible element's computed colours are read -
+        nothing may be in an OK colour. On a failure the seed and the cut are said."""
         seed = int(os.environ.get("WALL_FUZZ_SEED") or self.FUZZ_SEED)
         answers = self.fuzz_answers(seed, self.FUZZ_RUNS)
+        bad = self.fuzz_page(answers)
+        self.assertEqual(bad, [], "green on missing / old inputs - seed %d (WALL_FUZZ_SEED=%d to replay)" % (seed, seed))
+
+    def fuzz_page(self, answers):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         tmp = tempfile.mkdtemp()
@@ -944,9 +974,12 @@ class Browser(unittest.TestCase):
             fh.write("(function(){window.fetch=function(){return Promise.resolve({status:200,ok:true,headers:{get:function(){return ''}},"
                      "json:function(){return Promise.resolve(JSON.parse(JSON.stringify(window.ANS[0].a)))}})}})();")
         refs = ["ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
-                "grp:ds", "feed:vc:" + demo.VC1, "feed:ontap"]
+                "grp:ds", "grp:dsvm", "grp:load", "grp:aggr", "feed:vc:" + demo.VC1, "feed:ontap", "feed:netapp-run"]
         with open(os.path.join(d, "t.js"), "w") as fh:
-            fh.write("""setTimeout(function(){var T=window.__wallTest,bad=[];
+            fh.write("""setTimeout(function(){var T=window.__wallTest,bad=[],add=function(p,r,map){
+   if(r.scanned<40)bad.push(p+': only '+r.scanned+' elements drawn');
+   if(map&&(!r.sdots||!r.ticks))bad.push(p+': the map or the timeline was not drawn');
+   r.greens.forEach(function(g){bad.push(p+': '+g)})};
 window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
  (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
  (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
@@ -954,24 +987,23 @@ window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
  (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
  T.set(JSON.parse(JSON.stringify(a)));
  ['lights','cockpit','map'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
-   T.greens().forEach(function(g){bad.push(i+' '+x.cut+' '+st+'/'+ar+': '+g)})})});
+   add(i+' '+x.cut+' '+st+'/'+ar,T.greens(),st==='map')})});
  T.view('cockpit','overview');
- R.forEach(function(r){T.open(r);T.greens().forEach(function(g){bad.push(i+' '+x.cut+' card '+r+': '+g)})});
+ R.forEach(function(r){T.open(r);add(i+' '+x.cut+' card '+r,T.greens(),false)});
 });
-document.getElementById('res').textContent=JSON.stringify(bad.slice(0,30));},1200);""" % json.dumps(refs))
+document.getElementById('res').textContent=JSON.stringify(bad.slice(0,40));},1200);""" % json.dumps(refs))
         html = html.replace("<head>", '<head><script src="ans.js"></script><script src="stub.js"></script>', 1)
         html = html.replace("</body>", '<pre id="res" hidden></pre><script src="t.js"></script></body>', 1)
         with open(os.path.join(d, "p.html"), "w") as fh:
             fh.write(html)
         t0 = time.time()
         args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--window-size=1920,1080",
-                "--virtual-time-budget=60000", "--dump-dom", "file://" + os.path.join(d, "p.html")]
-        out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=300).stdout
+                "--virtual-time-budget=120000", "--dump-dom", "file://" + os.path.join(d, "p.html")]
+        out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=400).stdout
         m = re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S)
-        self.assertIsNotNone(m, "the fuzz page did not finish (seed %d)" % seed)
-        bad = json.loads(sp.html.unescape(m.group(1)))
-        self.assertEqual(bad, [], "green on missing / old inputs - seed %d (WALL_FUZZ_SEED=%d to replay)" % (seed, seed))
-        self.assertLess(time.time() - t0, 90)
+        self.assertIsNotNone(m, "the fuzz page did not finish")
+        self.assertLess(time.time() - t0, 120)
+        return json.loads(sp.html.unescape(m.group(1)))
 
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):

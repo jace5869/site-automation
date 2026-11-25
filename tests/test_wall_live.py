@@ -730,7 +730,7 @@ class CodexVerify(unittest.TestCase):
         c.wait(10)
         bk = list(c.buckets.values())[0]
         self.assertEqual(bk["next_try"], clock.t + 900)          # still backed off
-        self.assertEqual(list(json.load(open(state)).values()), [clock.t + 900])   # and the file still says so
+        self.assertEqual([e.get("until") for e in json.load(open(state))["accounts"].values()], [clock.t + 900])   # and the file still says so
         self.assertEqual(c.view()["sources"][a.key]["state"], "auth")
 
     def cut_401(self, verb):
@@ -799,6 +799,81 @@ class BackoffFile(unittest.TestCase):
         c.cycle()
         c.wait(10)
         self.assertEqual(f.calls, 1)
+
+
+class WriteAhead(unittest.TestCase):
+    """Codex verify 3: the back-off file is write-ahead - no login unless the attempt is written first; a refusal, then a
+    restart one second later: no second login inside the window; a login cut by a restart holds its account"""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.state = os.path.join(self.d, "wall-backoff.json")
+        self.vim, self.port = vim_stub(self)
+
+    def src(self, pw="old"):
+        return W.VcenterSource("127.0.0.1", "svc-wall", pw, verify=False, port=self.port)
+
+    def run_cycles(self, c, clock, n, step=1):
+        for _ in range(n):
+            c.cycle()
+            c.wait(10)
+            clock.t += step
+
+    def test_no_write_no_login(self):
+        os.chmod(self.d, 0o500)
+        self.addCleanup(os.chmod, self.d, 0o700)
+        clock, logs = Clock(), []
+        s = self.src("pass")
+        c = W.Collector([s], seconds=60, auth_retry=900, clock=clock, log=logs.append, state_file=self.state)
+        self.run_cycles(c, clock, 3, 60)
+        self.assertEqual(self.vim.methods.count("Login"), 0)                    # never sent
+        st = c.view()["sources"][s.key]
+        self.assertEqual(st["state"], "paused")
+        self.assertIn("back-off file", st["why"])
+        self.assertEqual(len([x for x in logs if x.get("state") == "login paused"]), 1)
+
+    def test_refused_then_restart_one_second_later(self):
+        clock = Clock()
+        c = W.Collector([self.src()], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
+        ahead = c._ahead
+
+        def ahead_then_lock_the_folder(cred):                                  # the attempt written - then the folder turns
+            ok = ahead(cred)                                                    # read-only: the refusal's deadline is not written
+            os.chmod(self.d, 0o500)
+            return ok
+        for b in c.buckets.values():
+            b["gate"].ahead = lambda cred=list(c.buckets)[0]: ahead_then_lock_the_folder(cred)
+        self.run_cycles(c, clock, 1)
+        os.chmod(self.d, 0o700)                                                 # writable again for the restart
+        self.assertEqual(self.vim.methods.count("Login"), 1)
+        c2 = W.Collector([self.src()], seconds=60, auth_retry=900, clock=clock, state_file=self.state)    # the restart, 1 s later
+        self.run_cycles(c2, clock, 898)                                         # to 899 s after the refusal
+        self.assertEqual(self.vim.methods.count("Login"), 1)
+
+    def test_a_login_cut_by_a_restart_holds_its_account(self):
+        clock = Clock()
+        with open(self.state, "w") as fh:                                      # the attempt written, then the process killed
+            json.dump({"v": 2, "accounts": {W.Collector._hkey(("account", "svc-wall")): {"attempt": clock.t - 10}}}, fh)
+        c = W.Collector([self.src("pass")], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
+        self.run_cycles(c, clock, 14, 60)                                       # to 850 s after the attempt
+        self.assertEqual(self.vim.methods.count("Login"), 0)
+        self.run_cycles(c, clock, 2, 60)
+        self.assertEqual(self.vim.methods.count("Login"), 1)                    # after the window: one login, it works
+        self.assertEqual(json.load(open(self.state))["accounts"], {})           # and nothing is held any more
+
+    def test_files_that_cannot_be_trusted_hold_every_account(self):
+        clock = Clock()
+        h = W.Collector._hkey(("account", "svc-wall"))
+        for text in ('{"v": 2, "accounts": {"%s": {"until": "soon"}}}' % h, '{"v": 2, "accounts": {"%s": {"until": %d}}}' % (h, clock.t + 10 ** 7),
+                     '{"%s": 1000}' % h, '[1]', '{"v": 2, "accounts": {"x": {"attempt": 5, "other": 1}}}'):
+            with open(self.state, "w") as fh:
+                fh.write(text)
+            s = self.src("pass")
+            c = W.Collector([s], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
+            self.assertEqual(c.view()["sources"][s.key]["state"], "auth", text)
+            self.assertLessEqual(c.view()["sources"][s.key]["next_try"], clock.t + 900, text)     # one window, never years
+        self.assertEqual(self.vim.methods.count("Login"), 0)
 
 
 def closed_port():

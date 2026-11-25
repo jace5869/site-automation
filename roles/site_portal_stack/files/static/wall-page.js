@@ -248,6 +248,11 @@
     });
   }
 
+  // drawing that needs the layout (the map, the timeline): the next frame; the test harness runs them at once (flush)
+  var PENDING = null;
+  function later(fn) { if (PENDING) PENDING.push(fn); else requestAnimationFrame(fn); }
+  function flush() { while (PENDING && PENDING.length) PENDING.shift()(); }
+
   // ---------------------------------------------------------------- the frame: header, stage, tooltip, detail card
   var hdr, stage, tip, back, card;
   function seg(label, items, cls, attr) {
@@ -996,7 +1001,7 @@
     if (a === "watch") add(main, [khead("What the wall watches"), h("div", "panel", [watchEl()])]);
     else add(main, a === "storage" ? pStorage() : a === "vmware" ? pVmware() : pOverview());
     r.appendChild(main);
-    requestAnimationFrame(countHidden);
+    later(countHidden);
   };
 
   // ================================================================ LIGHTS: one big status light per area
@@ -1210,7 +1215,7 @@
       "Set portal_wall_site_places (a country code or [longitude, latitude] per site) to put them here."]));
     add(cardEl, [h("div", "ch", [h("h2", "", ["Where"]), h("span", "sub", [S.site ? "focused on " + S.site + " · click again to clear" : "click a dot: the condition that lights it"])]), box,
       h("div", "maplg", [h("span", "", ["✕ down"]), h("span", "", ["! warning"]), h("span", "", ["✓ ok"]), h("span", "", ["? hollow = not current (older than 10 min, never green)"]), h("span", "", ["dots: VMware and Storage conditions · no WAN lines (Network not on the wall yet)"])])]);
-    requestAnimationFrame(function () { drawMap(svg); });
+    later(function () { drawMap(svg); });
     return cardEl;
   }
   function scopeArea() { return S.area === "overview" || S.area === "watch" ? "" : S.area; }
@@ -1260,7 +1265,7 @@
   function timelineCard() {
     var c = h("section", "card tlcard"), tl = h("div", "tl"), list = tlEntries();
     add(c, [h("div", "ch", [h("h2", "", ["Last 4 hours"]), h("span", "sub", [list.length + " wall conditions · started → cleared"]), h("span", "r", ["now at top"])]), tl]);
-    requestAnimationFrame(function () { drawTimeline(tl, list); });
+    later(function () { drawTimeline(tl, list); });
     return c;
   }
   function nowCard() {
@@ -1428,17 +1433,44 @@
   }
   // the test harness only (data-test): set an answer, draw a view, open a card, list what is drawn green - the tests' fuzz run
   if (TEST) {
+    PENDING = [];
+    // the OK colours of the theme in force (any that equals a colour that is not OK left out): what "green" is on this page
+    var okColours = function () {
+      var probe = document.createElement("span"), cs = getComputedStyle(document.body), seen = {};
+      root.appendChild(probe);
+      var rgb = function (tok) { var v = cs.getPropertyValue(tok).trim(); if (!v) return ""; probe.style.color = ""; probe.style.color = v; return getComputedStyle(probe).color; };
+      var not = ["--ink", "--muted", "--label", "--accent", "--accent-ink", "--bg", "--card", "--card-strong", "--edge", "--line", "--li-ok", "--li-warn",
+                 "--li-crit", "--li-stale", "--g-track", "--track", "--g-thr", "--g-tick", "--sea", "--land", "--landline"].map(rgb);
+      ["--ok", "--l-ok", "--m-ok", "--g-ok", "--ok-bg", "--okc-bg", "--gl-ok"].forEach(function (t) { var c = rgb(t); if (c && not.indexOf(c) < 0) seen[c] = t; });
+      root.removeChild(probe);
+      return seen;
+    };
+    var visible = function (e) { var r = e.getClientRects(); if (!r.length) return false; var st = getComputedStyle(e); return st.visibility !== "hidden" && st.display !== "none" && +st.opacity > 0; };
     window.__wallTest = {
-      set: function (a) { if (LOADED) closeDetail(); W = adapt(a); setZone(W.zone || "UTC"); if (!LOADED) { LOADED = true; frame(); } render(); },
-      view: function (st, area) { closeDetail(); S.style = st; S.area = area; S.site = ""; render(); },
-      open: function (ref) { closeDetail(); openDetail(ref); },
+      set: function (a) { if (LOADED) closeDetail(); W = adapt(a); setZone(W.zone || "UTC"); if (!LOADED) { LOADED = true; frame(); } render(); flush(); },
+      view: function (st, area) { closeDetail(); S.style = st; S.area = area; S.site = ""; render(); flush(); },
+      open: function (ref) { closeDetail(); openDetail(ref); flush(); },
+      // every visible element of the wall, its computed colours (text, fill, stroke, background, border) against the OK colours
       greens: function () {
-        var out = [];
-        root.querySelectorAll(".word.ok,.wd.ok,.lamp.s-ok,.ctr.ok,.fl.f-ok,.val.g-ok,.ln.g-ok,.cell.s-ok,.brow.s-ok,.gauge.s-ok,.k-ok").forEach(function (e) {
+        var ok = okColours(), out = [], n = 0;
+        root.querySelectorAll("*").forEach(function (e) {
+          if (e.closest("#tip")) return;
           if (e.closest("#dsBack") && !back.classList.contains("on")) return;
-          var c = e.closest("[data-d]"); out.push(e.getAttribute("class") + " @ " + (c ? c.getAttribute("data-d") : e.textContent.slice(0, 40)));
+          if (!visible(e)) return;
+          n++;
+          var st = getComputedStyle(e), hit = "";
+          var inSvg = e instanceof SVGElement, ownText = [].some.call(e.childNodes, function (x) { return x.nodeType === 3 && x.nodeValue.trim(); });
+          var props = ["background-color", "border-left-color", "border-top-color", "box-shadow"];
+          if (ownText) props.push("color");
+          if (inSvg && e.tagName.toLowerCase() !== "svg") props.push("fill", "stroke");
+          props.forEach(function (p) {
+            var v = st.getPropertyValue(p);
+            if (p.indexOf("border") === 0 && parseFloat(st.getPropertyValue(p.replace("-color", "-width"))) === 0) return;
+            Object.keys(ok).forEach(function (c) { if (!hit && v && v.indexOf(c) >= 0) hit = p + "=" + ok[c]; });
+          });
+          if (hit) { var c = e.closest("[data-d]"); out.push(hit + " " + e.tagName.toLowerCase() + "." + (e.getAttribute("class") || "") + " @ " + (c ? c.getAttribute("data-d") : (e.textContent || "").trim().slice(0, 40))); }
         });
-        return out;
+        return {greens: out, scanned: n, sdots: root.querySelectorAll(".sdot, .mapnote").length, ticks: root.querySelectorAll(".tl .tk, .tl .nowt").length};
       }
     };
   }
