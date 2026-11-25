@@ -399,6 +399,7 @@ class Config(object):
         # "NetApp ONTAP" accounts, each a podman secret (PORTAL_WALL_VCENTER_LOGIN, PORTAL_WALL_ONTAP_LOGIN: JSON)
         self.wall = flag(g("PORTAL_WALL", "1"))
         self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
+        self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))     # the preview banner on every style (portal_wall_preview)
         self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
         try:
             wo = g("PORTAL_WALL_OPTS", "{}")
@@ -5705,10 +5706,17 @@ def feedback_page(cfg, cn, fb, area=""):
     return shell(cfg, "Wall feedback", body, cn, page="wall-feedback")
 
 
+# portal_wall_preview (default true): the user's bar for the wall's first release - a display fault may ship with this said on
+# every style, kiosk included (not dismissable)
+WALL_PREVIEW = ('<p class="wall-preview" role="note" id="wall-preview"><b>Preview</b> - a light may show OK when data is missing or late. '
+                'Check vCenter / NetApp before acting.</p>')
+
+
 def wall_page(cfg, cn, statics, token=""):
     """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
     v = lambda n: statics.get(n, "")
-    body = ('<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s"%s>'
+    body = ((WALL_PREVIEW if getattr(cfg, "wall_preview", True) else "") +
+            '<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s"%s>'
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'

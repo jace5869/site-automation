@@ -379,6 +379,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the tab's and the page's name: what your site calls its operations center
 # portal_wall_title: "{{ outage_ops_center | default('Ops center', true) }}"
 
+## a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is
+## missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
+# portal_wall_preview: true
+
 ## shown beside the title; one portal serves one enclave
 # portal_wall_enclave: "{{ site_enclave | default('', true) }}"
 

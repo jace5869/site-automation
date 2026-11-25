@@ -1010,6 +1010,14 @@ grey tiles "Not on the wall yet".
 - **One portal, one enclave:** `portal_wall_enclave` (default: `site_enclave`) is shown beside the title. There is no
   enclave switch on the page; each enclave's portal has its own wall.
 
+### The preview banner (portal_wall_preview)
+
+While `portal_wall_preview` is `true` (the default), every wall style - Lights, Cockpit, Map, and the kiosk / full screen -
+shows a thin amber banner that cannot be closed: *"Preview - a light may show OK when data is missing or late. Check
+vCenter / NetApp before acting."* The wall is built never to show green on missing, old or failed data, but until your teams
+have used it for a while, treat a green light as a hint, not a proof. Set `portal_wall_preview: false` and run the portal's
+deploy again to take the banner away.
+
 ### Where the wall's data comes from
 
 | Area | Source | How often | Freshness on the wall |

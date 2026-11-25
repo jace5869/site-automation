@@ -200,6 +200,7 @@ portal_netapp_old_minutes: 60                       # a run older than this is s
 # ONTAP (GET only) when the "NetApp ONTAP" credential is on this deploy. Freshness: LATE after 3 min, STALE after 10 min.
 portal_wall: true
 portal_wall_title: "{{ outage_ops_center | default('Ops center', true) }}"   # the tab's and the page's name: what your site calls its operations center
+portal_wall_preview: true                           # a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
 portal_wall_enclave: "{{ site_enclave | default('', true) }}"              # shown beside the title; one portal serves one enclave
 portal_wall_seconds: 60                             # the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks
 portal_wall_auth_retry_minutes: 15                  # a refused login: that source stops at once and is tried again no sooner than this (5 to 1440) - the accounts are shared with the AAP jobs, a lockout would stop them too

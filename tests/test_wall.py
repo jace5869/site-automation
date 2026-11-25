@@ -496,6 +496,21 @@ def post_feedback(call, base, dn=JDOE, body=None, token=True, cn=JDOE_CN, portal
 
 
 class Portal(unittest.TestCase):
+    def test_preview_banner(self):
+        """portal_wall_preview (default true): the banner on the page, outside every style and the kiosk's hidden bars; off: gone"""
+        _cfg, _p, call, _b = serve(self)
+        page = call("/wall")[1]
+        self.assertIn('<p class="wall-preview" role="note" id="wall-preview"><b>Preview</b> - a light may show OK when data is missing or late. '
+                      'Check vCenter / NetApp before acting.</p><div id="wall"', page)
+        css = open(os.path.join(FILES, "static", "wall-page.css"), encoding="utf-8").read()
+        self.assertIn(".wall-preview{position:sticky", css)
+        self.assertNotRegex(css, r"kiosk[^{}]*\.wall-preview")                       # never hidden in kiosk
+        self.assertNotIn("wall-preview", open(os.path.join(FILES, "static", "wall-page.js"), encoding="utf-8").read())   # no script closes it
+        _cfg, _p, call, _b = serve(self, PORTAL_WALL_PREVIEW="0")
+        self.assertNotIn("wall-preview", call("/wall")[1])
+        d = open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml"), encoding="utf-8").read()
+        self.assertIn("portal_wall_preview: true", d)
+
     def test_page_answer_and_csp(self):
         cfg, p, call, _b = serve(self)
         code, page, h = call("/wall")

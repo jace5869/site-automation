@@ -795,3 +795,7 @@ body.kiosk .dsc .kxh{display:none}
 .sK .now.warnonly{background:var(--warning-bg);border-bottom-color:var(--warning-bd)}
 .sK .now.warnonly .lab{color:var(--warning)}
 .sM .tlempty.nocur b{color:var(--muted)}
+/* portal_wall_preview: a thin, neutral-amber banner on every style and in full screen - not dismissable */
+.wall-preview{position:sticky;top:0;z-index:60;margin:0;padding:4px 16px;font-size:12.5px;line-height:1.4;text-align:center;
+  background:linear-gradient(var(--warning-bg),var(--warning-bg)),var(--card-strong);color:var(--ink);border-bottom:1px solid var(--warning-bd)}
+.wall-preview b{color:var(--warning);font-weight:700;margin-right:2px}

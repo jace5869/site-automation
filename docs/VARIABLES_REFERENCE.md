@@ -2249,6 +2249,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_netapp_old_minutes` | `60` | a run older than this is said to be old on the page (the refresh runs every 15-30 min) |
 | `portal_wall` | `true` | ---- 1.129.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall") ------------------------------------------- /portal/wall: one page for a wall screen - Lights, Cockpit (the default) or Map, saved per viewer - with only the wall conditions below lit (routine alarms never). VMware is read live by the porta… (all of it: the role file) |
 | `portal_wall_title` | `"{{ outage_ops_center \| default('Ops center', true) }}"` | the tab's and the page's name: what your site calls its operations center |
+| `portal_wall_preview` | `true` | a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted |
 | `portal_wall_enclave` | `"{{ site_enclave \| default('', true) }}"` | shown beside the title; one portal serves one enclave |
 | `portal_wall_seconds` | `60` | the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks |
 | `portal_wall_auth_retry_minutes` | `15` | a refused login: that source stops at once and is tried again no sooner than this (5 to 1440) - the accounts are shared with the AAP jobs, a lockout would stop them too |
