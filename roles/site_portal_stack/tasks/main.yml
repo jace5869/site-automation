@@ -336,7 +336,7 @@
   ansible.builtin.set_fact:
     _portal_windows_playbooks: >-
       {{ _portal_catalog_doc.job_templates | default([], true) | selectattr('playbook', 'defined')
-         | selectattr('credentials', 'defined') | selectattr('credentials', 'contains', 'machine_windows')
+         | selectattr('credentials', 'defined') | rejectattr('credentials', 'none') | selectattr('credentials', 'contains', 'machine_windows')
          | map(attribute='playbook') | unique | list }}
     _portal_playbook_areas: >-
       {{ dict(_portal_catalog_doc.job_templates | default([], true)

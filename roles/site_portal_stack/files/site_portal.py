@@ -2671,6 +2671,8 @@ class Portal(object):
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
         code, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
         iid = row.get("inventory") if code == 200 and isinstance(row, dict) else None
+        if kind == "workflow_job_templates" and code == 200 and isinstance(row, dict) and iid is None:
+            iid = self.aap._inventory_id()         # a built-in workflow keeps its inventory on its steps: portal_inventory, as in 1.129.0
         if type(iid) is not int or iid <= 0:
             return a, "could not check this template's inventory in AAP - try again"
         os_ = action_os(row.get("playbook") if kind == "job_templates" else "", a["aap"]["name"], self.cfg.windows_playbooks)
