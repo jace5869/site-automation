@@ -860,6 +860,7 @@
       PORTAL_LDAP_PORT: "{{ portal_ldap_ports.ldap | default(389) | string }}"
       PORTAL_LDAP_TIMEOUT: "{{ portal_ldap_timeout | string }}"
       PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
+      PORTAL_JOB_OUTPUT_EMOJI: "{{ portal_job_output_emoji | bool | string }}"
       PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
       PORTAL_STIGMAN_PATH: "{{ portal_stigman_path }}"
       # 1.101.2: the live AD page

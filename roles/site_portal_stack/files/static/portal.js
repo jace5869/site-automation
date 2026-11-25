@@ -321,7 +321,7 @@ function jobsPage() {
     const scope = ($("jl") && $("jl").dataset.scope) || "mine";
     try {
       const both = paneLive();
-      const url = both ? "jobs/" + encodeURIComponent(pane.dataset.job) + "?pane=1&list=" + encodeURIComponent(scope) + (pane.dataset.via ? "&via=" + encodeURIComponent(pane.dataset.via) : "")
+      const url = both ? "jobs/" + encodeURIComponent(pane.dataset.job) + "?pane=1&list=" + encodeURIComponent(scope) + (pane.querySelector("#job-output[data-raw]") ? "&output=raw" : "") + (pane.dataset.via ? "&via=" + encodeURIComponent(pane.dataset.via) : "")
                        : "jobs?list=1&scope=" + encodeURIComponent(scope);
       const r = await fetch(BASE + url, {credentials: "same-origin", headers: {"Accept": "text/html"}});
       if (r.status === 429) wait = 10000;
@@ -342,6 +342,10 @@ function jobsPage() {
           if (oldBox?.dataset.hold && previous && next && previous.aid === next.aid && previous.approveBlocked === next.approveBlocked &&
               previous.savedJob === next.savedJob && previous.pendingJob === next.pendingJob) newBox.replaceWith(oldBox);
           else if (oldBox && newBox && oldBox.querySelector("details.wic[open]") && newBox.querySelector("details.wic")) newBox.querySelector("details.wic").open = true;
+          if (same) {
+            const open = new Set(Array.from(pane.querySelectorAll("details[data-output-fold][open]"), d => d.dataset.outputFold));
+            for (const d of fresh.querySelectorAll("details[data-output-fold]")) d.open = open.has(d.dataset.outputFold);
+          }
           pane.replaceWith(fresh); pane = $("jd");
           ringIn(pane, was);
           decideBox();

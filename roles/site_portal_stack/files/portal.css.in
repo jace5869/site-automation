@@ -405,6 +405,29 @@ progress.pb::-moz-progress-bar{background:var(--info);border-radius:999px}
 .hc.ok{border-color:var(--ok-bd);background:var(--ok-bg)}.hc.bad{border-color:var(--critical-bd);background:var(--critical-bg)}
 .hc.run{border-color:var(--info-bd);background:var(--info-bg)}.hc.wait{border-color:var(--warning-bd);background:var(--warning-bg)}
 .hc .ic{width:14px;height:14px}
+#job-output{display:grid;gap:8px;min-width:0}
+#job-output .hd{align-items:center}
+#job-output h3,.output-sum,.output-check{margin:0}
+.output-check{padding:8px 12px;background:var(--info-bg);border:1px solid var(--info-bd);border-radius:10px}
+.output-sum{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}
+.output-recap th,.output-recap td{padding:4px 8px;white-space:nowrap}
+.output-recap th[scope=row]{background:transparent;font:600 13px var(--mono);letter-spacing:normal;text-transform:none}
+.output-recap thead th{text-transform:none;letter-spacing:normal}.output-recap .zero,.om-skipped{color:var(--muted)}
+.output-lines{list-style:none;margin:0;padding:6px 10px;background:var(--card-strong);border:1px solid var(--line);border-radius:10px;font-size:13.5px;overflow-wrap:anywhere}
+.output-lines>li{padding:2px 6px 2px 22px}
+.output-lines .out-play,.output-lines .out-task{padding:5px 0;font-weight:650}
+.output-lines .out-task{border-top:1px solid var(--line)}
+.output-lines summary{cursor:pointer}
+.output-lines details ul{margin:0;padding-left:28px}
+.output-marker{white-space:nowrap}.output-lines>li>.output-marker{display:inline-block;min-width:8em}.output-emoji{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+.om-ok{color:var(--ok)}.om-changed,.om-check{color:var(--info)}.om-failed{color:var(--critical)}
+.om-warning,.om-unreachable{color:var(--warning)}.om-retry{color:var(--low)}
+.out-failed{background:var(--critical-bg)}.out-unreachable{background:var(--warning-bg)}
+.output-lines .out-failed,.output-lines .out-unreachable{margin:2px 0;border-left:3px solid var(--critical);border-radius:4px}
+.output-lines .out-unreachable{border-color:var(--warning)}
+.out-failed .output-msg,.out-unreachable .output-msg{display:block;font-family:var(--mono)}
+.output-lines pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.output-raw{margin:0;padding:10px;overflow:auto;background:var(--code);border:1px solid var(--line);border-radius:8px}
 .evs{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 .evs .ev{display:flex;gap:10px;align-items:flex-start;font-size:14px;padding:3px 0}
 .evs .ev svg{width:16px;height:16px;margin-top:3px;flex:none}

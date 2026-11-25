@@ -446,6 +446,7 @@ class Config(object):
         self.approvers = names(g("PORTAL_APPROVERS", "[]"))
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
+        self.job_output_emoji = flag(g("PORTAL_JOB_OUTPUT_EMOJI", "true"))
         self.title = g("PORTAL_TITLE", "Site portal")
         self.logo, self.logo_type, self.logo_v, self.logo_why = load_logo(g("PORTAL_LOGO", ""))        # 1.78.2: the site's own image in the header ("" = the badge)
         # 1.75.3: "pick a host, then a finding": the report jobs read (the last N of each playbook, finished within D days; the deploy's
@@ -1863,17 +1864,18 @@ LINES_MAX = 8                                   # "What just happened": the last
 
 def task_what(name):
     """A task's name as a person reads it: our names are "Area | what" - the part after the bar."""
-    t = " ".join(str(name or "").split())
+    t = " ".join(output_text(name).split())
     if "|" in t:
         t = t.split("|", 1)[1].strip()
     return t[:80]
 
 
-def cause_class(event, res):
+def cause_class(e):
     """The plain cause of a failure - never the module's own message (it can hold anything): could not connect, timed out, or failed."""
-    if event == "runner_on_unreachable":
+    if e["event"] == "runner_on_unreachable":
         return "could not connect"
-    msg = str((res or {}).get("msg") or "").lower()
+    res = (e.get("event_data") or {}).get("res")
+    msg = output_text(res.get("msg")).lower() if isinstance(res, dict) and not output_censored(e) else ""
     return "timed out" if ("timed out" in msg or "timeout" in msg) else "failed"
 
 
@@ -1881,19 +1883,136 @@ def event_line(e):
     """One AAP job event as a plain line -> {k: ok | changed | bad | unreach | skip, host, text} or None (an event that says nothing a person needs).
     Failed lines carry the host, the task and the cause class only."""
     ev, d = str(e.get("event") or ""), e.get("event_data") or {}
-    host = str(e.get("host_name") or d.get("host") or "")
+    host = output_text(e.get("host_name") or d.get("host"))
     what = task_what(d.get("task"))
     if not host or not what:
         return None
     if ev == "runner_on_ok":
         return {"k": "changed" if e.get("changed") else "ok", "host": host, "text": what + (" (changed something)" if e.get("changed") else "")}
     if ev == "runner_on_failed":
-        return {"k": "bad", "host": host, "text": "%s: %s" % (what, cause_class(ev, d.get("res")))}
+        return {"k": "bad", "host": host, "text": "%s: %s" % (what, cause_class(e))}
     if ev == "runner_on_unreachable":
-        return {"k": "unreach", "host": host, "text": cause_class(ev, d.get("res"))}
+        return {"k": "unreach", "host": host, "text": cause_class(e)}
     if ev == "runner_on_skipped":
         return {"k": "skip", "host": host, "text": what + " (skipped)"}
     return None
+
+
+# Only scalar fields chosen for display cross from event_data into the readable view.
+OUTPUT_MARKERS = {
+    "ok": ("✅", "OK", "ok"), "changed": ("🔄", "CHANGED", "changed"),
+    "skipped": ("⏭️", "SKIPPED", "skipped"), "failed": ("❌", "FAILED", "failed"),
+    "unreachable": ("🔌", "UNREACHABLE", "unreachable"), "warning": ("⚠️", "WARNING", "warning"),
+    "msg": ("ℹ️", "INFO", "msg"), "retry": ("🔁", "RETRY", "retrying"),
+    "play": ("▶️", "PLAY", "PLAY"), "task": ("🔹", "TASK", "TASK"),
+    "recap": ("📋", "RECAP", "RECAP"), "check": ("🧪", "CHECK", "Check"),
+}
+RUNNER_RESULTS = {"runner_on_ok": "ok", "runner_on_failed": "failed", "runner_on_unreachable": "unreachable",
+                  "runner_on_skipped": "skipped", "runner_retry": "retry", "runner_on_retry": "retry",
+                  "runner_item_on_ok": "ok", "runner_item_on_failed": "failed", "runner_item_on_skipped": "skipped"}
+# A diagnostic can contain shell assignments, quoted JSON fields, or an Authorization header.
+OUTPUT_SECRET = re.compile(
+    r"""((?:password|secret|token|key)[\w.-]*["']?\s*[:=]\s*)"""
+    r"""(?:"(?:\\.|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\])*(?:'|\\?\Z)|[\[{].*|(?:\\.|[^\s\\])*)""", re.I | re.S)
+OUTPUT_AUTH = re.compile(r"(authorization\s*:\s*)[^\r\n]*", re.I)
+
+
+def redact_output(text):
+    text = OUTPUT_SECRET.sub(r"\1[redacted]", text)
+    return OUTPUT_AUTH.sub(r"\1[redacted]", text)
+
+
+def output_text(value):
+    return redact_output(clean(value)).strip() if isinstance(value, str) else ""
+
+
+def output_censored(e):
+    d = e.get("event_data") or {}
+    res = d.get("res") or {}
+
+    def hidden(data):
+        if isinstance(data, list):
+            return any(hidden(item) for item in data)
+        return isinstance(data, dict) and ("censored" in data or data.get("_ansible_no_log")
+                                           or any(hidden(v) for v in data.values() if isinstance(v, (dict, list))))
+
+    stdout = str(e.get("stdout") or "").lower()
+    return (e.get("_ansible_no_log") or d.get("_ansible_no_log") or "censored" in e or "censored" in d or hidden(res)
+            or "output has been hidden" in stdout or '"censored":' in stdout)
+
+
+def clipped(text, limit):
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def debug_message(data, res):
+    """Only debug's msg argument is displayable. debug(var=...) also returns a field named after its variable."""
+    args = data.get("task_args")
+    invocation = res.get("invocation")
+    module_args = invocation.get("module_args") if isinstance(invocation, dict) else None
+    if any(isinstance(a, dict) and "var" in a for a in (args, module_args)):
+        return ""
+    if isinstance(args, str) and re.search(r"""\bvar["']?\s*[:=]""", args):
+        return ""
+    msg = res.get("msg")
+    if isinstance(msg, list) and all(isinstance(s, str) for s in msg):
+        msg = "\n".join(msg)
+    return output_text(msg)
+
+
+def output_event_lines(e):
+    ev, d = e.get("event"), e.get("event_data") or {}
+    res = d.get("res") if isinstance(d.get("res"), dict) else {}
+    hidden = output_censored(e)
+    task = clipped(output_text(d.get("task") or e.get("task")), 200)
+    host = clipped(output_text(e.get("host_name") or d.get("host")), 200)
+    base = {"host": host, "task": task, "task_id": clipped(output_text(d.get("task_uuid")), 100) or task, "counter": e.get("counter", 0)}
+    if ev == "playbook_on_play_start":
+        return [dict(base, kind="play", name=clipped(output_text(d.get("play") or e.get("play")), 200))]
+    if ev in ("playbook_on_task_start", "playbook_on_handler_task_start"):
+        return [dict(base, kind="task")]
+
+    # Callback warnings may accompany a result or arrive as a standalone stdout line.
+    warnings = res.get("warnings") or []
+    if not isinstance(warnings, list):
+        warnings = [warnings]
+    kind = RUNNER_RESULTS.get(ev)
+    if ev in ("warning", "system_warning", "verbose") and not hidden:
+        stdout = clean(e.get("stdout")).strip()
+        if stdout.startswith("[WARNING]:"):
+            warnings = warnings + [stdout.splitlines()[0][10:].strip()]
+        elif ev != "verbose":
+            warnings = warnings + [d.get("warning") or d.get("msg") or res.get("msg") or stdout.partition("\n")[0]]
+    rows = [] if hidden else [dict(base, kind="warning", message=clipped(output_text(w), 160))
+                              for w in warnings if isinstance(w, str) and w.strip()]
+    if not kind:
+        return rows
+    message = ""
+    if kind in ("failed", "unreachable") and not hidden:
+        reason = res.get("msg")
+        message = output_text(reason)
+        if reason is None or (isinstance(reason, str) and not message):
+            fallback = output_text(res.get("stderr")) or output_text(res.get("stdout"))
+            message = fallback.splitlines()[0] if fallback else ""
+    elif kind == "ok":
+        if e.get("changed") or res.get("changed"):
+            kind = "changed"
+        elif not hidden and (d.get("resolved_action") or d.get("task_action") or e.get("task_action") or "").split(".")[-1] == "debug":
+            message = debug_message(d, res)
+            if message:
+                kind = "msg"
+    elif kind == "retry" and not hidden:
+        if isinstance(res.get("retries"), int) and isinstance(res.get("attempts"), int):
+            message = "%d retries left" % max(0, res["retries"] - res["attempts"])
+    elif kind == "skipped" and not hidden:
+        message = output_text(res.get("skip_reason"))
+    full = clipped(message, 2000)
+    first = full.splitlines()[0] if full else ""
+    preview = first[:159] + "…" if len(first) > 160 or first != full else first
+    row = dict(base, kind=kind, message=preview)
+    if full != preview:
+        row["more"] = full
+    return rows + [row]
 
 
 class Progress(object):
@@ -1928,7 +2047,7 @@ class Progress(object):
                 continue
             if not ev.startswith("runner_on_"):
                 continue
-            host = str(e.get("host_name") or d.get("host") or "")
+            host = output_text(e.get("host_name") or d.get("host"))
             if not host:
                 continue
             self.host = host
@@ -1942,7 +2061,7 @@ class Progress(object):
             if line:
                 self.lines.append(line)
                 if line["k"] in ("bad", "unreach") and self.first_bad is None:
-                    self.first_bad = {"host": host, "what": task_what(d.get("task")), "cause": cause_class(ev, d.get("res"))}
+                    self.first_bad = {"host": host, "what": task_what(d.get("task")), "cause": cause_class(e)}
 
     def view(self, est, finished):
         done = [h for h, s in self.hosts.items() if s != "running"]
@@ -2970,6 +3089,10 @@ class Portal(object):
         code, view = self.job(jid, via, cn)
         if code != 200:
             return code, view
+        return 200, self.job_progress(jid, view)
+
+    def job_progress(self, jid, view):
+        """Build progress from the same authorized job snapshot used to render its output."""
         done = bool(view.get("done"))
         out = {"id": jid, "status": view.get("status", ""), "done": done, "type": view.get("type", ""), "hosts": [], "lines": [], "steps": [], "now": "",
                "pct": None, "hosts_line": "", "result_line": ""}
@@ -3005,9 +3128,9 @@ class Portal(object):
             bad = next((s for s in steps if s["word"] == "Failed"), None)
             out["result_line"] = ("%s failed (step %d of %d)" % (bad["name"], steps.index(bad) + 1, n)) if bad else ""
             out["steps_done"], out["steps_n"] = finished, n
-            return 200, out
+            return out
         if view.get("type") != "job":
-            return 200, out
+            return out
         out["deploy_plan"] = view.get("deploy_plan")
         out["deploy_shortlist"] = view.get("deploy_shortlist")
         with self.lock:
@@ -3024,6 +3147,9 @@ class Portal(object):
         est = self.aap.task_estimate(jid)
         v = pr.view(est, done)
         out.update(hosts=v["hosts"], lines=v["lines"], pct=pct(v["step"], est, done), step=v["step"], est=est, hosts_done=v["hosts_done"], hosts_n=v["hosts_n"])
+        if view.get("check_mode"):
+            out["lines"] = [dict(line, text=line["text"].rpartition(" (changed something)")[0] + " (would change)")
+                            if line["k"] == "changed" else line for line in v["lines"]]
         if not done:
             out["now"] = now_line(v["step"], est, v["what"], v["host"]) if v["step"] else "Starting"
         if v["hosts_n"]:
@@ -3036,7 +3162,7 @@ class Portal(object):
             out["result_line"] = "%s on %s (%s)" % (fb["what"] or "A task", fb["host"], fb["cause"])
         if why:
             out["note"] = why
-        return 200, out
+        return out
 
     GROUPS = (("running", "Running"), ("succeeded", "Succeeded"), ("failed", "Failed"), ("other", "Other"))
 
@@ -3210,14 +3336,26 @@ class Portal(object):
             view["buttons"] = result_buttons([art])
             self.outcome(view, [art], rec or parent or {})
             code, ev = self.aap.call("GET", "jobs/%d/job_events/?order_by=-counter&page_size=%d" % (jid, self.cfg.events))
-            lines = [clean(e.get("stdout")) for e in reversed(ev.get("results") or []) if e.get("stdout")] if code == 200 else []
+            events = list(ev.get("results") or []) if code == 200 else []
+            next_page = self.aap._relative(ev.get("next")) if code == 200 else ""
+            while next_page and len(events) < self.cfg.events:
+                page_code, page = self.aap.call("GET", next_page)
+                if page_code != 200 or not page.get("results"):
+                    break
+                events.extend(page["results"])
+                next_page = self.aap._relative(page.get("next"))
+            events = list(reversed(events[:self.cfg.events]))
+            view["check_mode"] = (jd.get("job_type") or u.get("job_type")) == "check"
+            view["readable"] = [line for e in events for line in output_event_lines(e)]
+            # Keep the bounded, ANSI-free output field of the existing JSON API.
+            lines = [redact_output(clean(e["stdout"])) for e in events if e.get("stdout") and not output_censored(e)]
             view["output"] = "\n".join(lines)[-200000:]
-            view["output_more"] = bool(code == 200 and (ev.get("count") or 0) > self.cfg.events)
-            code, hs = self.aap.call("GET", "jobs/%d/job_host_summaries/?page_size=200" % jid)
+            view["output_more"] = bool(code == 200 and (ev.get("count") or 0) > len(events))
+            summaries, why = self.aap._paged("jobs/%d/job_host_summaries/?page_size=200" % jid)
             view["hosts"] = [{"host": h.get("host_name") or (h.get("summary_fields") or {}).get("host", {}).get("name", ""),
                               "ok": h.get("ok", 0), "changed": h.get("changed", 0), "failed": h.get("failures", 0),
                               "unreachable": h.get("dark", 0), "skipped": h.get("skipped", 0)}
-                             for h in (hs.get("results") or [])] if code == 200 else []
+                             for h in summaries] if not why else []
         else:                           # an approval step and the like: its status only
             view["artifacts"], view["links"], view["buttons"] = {}, [], []
         return 200, view
@@ -4761,15 +4899,112 @@ def decide_box_html(cfg, a):
             % (left, ('<div>%s</div>' % plan) if plan else "", nothing, act))
 
 
-def job_pane_html(cfg, portal, cn, jid, via=None):
+def output_marker(kind, emoji, check):
+    mark, code, word = OUTPUT_MARKERS[kind]
+    if check and kind == "changed":
+        word = "would change"
+    if emoji:
+        label = '<span class="output-emoji" aria-hidden="true">%s</span> %s' % (mark, word)
+    else:
+        label = "[%s]" % code
+        if word.lower() != code.lower():
+            label += " " + word
+    return '<b class="output-marker om-%s">%s</b>' % (kind, label)
+
+
+def output_recap(hosts, emoji, check):
+    if not hosts:
+        return ""
+    columns = ("ok", "changed", "failed", "unreachable", "skipped")
+    counts = collections.Counter()
+    rows = []
+    for h in hosts:
+        kind = next((k for k in ("failed", "unreachable", "changed") if h[k]), "ok")
+        counts[kind] += 1
+        cells = "".join('<td class="num%s">%d</td>' % ("" if h[k] else " zero", h[k]) for k in columns)
+        row = '<tr class="out-%s"><th scope="row">%s</th><td>%s</td>%s</tr>' % (
+            kind, esc(output_text(h["host"])), output_marker(kind, emoji, check), cells)
+        rows.append(({"failed": 0, "unreachable": 1}.get(kind, 2), h["host"].casefold(), row))
+    change = "would change" if check else "changed"
+    summary = ('<p class="output-sum">%s <span class="om-ok">%d ok</span> <span class="om-failed">%d failed</span> '
+               '<span class="om-unreachable">%d unreachable</span> <span>· %d %s</span></p>') % (
+                   output_marker("recap", emoji, check), counts["ok"] + counts["changed"], counts["failed"],
+                   counts["unreachable"], sum(bool(h["changed"]) for h in hosts), change)
+    headings = "".join('<th class="num" scope="col">%s</th>' % (change if k == "changed" else k) for k in columns)
+    return summary + ('<div class="tw"><table class="output-recap" aria-label="Host recap"><thead><tr><th>Host</th><th>Result</th>%s'
+                      '</tr></thead><tbody>%s</tbody></table></div>' % (headings, "".join(r for _, _, r in sorted(rows))))
+
+
+def output_list(lines, emoji, check):
+    # AAP's free strategy can interleave results from several tasks. Keep each ok fold with its own task.
+    items, tasks = [], {}
+    for line in lines:
+        kind, task_id = line["kind"], line["task_id"]
+        if kind == "play":
+            tasks.clear()
+            items.append(("play", line["name"], []))
+            continue
+        if kind == "task" or (task_id and task_id not in tasks):
+            group = []
+            tasks[task_id] = group
+            items.append(("task", line["task"], group))
+        if kind != "task":
+            if task_id in tasks:
+                tasks[task_id].append(line)
+            else:
+                items.append(("", "", [line]))
+    html_rows = []
+    for heading, name, group in items:
+        if heading:
+            html_rows.append('<li class="out-%s">%s · %s</li>' % (heading, output_marker(heading, emoji, check), esc(name)))
+        ok_hosts = dict.fromkeys(line["host"] for line in group if line["kind"] == "ok" and line["host"])
+        for line in group:
+            kind = line["kind"]
+            marker = output_marker(kind, emoji, check)
+            if kind == "ok" and line["host"]:
+                if ok_hosts:
+                    hosts = "".join('<li>%s</li>' % esc(h) for h in ok_hosts)
+                    html_rows.append('<li><details data-output-fold="ok-%s"><summary>%s on %s</summary>'
+                                     '<ul class="mono">%s</ul></details></li>' % (
+                                         esc(line["counter"]), marker, counted(len(ok_hosts), "host"), hosts))
+                    ok_hosts.clear()
+                continue
+            more = ('<details data-output-fold="more-%s"><summary>more</summary><pre>%s</pre></details>'
+                    % (esc(line["counter"]), esc(line["more"]))) if line.get("more") else ""
+            html_rows.append('<li class="out-%s">%s <span class="mono">%s</span> <span class="output-msg">%s</span>%s</li>'
+                             % (kind, marker, esc(line["host"]), esc(line.get("message")), more))
+    return '<ul class="output-lines">%s</ul>' % "".join(html_rows) if html_rows else '<p class="muted-line">No readable events yet.</p>'
+
+
+def job_output_html(cfg, job, url, raw_url, raw):
+    check, emoji = job.get("check_mode", False), cfg.job_output_emoji
+    nav = "".join('<a%s href="%s#job-output">%s</a>' % (
+        ' class="on" aria-current="true"' if selected else "", href, label)
+        for label, href, selected in (("Readable", url, raw is None), ("Raw", raw_url, raw is not None)))
+    if raw is None:
+        body = ('<p class="output-check">%s — nothing changed. A changed task shows what <b>would change</b> in a real run.</p>'
+                % output_marker("check", emoji, check)) if check else ""
+        body += output_recap(job.get("hosts"), emoji, check)
+        if job.get("output_more"):
+            body += '<p class="muted-line">Showing recent events. Open Raw for the full output.</p>'
+        body += output_list(job.get("readable") or [], emoji, check)
+    else:
+        code, stdout = raw
+        body = ('<pre class="output-raw"><code>%s</code></pre>' % esc(stdout) if code == 200 else
+                '<p class="muted-line">AAP could not provide stdout.</p>')
+    return ('<section id="job-output"%s><div class="hd"><h3>Job output</h3><nav class="seg2" aria-label="Output view">%s</nav>'
+            '</div>%s</section>' % (' data-raw' if raw is not None else "", nav, body))
+
+
+def job_pane_html(cfg, portal, cn, jid, via=None, raw=False, scope="mine"):
     """The right pane of the Jobs page for one job - rendered here, so the page shows the latest snapshot without scripts, and the script swaps this
     same HTML in every 3 s while the job runs (data-done tells it to stop)."""
-    code, view = portal.progress(jid, cn, via)
+    code, j = portal.job(jid, via, cn)
     if code != 200:
         # 1.79.6 (Codex): data-error - AAP could not give the job just now: the page keeps what it showed and asks again (portal.js)
-        return '<section class="card jd" id="jd" data-done="1" data-error="1"><p class="empty">%s</p></section>' % esc(view.get("error", "Not available."))
-    j = portal.job(jid, via, cn)[1]
-    pg, done = view, bool(view.get("done"))
+        return '<section class="card jd" id="jd" data-done="1" data-error="1"><p class="empty">%s</p></section>' % esc(j.get("error", "Not available."))
+    pg = portal.job_progress(jid, j)
+    done = bool(pg.get("done"))
     st = j.get("status", "")
     approval_wait = any(s_["word"] == "Waiting for approval" for s_ in pg.get("steps") or [])
     wf = j.get("type") == "workflow_job"
@@ -4877,11 +5112,24 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     again = again_link(cfg, portal, cn, j) if done else ""
     nxt = ('<p class="next"><a class="btn pri" href="%s">%s</a></p>' % (esc(j["next"]["url"]), esc(j["next"]["label"]))) if j.get("next") else ""
     links = job_results_html(j.get("buttons"))                      # 1.78.2: known results as buttons; no known result, no heading
-    tech = ""                                   # "Technical output: available after the next update." is left out until 1.77.0 gives it a source
+    query = {}
+    if via:
+        query["via"] = via
+    if scope == "all":
+        query["scope"] = scope
+    path = "%sjobs/%d" % (cfg.path, jid)
+    url = esc(path + ("?" + urllib.parse.urlencode(query) if query else ""))
+    raw_url = esc(path + "?" + urllib.parse.urlencode(dict(query, output="raw")))
+    output = ""
+    if j.get("type") == "job":
+        stdout = portal.aap.api.call("GET", "jobs/%d/stdout/?format=txt" % jid, plain_text=True) if raw else None
+        output = job_output_html(cfg, j, url, raw_url, stdout)
+        if happened and any(line["kind"] in ("play", "task") for line in j.get("readable", [])):
+            happened = '<details data-output-fold="recent"><summary>What just happened</summary><ul class="evs">%s</ul></details>' % ev
     aap = ('<a class="btn" href="%s" rel="noopener">Open in AAP</a>' % esc(j["aap_link"])) if j.get("aap_link") else ""
-    foot = ('<div class="btns pane-btns"><a class="btn" href="%sjobs/%d%s">%s Refresh</a>%s<button type="button" class="btn" data-copylink>Copy link</button><button type="button" class="btn" data-print>Print</button>%s'
+    foot = ('<div class="btns pane-btns"><a class="btn" href="%s">%s Refresh</a>%s<button type="button" class="btn" data-copylink>Copy link</button><button type="button" class="btn" data-print>Print</button>%s'
             '<span class="foot" id="upd" data-at="%d">Updated %s%s</span></div>'
-            % (cfg.path, jid, ("?via=%d" % via) if via else "", icon("refresh"), again, aap, int(time.time()), esc(time.strftime("%H:%M:%S", time.gmtime())) + " UTC",
+            % (raw_url if raw else url, icon("refresh"), again, aap, int(time.time()), esc(time.strftime("%H:%M:%S", time.gmtime())) + " UTC",
                "" if done else " \u00b7 refreshes every 10 s while it waits" if approval_wait else " \u00b7 refreshes every 3 s while it runs"))
     return ('<section class="card jd" id="jd" data-job="%d"%s data-done="%d" data-status="%s"%s><div class="hd"><div><h2>%s</h2><p class="muted-line">%s \u00b7 asked for through the portal</p></div>%s</div>'
             '%s%s%s%s%s%s%s%s%s%s%s%s%s</section>'
@@ -4891,22 +5139,22 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
                esc(title), "Workflow" if wf else "Job template",
                # 1.117.0: a VM deploy plan that stopped is a stop, amber as its banner, never a red Failed
                ('<span class="chip s-warning">%sStopped</span>' % icon("wait")) if deploy_stopped(vm_plan) else status_chip(st, approval_wait and not done),
-               banner, decide, nowbox, hosts, steps, happened, nxt, result, facts, answers, links, tech, foot))
+               banner, decide, nowbox, output, hosts, steps, happened, nxt, result, facts, answers, links, foot))
 
 
-def jobs_page(cfg, portal, cn, sel=None, scope="mine", via=None):
+def jobs_page(cfg, portal, cn, sel=None, scope="mine", via=None, raw=False):
     scope = "all" if scope == "all" and cn in cfg.approvers else "mine"
     items = portal.job_list(cn, scope)
     if sel is None and items:
         sel = items[0]["id"]
-    right = job_pane_html(cfg, portal, cn, sel, via) if sel is not None else '<section class="card jd" id="jd" data-done="1"><p class="empty">Nothing started yet. Run an action from the Actions page.</p></section>'
+    right = job_pane_html(cfg, portal, cn, sel, via, raw, scope) if sel is not None else '<section class="card jd" id="jd" data-done="1"><p class="empty">Nothing started yet. Run an action from the Actions page.</p></section>'
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Jobs</h1><p class="lede">What the portal started, and what AAP says about it now.</p></div>'
             '<div class="two-pane">%s%s</div>' % (job_list_html(cfg, portal, cn, items, sel, scope), right))
     return shell(cfg, "Jobs", body, cn, token=portal.token(cn), page="jobs")      # 1.92.0 review: the job page's Approve / Deny post
 
 
-def job_page(cfg, portal, cn, jid, via, scope="mine"):
-    return jobs_page(cfg, portal, cn, jid, scope, via)
+def job_page(cfg, portal, cn, jid, via, scope="mine", raw=False):
+    return jobs_page(cfg, portal, cn, jid, scope, via, raw)
 
 
 def _when(cfg, t):
@@ -6243,13 +6491,13 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Not here", "There is no job %d here." % int(m.group(2)), cn),
                                       "text/html; charset=utf-8")
                 if (q.get("pane") or [""])[-1]:                # the right pane only: the page's script swaps it in while the job runs
-                    body = job_pane_html(cfg, portal, cn, int(m.group(2)), via)
                     lst = (q.get("list") or [""])[-1]
+                    body = job_pane_html(cfg, portal, cn, int(m.group(2)), via, q.get("output") == ["raw"], lst)
                     if lst:                                     # 1.79.6: and the list, in the same answer - one request a turn, one poll
                         sc = "all" if lst == "all" and cn in cfg.approvers else "mine"
                         body += job_list_html(cfg, portal, cn, portal.job_list(cn, sc), None, sc)
                     return self._send(200, body, "text/html; charset=utf-8")
-                return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1]), "text/html; charset=utf-8")
+                return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1], q.get("output") == ["raw"]), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
             placement = re.fullmatch(r"/api/placement/(\d{1,12})", path)
