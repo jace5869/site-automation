@@ -321,6 +321,12 @@ class Capacity(unittest.TestCase):
     def test_p2_6_volume_missing_use_sorts_as_least_free(self):
         self.assert_unknown_first(choice(used=None))
 
+    def test_r5_23_volume_size_missing_use_known(self):
+        """Codex r5 #23: used 10, no size - "size unknown, use unknown", never "100% free"; sorted as the least free"""
+        self.assert_unknown_first(choice(used=10, size=0))
+        shown = expand.choice_shown(expand.choice_text(choice(used=10, size=0)))
+        self.assertIn("size unknown, use unknown", shown)
+
     def test_p2_6_volume_list_preserves_missing_use(self):
         v = volume_module().vol_in({"name": "vol1", "space": {"size": 100 * expand.GB}})
         self.assertIsNone(v["used"])

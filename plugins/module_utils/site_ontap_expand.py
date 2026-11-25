@@ -268,8 +268,9 @@ def lun_fullness(e):
         size = int(e.get("lun_size") or 0) or None
         used = e.get("lun_used")
         return size, (None if used is None or size is None else int(used)), "LUN"
-    # a volume whose use ONTAP did not give: unknown (None), never 0 % used
-    return int(e.get("size") or 0), (None if e.get("used") is None else int(e["used"])), "volume"
+    # a volume whose use ONTAP did not give: unknown (None), never 0 % used; its size not given: both unknown (never "100 % free")
+    size = int(e.get("size") or 0) or None
+    return size, (None if e.get("used") is None or size is None else int(e["used"])), "volume"
 
 
 def fullness_text(e):
