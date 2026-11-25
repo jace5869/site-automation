@@ -177,6 +177,10 @@ if deploy; then pass "deploy"; else fail "deploy" "$(cat "$work/out.txt")"; exit
 if grep -q "read the lines of $work/etc/nginx-portal.conf" "$work/out.txt" && grep -q 'proxy_pass $site_portal_app;' "$work/out.txt"; then
     pass "the deploy says what to add to the proxy's nginx, and shows the lines"
 else fail "the deploy says what to add" "$(grep -A30 'Verify | summary' "$work/out.txt")"; fi
+# 1.131.0: the summary ends with the wall's line (VMware / Storage on or off and why, the Map's places from netmap_sites)
+if grep -qE "Wall: (VMware (on|off)[^,]*, Storage (on|off)[^,]*, Map places from netmap_sites: [0-9]+|off \(portal_wall: false\))" "$work/out.txt"; then
+    pass "the deploy summary says the wall's state"
+else fail "the deploy summary says the wall's state" "$(grep -A40 'Verify | summary' "$work/out.txt" | head -60)"; fi
 if grep -q "AAP: answered (the account svc_portal)" "$work/out.txt" && grep -q "stig_recheck - ok" "$work/out.txt" \
     && grep -q 'WARNING: AAP.s ALLOW_JINJA_IN_EXTRA_VARS is \\\?"always\\\?"' "$work/out.txt"; then
     pass "the deploy asks AAP from the portal: the account, each action ok, ALLOW_JINJA_IN_EXTRA_VARS always warned"
