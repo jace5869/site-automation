@@ -25,10 +25,21 @@ def main():
     why = api.probe()
     if why:
         m.exit_json(changed=False, checked=False, busy=[], why="AAP could not be asked: %s" % why)
-    code, data = api.call("GET", "job_templates/%d/jobs/?status__in=pending,waiting,running&order_by=id&page_size=50" % p["template_id"])
-    if code != 200:
-        m.exit_json(changed=False, checked=False, busy=[], why="AAP could not be asked: %s" % error_text(data))
-    busy = [int(j["id"]) for j in data.get("results") or [] if int(j.get("id") or 0) != p["job_id"]]
+    path = "job_templates/%d/jobs/?status__in=pending,waiting,running&order_by=id&page_size=50" % p["template_id"]
+    page = 1
+    while True:
+        code, data = api.call("GET", "%s&page=%d" % (path, page))
+        if code != 200:
+            m.exit_json(changed=False, checked=False, busy=[], why="AAP could not be asked: %s" % error_text(data))
+        busy = []
+        for job in data.get("results") or []:
+            jid = int(job["id"])
+            if jid != p["job_id"] and (job["status"] == "running" or
+                                       (job["status"] in ("pending", "waiting") and jid < p["job_id"])):
+                busy.append(jid)
+        if busy or not data.get("next"):
+            break
+        page += 1
     m.exit_json(changed=False, checked=True, busy=busy, why="")
 
 

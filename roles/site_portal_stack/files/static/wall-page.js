@@ -9,7 +9,7 @@
   if (!root) return;
   var SRC = root.getAttribute("data-src");
   var QS = new URLSearchParams(location.search);
-  // Codex 1.129.0: ?freeze= (a still clock, no reads: screenshots) and ?pull= only where the portal runs as the test harness -
+  // Codex 1.130.0: ?freeze= (a still clock, no reads: screenshots) and ?pull= only where the portal runs as the test harness -
   // a production wall URL always ages and reads
   var TEST = root.getAttribute("data-test") === "1";
   var FREEZE = TEST && QS.get("freeze") === "1";
@@ -186,7 +186,7 @@
     areaList().forEach(function (a) { var st = areaState(a.id); if (r[st] > r[w]) w = st; });
     return w;
   }
-  // THE rule for every status the wall draws (Codex verify 1.129.0): green ("ok") only when the check ran, its source is there
+  // THE rule for every status the wall draws (Codex verify 1.130.0): green ("ok") only when the check ran, its source is there
   // and current, and the value is OK. A check that did not run, or no source at all: "off" (grey). An old source: "stale".
   // A critical or warning from a source that is there stays what it is (an old one: stale, said "last known").
   function status(st, fk, ran) {

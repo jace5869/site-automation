@@ -1594,9 +1594,10 @@ class Found(unittest.TestCase):
 
     def test_20_the_list(self):
         r = self.portal.aap.inventory_items("")
-        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],
-                         [("fail01.example.mil", "host", 1), ("failing", "group", 1), ("web01.example.mil", "host", 1), ("web03.example.mil", "host", 1),
-                          ("web_servers", "group", 2)])
+        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],             # 1.129.0: the groups first, then the hosts (the list's two parts)
+                         [("failing", "group", 1), ("web_servers", "group", 2), ("fail01.example.mil", "host", 1), ("web01.example.mil", "host", 1),
+                          ("web03.example.mil", "host", 1)])
+        self.assertEqual((r["groups_n"], r["hosts"]), (2, 3))
         self.assertEqual([i["name"] for i in self.portal.aap.inventory_items("WEB_")["items"]], ["web_servers"])      # substring, any case
         r = self.portal.aap.inventory_items("", 2)
         self.assertEqual((len(r["items"]), r["matches"]), (2, 5))                                                        # the cap, and how many there are
@@ -3320,6 +3321,21 @@ class Speed1990(unittest.TestCase):
         self.assertNotIn("jt_1", restarted.actions)
         self.cfg.aap_token = "another-placeholder"
         self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+
+    def test_a_changed_cap_or_windows_rule_drops_the_saved_catalog(self):
+        """1.129.0 (Codex): a tightened playbook cap (or another Windows rule) never comes back from the saved catalog."""
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        self.assertTrue(sp.Portal(self.cfg, aap=self.aap).restored)
+        keep = (self.cfg.limit_max_playbooks, self.cfg.windows_from)
+        try:
+            self.cfg.limit_max_playbooks = {"win_restart_schedule.yml": {"var": "", "max": 2}}
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+            self.cfg.limit_max_playbooks = keep[0]
+            self.cfg.windows_from = {"groups": ["*win*"], "vars": {}}
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+        finally:
+            self.cfg.limit_max_playbooks, self.cfg.windows_from = keep
 
     def test_restored_catalog_survives_failed_start(self):
         from unittest import mock

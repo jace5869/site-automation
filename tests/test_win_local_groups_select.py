@@ -215,7 +215,7 @@ class Review1122(unittest.TestCase):
         self.assertEqual([x["ctype"] for x in ok], ["application/json", "text/plain; charset=utf-8", "text/plain; charset=utf-8"])
         self.assertEqual(len(rf.prepare(items, 20, base)[1]), 3)                                          # the default list alone: refused
         with open(os.path.join(REPO, "playbooks", "win_local_groups.yml")) as fh:
-            self.assertIn("_report_web_files_more: ['.json', '.yml', '.ps1']", fh.read())
+            self.assertIn("_report_web_files_more: ['.json', '.yml', '.ps1', '.txt']", fh.read())
         for f in ("main.yml", "copy_page.yml"):
             with open(os.path.join(REPO, "roles", "site_email", "tasks", f)) as fh:
                 self.assertIn(("+ _report_web_files_more | default([])" if f == "main.yml" else "+ _copy_doc.data.files_more | default([])"), fh.read(), f)

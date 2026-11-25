@@ -972,8 +972,8 @@ what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md),
 
 - **Expand…** opens this portal's own Run dialog for *NetApp - expand a volume* (a found template: its survey form)
   with the LUN or volume picked - the survey's current choice, key included - and **Job type Check**. The Run dialog
-  shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type; it is sent to
-  AAP with the launch and kept in the portal's log. Other templates are not changed.
+  shows a Job type (Check or Run) for every job template that has *Prompt on launch* for its Job type - **Check** is picked
+  at first (1.129.0), Run only on purpose; it is sent to AAP with the launch and kept in the portal's log. Other templates are not changed.
 - The button is off, with the reason, when the portal does not offer the template or the person may not run it:
   "needs Execute on NetApp - expand a volume".
 - The server reads the database at most once a minute while someone has the page open; the page asks every minute
@@ -983,7 +983,7 @@ what each part shows and its settings; [REPORT_DATABASE.md](REPORT_DATABASE.md),
 **Set it up:** the read-only **Report database** login on *Site portal - deploy* (as for the Active Directory page) and
 the writer's on *NetApp - refresh volume list*. `portal_netapp: false` turns the page and its tab off.
 
-## The ops-center wall (1.129.0)
+## The ops-center wall (1.130.0)
 
 The **wall** (`/portal/wall`; its tab is named by `portal_wall_title`, by default your `outage_ops_center`, else
 "Ops center") is one page for a wall screen or a desk: only the *wall conditions* light it, routine alarms never do.
@@ -1227,10 +1227,54 @@ A card appears only when **both** are true: the portal's account has **Execute**
 
 **The host picker.** Every host field is the same: a searchable list of the inventory's hosts **and groups**.
 
-1. Open the list. A group shows its host count: *linux_prod (42 hosts)*.
-2. Type to filter (any case, any part of the name). The list shows the first 200 matches, then *N more - type to narrow*.
-3. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown** adds the shown ones that fit under the limit.
-4. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+1. Open the list. It has two parts, **Groups (n)** and **Hosts (n)**. A group shows its host count: *linux_prod (42 hosts)*.
+2. 1.129.0: **Group** (the drop-down above the search box) lists the inventory's groups as AAP has them now (a synced inventory's
+   too; every group, by name). Pick one to see only its hosts: **Pick the whole group (n)** adds the group as one pick, or tick
+   single hosts of it. *All hosts and groups* goes back to the whole list.
+3. Type to filter (any case, any part of the name; with a group picked, its hosts only). The list shows the first 200 matches, then *N more - type to narrow*.
+4. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown (n)** adds the shown ones that fit under the limit.
+5. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+
+The list is read on the server and sent 200 rows at a time: an inventory of thousands of hosts is never sent whole. Without
+scripts the plain multi-select has the same two parts (Groups, Hosts).
+
+**Windows jobs (1.129.0).** A found template whose playbook is `playbooks/win_*.yml` (or a workflow whose name starts with
+*Windows*) lists only the inventory's **Windows hosts**, and a group there stands for its Windows hosts: the count, the cap and
+the job's Limit are the Windows hosts only. A host is Windows by `portal_windows_hosts_from`:
+
+```yaml
+portal_windows_hosts_from:
+  groups: ["*windows*"]                     # a group whose name matches (globs, any case): its hosts are Windows
+  vars:                                     # or a variable: the host's own value, else a group's, else the inventory's
+    ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]
+    ansible_shell_type: [powershell, cmd]
+```
+
+Only what AAP's API shows counts: group names, and the Variables of hosts, groups and the inventory (a dynamic source's host
+variables too; a dotted name reads into a mapping, e.g. `config.guestId: ["*windows*"]`). Settings in the project's
+`playbooks/group_vars` are not seen. **Only `portal_windows_hosts_from: {}` turns the filter off** (every host is listed, one muted
+line says so; the job's own check skips a host that is not Windows). A rule that matches no host lists **no** host and refuses
+the launch: *no host matches the Windows rule (portal_windows_hosts_from) - set it to your inventory's Windows group or variable*.
+That is checked again when the job starts: a sync that removed the last Windows match refuses the launch, never sends every host.
+
+The portal reads the inventory as Ansible does (AAP's *inventories/<id>/script/*, one call): a variable counts as the host would
+see it - the inventory's, then its groups from the top down (a child group over its parent; at the same depth the higher
+`ansible_group_priority`, then the later name),
+then the host's own. It is read again **when the job starts**: a host synced into a picked group after the page opened is
+checked too. When AAP does not answer that read, the list says so and **Run is refused** (*could not check which hosts are
+Windows - try again*); it never falls back to every host.
+
+**A name that is a host's and a group's** (a host `pool`, and a group `pool`) cannot be told apart in a Limit: the picker shows
+it greyed out (*also a group's name - cannot be picked*), and the portal refuses it, and a group that holds it. Rename one in
+the inventory.
+
+**Many groups.** The portal reads the hosts of the first 400 groups with the list. Every other group keeps its name in the
+**Group** drop-down and the search, and its hosts are read when it is opened or picked.
+
+**A playbook's own cap (1.129.0).** `portal_limit_max_playbooks` gives a playbook a cap lower than `portal_limit_max`: *Windows -
+schedule a restart* and *Windows - cancel a scheduled restart* take `win_restart_max_hosts` (from the template's Variables when set
+there, else 50). The picker says it (*at most N (win_restart_max_hosts)*), and the portal checks again when it starts the job;
+the playbook checks it a last time.
 
 The finding steps take up to `portal_pick_max_hosts` (50) hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
 with the same names, and the form posts itself. The server checks every pick against `portal_inventory`: a typed name that is not a host or group is refused.
@@ -1279,6 +1323,8 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+| `portal_windows_hosts_from` | groups `*windows*`; vars `ansible_connection` winrm/psrp, `ansible_shell_type` powershell/cmd | 1.129.0: which hosts a Windows job's picker lists (`{}` = every host) |
+| `portal_limit_max_playbooks` | restart and cancel: `win_restart_max_hosts` (50) | 1.129.0: `{playbook file: {var, max}}` - a playbook's own cap when lower than `portal_limit_max` |
 | `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
 | `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
 
@@ -1321,7 +1367,9 @@ Your jobs are already in AAP. Instead of adding the label `portal` to each one b
 4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
 5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
 
-It never removes anything. A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
+It never removes anything but one case (1.129.0): a template on `portal_setup_never_published` (default *Windows - trust store
+report*, which removes certificates when `check_trust_remove` is true) is never published by a pattern, and its `portal` label is
+taken off where an earlier run put it (*label ... remove* in the list). A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
 **Admin** on the organization of the templates, as for the rest of this job.
 
 To take a job off the portal, list it the same way and run the job again (Check first):

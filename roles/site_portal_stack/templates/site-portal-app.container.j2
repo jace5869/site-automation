@@ -42,11 +42,11 @@ Secret=site-portal-swis,type=env,target=PORTAL_SWIS_LOGIN
 Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN
 {% endif %}
 {% if _portal_has_wall_vc | default(false) | bool %}
-# 1.129.0: the wall's vCenter login (the site's "VMware vCenter" account), a podman secret too
+# 1.130.0: the wall's vCenter login (the site's "VMware vCenter" account), a podman secret too
 Secret=site-portal-vcenter,type=env,target=PORTAL_WALL_VCENTER_LOGIN
 {% endif %}
 {% if _portal_has_wall_ontap | default(false) | bool %}
-# 1.129.0: the wall's ONTAP login (the site's "NetApp ONTAP" account), a podman secret too
+# 1.130.0: the wall's ONTAP login (the site's "NetApp ONTAP" account), a podman secret too
 Secret=site-portal-ontap,type=env,target=PORTAL_WALL_ONTAP_LOGIN
 {% endif %}
 {% if _portal_has_rdb | default(false) | bool %}

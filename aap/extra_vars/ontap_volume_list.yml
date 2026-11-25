@@ -87,7 +87,8 @@
 ## volumes and FlexGroups always are.
 # ontap_expand_exclude: []
 
-## the templates (names or IDs; or {template, kind}) whose survey the volume list writes
+## the templates (names or IDs; or {template, kind}) whose survey the volume list writes; the expand
+## asks AAP about the runs of each (one at a time)
 # ontap_expand_templates: ["NetApp - expand a volume"]
 
 ## the variable of the survey question the volume list writes (added, single select, when the survey
@@ -145,7 +146,8 @@
 ## noise
 # ontap_live_growth_min_hours: 6
 
-## full (a volume) or at ontap_expand_aggr_max_pct (an aggregate) within this many days: amber
+## a volume full within this many days: amber (an aggregate's status is its used % only,
+## ontap_aggr_warn_pct / _crit_pct)
 # ontap_live_days_warn: 30
 
 ## ... within this many days: red

@@ -114,6 +114,11 @@ portal_setup_portal_user: svc_site_portal
 ## same shape.
 # portal_unpublish_templates: []
 
+## 1.129.0: never on the portal (exact names, any case): never published by a pattern, and the label
+## is taken off one that has it. Windows - trust store report removes certificates when
+## check_trust_remove is true.
+# portal_setup_never_published: ["Windows - trust store report"]
+
 # ---- aap_templates -------------------------------------------------------------------------------
 ## the Contact line's Owner= ("" with no contact either: no Contact line)
 # aap_templates_description_owner: ""

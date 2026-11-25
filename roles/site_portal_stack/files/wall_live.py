@@ -62,7 +62,7 @@ class NotAllowed(Exception):
 
 
 def account(user):
-    """Codex 1.129.0: one account, whatever it is called - DOMAIN\\user, user@corp.example.mil and USER are one (the vCenter and the ONTAP
+    """Codex 1.130.0: one account, whatever it is called - DOMAIN\\user, user@corp.example.mil and USER are one (the vCenter and the ONTAP
     credential may name the same AD account): the collector's back-off key. Two accounts of one name in two domains share a
     back-off: more careful, never less."""
     u = str(user or "").casefold()
@@ -71,7 +71,7 @@ def account(user):
 
 
 class Gate(object):
-    """1.129.0 review: one shared account (the site's own, the AAP jobs' too): its logins one at a time, and none at all while
+    """1.130.0 review: one shared account (the site's own, the AAP jobs' too): its logins one at a time, and none at all while
     the last one was refused (until the collector opens the gate again after auth_retry). Each source of that account holds it."""
 
     def __init__(self):

@@ -107,15 +107,16 @@ def payload(hours_ago=0.0, new=True, health=True, perf=True):
                                   "health": health, "perf": perf, "opts": fx.OPTS}), texts
 
 
-def fill(db=None, hours=(48, 36, 24, 12, 6, 3, 1, 0), now=None):
-    """Runs of the list hours ago (oldest first); vol_new01 only in the last two hours."""
+def fill(db=None, hours=(48, 36, 24, 12, 6, 3, 1, 0), now=None, opts=None):
+    """Runs of the list hours ago (oldest first); vol_new01 only in the last two hours. opts: the page's settings (fx.OPTS)."""
     db = db or Lite()
+    opts = opts or fx.OPTS
     now = now or fx.at(0)
     for h in hours:
         p, _t = payload(h, new=h <= 2)
         rid, _v, _a, _p, _parts = ldb.write(db, now - datetime.timedelta(hours=h), 9000 + int(100 - h), 58, p, "NetApp - expand a volume",
-                                            "ontap_expand_volume", fx.OPTS)
-        ldb.rate_all(db, now - datetime.timedelta(hours=h), rid, fx.OPTS)
+                                            "ontap_expand_volume", opts)
+        ldb.rate_all(db, now - datetime.timedelta(hours=h), rid, opts)
     db.commit()
     return db
 
@@ -192,8 +193,9 @@ class Growth(unittest.TestCase):
         self.assertEqual(L.volume_status(50.0, 5, o), "critical")              # under 85 %, but full within 7 days
         self.assertEqual(L.volume_status(50.0, 20, o), "warning")
         self.assertEqual(L.volume_status(50.0, None, o), "ok")
-        self.assertEqual(L.aggr_status(91.0, 400, o), "critical")
-        self.assertEqual(L.aggr_status(70.0, 0.0, o), "critical")              # at the expand job's limit now
+        self.assertEqual(L.aggr_status(91.0, o), "critical")
+        self.assertEqual(L.aggr_status(86.0, o), "warning")
+        self.assertEqual(L.aggr_status(70.0, o), "ok")                         # 1.128.0: used % only, never the days until a limit
 
 
 class Payload(unittest.TestCase):
@@ -260,7 +262,8 @@ class Payload(unittest.TestCase):
         p = lf.ontap_live_payload({"list": lst, "choices": [], "found": found, "collected": col, "health": True, "perf": True, "opts": fx.OPTS})
         for part in ("snapmirror", "nodes", "disks", "ems", "perf"):
             self.assertIn("%s: no answer on port 443" % fx.C2, p["parts"][part]["errors"])
-        self.assertEqual([c["st"] for c in p["parts"]["clusters"]["rows"] if c["name"] == fx.C2], ["critical"])
+        # its name from the list (1.128.0, Neon P2) - the address when the list did not read it either
+        self.assertEqual([c["st"] for c in p["parts"]["clusters"]["rows"] if c["name"] == "cluster2"], ["critical"])
         col = fx.collected()
         col["clusters"][0]["data"]["nodes"] = {"records": [], "error": "HTTP 404: API not found"}
         p = lf.ontap_live_payload({"list": lst, "choices": [], "found": found, "collected": col, "health": True, "opts": fx.OPTS})
@@ -272,6 +275,62 @@ class Payload(unittest.TestCase):
         self.assertEqual(lf.period_seconds({"cron": {"minutes": [0], "hours": [0, 12]}}), 43200)
         self.assertEqual(lf.period_seconds({"interval": "PT15M"}), 900)
         self.assertIsNone(lf.period_seconds(None))
+        # Neon 1.127.x P2: an interval schedule read without its interval (fallback fields name, cron), or an empty cron: not
+        # known - never "every minute" (that made every SnapMirror lag after 2 minutes)
+        self.assertIsNone(lf.period_seconds({"name": "5min", "type": "interval"}))
+        self.assertIsNone(lf.period_seconds({"name": "5min", "cron": {}}))
+
+    def review_payload(self, edit, health=True, perf=True):
+        col = fx.collected()
+        edit(col)
+        lst, found = fx.listed()
+        return lf.ontap_live_payload({"list": lst, "choices": [], "found": found, "collected": col, "health": health, "perf": perf, "opts": fx.OPTS})
+
+    def test_a_rebuild_on_partitioned_disks_is_said(self):
+        # Neon 1.127.x P2: ADP (shared) disks with one reconstructing: warning "rebuilding", never ok
+        def edit(col):
+            col["clusters"][0]["data"]["disks"]["records"] = [
+                {"name": "1.0.%d" % i, "state": "reconstructing" if i == 3 else "present", "container_type": "shared",
+                 "home_node": {"name": "cluster1-01"}} for i in range(6)]
+        rows = [r for r in self.review_payload(edit)["parts"]["disks"]["rows"] if r["node"] == "cluster1-01"]
+        self.assertEqual(rows[0]["st"], "warning")
+        self.assertIn("rebuilding", rows[0]["why"])
+
+    def test_each_lun_its_own_datastore_in_performance(self):
+        # Neon 1.127.x P2: vol_ds01's lun2 is on DS-SITEA-01-B, never its volume's first datastore
+        def edit(col):
+            recs = col["clusters"][0]["data"]["perf_luns"]["records"]
+            r2 = json.loads(json.dumps([r for r in recs if r["name"] == "/vol/vol_ds01/lun1"][0]))
+            r2["name"] = "/vol/vol_ds01/lun2"
+            recs.append(r2)
+        rows = self.review_payload(edit)["parts"]["perf"]["rows"]
+        self.assertEqual(sorted((r["lun"], r["ds"]) for r in rows if r["vol"] == "vol_ds01"),
+                         [("lun1", "DS-SITEA-01"), ("lun2", "DS-SITEA-01-B")])
+        self.assertEqual([r["ds"] for r in rows if r["vol"] == "vol_ds07"], ["DS-SITEA-07"])          # an NFS volume: its own
+
+    def test_performance_keeps_the_cluster_names_without_the_health_parts(self):
+        # Neon 1.127.x P2: ontap_live_health off - /api/cluster not read; the names come from the list
+        def edit(col):
+            for c in col["clusters"]:
+                c["data"].pop("cluster", None)
+        rows = self.review_payload(edit, health=False)["parts"]["perf"]["rows"]
+        self.assertTrue(rows)
+        self.assertEqual(sorted(set(r["cluster"] for r in rows)), ["cluster1", "cluster2"])
+
+
+class LiveDbTask(unittest.TestCase):
+    """Neon 1.127.x P2: roles/ontap_report/tasks/live_db.yml's expand_template with no expand template ([]): '' - never a
+    failed task (first of an empty list)."""
+
+    def test_expand_template_of_each_shape(self):
+        import jinja2
+        text = open(os.path.join(ROOT, "roles", "ontap_report", "tasks", "live_db.yml")).read()
+        m = re.search(r"    expand_template: >-\n((?:      .*\n)+)", text)
+        expr = "".join(l[6:] for l in m.group(1).splitlines(True)).strip()
+        env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        for v, want in (([], ""), ("", ""), (["NetApp - expand a volume"], "NetApp - expand a volume"),
+                        ([{"template": "Expand B", "kind": "job"}], "Expand B"), ("Expand C", "Expand C")):
+            self.assertEqual(env.from_string(expr).render(ontap_expand_templates=v).strip(), want, v)
 
 
 class Writer(unittest.TestCase):
@@ -469,6 +528,19 @@ class Reader(unittest.TestCase):
         self.assertEqual(m["aggrs"][0]["a"], "aggr2_c2n2")
         self.assertEqual(set(m["parts"]), {"snapmirror", "nodes", "disks", "ems", "clusters", "perf"})
 
+    def test_aggregates_by_used_pct_only_fullest_first(self):
+        # 1.128.0 (user): the days until a limit were always a guess - an aggregate's status is its used % only (a row
+        # an older writer marked critical for its days reads ok at 70 %), fullest first within a status
+        T = 1024 ** 4
+        rows = [("c1", "aggr_soon", "cluster1", "n1", 10 * T, 7 * T, 50.0, 3.0, 9.0, "", "critical"),
+                ("c1", "aggr_86", "cluster1", "n1", 10 * T, int(8.6 * T), 1.0, 99.0, 200.0, "", "warning"),
+                ("c1", "aggr_88", "cluster1", "n2", 10 * T, int(8.8 * T), None, None, None, "no point yet", "ok"),
+                ("c1", "aggr_95", "cluster1", "n2", 10 * T, int(9.5 * T), 0.0, None, None, "", "critical"),
+                ("c1", "aggr_40", "cluster1", "n2", 10 * T, 4 * T, 0.0, None, None, "", "ok")]
+        m = nl.model({"opts": {"aggr_warn_pct": 85, "aggr_crit_pct": 90}}, [], rows, [])
+        self.assertEqual([(a["a"], a["st"]) for a in m["aggrs"]],
+                         [("aggr_95", "critical"), ("aggr_88", "warning"), ("aggr_86", "warning"), ("aggr_soon", "ok"), ("aggr_40", "ok")])
+
     def test_no_table_no_run_no_tab(self):
         bare = Lite(tables=False)
         self.assertEqual(nl.Database(lambda: bare, mark="?").read(), {"empty": nl.NO_TABLES})
@@ -587,7 +659,8 @@ class RunDialog(unittest.TestCase):
         self.assertNotIn('value="run" checked', h)
         self.assertNotIn("is required", h)
         h = sp.action_page(p.cfg, p, CN, "jt_58", {}, embed=True)
-        self.assertIn('value="run" checked', h)                                  # the template's own Job type otherwise
+        self.assertIn('value="check" checked', h)                                # 1.129.0: Check otherwise too (Run on purpose)
+        self.assertNotIn('value="run" checked', h)
         p.actions["jt_58"]["job_type"] = {"ask": False, "default": "run"}
         self.assertNotIn("portal-job-type", sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True))
 
@@ -675,6 +748,21 @@ class ExpandGuards(unittest.TestCase):
         del self.p.actions["jt_58"]["vars"]["ontap_expand_require_check"]          # a survey not set up again yet: not sent
         self.assertEqual(self.launch(self.texts[2])[0], 201)
         self.assertNotIn("ontap_expand_require_check", self.sent[-1][2]["extra_vars"])
+
+    def test_no_job_type_or_a_type_the_template_cannot_run_is_refused(self):
+        # Neon 1.127.x P1: an Expand launch without its Job type would run as the template's own (Run): refused
+        n = len(self.sent)
+        code, out = self.launch(self.texts[0], jt=None)
+        self.assertEqual(code, 409, out)
+        self.assertIn("Job type is fixed to Run", out["error"])
+        self.p.actions["jt_58"]["job_type"] = {"ask": False, "default": "run"}          # fixed to Run
+        for jt in (None, "check", "run"):
+            self.assertEqual(self.launch(self.texts[0], jt=jt)[0], 409, jt)
+        self.assertEqual(len(self.sent), n)                                              # nothing reached AAP
+        self.p.actions["jt_58"]["job_type"] = {"ask": False, "default": "check"}        # fixed to Check: Check only
+        self.assertEqual(self.launch(self.texts[0], jt="run")[0], 409)
+        self.assertEqual(self.launch(self.texts[0], jt="check")[0], 201)
+        self.assertEqual(self.sent[-1][2]["extra_vars"]["ontap_expand_require_check"], "true")
 
     def test_a_job_type_aap_ignored_is_cancelled(self):
         self.answer = (201, {"job": 77, "id": 77, "ignored_fields": {"job_type": "check"}})
@@ -813,11 +901,21 @@ class Sites(unittest.TestCase):
         self.assertEqual(self.m("^site")["sites"], [])                                       # no group: no filter
 
 
+SITE_RX = r"^(cluster\d)"           # the fixture's clusters cluster1 and cluster2 as two sites
+
+
 def site_answer(test):
-    """the page's answer with the fixture's clusters named like sites (sita01, sitb02)"""
-    a = json.loads(json.dumps(answer_for(test)).replace("cluster1", "sita01").replace("cluster2", "sitb02"))
-    nl.add_sites(a["model"])
-    return a
+    """the page's answer as the portal gives it (NetappLive.answer, /api/netapp) with a site pattern that finds two sites -
+    Neon 1.127.x P1: never the model's sites added after the answer (that hid the answer dropping them)"""
+    return answer_for(test, db=fill(opts=dict(fx.OPTS, site_pattern=SITE_RX)))
+
+
+class SitesThroughTheAnswer(unittest.TestCase):
+    def test_the_answer_carries_the_sites(self):
+        a = site_answer(self)
+        self.assertEqual(a["model"]["sites"], [{"site": "CLUSTER1", "n": len([v for v in a["model"]["volumes"] if v["site"] == "CLUSTER1"])},
+                                               {"site": "CLUSTER2", "n": len([v for v in a["model"]["volumes"] if v["site"] == "CLUSTER2"])}])
+        self.assertEqual(answer_for(self)["model"]["sites"], [])                    # the fixture's names: no site found, no filter
 
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")
@@ -833,32 +931,47 @@ class Browser(unittest.TestCase):
 
     def test_the_site_filter(self):
         a = site_answer(self)
-        self.assertEqual([x["site"] for x in a["model"]["sites"]], ["SITA01", "SITB02"])
+        self.assertEqual([x["site"] for x in a["model"]["sites"]], ["CLUSTER1", "CLUSTER2"])
         js = ("r.btn=[].map.call(document.querySelectorAll('.nap-sites button'),function(b){return b.textContent+'|'+b.getAttribute('aria-pressed')});"
-              "document.querySelector('.nap-sites button[data-site=\"SITB02\"]').click();"
+              "document.querySelector('.nap-sites button[data-site=\"CLUSTER2\"]').click();"
               "r.url=location.search;r.names=[].map.call(document.querySelectorAll('.nap-vols tbody tr b.mono'),function(x){return x.textContent});"
               "r.aggr=[].map.call(document.querySelectorAll('#runway table:not(.nap-vols) tbody tr b.mono'),function(x){return x.textContent});"
               "r.tiles=[].map.call(document.querySelectorAll('.nap-tiles .tile .n'),function(x){return x.textContent});"
               "r.sel=getComputedStyle(document.getElementById('nap-site')).display;r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;")
-        b_ = [v["name"] for v in a["model"]["volumes"] if v["site"] == "SITB02"]
+        b_ = [v["name"] for v in a["model"]["volumes"] if v["site"] == "CLUSTER2"]
         for w in (1280, 800):
             out = run_page(page_files(self, a, width=w, js=js), w)
             r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
             self.assertNotIn("err", r)
             self.assertEqual(r["btn"][0].split("|"), ["All (%d)" % len(a["model"]["volumes"]), "true"])
-            self.assertTrue(r["url"].endswith("site=SITB02"), r["url"])
+            self.assertTrue(r["url"].endswith("site=CLUSTER2"), r["url"])
             self.assertTrue(r["names"] and set(r["names"]) <= set(b_), (r["names"], b_))      # the runway: that site's only
             self.assertTrue(r["aggr"] and all("c2" in x for x in r["aggr"]), r["aggr"])       # the aggregates follow it
             self.assertEqual(r["sel"] == "none", w == 1280, (w, r["sel"]))                     # buttons at 1280, a select at 800 px
             self.assertEqual(r["side"], 0, w)
 
+    def test_a_lag_not_known_is_never_0x_the_schedule(self):
+        # Neon 1.127.x P2: a broken relationship with no lag and a known schedule: "-", never "0.0x the schedule"
+        a = answer_for(self)
+        rows = a["model"]["parts"]["snapmirror"]["rows"]
+        rows[0]["lag"], rows[0]["per"] = None, 3600
+        js = "r.t=document.getElementById('snapmirror').textContent;"
+        out = run_page(page_files(self, a, js=js), 1280)
+        r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
+        self.assertNotIn("err", r)
+        self.assertNotIn("0.0x the schedule", r["t"])
+
     def test_no_days_until_full_and_the_least_free_tile(self):
         js = ("r.th=[].map.call(document.querySelectorAll('.nap-vols thead th'),function(x){return x.textContent});"
+              "r.ath=[].map.call(document.querySelectorAll('#runway table:not(.nap-vols) thead th'),function(x){return x.textContent});"
               "r.k=[].map.call(document.querySelectorAll('.nap-tiles .tile .k'),function(x){return x.textContent});"
               "var d=document.querySelector('.nap-vols .nap-ds');r.ws=getComputedStyle(d).whiteSpace;r.title=d.title;r.txt=d.textContent;")
         out = run_page(page_files(self, answer_for(self), js=js), 1280)
         r = json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
         self.assertNotIn("Days until full", r["th"])
+        # 1.128.0 (user): the aggregates' days-until columns are off the page too (the health report keeps them)
+        self.assertFalse([x for x in r["ath"] if x.startswith("Days until")], r["ath"])
+        self.assertIn("Growth GB/day", r["ath"])
         self.assertIn("Growth GB/day", r["th"])
         self.assertIn("Least free", r["k"])
         self.assertNotIn("Soonest full", r["k"])
@@ -881,6 +994,41 @@ class Browser(unittest.TestCase):
             self.assertEqual(r["found"], ["vol_ds07"])
             self.assertEqual([x.split(" (")[0] for x in r["grp"]], ["VMware datastores", "Other volumes and LUNs"], w)
             self.assertEqual(r["dsrows"], len([v for v in a["model"]["volumes"] if v["ds"]]), w)   # every datastore in the default (short) view
+
+
+@unittest.skipUnless(browser(), "no google-chrome or chromium")
+class ExpandDialogLock(unittest.TestCase):
+    """Neon 1.127.x P1: Expand... opens the dialog the server drew; a Launch the server turned off (the template fixed to
+    Run: no Check any more) stays off with the volume picked - the page only adds "no volume" to it."""
+
+    def go_state(self, job_type):
+        texts = newest_texts()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        p = sp.Portal(cfg_for(tmp))
+        act = expand_action(texts)
+        act["job_type"] = job_type
+        p.actions = {"jt_58": act}
+        a = answer_for(self)
+        x = [v for v in a["model"]["volumes"] if v.get("x")][0]
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(x["x"][0]["href"]).query)
+        frag = sp.action_page(p.cfg, p, CN, "jt_58", q, embed=True)
+        js = ("var F=%s;var f1=window.fetch;window.fetch=function(u,o){if(String(u).indexOf('actions/')>=0)"
+              "return Promise.resolve({ok:true,status:200,text:function(){return Promise.resolve(F)}});return f1(u,o)};"
+              "document.querySelector('a[data-expand]').click();"
+              "setTimeout(function(){var g=document.getElementById('go');var s=document.querySelector('#run select');"
+              "document.getElementById('res').textContent=JSON.stringify({go:g?g.disabled:null,sel:s?s.value:null,"
+              "open:document.getElementById('dlg').open})},1500);r.clicked=1;") % json.dumps(frag)
+        out = run_page(page_files(self, a, js=js), 1280)
+        return json.loads(sp.html.unescape(re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S).group(1)))
+
+    def test_fixed_run_stays_off_and_asked_is_on(self):
+        r = self.go_state({"ask": False, "default": "run"})
+        self.assertTrue(r.get("open"), r)
+        self.assertTrue(r["sel"], r)                                   # the volume is picked ...
+        self.assertTrue(r["go"], r)                                    # ... and Launch stays off (the server's own)
+        r = self.go_state({"ask": True, "default": "run"})
+        self.assertEqual((r.get("open"), bool(r["sel"]), r["go"]), (True, True, False), r)
 
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")

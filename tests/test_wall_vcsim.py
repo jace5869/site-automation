@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.129.0: the ops-center wall against vcsim (VMware's vCenter simulator, docker.io/vmware/vcsim, never pulled by the test):
+"""1.130.0: the ops-center wall against vcsim (VMware's vCenter simulator, docker.io/vmware/vcsim, never pulled by the test):
 the real collector (wall_live) in the real portal answer and page - one Login kept over several cycles, hosts, datastores
 and quick stats read, a host disconnected in vcsim on the wall as Critical with its VMs in the detail card, only read
 calls sent. The container has a name of its own and is removed by that name (never a prune). Skipped without podman,

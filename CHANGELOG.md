@@ -1,18 +1,17 @@
 # Changelog
 
-## 1.129.0 — 2026-11-24
+## 1.130.0 — 2026-11-25
 
-**To set up:** attach the site's existing **VMware vCenter** credential (the VMware jobs' account) and, for live storage,
-the **NetApp ONTAP** credential to *Site portal - deploy* (both optional there; no new account), keep its read-only
-**Report database** credential, run AAP - set up job templates if the template should list them, and run *Site portal -
-deploy*. The wall is on by default (`portal_wall: true`); its tab is named by `portal_wall_title` (default
-`outage_ops_center`, else "Ops center"). Thresholds (defaults fine for a first showing): `portal_wall_datastore_warn` /
-`_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90) and
-`portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
-`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15). Optional: `portal_wall_site_places` (the Map's dots),
-`portal_wall_site_pattern`, `portal_wall_enclave` (default `site_enclave`), `portal_wall_vcenter` / `portal_wall_ontap`
-(auto | true | false). Feedback: `portal_wall_feedback` (true), `portal_wall_feedback_groups` ([] = everyone who opens
-the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); the list is at `<portal>/wall/feedback`.
+**To set up:** run **Site portal - deploy**. The wall's logins come from the credentials already on that template: the
+existing **VMware vCenter** and **NetApp ONTAP** credentials (the ones the VMware and NetApp jobs use - no new accounts) are
+copied to the portal server as the podman secrets `site-portal-vcenter` and `site-portal-ontap`. Storage is on the wall
+only with live ONTAP: list the clusters in `portal_wall_ontap_clusters`. Who may send feedback: `portal_wall_feedback_groups`
+([] = everyone who opens the wall; the list is at `<portal>/wall/feedback`, read by `portal_wall_feedback_readers`). The
+preview banner is on by default (`portal_wall_preview: true`) - set it false once your teams trust the wall. The wall is on
+by default (`portal_wall: true`); its tab is named by `portal_wall_title`. Thresholds (defaults fine for a first showing):
+`portal_wall_datastore_warn` / `_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90)
+and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
+`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15).
 
 - **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
   amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
@@ -80,6 +79,115 @@ the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); th
   checked on the server (the button hidden and the send refused for others; the list 403).
 - docs/SITE_PORTAL.md, "The ops-center wall": the sources, the collector, the set-up, "Thresholds to confirm with each
   team", "Wall feedback: how to open it and who sees it".
+
+## 1.129.0 — 2026-11-25
+
+**To set up:** (1) run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and
+`portal_limit_max_playbooks` need no change when your Windows hosts are in a group whose name has *windows* in it, or have
+`ansible_connection: winrm` in AAP's inventory). (2) Put the Windows reports on the portal - label and Execute for the portal's
+account - with **AAP - set up portal actions**, Check first, then Run, with these lines in all.yml (your template names, if
+yours differ):
+
+```yaml
+portal_publish_templates: ["Windows connection test", "Windows health check", "Windows troubleshoot",
+                           "Windows - local group members", "Windows certificate report", "Windows STIG drift report",
+                           "Windows - schedule a restart", "Windows - cancel a scheduled restart"]
+```
+
+Each template needs Limit **Prompt on launch** and its inventory set (the Windows inventory). The cards appear within a minute.
+(3) Optional, on *Windows - local group members*: `win_local_groups_baseline_pct` (90) and `win_local_groups_rare_pct` (10).
+
+- **Windows jobs pick many servers in the site portal, like the Linux ones.** The Hosts box of a Windows job takes several
+  servers, a whole inventory group, or some servers of a group; one pick set is one job (the Limit is the hosts, counted
+  once). Labelled for the portal now (catalog `portal: true`): *Windows connection test*, *Windows health check*, *Windows
+  troubleshoot*, *Windows - local group members*, *Windows certificate report*, *Windows STIG
+  drift report*; *Windows - schedule a restart* and *cancel* already were. The restart form keeps its survey (24-hour time,
+  reason, only if pending, change). **Job type starts on Check** for every template that prompts it (restart, cancel, patch,
+  load ...): Run is picked on purpose.
+- **Windows hosts only.** A Windows job's picker (playbook `playbooks/win_*.yml`, or a workflow named *Windows ...*) lists only
+  the inventory's Windows hosts, and a group counts by its Windows hosts - by `portal_windows_hosts_from`: a group whose name
+  matches `*windows*`, or `ansible_connection` (winrm, psrp) / `ansible_shell_type` (powershell, cmd) in the host's, a group's
+  or the inventory's Variables in AAP. Only `portal_windows_hosts_from: {}` turns the filter off; a rule that matches no host
+  lists none and refuses the launch (*no host matches the Windows rule - set it to your inventory's Windows group or variable*).
+- **A playbook's own cap.** `portal_limit_max_playbooks`: the restart and cancel take at most `win_restart_max_hosts` (the
+  template's Variables, else 50); the picker shows it and the launch checks it.
+- **The picker: groups and search.** A **Group** drop-down lists every group of the inventory live from AAP; picking one
+  shows its hosts, with **Pick the whole group (n)** or single hosts to tick. The list has two parts, *Groups (n)* and
+  *Hosts (n)*; **Select all shown (n)** says how many. The server sends 200 rows at a time (thousands of hosts are never sent
+  whole). Without scripts the plain multi-select has the same two parts.
+- **Windows - local group members: prevalence and a suggested baseline.** Each member is ranked by how many of the servers
+  that answered have it (*in 56 of 60 servers, 93 %*; servers that did not answer are counted apart), and the servers with
+  rare members (under `win_local_groups_rare_pct`, 10 %) are listed. Members at or over `win_local_groups_baseline_pct` (90 %)
+  form a suggested baseline: JSON and a pasteable snippet for the Administrators membership check, on the email and the
+  website, and a *Suggested baseline* sheet in the workbook.
+- Which hosts are Windows is read as Ansible reads the inventory (a child group over its parent, the host over both) and
+  again when the job starts; a failed read refuses the launch. A name that is a host's and a group's is refused. Past 400
+  groups, a group's hosts are read when it is opened. *Windows - trust store report* is not published to the portal (it
+  removes certificates when `check_trust_remove` is true): **AAP - set up portal actions** now takes the `portal` label off
+  it where an earlier run put it (`portal_setup_never_published`), and no pattern publishes it. A template whose playbook has its own cap but does not prompt
+  for Limit is not offered (the reason says so). Local groups baseline: a member some servers could not name, or named in
+  another language, is exported by its SID; well-known principals (S-1-5-11, BUILTIN) are one member in every language.
+- Not in this release: the Windows jobs that change servers (patch, certificate install and restore, CSRs, ACT install) stay in
+  their workflows with an approval, not labelled for the portal.
+
+## 1.128.0 — 2026-11-25
+
+**To set up:** run AAP - set up job templates for NetApp - expand a volume (its Size question's wording, and
+Concurrent jobs off), then NetApp - refresh volume list once, and Site portal - deploy. The ONTAP credential of the
+expand job needs a role that may modify volumes and LUNs (as before). Optional: a Red Hat Ansible Automation Platform
+credential on NetApp - expand a volume, so each run checks that no other run of it is going.
+
+- **NetApp - expand a volume: a LUN volume is grown by its LUN.** The default growth is 10 % of the LUN (1-512 GB) or
+  the size typed; the volume grows only as much as the bigger LUN needs (a thick LUN: its data + the growth; a thin
+  one: its headroom kept; the snapshot reserve and the snapshots' spill on top) - not at all when it has the room.
+  The aggregate is checked against what really lands on it (the volume's space guarantee, a thick LUN's growth); the
+  largest LUN growth that fits is said.
+- **Autosize is never changed.** A volume with autosize grow_shrink is refused (in the plan and right before the
+  change). A new size over the autosize maximum ONTAP reports is refused too, whatever the mode (ONTAP would reset the
+  maximum with the size): grow it by hand or raise the maximum first.
+- **Everything the plan stood on is read again right before each change:** the volume (size, autosize, guarantee, its
+  aggregate and that aggregate's room), the LUN (its size, its space reservation, that it is still in the same volume
+  by UUID), and the volume's name, SVM and `ontap_expand_exclude` on that last read (the comment-only write too).
+  Anything moved: nothing is sent. Every size sent is capped at the plan's own (exact bytes); the volume first, then the
+  LUN; a snapshot deleted meanwhile sends a smaller size or none, never more; a volume that needs more now stops the
+  run before any change. The comment written is the last read's, with the line added.
+- **One run at a time:** the expand template is made with Concurrent jobs off, and with an AAP credential each run asks
+  AAP right before the change about every template in `ontap_expand_templates` (and a workflow there) and its own
+  (another run going, or queued before it: nothing is changed; no credential: "not checked" in the report).
+- **The report says what was read back** after each change, per volume and LUN; "not known - check System Manager"
+  when a change was sent and nothing was verified, "(not changed)" when nothing was sent - never the planned size.
+- NetApp live page: the aggregates' days-until columns removed - still in the health report. An aggregate's status
+  there is its used % only (`ontap_aggr_warn_pct` / `_crit_pct`; the days until a limit were always a guess), and the
+  aggregates are listed by status, then fullest first; the "need a look" count follows.
+
+**Windows - to set up:** nothing to change. New restarts put their script in `C:\Program Files\site-automation\restart`. Restarts scheduled by 1.127.x are found and removed by cancel or a new schedule; afterwards delete the old folder `C:\ProgramData\site-automation\restart` by hand.
+
+**Known limits:** ONTAP's REST API takes a volume's (and a LUN's) size, not "this much more". Between the job's last
+read and ONTAP's change (well under a second), a person in System Manager or ONTAP's autosize could still grow the
+volume; the job's size then sets it back to the job's size and the report shows the size read back. Not fixed, by
+design (docs/NETAPP.md, Limits).
+
+**Fixed (review of 1.127.x)**
+
+- NetApp page: the site filter never showed (the page's answer left the sites out), and `?site=` did nothing.
+- NetApp page: Expand… on a template fixed to Run could still start a real run (the dialog turned Launch back on, and
+  a launch without a Job type was taken). The portal now refuses an Expand launch unless it says Check (the template
+  can run as Check) or Run (the template asks the Job type); the dialog keeps the portal's own "off".
+- SnapMirror: a schedule read without its interval or cron counted as "every minute" (healthy relationships showed as
+  lagging); now not known.
+- Disks: a rebuild on partitioned (ADP) disks shows as a warning, not ok.
+- Performance: each LUN shows its own datastore (two LUNs of one volume on two datastores); the cluster names stay when
+  `ontap_live_health` is off.
+- SnapMirror: a lag not known no longer reads "0.0x the schedule".
+- NetApp - refresh volume list: no failed task with `ontap_expand_templates: []`.
+- Windows - schedule a restart (review of 1.127.x):
+  - `win_restart_dir` must be a subdirectory of Program Files (`$env:ProgramFiles`). Before writing files and before registering a restart, the job checks ownership and write permissions on each directory below Program Files and on the task files. It refuses reparse points, including dangling links, and square brackets in the configured subdirectory path. Cancel and reschedule remove or replace only the matching 1.127.x scheduled task and report that the old ProgramData folder must be deleted by hand.
+  - A later queued AAP job can wait for the current run. Targets and exclusions follow Ansible's comma and colon splitting rules, including exclusions and intersections after a regex. Limit validation accepts group slices, group wildcards and regular expressions, and reports invalid ranges.
+  - The controller and the Windows task clean and cap shutdown comments at 500 characters and validate planned shutdown reason codes (`p:<major>:<minor>`).
+  - Schedule, replacement, rollback and cancel use the same normalized Task Scheduler folder. PowerShell records the restart time in UTC across versions.
+  - SolarWinds preserves windows whose timezone-free end could still be ahead within 14 hours. A failed node lookup for the whole run raises a report warning.
+  - A wildcard, regex or slice in the Limit that would select the whole inventory (all) is refused.
+- **Excluded servers (since 1.67.0):** a target of several servers separated by commas (A,B) plus `site_exclude_hosts` could still reach an excluded server (`A,B:!site_excluded` keeps A). The exclusion is now its own term (`A,B,!site_excluded`) in every playbook.
 
 ## 1.127.3 — 2026-11-24
 

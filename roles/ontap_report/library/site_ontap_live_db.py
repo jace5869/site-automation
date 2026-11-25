@@ -233,7 +233,7 @@ def write(conn, now, job, template_id, run, expand_template="", expand_question=
     for i in range(0, len(rows), CHUNK):
         cur.executemany(INSERT_VOL, rows[i:i + CHUNK])
     arows = [(rid, str(a["address"])[:191], str(a["name"])[:191], str(a.get("cluster") or "")[:191], str(a.get("node") or "")[:191],
-              # 1.129.0: an aggregate whose use was not read is written with size 0 - the readers show it as unknown ("?"), never 0 %
+              # 1.130.0: an aggregate whose use was not read is written with size 0 - the readers show it as unknown ("?"), never 0 %
               int(a.get("size") or 0) if a.get("used") is not None else 0, int(a.get("used") or 0)) for a in aggrs]
     if arows:
         cur.executemany(INSERT_AGGR, arows)
@@ -242,7 +242,7 @@ def write(conn, now, job, template_id, run, expand_template="", expand_question=
     for v in vols:                                     # one point a row: each LUN its own (its datastore's or its own fullness)
         k = (v["address"].lower(), "volume", _vol_obj(v))
         if v.get("full_src") == "unknown":
-            continue                                   # 1.129.0: a LUN's use not read - no point for its growth
+            continue                                   # 1.130.0: a LUN's use not read - no point for its growth
         if k not in seen:
             seen.add(k)
             pts.append((k[0][:191], "volume", k[2][:255], at, now, int(v.get("full_size") or v.get("size") or 0),
@@ -294,7 +294,7 @@ def rate_all(conn, now, rid, opts=None):
         pctu = 100.0 * used / size if size else 0.0
         if pctu >= lim:
             dlim = 0.0
-        arows.append((g, dlim, dfull, why[:120], L.aggr_status(pctu, dlim, o), rid, addr, aggr))
+        arows.append((g, dlim, dfull, why[:120], L.aggr_status(pctu, o), rid, addr, aggr))
     if arows:
         cur.executemany("UPDATE ontap_live_aggr SET growth_gb_day = %s, days_limit = %s, days_full = %s, rate_why = %s, status = %s "
                         "WHERE run_id = %s AND address = %s AND aggr = %s", arows)

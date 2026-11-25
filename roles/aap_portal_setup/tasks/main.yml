@@ -65,6 +65,7 @@
     publish: "{{ portal_publish_templates }}"
     publish_area: "{{ portal_publish_area }}"
     unpublish: "{{ portal_unpublish_templates }}"
+    never: "{{ portal_setup_never_published | default([], true) }}"
     publish_label: "{{ portal_label | default('portal', true) }}"
     area_label: "{{ portal_label_area | default('portal-area:', true) }}"
     alone_label: "{{ portal_label_alone | default('portal-alone', true) }}"

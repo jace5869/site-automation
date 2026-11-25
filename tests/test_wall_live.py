@@ -549,7 +549,7 @@ class CollectorTest(unittest.TestCase):
 
 
 class SharedAccount(unittest.TestCase):
-    """1.129.0 review: the site's shared accounts - one refused login backs off every source of that account; after the start
+    """1.130.0 review: the site's shared accounts - one refused login backs off every source of that account; after the start
     and after each back-off one source tries first and the others wait for its answer: exactly one bad login per window"""
 
     def make(self, srcs, auth_retry=900):
@@ -618,7 +618,7 @@ class SharedAccount(unittest.TestCase):
 
 
 class Faults(unittest.TestCase):
-    """1.129.0 review: permission faults and proxies' 401 are refusals (backed off); no session left behind"""
+    """1.130.0 review: permission faults and proxies' 401 are refusals (backed off); no session left behind"""
 
     def test_no_permission_on_the_view_logs_out_and_is_an_auth_error(self):
         vim, port = vim_stub(self)
@@ -655,7 +655,7 @@ class Faults(unittest.TestCase):
 
 
 class Codex(unittest.TestCase):
-    """Codex 1.129.0 pre-release review: one back-off per account across vCenter and ONTAP, kept over a restart; the deadline
+    """Codex 1.130.0 pre-release review: one back-off per account across vCenter and ONTAP, kept over a restart; the deadline
     from the refusal; a 401 on Login whatever its body"""
 
     def test_one_account_across_vcenter_and_ontap(self):
@@ -722,7 +722,7 @@ class Codex(unittest.TestCase):
 
 
 class CodexVerify(unittest.TestCase):
-    """Codex verify 1.129.0: a read on an old session never ends a back-off; a cut 401 is a refusal"""
+    """Codex verify 1.130.0: a read on an old session never ends a back-off; a cut 401 is a refusal"""
 
     def test_an_in_flight_read_never_clears_the_back_off(self):
         d = tempfile.mkdtemp()

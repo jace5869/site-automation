@@ -133,6 +133,7 @@
         _wr_model: >-
           {{ _wr_hosts | win_restart_model({'mode': 'schedule', 'check': ansible_check_mode, 'comment': _wr_comment,
                                             'only_if_pending': win_restart_only_if_pending | bool,
+                                            'swis_state': _wr_sw_state,
                                             'swis_window': _wr_swrun.window_text | default('') if _wr_sw_state == 'on' else '',
                                             'swis_span': win_restart_solarwinds_before_minutes ~ ' minutes before to '
                                                          ~ win_restart_solarwinds_minutes ~ ' minutes after',

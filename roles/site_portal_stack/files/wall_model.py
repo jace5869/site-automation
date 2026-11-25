@@ -236,7 +236,7 @@ def vmware_part(view, o, now):
         for h in hosts:
             by_cluster.setdefault(h.get("cluster") or "(standalone)", []).append(h)
         for cn, hs in by_cluster.items():
-            up = [h for h in hs if h.get("state") == "connected"]          # Codex 1.129.0: only a host vCenter says is connected is up
+            up = [h for h in hs if h.get("state") == "connected"]          # Codex 1.130.0: only a host vCenter says is connected is up
             cpus = [h["cpu_pct"] for h in up if h.get("cpu_pct") is not None]
             mems = [h["mem_pct"] for h in up if h.get("mem_pct") is not None]
             part["clusters"].append({"n": cn, "vc": name, "feed": fk, "up": len(up), "of": len(hs),

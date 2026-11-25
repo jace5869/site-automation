@@ -245,7 +245,7 @@
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
-# 1.129.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
+# 1.130.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
 # deploy has their credentials); the thresholds are checked here, the service checks them again
 - name: Settings | the ops-center wall (portal_wall_*)
   ansible.builtin.set_fact:
@@ -483,7 +483,7 @@
     - {src: netapp_live.py, dest: netapp_live.py}
     - {src: static/netapp-page.js, dest: static/netapp-page.js}
     - {src: static/netapp-page.css, dest: static/netapp-page.css}
-    # 1.129.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
+    # 1.130.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
     - {src: wall_model.py, dest: wall_model.py}
     - {src: wall_live.py, dest: wall_live.py}
     - {src: static/wall-page.js, dest: static/wall-page.js}
@@ -724,7 +724,7 @@
     msg: "podman secret create site-portal-ldap failed (rc {{ _portal_ldap_set.rc }}): {{ _portal_ldap_set.stderr | default('', true) | trim or 'no reason given' }}"
   when: _portal_ldap_set.rc | default(0) != 0
 
-# ---------------------------------------------------------------- 1.129.0: the wall's logins, podman secrets (as the LDAP bind account)
+# ---------------------------------------------------------------- 1.130.0: the wall's logins, podman secrets (as the LDAP bind account)
 # the site's existing "VMware vCenter" and "NetApp ONTAP" accounts as JSON, one secret each (site-portal-vcenter ->
 # PORTAL_WALL_VCENTER_LOGIN, site-portal-ontap -> PORTAL_WALL_ONTAP_LOGIN), the SHA-256 on a label; removed when off
 - name: Secret | the wall's logins - the values
@@ -947,6 +947,8 @@
       PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
       PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
       PORTAL_INVENTORIES_MAX: "{{ portal_inventories_max }}"
+      PORTAL_WINDOWS_HOSTS_FROM: "{{ portal_windows_hosts_from | default({}, true) | to_json }}"          # 1.129.0
+      PORTAL_LIMIT_MAX_PLAYBOOKS: "{{ portal_limit_max_playbooks | default({}, true) | to_json }}"        # 1.129.0
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
@@ -984,7 +986,7 @@
       PORTAL_AD_SECONDS: "{{ portal_ad_seconds | string }}"
       PORTAL_AD_OLD_MINUTES: "{{ portal_ad_old_minutes | string }}"
       PORTAL_AD_TEMPLATE: "{{ portal_ad_template | string }}"
-      # 1.129.0: the ops-center wall (its logins: the secrets site-portal-vcenter, site-portal-ontap)
+      # 1.130.0: the ops-center wall (its logins: the secrets site-portal-vcenter, site-portal-ontap)
       PORTAL_WALL: "{{ '1' if portal_wall | bool else '0' }}"
       PORTAL_WALL_TITLE: "{{ portal_wall_title | string | trim }}"
       PORTAL_WALL_PREVIEW: "{{ '1' if portal_wall_preview | bool else '0' }}"
@@ -1226,7 +1228,7 @@
          or _portal_wall_set is changed
          or _portal_trust_gone is changed)
 
-# 1.129.0: a wall login no longer wanted (portal_wall_vcenter / _ontap off): removed now that the unit no longer names it and the
+# 1.130.0: a wall login no longer wanted (portal_wall_vcenter / _ontap off): removed now that the unit no longer names it and the
 # service was restarted without it
 - name: Secret | the wall's logins no longer used - removed
   ansible.builtin.command:

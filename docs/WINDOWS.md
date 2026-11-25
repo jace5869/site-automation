@@ -181,6 +181,18 @@ For all of these, use: **Inventory** `Windows servers`, **Project** `site-automa
 from step 2, **Credentials** `Windows (WinRM)`, **Limit** empty with **Prompt on launch** ticked.
 Leave **Variables** empty: with no `target`, they run on every server in the inventory.
 
+**From the site portal (1.129.0).** List them in `portal_publish_templates` and run **AAP - set up portal actions** (Check
+first): it gives each the label `portal` and the portal's account Execute (docs/SITE_PORTAL.md, "Add your jobs in bulk").
+`aap_templates_label_portal: portal-actions` on **AAP - set up job templates** labels them too, but gives no Execute. The
+Windows reports whose servers are the Limit then show under **Windows** (STIG drift under
+**STIG**, the certificate report under **Certificates**) with a Hosts box - several servers, a whole group or
+some servers of a group, one job for all of them, Windows hosts only (docs/SITE_PORTAL.md, "Windows jobs"). They are:
+*Windows connection test*, *Windows health check*, *Windows troubleshoot*, *Windows - local group members*, *Windows certificate
+report*, *Windows STIG drift report*, and (since 1.127.0) *Windows - schedule a restart* and
+*Windows - cancel a scheduled restart*. Not *Windows - trust store report*: it removes certificates when
+`check_trust_remove` is true. The jobs that change servers (patch, certificate install and restore, CSRs, ACT
+install) are not labelled: they run in their workflows, with an approval.
+
 ### Windows health check
 
 | Field | Value |
@@ -525,14 +537,21 @@ What it reads:
 
 What the report shows:
 
-- **Unusual members**: an enabled local account (not the built-in one) in Administrators (a warning). With
-  `win_local_groups_usual` (`auto` = 80%, or a percent; default `off`), members on few of the servers too.
+- **At a glance** gives the baseline size and names the servers that did not answer. It flags enabled local
+  Administrators accounts other than the built-in account. `win_local_groups_usual` adds alerts based on the
+  servers that have each group (`auto` = 80%, or a percent, default `off`).
+- **Most common members** ranks each group's members by the number of answering servers where they appeared.
+  **Unusual members** lists the servers for members at or below `win_local_groups_rare_pct` (default 10%).
+- Members at or above `win_local_groups_baseline_pct` (default 90%) form the suggested baseline. Both cutoffs use
+  the exact share before display rounding. The email and website include `suggested-baseline.json` for every qualifying
+  group and `suggested-baseline.txt` with one-line and block YAML for the Administrators membership check. Review the
+  suggestions before pasting either form into AAP as `win_local_groups_approved`.
 - **By server**, **By member** (who is in which group where), **Not read** (the server and why).
 - The page has a Group button row and a Member search; they choose the rows of By server and By member.
 - The inventory: every member of every group on every server, one row each, nothing left out. Columns: server, group,
   member, type, source, SID, enabled, servers with this member. As `local-groups.csv` and `local-groups.json` (attached,
   and beside the page on the report website), the workbook's By server sheet, and the job artifact `win_local_groups`.
-- The workbook (`report_email_xlsx: true`): Approved list, By member, By server (each with a Group column), Not read.
+- The workbook (`report_email_xlsx: true`): Approved list, By member, By server (each with a Group column), Not read, Suggested baseline.
 
 The job judges nothing. To check the servers against an approved list:
 
@@ -583,12 +602,26 @@ time you type. **Windows - cancel a scheduled restart** (`playbooks/win_restart_
 3. Set the templates' inventory to your Windows inventory.
 4. Optional: `report_email_to` and `report_web_dest` on the template, for the report email and page.
 
+**In the site portal (1.129.0).** The Hosts box takes one server, several, a whole inventory group, or some servers of a
+group (the **Group** drop-down shows one group's servers; **Pick the whole group** or tick single ones). It lists only the
+Windows hosts of the inventory (`portal_windows_hosts_from`, docs/SITE_PORTAL.md "Windows jobs"); a group counts by its Windows
+hosts. One pick set is **one job**, up to `win_restart_max_hosts` servers (the portal reads it from the template's Variables).
+The form keeps the survey (time, reason, only if pending, change). Its Job type starts on **Check** (the plan only):
+pick **Run** on purpose once the plan is right.
+
 ### Run it
 
 1. Launch **Windows - schedule a restart**. Limit (or the portal's Hosts box): the servers. An empty Limit, `all`, only
    exclusions (`!name`) or a Limit from a file (`@file`) is refused, and so is a run with a server the Limit did not
    name; at most `win_restart_max_hosts` (50) servers. The job output lists the servers it
-   will act on. Servers in `site_exclude_hosts` are always left out.
+   will act on. The Limit accepts group slices such as `windows[0:4]` (both ends included) and `windows[0]`,
+   group wildcards such as `win_app*`, and regex terms such as `~^SRV-APP[0-9]+$`. Host ranges must run
+   forwards and can expand to at most 1,000 values per range. A wildcard, regex or slice that selects the inventory
+   group `all` or `ungrouped` stops the job. Negative slice bounds count from the end of the ordered, deduplicated
+   group members in the job’s validation. The Ansible inventory parser must also support the slice in a command-line
+   Limit. Use commas between terms that contain regexes or IPv6 addresses. In a comma list, colons are literal.
+   For example, `web*:!~web01:&staging` selects staging web hosts and excludes names matching the `web01` regex.
+   Servers in `site_exclude_hosts` are always left out.
 2. Answer the survey:
 
    | Question | Example | Notes |
@@ -611,18 +644,33 @@ Success looks like: `SRV-APP01: SCHEDULED - at Tue 2026-11-24 22:30 EST (server:
 What the job does on each server:
 
 - Registers the task `\site-automation\site-automation restart` (SYSTEM) for that moment. The moment is fixed in UTC,
-  so a server in another time zone restarts at the same moment.
+  so a server in another time zone restarts at the same moment. An empty `win_restart_task_path` uses the Task
+  Scheduler root. Leading and trailing backslashes are optional for a named folder.
 - At that time the task runs `shutdown /r /t 60 /d p:0:0 /c "<change>: <reason> (site-automation, AAP job N)"`.
   Logged-on users get 60 seconds' warning (`win_restart_delay_seconds`).
+  The reason code must have the planned form `p:<major>:<minor>`. The job and the task strip quotes and control
+  characters, collapse whitespace and limit the comment to 500 characters. The task uses `Scheduled restart`
+  if the stored comment is empty after cleaning.
 - With "only if pending" it checks again first. Nothing pending any more: no restart; a line in `restart.log` and the
   Application log (source `site-automation`, event 101).
 - One restart of ours per server: a new run replaces the earlier task in one step (the report says "replaces ...").
   With "only if pending" and nothing pending, the server is skipped and an earlier restart of ours is removed.
-- Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`); the
-  earlier one's are removed only after the new task reads back right. If it does not, the earlier task is put back.
+- Each registration has its own script and settings files (`restart-task-<id>.ps1`, `restart-<id>.json`).
+  During replacement, the job keeps the previous protected files until it verifies the new task. If verification
+  fails, the job can restore the previous task from those files.
 - A server that is off at that time does not restart when it comes back. The task deletes itself a day later.
-- The task's script and settings are in `win_restart_dir` (`C:\ProgramData\site-automation\restart`), readable by
-  SYSTEM and Administrators only.
+- The task's script and settings inherit the permissions of `$env:ProgramFiles\site-automation\restart`
+  (usually `C:\Program Files\site-automation\restart`), so ordinary users cannot replace a script that runs as SYSTEM.
+  `win_restart_dir` must be a subdirectory of `$env:ProgramFiles`. Square brackets are refused anywhere in
+  the path. Before writing files and again before registering
+  the task, the job checks every directory from the first child of Program Files through `win_restart_dir`, plus
+  the script and settings files. Each must be owned by SYSTEM, Administrators or TrustedInstaller, and only those
+  trustees may have effective write or control grants. Reparse points anywhere along the path are refused.
+- Cancel and reschedule remove or replace the matching 1.127.x scheduled task and leave every file in the old
+  directory. Rescheduling writes the new script in the protected directory. The affected server's result includes
+  `old files left in C:\ProgramData\site-automation\restart - delete that folder by hand`.
+- The settings file stores the UTC restart time as `yyyy-MM-ddTHH:mm:ssZ` on Windows PowerShell and PowerShell 7.
+  Rescheduling, skipping or cancelling can use that time to identify the earlier SolarWinds window in the report.
 - It never restarts a server right away. Run in Task Scheduler is switched off for the task, and the task's script does
   nothing when it starts more than 2 minutes before its time (a line in `restart.log`).
 - One schedule or cancel at a time per server (`restart.lock` in that folder; one older than 10 minutes is taken as left over).
@@ -676,12 +724,16 @@ What it does:
 - After the call one read-back reports the window as SolarWinds shows it, and whether SWIS returns times as UTC or as
   local time ("SolarWinds returns times as ..."). A failed read-back does not undo the write: "unmanaged; the read-back
   failed". Check on the first real run that the node's window in Orion is the report's.
-- "No window" means: not unmanaged, and an end (`UnManageUntil`) that is empty or past every way it can be read - as UTC
-  and in the site's zone, both readings on the night the clocks go back. An end that cannot be read is a window: left.
+- For a managed node, an empty `UnManageUntil` clears the way for a new window. An end with a UTC offset is compared
+  at that instant. When Orion omits the offset, the job adds 14 hours to the reported end read as UTC. If that could
+  still be in the future, the report says the window was "left as it is". An unreadable end also preserves the window.
 - One run at a time: the template is made with **Concurrent jobs** off, and with a "Red Hat Ansible Automation
-  Platform" credential (optional) each run also refuses to start while another run of it is going. The race left
+  Platform" credential (optional) each run also checks for another running job or an earlier pending or waiting job
+  of the same template. A later queued job lets the current run finish. The race left
   needs two writers at once on one node - this job and a person (or another tool) unmanaging it in the same seconds.
-- A failed SolarWinds call is a warning on that row; the restart stays scheduled; the job ends as a warning.
+- A failed SolarWinds call adds a warning to the affected row. If the initial lookup fails for every server, the
+  report shows a warning and includes the lookup error. Each verified restart stays scheduled. A server that could
+  not be reached or scheduled still makes the report critical.
 - With "only if pending" the node is unmanaged for the window even if, at the restart time, nothing is pending and the
   server does not restart.
 
@@ -689,7 +741,7 @@ What it does:
 
 Launch **Windows - cancel a scheduled restart** with the same servers. Check lists our task; Run removes it. Only the
 task `win_restart_task_path` + `win_restart_task_name` is touched, and only when this job made it (its author, its
-description and its script in `win_restart_dir`). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
+description and its script path in the current or legacy directory). Another product's task of that name is reported and left as it is. A restart already counting down is not stopped: run
 `shutdown /a` on the server within the 60 seconds. It calls nothing in SolarWinds: an unmanage window the restart set
 stays and ends by itself.
 

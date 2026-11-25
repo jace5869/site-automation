@@ -116,6 +116,23 @@ portal_label_area: "portal-area:"                 # a label that starts with thi
 portal_approval_required: []                      # template names that are marked "approval" without the label
 portal_inventories_max: 10                        # 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason
 portal_limit_max: 50                              # a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500)
+# 1.129.0: the picker of a Windows job (a found template whose playbook is playbooks/win_*.yml, or a workflow named "Windows ...")
+# lists only the inventory's Windows hosts, and a group there stands for its Windows hosts. A host is Windows when it is in a group
+# whose name matches one of groups (globs, any case), or when one of vars matches: the host's own value, else a group's, else the
+# inventory's (what AAP's API shows - a dynamic source's host variables count; playbooks/group_vars in the project do not). A
+# dotted name reads into a mapping (config.guestId); group priority as Ansible. {} = the filter is off (every host is listed). A
+# rule that matches no host lists none and refuses the launch (set it to your Windows group or variable).
+portal_windows_hosts_from:
+  groups: ["*windows*"]
+  vars:
+    ansible_connection: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]
+    ansible_shell_type: [powershell, cmd]
+# 1.129.0: a playbook's own cap of hosts in one run (its file name): the picker and the launch use it when it is lower than
+# portal_limit_max. var: the template's Variables may set it (then that value counts), max: else this. Windows - schedule
+# a restart and cancel: win_restart_max_hosts (50).
+portal_limit_max_playbooks:
+  win_restart_schedule.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts | default(50) }}"}
+  win_restart_cancel.yml: {var: win_restart_max_hosts, max: "{{ win_restart_max_hosts | default(50) }}"}
 # the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from)
 portal_finding_playbooks: >-
   {{ (finding_ref_report_playbooks | default(['health_check.yml', 'win_health_check.yml', 'troubleshoot.yml', 'win_troubleshoot.yml', 'disk_report.yml',
@@ -189,11 +206,11 @@ portal_ad_old_minutes: 90                           # the AD checks older than t
 portal_ad_template: ""                              # two AD templates (two forests): the ID of the one the page shows; "" = the newest run's
 # ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ----
 # /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its
-# "Report database" credential) - each LUN and volume soonest full first with Expand... (NetApp - expand a volume, the
-# choice and Check preselected), the aggregates, SnapMirror, health, performance. The tab shows once the database has a run.
+# "Report database" credential) - each LUN and volume, VMware datastores first, each least free first, with Expand... (NetApp -
+# expand a volume, the choice and Check preselected), the aggregates (fullest first), SnapMirror, health, performance. The tab shows once the database has a run.
 portal_netapp: true
 portal_netapp_old_minutes: 60                       # a run older than this is said to be old on the page (the refresh runs every 15-30 min)
-# ---- 1.129.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall") -------------------------------------------
+# ---- 1.130.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall") -------------------------------------------
 # /portal/wall: one page for a wall screen - Lights, Cockpit (the default) or Map, saved per viewer - with only the wall
 # conditions below lit (routine alarms never). VMware is read live by the portal itself (one kept vCenter session, one property
 # read a cycle, read-only calls only); Storage live from ONTAP only (GET only, portal_wall_ontap_clusters, the "NetApp ONTAP"
@@ -260,7 +277,7 @@ portal_aap_token: >-
 portal_ldap_vars: {user: MICROSOFT_AD_LDAP_USERNAME, password: MICROSOFT_AD_LDAP_PASSWORD}
 portal_solarwinds_username: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"   # 1.85.0: the "SolarWinds (read-only)" credential's user
 portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"   # the credential's password (secret)
-# 1.129.0: the wall's collector - the site's existing accounts, copied to the portal server as podman secrets (site-portal-vcenter,
+# 1.130.0: the wall's collector - the site's existing accounts, copied to the portal server as podman secrets (site-portal-vcenter,
 # site-portal-ontap) the same way as the LDAP bind account: never in a file, a unit, the page, the API or the logs
 portal_wall_vcenter_host: "{{ lookup('ansible.builtin.env', 'VMWARE_HOST') | trim }}"          # the "VMware vCenter" credential's vCenter
 portal_wall_vcenter_username: "{{ lookup('ansible.builtin.env', 'VMWARE_USER') | trim }}"      # its account

@@ -54,3 +54,6 @@ portal_publish_organization: ""                   # an organization's name: only
 portal_publish_max: 50                            # the most one pattern may match
 # Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape.
 portal_unpublish_templates: []
+# 1.129.0: never on the portal (exact names, any case): never published by a pattern, and the label is taken off one that has
+# it. Windows - trust store report removes certificates when check_trust_remove is true.
+portal_setup_never_published: ["Windows - trust store report"]

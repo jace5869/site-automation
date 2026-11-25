@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.129.0: the portal's ops-center wall (/portal/wall): the rules and the model (roles/site_portal_stack/files/wall_model.py:
+"""1.130.0: the portal's ops-center wall (/portal/wall): the rules and the model (roles/site_portal_stack/files/wall_model.py:
 sustained-high windows, LATE / STALE, never green when stale, the thresholds, the tracker), the answer (/api/wall: its shape,
 the ETag), the page frame and its CSP (no inline script or style), the Feedback button and list (who may use and read them),
 the role's settings, and the page itself in headless Chrome (each style drawn, a detail card opened, no sideways scroll).
@@ -187,7 +187,7 @@ class Model(unittest.TestCase):
 
 
 class Review(unittest.TestCase):
-    """1.129.0 pre-release review: the model's part"""
+    """1.130.0 pre-release review: the model's part"""
 
     def live_and_db(self):
         import netapp_live as nl
@@ -218,7 +218,7 @@ class Review(unittest.TestCase):
         self.assertTrue(all("age" not in f for f in m["feeds"].values()))   # no per-second age in the answer (the ETag)
 
 class CodexModel(unittest.TestCase):
-    """Codex 1.129.0 pre-release review: the model's part"""
+    """Codex 1.130.0 pre-release review: the model's part"""
 
     def test_a_host_state_not_read_is_never_up(self):
         v = demo.view(NOW)
@@ -662,7 +662,7 @@ class Role(unittest.TestCase):
 
 
 class DeployCopiesEverything(unittest.TestCase):
-    """Codex 1.129.0: the deploy copied site_portal.py but not wall_model.py - the portal could not start. Every module the service
+    """Codex 1.130.0: the deploy copied site_portal.py but not wall_model.py - the portal could not start. Every module the service
     imports (and theirs, all the way down) and every static file its pages name must be in the role's copy loop."""
 
     def copied(self):
