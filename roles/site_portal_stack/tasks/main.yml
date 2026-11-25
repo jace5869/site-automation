@@ -1058,6 +1058,7 @@
         vm_heartbeat: "{{ portal_wall_vm_heartbeat | bool }}"
         site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"
         site_places: "{{ portal_wall_site_places | default({}, true) }}"
+        netmap_sites: "{{ netmap_sites | default({}, true) }}"     # 1.131.0: the Map's places when portal_wall_site_places has none
       # the NetApp page (its runs from the report database; the tab only once there is one)
       PORTAL_NETAPP: "{{ '1' if portal_netapp | bool else '0' }}"
       PORTAL_NETAPP_OLD_MINUTES: "{{ portal_netapp_old_minutes | string }}"
@@ -1456,8 +1457,18 @@
           ~ (' --user' if portal_scope == 'user' else '') ~ ' -u site-portal-app and in the data volume (portal-log.jsonl).']
          + (['The logo: ' ~ ('on (' ~ _portal_logo_dest ~ ')' if _logo == 'on' else (_logo | default('not shown', true)))] if _portal_logo_dest | length > 0 else [])
          + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
-              | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.']) }}
+              | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.'])
+         + [_wall_line] }}
     _acts: "{{ _portal_aap.actions | default({}) }}"
+    # 1.131.0: the wall's on/off and why, and how many network-map places the Map uses (no secret: only whether one is set)
+    _wall_line: >-
+      {{ {'wall': portal_wall | bool, 'vc_on': _portal_wall_vc | bool, 'vc_mode': portal_wall_vcenter | string,
+          'vc_host': portal_wall_vcenter_host | default(''), 'vcenters': portal_wall_vcenters | default([], true),
+          'vc_user': portal_wall_vcenter_username | default(''), 'vc_pass': portal_wall_vcenter_password | default('') | length > 0,
+          'ontap_on': _portal_wall_ontap | bool, 'ontap_mode': portal_wall_ontap | string,
+          'clusters': portal_wall_ontap_clusters | default([], true), 'ontap_user': portal_wall_ontap_username | default(''),
+          'ontap_pass': portal_wall_ontap_password | default('') | length > 0, 'netmap_sites': netmap_sites | default({}, true)}
+         | site_portal_wall_summary }}
     _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-
       {{ ['The portal: ' ~ portal_public_url] if portal_own_nginx | bool else

@@ -88,6 +88,39 @@ def model(view=None, **kw):
     return M.build(view if view is not None else demo.view(NOW), kw.pop("nm", None), kw.pop("asof", None), kw.pop("opts", demo.OPTS), M.Tracker(), NOW, **kw)
 
 
+class NetmapPlaces131(unittest.TestCase):
+    """1.131.0: the Map takes the network map's netmap_sites when portal_wall_site_places has no entry for a site"""
+
+    def test_mapping(self):
+        o = M.opts_of({"netmap_sites": {"Site A": {"lat": 39.4, "lon": -93.2}, "SITB*": {"lat": 34.9, "lon": -112.8},
+                                        "bad": {"lat": "x"}, "far": {"lat": 120, "lon": 0}},
+                       "site_places": {"sitb02": "DE"}})
+        self.assertEqual(M.place_of("SITE A", o), [-93.2, 39.4])           # by name, any case; {lat, lon} -> [lon, lat]
+        self.assertEqual(M.place_of("SITB01", o), [-112.8, 34.9])          # by pattern, any case
+        self.assertEqual(M.place_of("SITB02", o), "DE")                    # portal_wall_site_places wins
+        self.assertIsNone(M.place_of("BAD", o))
+        self.assertIsNone(M.place_of("FAR", o))
+        self.assertIsNone(M.place_of("SITC01", o))
+        self.assertEqual(M.netmap_places(o), 2)
+        self.assertEqual(M.place_of("SITA01", M.opts_of({})), None)
+        self.assertEqual(M.opts_of({"netmap_sites": "not a mapping"})["netmap_sites"], {})
+
+    def test_summary_text(self):
+        import site_portal_filters as F
+        base = {"wall": True, "vc_on": False, "vc_mode": "auto", "vc_host": "", "vcenters": [], "vc_user": "", "vc_pass": False,
+                "ontap_on": False, "ontap_mode": "auto", "clusters": [], "ontap_user": "", "ontap_pass": False,
+                "netmap_sites": {"Site A": {"lat": 39.4, "lon": -93.2}, "SITB*": {"lat": 34.9, "lon": -112.8}}}
+        self.assertEqual(F.site_portal_wall_summary(base),
+                         "Wall: VMware off (no vCenter credential attached (VMWARE_HOST empty)), Storage off (ontap_clusters empty), "
+                         "Map places from netmap_sites: 2")
+        self.assertEqual(F.site_portal_wall_summary(dict(base, clusters=["cl01"])).split(", Map")[0].split(", ")[-1],
+                         "Storage off (no NetApp credential (ONTAP_USERNAME empty))")
+        self.assertEqual(F.site_portal_wall_summary(dict(base, vc_on=True, ontap_on=True, netmap_sites={})),
+                         "Wall: VMware on, Storage on, Map places from netmap_sites: 0")
+        self.assertIn("VMware off (portal_wall_vcenter: false)", F.site_portal_wall_summary(dict(base, vc_mode="False")))
+        self.assertEqual(F.site_portal_wall_summary(dict(base, wall=False)), "Wall: off (portal_wall: false)")
+
+
 class Model(unittest.TestCase):
     def ids(self, m, kind):
         return [c["id"] for c in m["conds"] if c["kind"] == kind and c["end"] is None]

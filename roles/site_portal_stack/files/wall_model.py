@@ -43,7 +43,7 @@ NOT_ON_WALL = {
 
 DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97.0, "high_pct": 90.0, "high_minutes": 15,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
-            "late": LATE_S, "stale": STALE_S}
+            "netmap_sites": {}, "late": LATE_S, "stale": STALE_S}
 
 
 def opts_of(o):
@@ -121,6 +121,40 @@ def site_rule(pattern):
     except re.error:
         return None
     return rx if rx.groups >= 1 else None
+
+
+def _lonlat(v):
+    """a netmap_sites value {lat, lon} -> [lon, lat] (the wall's order); anything else: None"""
+    try:
+        lat, lon = float(v.get("lat")), float(v.get("lon"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return [lon, lat] if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def place_of(site, o):
+    """1.131.0: where the Map puts a site - portal_wall_site_places first (its own key, any case), else the network map's
+    netmap_sites ({lat, lon}; a name in any case first, then a pattern with * and ?, as the network map matches), else None"""
+    s = str(site or "")
+    own = o.get("site_places") or {}
+    if s in own:
+        return own[s]
+    for k, v in own.items():
+        if str(k).casefold() == s.casefold():
+            return v
+    nm = o.get("netmap_sites") or {}
+    for k, v in nm.items():
+        if str(k).casefold() == s.casefold():
+            return _lonlat(v)
+    for k, v in nm.items():
+        if any(c in str(k) for c in "*?[") and fnmatch.fnmatchcase(s.casefold(), str(k).casefold()):
+            return _lonlat(v)
+    return None
+
+
+def netmap_places(o):
+    """how many netmap_sites entries the wall can use (valid {lat, lon}) - the deploy summary's count"""
+    return sum(1 for v in (o.get("netmap_sites") or {}).values() if _lonlat(v) is not None)
 
 
 def site_of(rx, *names):
@@ -555,4 +589,4 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
             "thresholds": {"ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
-            "sites": [{"id": s, "place": o["site_places"].get(s)} for s in sites]}
+            "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}

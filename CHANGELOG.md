@@ -17,6 +17,10 @@ cannot remove them).
 - **Active Directory page: the domain report's replication matrix and map.** Source DCs in rows as in the report, the same
   bands; a cell opens its partitions, error and a copyable `repadmin` command; **Links, worst first** for a list; the
   replication map placed as on the network map. From the report database - no new rights. Each block shows its age.
+- **Wall Map uses the network map's places.** The wall's Map puts sites where `netmap_sites` puts them (name or pattern,
+  any case); `portal_wall_site_places` is only needed for a site to go elsewhere (it wins). The site rule defaults to
+  `netmap_site_pattern` when set. The deploy summary ends with `Wall: VMware on|off (why), Storage on|off (why), Map places
+  from netmap_sites: N` - the why names what is missing (for example `VMWARE_HOST empty`, `ontap_clusters empty`).
 - **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
 
 ## 1.130.0 — 2026-11-25

@@ -1239,7 +1239,7 @@
     var placed = sites().filter(placeOf).length;
     box.appendChild(svg);
     if (!placed) box.appendChild(h("div", "mapnote", [h("b", "", ["Sites are not placed on the map yet"]), sites().length ? " - " + sites().length + " sites found in the names (" + sites().slice(0, 8).join(", ") + (sites().length > 8 ? ", …" : "") + "). " : " - no site code found in the cluster or host names. ",
-      "Set portal_wall_site_places (a country code or [longitude, latitude] per site) to put them here."]));
+      "The Map uses the network map's netmap_sites ({lat, lon} by site name or pattern, in all.yml); set it there, or portal_wall_site_places (a country code or [longitude, latitude] per site) to put them here."]));
     add(cardEl, [h("div", "ch", [h("h2", "", ["Where"]), h("span", "sub", [S.site ? "focused on " + S.site + " · click again to clear" : "click a dot: the condition that lights it"])]), box,
       h("div", "maplg", [h("span", "", ["✕ down"]), h("span", "", ["! warning"]), h("span", "", ["✓ ok"]), h("span", "", ["? hollow = not current (older than 10 min, never green)"]), h("span", "", ["dots: VMware and Storage conditions · no WAN lines (Network not on the wall yet)"])])]);
     later(function () { drawMap(svg); });

@@ -1192,8 +1192,11 @@ in force.
 | `portal_wall_seconds` | 60 | how often vCenter and ONTAP are read | VMware and Storage |
 | `portal_wall_auth_retry_minutes` | 15 | after a refused login, the next try no sooner than this | VMware and Storage |
 
-Map style: `portal_wall_site_places` puts the sites on the map (`{SITA01: DE}` or `{SITA01: [10.4, 51.2]}`); the site of
-a cluster, host or datastore is `portal_wall_site_pattern`'s first group (default: a 4-letter, 2-digit prefix).
+Map style: the sites go where the network map's `netmap_sites` puts them (`{lat, lon}` by site name or a `*`/`?` pattern,
+any case - usually already in all.yml); `portal_wall_site_places` places a site itself and wins (`{SITA01: DE}` or
+`{SITA01: [10.4, 51.2]}`, longitude first). The site of a cluster, host or datastore is `portal_wall_site_pattern`'s first
+group (default: `netmap_site_pattern` when set, else a 4-letter, 2-digit prefix). The deploy's summary ends with one line
+on the wall: `Wall: VMware on|off (why), Storage on|off (why), Map places from netmap_sites: N`.
 
 ### Wall feedback: how to open it and who sees it
 

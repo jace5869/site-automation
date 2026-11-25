@@ -2278,8 +2278,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_high_minutes` | `15` | ... for this many minutes or longer: warning (shorter spikes stay off the wall) |
 | `portal_wall_maintenance_expected` | `[]` | hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in maintenance: warning |
 | `portal_wall_vm_heartbeat` | `true` | a powered-on VM whose VMware Tools heartbeat is red: critical (false = off) |
-| `portal_wall_site_pattern` | (empty) | the site of a cluster / host / datastore: the regex's first group on its name; "" = a 4-letter, 2-digit prefix (SITA01) |
-| `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); none = the sites as a list |
+| `portal_wall_site_pattern` | `"{{ netmap_site_pattern \| default('', true) }}"` | the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01) |
+| `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approver_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
