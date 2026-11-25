@@ -132,6 +132,8 @@ def record(e, review=False, review_storage_events=False):
             "entity_type": _entity_type(getattr(e, "entity", None)),
             "from": str(getattr(e, "from", "") or ""), "to": str(getattr(e, "to", "") or "")}
 
+    if row["type"] == "AlarmStatusChangedEvent":
+        row["entity_moid"] = _event_moid(e, "entity", "entity")
     if review:
         row.update({"host_moid": _event_moid(e, "host", "host"), "vm_moid": _event_moid(e, "vm", "vm"),
             "datastore": _name(getattr(e, "ds", None)), "datastore_moid": _event_moid(e, "ds", "datastore"),

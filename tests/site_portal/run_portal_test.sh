@@ -181,6 +181,9 @@ else fail "the deploy says what to add" "$(grep -A30 'Verify | summary' "$work/o
 if grep -qE "Wall: (VMware (on|off)[^,]*, Storage (on|off)[^,]*, Map places from netmap_sites: [0-9]+|off \(portal_wall: false\))" "$work/out.txt"; then
     pass "the deploy summary says the wall's state"
 else fail "the deploy summary says the wall's state" "$(grep -A40 'Verify | summary' "$work/out.txt" | head -60)"; fi
+if grep -q "Wall: VMware off (no vCenter credential attached (VMWARE_HOST empty))" "$work/out.txt"; then
+    pass "the summary says why VMware is off (no vCenter credential attached)"
+else fail "the summary says why VMware is off" "$(grep -o 'Wall: [^"]*' "$work/out.txt" | head -3)"; fi
 if grep -q "AAP: answered (the account svc_portal)" "$work/out.txt" && grep -q "stig_recheck - ok" "$work/out.txt" \
     && grep -q 'WARNING: AAP.s ALLOW_JINJA_IN_EXTRA_VARS is \\\?"always\\\?"' "$work/out.txt"; then
     pass "the deploy asks AAP from the portal: the account, each action ok, ALLOW_JINJA_IN_EXTRA_VARS always warned"
@@ -520,6 +523,38 @@ if echo "$r" | grep -q 'class=\\"banner\\">CUI</div>' && echo "$css" | grep -q "
 else fail "the banner and the times" "$r
 $css
 $t"; fi
+
+# ---- 1.131.1: the wall's login path - a "VMware vCenter" credential (a host that never resolves): the deploy writes the wall's
+# token with a one-off container and creates the login secret; the RUNNING portal must still serve its files and write its
+# log afterwards (1.130.2: a :Z on that container relabelled /app and /data - an unstyled portal, PermissionError)
+deploy_vc() {
+    (cd "$repo" && CONTROLLER_HOST=http://portal-test-aap:8000 CONTROLLER_OAUTH_TOKEN=test-token-1670 ANSIBLE_NOCOLOR=1 \
+        REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=9 REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=Test-Only-dbpw-1012 \
+        MICROSOFT_AD_LDAP_USERNAME=svc_aap_adreader@corp.example.mil MICROSOFT_AD_LDAP_PASSWORD=Test-Only-ldappw-1120 \
+        VMWARE_HOST=vc-none.invalid VMWARE_USER=svc_wall@corp.example.mil VMWARE_PASSWORD=Test-Only-vcpw-1311 \
+        "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" "$@") > "$work/out-vc.txt" 2>&1
+}
+if deploy_vc && podman secret inspect site-portal-vcenter >/dev/null 2>&1 && grep -q "Wall: VMware on" "$work/out-vc.txt"; then
+    pass "a vCenter credential: the deploy runs the wall's token step, makes its login secret, says VMware on"
+else fail "the deploy with a vCenter credential" "$(grep -B2 -A8 'fatal\|failed:' "$work/out-vc.txt" | head -40; grep -o 'Wall: [^"]*' "$work/out-vc.txt" | head -2)"; fi
+for _ in $(seq 1 30); do [ "$(c "$k/jdoe" get /portal/ | jq_ 'd["code"]')" = 200 ] && break; sleep 1; done
+css="$(c "$k/jdoe" get /portal/static/portal.css)"
+before="$(podman exec site-portal-app wc -l /data/portal-log.jsonl 2>/dev/null | cut -d' ' -f1)"
+c "$k/jdoe" launch stig_recheck '{"target": "web03.example.mil"}' >/dev/null 2>&1      # a launch: a log line
+for _ in $(seq 1 20); do
+    after="$(podman exec site-portal-app wc -l /data/portal-log.jsonl 2>/dev/null | cut -d' ' -f1)"
+    [ "${after:-0}" -gt "${before:-0}" ] && break; sleep 1
+done
+for _ in $(seq 1 60); do                                          # the collector's first poll: the name never resolves - said, once
+    podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null && break; sleep 2
+done
+if podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null; then
+    pass "the wall's collector reads with the new login and says why it could not (a name that does not resolve)"
+else fail "the wall's collector said why it could not read" "$(podman exec site-portal-app grep '"event": "wall"' /data/portal-log.jsonl 2>&1 | tail -5)"; fi
+denied="$(journalctl --user -u site-portal-app --since "-5min" --no-pager 2>/dev/null | grep -c 'PermissionError')"
+if echo "$css" | jq_ 'd["code"]' | grep -q 200 && echo "$css" | grep -q -- '--' && [ "${after:-0}" -gt "${before:-0}" ] && [ "$denied" = 0 ]; then
+    pass "after the wall's token step the running portal still serves portal.css and writes its log (the 1.130.2 regression)"
+else fail "the portal after the wall's token step" "css: $(echo "$css" | head -c 200); log lines $before -> $after; PermissionError lines: $denied"; fi
 
 # ---- the screenshots (a test-only server: one fixed person, the approver) ------------------------------------------------
 if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head -1)" ]; then

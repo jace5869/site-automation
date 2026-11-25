@@ -415,10 +415,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## ---- 1.130.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall")
 ## ------------------------------------------- /portal/wall: one page for a wall screen - Lights,
 ## Cockpit (the default) or Map, saved per viewer - with only the wall conditions below lit (routine
-## alarms never). VMware is read live by the portal itself (one kept vCenter session, one property
-## read a cycle, read-only calls only); Storage live from ONTAP only (GET only,
-## portal_wall_ontap_clusters, the "NetApp ONTAP" credential) - without it Storage is not on the
-## wall; the report database's NetApp refresh only fills the storage path card, as information.
+## alarms never). VMware is read live by the portal itself (one kept vCenter session, inventory
+## properties and triggered alarm names, read-only calls only); Storage live from ONTAP only (GET
+## only, portal_wall_ontap_clusters, the "NetApp ONTAP" credential) - without it Storage is not on
+## the wall; the report database's NetApp refresh only fills the storage path card, as information.
 ## Freshness: LATE after 3 min, STALE after 10 min.
 # portal_wall: true
 
@@ -451,9 +451,8 @@ portal_public_url: https://stigman.example.mil/portal/
 ## vCenter's certificate checked (the CAs: portal_trust_host_cas)
 # portal_wall_vcenter_validate_certs: "{{ vmware_validate_certs | default(true) }}"
 
-## ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is
-## set (GET only). Off: the wall's storage comes from the NetApp page's run in the report database
-## (as old as that run). auto | true | false
+## ONTAP live: auto enables Storage when the deploy has the "NetApp ONTAP" credential and
+## ontap_clusters is set (GET only). auto | true | false
 # portal_wall_ontap: auto
 
 ## the clusters read live (management names or addresses)
@@ -462,8 +461,26 @@ portal_public_url: https://stigman.example.mil/portal/
 ## ONTAP's certificate checked (the CAs: portal_trust_host_cas)
 # portal_wall_ontap_validate_certs: "{{ ontap_validate_certs | default(true) }}"
 
-## The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall
-## watches" shows the ones in force a datastore this % used or more: warning (VMware / Storage team)
+## case-insensitive name globs by kind (vms, hosts, datastores, volumes, aggregates), before alerts
+## and rankings
+# portal_wall_exclude: {}
+
+## 1.131.1: the Host hardware light - these triggered vCenter alarms by whole name (any case;
+## vCenter's default hardware alarm definitions; add a site's own hardware alarm by its exact name).
+## Never overallStatus (it also covers config issues).
+# portal_wall_hw_alarms: ["Host hardware fan status", "Host hardware power status", "Host hardware temperature status", "Host hardware voltage", "Host hardware system board status", "Host memory status", "Host processor status", "Host storage status", "Host battery status", "Host IPMI System Event Log status", "Host Baseboard Management Controller status", "Status of other host hardware objects"]
+
+## datastore names left out of the capacity watch (whole-name globs, any case; 1.131.1: never a
+## fragment like *iso*, which hid prod-isolated)
+# portal_wall_ds_ignore: ['iso', 'isos', 'iso-*', 'iso_*', '*-iso', '*_iso', '*-isos', '*content-library*']
+
+## healthy relationship with measured lag above this many hours is amber
+# portal_wall_snapmirror_lag_warn_hours: 24
+
+## healthy relationship with measured lag above this many hours is red
+# portal_wall_snapmirror_lag_crit_hours: 72
+
+## a datastore this % used or more: warning (VMware / Storage team)
 # portal_wall_datastore_warn: 85
 
 ## ... critical
@@ -485,7 +502,7 @@ portal_public_url: https://stigman.example.mil/portal/
 ## maintenance: warning
 # portal_wall_maintenance_expected: []
 
-## a powered-on VM whose VMware Tools heartbeat is red: critical (false = off)
+## previously running Tools stop or heartbeat turns red on a powered-on workload VM
 # portal_wall_vm_heartbeat: true
 
 ## the site of a cluster / host / datastore: the regex's first group on its name; default the

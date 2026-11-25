@@ -6610,8 +6610,9 @@ class WallLive(object):
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
         for k in (bad if isinstance(bad, list) else []):
-            _safe_add(log, {"event": "wall", "source": k, "state": "login not readable",
-                            "why": "the %s login secret is not JSON - run Site portal - deploy again" % k})
+            why = "the %s login secret is not JSON - run Site portal - deploy again" % k
+            self.no_source["vmware" if k == "vcenter" else "storage"] = why
+            _safe_add(log, {"event": "wall", "source": k, "state": "login not readable", "why": why})
         try:
             bad_places = wall_model.netmap_ignored(cfg.wall_opts)
         except Exception:  # pylint: disable=broad-except
@@ -6630,7 +6631,10 @@ class WallLive(object):
                                                          state_file=os.path.join(cfg.data, "wall-backoff.json"))
                     self.collector.start()
                 except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
-                    _safe_add(log, {"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
+                    why = "collector not started: " + clean(str(e), 200)
+                    for source in src:
+                        self.no_source["vmware" if source.kind == "vcenter" else "storage"] = why
+                    _safe_add(log, {"event": "wall", "collector": "not started", "why": why})
                     self.collector = None
                 # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
                 threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()

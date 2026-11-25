@@ -304,6 +304,17 @@
       - 0 < portal_wall_aggr_warn | float < portal_wall_aggr_crit | float <= 100
       - 0 < portal_wall_high_pct | float <= 100
       - portal_wall_high_minutes | int >= 1 and portal_wall_high_minutes | int <= 240
+      - portal_wall_exclude is mapping
+      - portal_wall_exclude.keys() | difference(['vms', 'hosts', 'datastores', 'volumes', 'aggregates']) | length == 0
+      - portal_wall_exclude.values() | reject('sequence') | list | length == 0
+      - portal_wall_exclude.values() | select('string') | list | length == 0
+      - portal_wall_exclude.values() | select('mapping') | list | length == 0
+      - portal_wall_exclude.values() | list | flatten(levels=1) | reject('string') | list | length == 0
+      - portal_wall_ds_ignore is sequence and portal_wall_ds_ignore is not string and portal_wall_ds_ignore is not mapping
+      - portal_wall_ds_ignore | reject('string') | list | length == 0
+      - portal_wall_hw_alarms is sequence and portal_wall_hw_alarms is not string and portal_wall_hw_alarms is not mapping
+      - portal_wall_hw_alarms | reject('string') | list | length == 0
+      - 0 <= portal_wall_snapmirror_lag_warn_hours | float(-1) < portal_wall_snapmirror_lag_crit_hours | float(-1)
       - portal_wall_maintenance_expected is sequence and portal_wall_maintenance_expected is not string
       - portal_wall_site_places is mapping
       - portal_wall_feedback_groups is sequence and portal_wall_feedback_groups is not string
@@ -1054,6 +1065,11 @@
         aggr_crit: "{{ portal_wall_aggr_crit | float }}"
         high_pct: "{{ portal_wall_high_pct | float }}"
         high_minutes: "{{ portal_wall_high_minutes | int }}"
+        exclude: "{{ portal_wall_exclude }}"
+        ds_ignore: "{{ portal_wall_ds_ignore }}"
+        hw_alarms: "{{ portal_wall_hw_alarms }}"
+        snapmirror_lag_warn_hours: "{{ portal_wall_snapmirror_lag_warn_hours | float }}"
+        snapmirror_lag_crit_hours: "{{ portal_wall_snapmirror_lag_crit_hours | float }}"
         maintenance_expected: "{{ portal_wall_maintenance_expected | default([], true) }}"
         vm_heartbeat: "{{ portal_wall_vm_heartbeat | bool }}"
         site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"

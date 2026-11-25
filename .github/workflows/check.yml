@@ -62,6 +62,7 @@ jobs:
           python tests/test_filters.py
           python tests/test_vmware_modules.py
           python tests/test_vm_watch.py
+          python tests/test_vm_watch_usage.py
           python tests/test_vm_ask.py
           python tests/test_vmware_ask.py
           python tests/test_site_portal.py

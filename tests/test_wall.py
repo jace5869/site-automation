@@ -1056,7 +1056,7 @@ class Browser(unittest.TestCase):
         self.addCleanup(stop)
         db = None
         out = self.run_page(url, "style=cockpit&freeze=1")
-        self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken')              # the run has the health parts
+        self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror health and lag')              # the run has the health parts
         def unread():                                          # the live reads: SnapMirror and nodes not read (their checks did not run)
             v = demo.view(vc2_state="ok")
             for k in [k for k in v["sources"] if k.startswith("ontap:")]:
@@ -1066,7 +1066,7 @@ class Browser(unittest.TestCase):
         self.addCleanup(stop2)
         for st, area in (("cockpit", "overview"), ("cockpit", "storage"), ("lights", "storage")):
             out = self.run_page(url2, "style=%s&area=%s&freeze=1" % (st, area))
-            self.assertNotIn("None broken", out, (st, area))
+            self.assertNotIn("None over threshold or unhealthy", out, (st, area))
             self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes)"', (st, area))
         out = self.run_page(url2, "style=cockpit&freeze=1&open=ctr:sm")
         self.assertEqual(self.greens(out.split('id="dsCard"', 1)[1]), [])
@@ -1176,7 +1176,7 @@ class Browser(unittest.TestCase):
                         d["free"] = d["capacity"] // 2
             snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
             cut = rng.choice(["stale", "late", "never", "error_recent", "auth_recent", "host_state", "host_cpu", "host_mem", "host_maint",
-                              "ds_cap", "ds_free", "vm_cpu", "vm_heartbeat"])
+                              "ds_cap", "ds_free", "ds_shared", "host_hardware", "vm_template", "vm_tools_seen", "vm_cpu", "vm_heartbeat"])
             src = v["sources"]["vcenter:" + rng.choice([demo.VC1, demo.VC2])]
             if cut == "stale":
                 src["at"] = now - 900
@@ -1188,17 +1188,17 @@ class Browser(unittest.TestCase):
                 src.update(at=now - 20, state="error" if cut == "error_recent" else "auth", why="timed out", fail_since=now - 5)
             elif cut.startswith("host"):
                 h = rng.choice([x for x in snap["hosts"] if x["state"] == "connected"])
-                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct", "host_maint": "maint"}[cut]
+                key = {"host_state": "state", "host_cpu": "cpu_pct", "host_mem": "mem_pct", "host_maint": "maint", "host_hardware": "hardware"}[cut]
                 if rng.random() < 0.5:
                     h.pop(key)
                 else:
                     h[key] = None
             elif cut.startswith("vm"):
                 vm = rng.choice([x for x in snap["vms"] if x.get("power") == "poweredOn"])
-                vm[{"vm_cpu": "cpu_pct", "vm_heartbeat": "heartbeat"}[cut]] = None
+                vm[{"vm_cpu": "cpu_pct", "vm_heartbeat": "heartbeat", "vm_template": "template", "vm_tools_seen": "tools_seen"}[cut]] = None
             else:
-                d = rng.choice(snap["datastores"])
-                d[{"ds_cap": "capacity", "ds_free": "free"}[cut]] = None
+                d = rng.choice([x for x in snap["datastores"] if x["shared"]])
+                d[{"ds_cap": "capacity", "ds_free": "free", "ds_shared": "shared"}[cut]] = None
             # Storage: live ONTAP only (Codex verify 4) - the report database is information on the path card, never a cut that matters
             nm, at = json.loads(json.dumps(base_nm)), now - 60
             ons = [x for k, x in v["sources"].items() if k.startswith("ontap:")]
@@ -1209,7 +1209,7 @@ class Browser(unittest.TestCase):
                     for r in x["snap"]["snapmirror"]:
                         r.update(state="snapmirrored", healthy=True)
             scut = rng.choice(["none", "stale", "late", "never", "error_recent", "auth_recent", "aggr_null", "aggr_size0", "node_state",
-                               "sm_health", "sm_state", "vol_state", "lun_state", "failed_sm", "failed_nodes", "failed_aggrs"])
+                               "sm_health", "sm_state", "sm_lag", "vol_state", "lun_state", "failed_sm", "failed_nodes", "failed_aggrs"])
             on = rng.choice(ons)
             osnap = on["snap"]
             if scut == "none":
@@ -1229,6 +1229,8 @@ class Browser(unittest.TestCase):
                 rng.choice(osnap["aggrs"])["size"] = 0
             elif scut == "node_state":
                 rng.choice(osnap["nodes"])["state"] = rng.choice([None, "booting", "unknown", ""])
+            elif scut == "sm_lag":
+                osnap["snapmirror"][0].update(healthy=True, state="snapmirrored", lag_s=rng.choice([None, -1, "unknown", False]))
             elif scut == "sm_health":
                 osnap["snapmirror"][0].update(state="snapmirrored", healthy=rng.choice([None, "true", {}]))
             elif scut == "sm_state":
@@ -1281,7 +1283,7 @@ class Browser(unittest.TestCase):
         a.update(zone="Europe/Berlin", poll=30, full={}, auth_retry=900, me={"feedback": False, "reader": False, "areas": [], "max": 1000})
         return json.loads(json.dumps(a, default=str))
 
-    def fuzz_page(self, answers):
+    def scripted_page(self, answers, script, query="", budget=120000):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         tmp = tempfile.mkdtemp()
@@ -1297,10 +1299,92 @@ class Browser(unittest.TestCase):
         with open(os.path.join(d, "stub.js"), "w") as fh:
             fh.write("(function(){window.fetch=function(){return Promise.resolve({status:200,ok:true,headers:{get:function(){return ''}},"
                      "json:function(){return Promise.resolve(JSON.parse(JSON.stringify(window.ANS[0].a)))}})}})();")
-        refs = ["ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
-                "grp:ds", "grp:dsvm", "grp:load", "grp:aggr", "feed:vc:" + demo.VC1, "feed:ontap", "feed:netapp-run"]
         with open(os.path.join(d, "t.js"), "w") as fh:
-            fh.write("""setTimeout(function(){var T=window.__wallTest,bad=[],add=function(p,r,map){
+            fh.write(script)
+        html = html.replace("<head>", '<head><script src="ans.js"></script><script src="stub.js"></script>', 1)
+        html = html.replace("</body>", '<pre id="res" hidden></pre><script src="t.js"></script></body>', 1)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write(html)
+        t0 = time.time()
+        args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--window-size=1920,1080",
+                "--virtual-time-budget=%d" % budget, "--dump-dom", "file://" + os.path.join(d, "p.html") + "?" + query]
+        out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=400).stdout
+        m = re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S)
+        self.assertTrue(m and m.group(1), "the wall test script did not finish")
+        self.assertLess(time.time() - t0, 120)
+        return json.loads(sp.html.unescape(m.group(1)))
+
+    def test_rotate_pauses_on_click_and_resumes_after_idle(self):
+        snapshots = self.scripted_page([{"a": self.control_answer()}], """
+window.addEventListener("load", async function () {
+    const button = document.querySelector("#rotBtn");
+    const status = () => button.querySelector("#rotCd").innerText;
+    const style = () => document.querySelector("[data-style][aria-pressed=true]").dataset.style;
+    const key = (target, key) => target.dispatchEvent(new KeyboardEvent("keydown", {key, bubbles: true}));
+    const mouse = (target, type) => target.dispatchEvent(new MouseEvent(type, {bubbles: true}));
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const seen = {};
+
+    mouse(document.body, "mousemove");
+    document.body.dispatchEvent(new PointerEvent("pointermove", {bubbles: true}));
+    key(document.body, "Shift");
+    seen.afterMovement = status();
+    key(document.body, "r");
+    seen.popoverOpened = [button.getAttribute("aria-expanded"), status()];
+    const every = document.querySelector("#rotEvery");
+    mouse(every, "mousedown");
+    key(every, "ArrowDown");
+    every.value = "60";
+    every.dispatchEvent(new Event("change", {bubbles: true}));
+    seen.settingChanged = status();
+    every.value = "30";
+    every.dispatchEvent(new Event("change", {bubbles: true}));
+    mouse(button, "mousedown");
+    button.click();
+    seen.popoverClosed = [button.getAttribute("aria-expanded"), status()];
+
+    document.body.click();
+    seen.afterClick = status();
+    await wait(19000);
+    mouse(document.body, "mousemove");
+    seen.beforeResume = status();
+    seen.styleDuringPause = style();
+    await wait(2100);
+    seen.afterResume = status();
+    seen.styleAfterResume = style();
+    await wait(30000);
+    seen.nextStyle = style();
+    document.querySelector("#res").textContent = JSON.stringify(seen);
+});""", query="rotate=styles&style=lights&every=30", budget=55000)
+        self.assertEqual(snapshots["afterMovement"], "next in 30 s")
+        self.assertEqual(snapshots["popoverOpened"], ["true", "next in 30 s"])
+        self.assertEqual(snapshots["settingChanged"], "next in 60 s")
+        self.assertEqual(snapshots["popoverClosed"], ["false", "next in 30 s"])
+        self.assertEqual(snapshots["afterClick"], "paused - resumes in 20 s")
+        self.assertRegex(snapshots["beforeResume"], r"^paused - resumes in [12] s$")
+        self.assertEqual(snapshots["styleDuringPause"], "lights")
+        self.assertRegex(snapshots["afterResume"], r"^next in (29|30) s$")
+        self.assertEqual(snapshots["styleAfterResume"], "lights")
+        self.assertEqual(snapshots["nextStyle"], "cockpit")
+
+    def test_kiosk_rotation_ignores_pointer_input(self):
+        snapshots = self.scripted_page([{"a": self.control_answer()}], """
+window.addEventListener("load", function () {
+    const status = () => document.querySelector("#rotCd").innerText;
+    for (const type of ["mousemove", "pointermove", "mousedown", "click", "wheel", "touchstart"]) {
+        document.body.dispatchEvent(new Event(type, {bubbles: true}));
+    }
+    const seen = [status()];
+    document.body.dispatchEvent(new KeyboardEvent("keydown", {key: "a", bubbles: true}));
+    seen.push(status());
+    document.querySelector("#res").textContent = JSON.stringify(seen);
+});""", query="kiosk=1&rotate=styles&every=30", budget=2000)
+        self.assertEqual(snapshots, ["next in 30 s", "paused - resumes in 20 s"])
+
+    def fuzz_page(self, answers):
+        refs = ["ctr:hardware", "kind:vmhung", "ctr:hosts", "ctr:vc", "ctr:dsi", "ctr:hung", "ctr:hot", "ctr:maint", "ctr:sm", "ctr:nodes", "ctr:ds", "ctr:aggr", "grp:sm", "grp:hostvc",
+                "grp:ds", "grp:dsvm", "grp:load", "grp:aggr", "feed:vc:" + demo.VC1, "feed:ontap", "feed:netapp-run"]
+        return self.scripted_page(answers, """setTimeout(function(){var T=window.__wallTest,bad=[],add=function(p,r,map){
    if(r.scanned<40)bad.push(p+': only '+r.scanned+' elements drawn');
    if(map&&(!r.sdots||!r.ticks))bad.push(p+': the map or the timeline was not drawn');
    r.greens.forEach(function(g){bad.push(p+': '+g)})};
@@ -1310,7 +1394,7 @@ window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
    if(ctl)bad.push('control: green seen');return;}
  (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
  (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
- (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.c+'|'+g.n)});
+ (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.ref)});
  (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
  T.set(JSON.parse(JSON.stringify(a)));
  ['lights','cockpit','map'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
@@ -1319,18 +1403,6 @@ window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
  R.forEach(function(r){T.open(r);add(i+' '+x.cut+' card '+r,T.greens(),false)});
 });
 document.getElementById('res').textContent=JSON.stringify(bad.slice(0,40));},1200);""" % json.dumps(refs))
-        html = html.replace("<head>", '<head><script src="ans.js"></script><script src="stub.js"></script>', 1)
-        html = html.replace("</body>", '<pre id="res" hidden></pre><script src="t.js"></script></body>', 1)
-        with open(os.path.join(d, "p.html"), "w") as fh:
-            fh.write(html)
-        t0 = time.time()
-        args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--window-size=1920,1080",
-                "--virtual-time-budget=120000", "--dump-dom", "file://" + os.path.join(d, "p.html")]
-        out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=400).stdout
-        m = re.search(r'<pre id="res" hidden="">(.*?)</pre>', out, re.S)
-        self.assertIsNotNone(m, "the fuzz page did not finish")
-        self.assertLess(time.time() - t0, 120)
-        return json.loads(sp.html.unescape(m.group(1)))
 
     def test_red_beats_grey(self):
         """one cluster's SnapMirror check failed, another's relationship is confirmed broken: the counter is red, not grey"""

@@ -81,7 +81,7 @@ def db_run(address=ARRAY):
 
 def relationship(**changes):
     return dict({"src": "SITEA:vol1", "dst": "SITEA:vol2", "healthy": False,
-                 "state": "snapmirrored"}, **changes)
+                 "state": "snapmirrored", "lag_s": 60}, **changes)
 
 
 def host(state):
@@ -294,7 +294,7 @@ class Observations(unittest.TestCase):
 
     def test_p2_7_gray_heartbeat_is_not_recovery(self):
         t = wall.Tracker()
-        vm = {"name": "SITEA-vm", "power": "poweredOn", "cpu_pct": 20, "mem_pct": 30}
+        vm = {"name": "SITEA-vm", "template": False, "tools_seen": True, "power": "poweredOn", "cpu_pct": 20, "mem_pct": 30}
         def read(color, now):
             return model(source("vcenter", VC, {"vms": [dict(vm, heartbeat=color)]}, now), tracker=t, now=now)
         first, = read("red", NOW)["conds"]
@@ -426,6 +426,58 @@ class WallPage(unittest.TestCase):
         run = subprocess.run(["node", "-"], input=script + "\n})();",
                              capture_output=True, text=True, timeout=10, check=True)
         return json.loads(run.stdout)
+
+    def test_now_groups_link_to_all_six_objects(self):
+        rows = [dict(name="app%d" % i, power="poweredOn", template=False, tools_seen=True,
+                     heartbeat="red", cpu_pct=10, mem_pct=20) for i in range(6)]
+        rows.append(dict(rows[0], name="other", tools_seen=False))
+        answer = model(source("vcenter", VC, {"vms": rows}))
+        result = self.render(answer, """
+            const strip = nowStrip("vmware");
+            const links = elements(strip).filter(e => e.getAttribute("data-d"));
+            const detail = DET.kind("vmhung");
+            return [strip.textContent, links.map(x => x.getAttribute("data-d")),
+                    kv(detail.rows).textContent, kv(DET.ctr("hung").rows).textContent];
+        """)
+        self.assertIn("6 VMs: no heartbeat · app0, app1, app2 +3", result[0])
+        self.assertEqual(result[1], ["kind:vmhung"])
+        self.assertIn("app5", result[2])
+        self.assertIn("not watched: 1", result[3])
+
+    def test_grey_tile_and_both_gauge_styles_identify_the_source(self):
+        inventory = {"hosts": [host("connected")]}
+        sources = source("vcenter", VC, inventory)
+        sources.update(source("vcenter", "vc2.example.mil", inventory))
+        for state, why, at, expected in [
+                ("error", "certificate name mismatch", NOW, "certificate name mismatch"),
+                ("auth", "login refused", NOW, "login refused"), ("never", "", None, "not read yet"),
+                ("ok", "", NOW - 300, "late"), ("ok", "", NOW - 900, "stale")]:
+            with self.subTest(state=state, why=why, at=at):
+                sources["vcenter:" + VC].update(state=state, why=why, at=at)
+                result = self.render(model(sources), """
+                    const c = W.vmware.clusters.find(x => x.vc === "vc2.example.mil");
+                    return [lOverview()[lOverview().length - 2].textContent,
+                            clGauge(c, "cpu").textContent,
+                            lGauge("CPU", c.cpu, 90, 95, "", withFresh("ok", c.feed), "", c.feed).textContent];
+                """)
+                for text in result:
+                    self.assertIn("Why grey: vCenter " + VC + ": " + expected, text)
+
+    def test_hardware_light_and_exclusion_details(self):
+        hosts = [dict(host("connected"), name=n, hardware=status, alarms=["Fan sensor"])
+                 for n, status in (("host1", "red"), ("host2", "yellow"), ("skip", "red"))]
+        sources = source("vcenter", VC, {"hosts": hosts, "datastores": [{"name": "local", "shared": False, "accessible": True}]})
+        answer = wall.build({"sources": sources}, None, None, {"exclude": {"hosts": ["SKIP"]}}, None, NOW)
+        result = self.render(answer, """
+            return [CT.hardware().className, kv(DET.ctr("hardware").rows).textContent,
+                    kv(DET.ctr("ds").rows).textContent, DET.c(W.conds[0].id).rows[0][1].textContent];
+        """)
+        self.assertIn("crit", result[0])
+        for name in ("host1", "host2", "skip · excluded by portal_wall_exclude"):
+            self.assertIn(name, result[1])
+        self.assertIn("local · local - not watched", result[2])
+        self.assertIn("Fan sensor", result[1])
+        self.assertIn("Fan sensor", result[3])
 
     def test_p1_3_last_known_on_fresh_feed_renders_grey(self):
         answer = model(source("vcenter", VC, {"hosts": [host("disconnected")]}), tracker=wall.Tracker())

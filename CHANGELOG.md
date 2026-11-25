@@ -24,6 +24,35 @@ Run it with Check, then schedule it nightly at 02:00 with your Limit.
 - Tests: `tests/test_sw_inventory.py`; `tests/swinv/run_sw_inventory_test.sh` (UBI 8, 9, 10 over podman, both
   ansible-core versions).
 
+## 1.131.1 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**; optional `portal_wall_exclude`, `portal_wall_ds_ignore`, SnapMirror lag
+thresholds, and the outage watch's `vm_watch_usage_*` settings.
+
+The wall learns which VMs have running Tools, merges duplicate vCenters and filters infrastructure objects before capacity
+alerts and rankings. Host hardware and SnapMirror lag now light the wall. Grey tiles and gauges identify the source,
+and the Now strip groups repeated conditions into a single detail link.
+
+- **Rotate rotates:** only clicks, keys, scrolling or touch pause it (not moving the mouse); it resumes after 20 s; kiosk
+  ignores the mouse.
+- **The wall reads safely (review fixes).** A vCenter given by a short name and by its FQDN (the credential's host and
+  `portal_wall_vcenters`) is read once after both answer with the same instanceUuid and the same inventory - said in the
+  log and the deploy summary (`vCenter vc01 is vc01.corp.example.mil: read once`); two vCenters with different
+  instanceUuids, or a clone with another inventory, are never merged. A datastore whose sharing was not read still alerts
+  on its fill; `portal_wall_ds_ignore` matches whole names (the default no longer hides `prod-isolated`). Which VMs ran
+  Tools is kept in the data volume, so a VM that hangs while the portal restarts stays watched, and a known VM stays
+  watched when a later read leaves a property out. vCLS VMs are recognised by their managedBy only, never their name.
+  Host hardware lights only from vCenter's hardware alarms (`portal_wall_hw_alarms`, whole names), never `overallStatus`.
+  A failed alarm-name lookup never discards the inventory; a root-volume exclusion never reaches a LUN of an unnamed SVM;
+  a SnapMirror condition kept as last known stays on the SnapMirror panel. A status word's icon is text-sized in every drawer and style (it filled
+  the drawer's width outside Cockpit). Powered-on VMs without VMware Tools never grey VMware.
+- **VM outage watch: CPU and memory spikes.** Yellow CPU and memory usage alarms are hidden by default. Red alarms count after
+  15 continuous minutes in the window, with affected names grouped by alarm kind. Hidden spikes cannot trigger a report,
+  email or job failure. Usage alarms are matched by whole name (`CPU usage telemetry unavailable` is an ordinary alarm); a currently
+  red alarm counts from its trigger time, so a 5-minute schedule still sees 15 minutes; objects are matched by id only; a
+  failed alarm read or one incomplete alarm record never sends a recovery or loses the vCenter's other findings; a VM
+  joining or leaving a group sends an update.
+
 ## 1.131.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional. The guides (PDFs) moved

@@ -80,7 +80,7 @@ def objects():
         ("name", "xsd:string", n, ""), ("runtime.host", "ManagedObjectReference", host, ' type="HostSystem"'),
         ("runtime.powerState", "VirtualMachinePowerState", pw, ""), ("summary.quickStats.overallCpuUsage", "xsd:int", str(cpu), ""),
         ("summary.runtime.maxCpuUsage", "xsd:int", "4000", ""), ("summary.quickStats.guestMemoryUsage", "xsd:int", str(mem), ""),
-        ("summary.config.memorySizeMB", "xsd:int", "8192", ""), ("guestHeartbeatStatus", "ManagedEntityStatus", "green", "")])
+        ("config.template", "xsd:boolean", "false", ""), ("summary.config.memorySizeMB", "xsd:int", "8192", ""), ("guestHeartbeatStatus", "ManagedEntityStatus", "green", "")])
     return [h("host-1", "esx01.corp.example.mil", "connected", 18000, 50, ["vm-1", "vm-2"], ["ds-1", "ds-2"]),
             h("host-2", "esx02.corp.example.mil", "notResponding", 0, 0, ["vm-3"], ["ds-1"]),
             ("ClusterComputeResource", "domain-c1", [("name", "xsd:string", "SITA01-CL01", ""),
@@ -362,7 +362,7 @@ class OntapRest(unittest.TestCase):
 
     def test_iso_seconds(self):
         self.assertEqual(W.iso_seconds("P1DT2H"), 93600)
-        self.assertEqual(W.iso_seconds("PT30.5S"), 30)
+        self.assertEqual(W.iso_seconds("PT30.5S"), 30.5)
         self.assertIsNone(W.iso_seconds(""))
         self.assertIsNone(W.iso_seconds("soon"))
 
@@ -475,7 +475,7 @@ class CollectorTest(unittest.TestCase):
 
     def test_history_window(self):
         snap = {"hosts": [{"name": "esx01", "cpu_pct": 95.0, "mem_pct": None}],
-                "vms": [{"name": "app07", "power": "poweredOn", "cpu_pct": 97.0, "mem_pct": 40.0},
+                "vms": [{"name": "app07", "template": False, "power": "poweredOn", "cpu_pct": 97.0, "mem_pct": 40.0},
                         {"name": "db02", "power": "poweredOff", "cpu_pct": None, "mem_pct": None}]}
         f = Fake(result=snap)
         c, clock, _logs = self.make(f, keep=600)

@@ -2,10 +2,10 @@
 portal itself - not by AAP jobs - so the wall's "as of" is a minute old, not an hour. Standard library only.
 
   VcenterSource  one vCenter over its SOAP API (vim25): one login, the session kept (its cookie) and used again at each
-                 poll; a new login only when vCenter says the session is gone. Each poll is one PropertyCollector read
+                 poll; a new login only when vCenter says the session is gone. Each poll uses a PropertyCollector read
                  (RetrievePropertiesEx, then ContinueRetrievePropertiesEx for the next pages) of a container view made
                  once per session: hosts, clusters, datastores and VMs, their state and quick stats. No performance
-                 manager queries: "sustained for 15 min" comes from the collector's own history of those quick stats.
+                 manager queries (only triggered alarm names need a separate property lookup): "sustained for 15 min" comes from the collector's own history of those quick stats.
   OntapSource    one ONTAP cluster over its REST API: GETs with fields= naming only what the wall shows, page by page.
   Collector      polls every source in turn, in ONE thread, every `seconds` (never two polls at once); a login refused,
                  or one whose answer did not come, stops every source of that account for auth_retry seconds (900: an
@@ -21,6 +21,7 @@ import errno
 import collections
 import hashlib
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -48,11 +49,12 @@ PAGE = 1000                         # objects per RetrievePropertiesEx page
 
 HOST_PATHS = ("name", "parent", "runtime.connectionState", "runtime.powerState", "runtime.inMaintenanceMode",
               "summary.quickStats.overallCpuUsage", "summary.quickStats.overallMemoryUsage", "summary.hardware.cpuMhz",
-              "summary.hardware.numCpuCores", "summary.hardware.memorySize", "vm", "datastore")
+              "summary.hardware.numCpuCores", "summary.hardware.memorySize", "vm", "datastore", "overallStatus", "triggeredAlarmState")
 CLUSTER_PATHS = ("name", "host")
-DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible", "summary.type", "host", "vm")
+DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible", "summary.type", "summary.multipleHostAccess", "host", "vm")
 VM_PATHS = ("name", "runtime.host", "runtime.powerState", "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
-            "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus")
+            "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus",
+            "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type")
 SPECS = (("HostSystem", HOST_PATHS), ("ClusterComputeResource", CLUSTER_PATHS), ("Datastore", DS_PATHS), ("VirtualMachine", VM_PATHS))
 
 
@@ -112,8 +114,13 @@ def _connect(conn, what):
     """open the connection first, on its own: a failure here sent nothing (NotSent); after it, the request may have left"""
     try:
         conn.connect()
-    except OSError as e:                                       # socket errors, timeouts, TLS (ssl.SSLError is an OSError)
-        raise NotSent("%s: %s" % (what, short(e)))
+    except ssl.SSLCertVerificationError as e:
+        why = getattr(e, "verify_message", "") or short(e)
+        if getattr(e, "verify_code", None) in (62, 64):
+            why = "certificate name mismatch"
+        raise NotSent("%s: %s" % (what, why)) from e
+    except OSError as e:
+        raise NotSent("%s: %s" % (what, short(e))) from e
 
 
 class SoapFault(Exception):
@@ -168,6 +175,11 @@ def _mor(tag, typ, value):
 def _val(el):
     """a propSet <val> -> a Python value: text, a (type, id) reference, or a list of either (ArrayOf...)"""
     xt = el.get(XSI_TYPE) or ""
+    if xt.rsplit(":", 1)[-1] == "ArrayOfAlarmState":
+        # 1.131.1: each triggered alarm with its own color (the host's hardware light comes from its hardware alarms)
+        return [("Alarm", alarm.text.strip(), state.findtext("v:overallStatus", "", NS)) for state in el
+                if state.findtext("v:overallStatus", "", NS) in ("red", "yellow")
+                for alarm in state.findall("v:alarm", NS) if alarm.text]
     kids = list(el)
     if xt.startswith("ArrayOf") or (kids and xt != "ManagedObjectReference"):
         out = []
@@ -199,6 +211,7 @@ class VcenterSource(object):
         self.cred = ("account", account(self.user))                # sources with one account (any kind) share one Gate
         self.gate = Gate()
         self.cookie, self.sc, self.view, self.session_key = "", None, "", ""
+        self.instance_uuid = ""
         self.logins = 0                                        # how many times this source logged in (a test counts them)
         self.login_sent = self.login_ok = False                # this poll: a login was sent / vCenter said it worked
         self.secret = (self.user, self._pw)                    # the logins' fingerprint (a changed credential starts the logins again)
@@ -248,7 +261,9 @@ class VcenterSource(object):
             kind = kind.replace("Fault", "") if kind.endswith("Fault") else kind
             if kind in ("NoPermission", "SecurityError", "InvalidLogin", "NotAuthorized"):   # whatever the call: a refusal
                 self.cookie, self.view = "", ""
-                raise AuthError("vCenter: NoPermission on %s - check the account's role" % method)
+                if kind == "InvalidLogin":
+                    raise AuthError("login refused - check the credential")
+                raise AuthError("vCenter: %s on %s - check the account's role" % (kind, method))
             raise SoapFault(kind, (f.findtext("faultstring") or "").strip())
         if r.status != 200:
             raise RuntimeError("vCenter answered HTTP %s" % r.status)
@@ -261,9 +276,10 @@ class VcenterSource(object):
     # -- the session ----------------------------------------------------------------------------------------------------
     def _login(self):
         self.cookie, self.view = "", ""
-        if self.sc is None:
+        if True:                                                   # 1.131.1 (Codex #2): every login - a repointed name is another vCenter
             rc = self._send("RetrieveServiceContent", _mor("_this", "ServiceInstance", "ServiceInstance"))
             rv = rc.find("v:returnval", NS)
+            self.instance_uuid = rv.findtext("v:about/v:instanceUuid", "", NS).strip().casefold()
             self.sc = dict((k, rv.findtext("v:" + k, "", NS).strip()) for k in ("propertyCollector", "viewManager", "sessionManager", "rootFolder"))
         with self.gate.lock:                                       # one login at a time for this account, none while it is bad
             self.gate.check()
@@ -327,6 +343,23 @@ class VcenterSource(object):
         props = "".join("<propSet><type>%s</type>%s</propSet>" % (t, "".join("<pathSet>%s</pathSet>" % p for p in paths)) for t, paths in SPECS)
         spec = ('<specSet>%s<objectSet>%s<skip>true</skip><selectSet xsi:type="TraversalSpec"><name>view</name><type>ContainerView</type>'
                 '<path>view</path><skip>false</skip></selectSet></objectSet></specSet>' % (props, _mor("obj", "ContainerView", self.view)))
+        objs = self._properties(spec)
+        alarms = sorted({ref[1] for typ, _, v in objs if typ == "HostSystem"
+                         for ref in v.get("triggeredAlarmState") or [] if isinstance(ref, tuple) and ref[0] == "Alarm"})
+        if alarms:
+            refs = "".join("<objectSet>%s</objectSet>" % _mor("obj", "Alarm", a) for a in alarms)
+            alarm_spec = "<specSet><propSet><type>Alarm</type><pathSet>info.name</pathSet></propSet>%s</specSet>" % refs
+            try:
+                objs.extend(self._properties(alarm_spec))
+            except (NotSent, AuthError):
+                raise
+            except Exception:  # pylint: disable=broad-except
+                # 1.131.1 (Codex #10): the alarm's display name is optional - a timeout or a vanished definition never costs
+                # the inventory already read (the red host and the disconnected ones are in it); the name is just not shown
+                pass
+        return objs
+
+    def _properties(self, spec):
         pc = _mor("_this", "PropertyCollector", self.sc["propertyCollector"])
         r = self._send("RetrievePropertiesEx", '%s%s<options><maxObjects>%d</maxObjects></options>'
                        % (pc, spec, PAGE))
@@ -402,6 +435,7 @@ def shape(objs):
     """the PropertyCollector's objects -> {hosts, clusters, datastores, vms} by name (references resolved)"""
     names = dict(((t, i), v.get("name", i)) for t, i, v in objs)
     nm = lambda ref: names.get(tuple(ref), ref[1]) if isinstance(ref, tuple) else ""     # noqa: E731
+    alarms = {i: v["info.name"] for t, i, v in objs if t == "Alarm" and v.get("info.name")}
     hosts, clusters, dss, vms = [], [], [], []
     for t, i, v in objs:
         if t == "HostSystem":
@@ -410,6 +444,11 @@ def shape(objs):
             state = v.get("runtime.connectionState") or ""
             ok = state == "connected"
             hosts.append({"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
+                          "overall": v.get("overallStatus"),
+                          # 1.131.1 (Codex #11): the triggered alarms by name (None: its name not read) and color - the model
+                          # lights Host hardware from the hardware alarms only, never from overallStatus
+                          "triggered": [[alarms.get(ref[1]), ref[2] if len(ref) > 2 else ""] for ref in v.get("triggeredAlarmState") or []
+                                        if isinstance(ref, tuple) and ref[0] == "Alarm"],
                           "state": state, "maint": _bool(v.get("runtime.inMaintenanceMode")), "power": v.get("runtime.powerState") or "",
                           "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
                           "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
@@ -419,11 +458,16 @@ def shape(objs):
             clusters.append({"name": v.get("name", i), "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple))})
         elif t == "Datastore":
             dss.append({"name": v.get("name", i), "type": v.get("summary.type") or "", "capacity": _int(v.get("summary.capacity"), None),
+                        "shared": _bool(v.get("summary.multipleHostAccess")),
                         "free": _int(v.get("summary.freeSpace"), None), "accessible": _bool(v.get("summary.accessible")),
                         "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple)), "vms": len(v.get("vm") or [])})
         elif t == "VirtualMachine":
             on = v.get("runtime.powerState") == "poweredOn"
-            vms.append({"name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
+            managed = (v.get("config.managedBy.extensionKey"), v.get("config.managedBy.type"))
+            vms.append({"id": i, "template": _bool(v.get("config.template")),
+                        "vcls": managed in (("VirtualCenter", "vcls-entity"), ("com.vmware.vim.eam", "cluster-agent")),
+                        "tools": v.get("guest.toolsRunningStatus"), "tools_version": v.get("guest.toolsVersionStatus2"),
+                        "name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
                         "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), v.get("summary.runtime.maxCpuUsage")) if on else None,
                         "mem_pct": _pct(v.get("summary.quickStats.guestMemoryUsage"), v.get("summary.config.memorySizeMB")) if on else None,
                         "heartbeat": v.get("guestHeartbeatStatus") or None})     # not read: unknown
@@ -437,7 +481,7 @@ NODE_FIELDS = "name,state,ha.takeover_check.takeover_possible"
 NODE_FIELDS_OLD = "name,state"                          # an ONTAP before 9.8 has no takeover_check: asked again without it
 ONTAP_GETS = (
     ("aggrs", "/api/storage/aggregates", "name,node.name,space.block_storage.size,space.block_storage.used", ""),
-    ("volumes", "/api/storage/volumes", "name,svm.name,state,space.size,space.used,aggregates.name,autosize.mode,"
+    ("volumes", "/api/storage/volumes", "name,svm.name,state,type,is_svm_root,space.size,space.used,aggregates.name,autosize.mode,"
                                          "space.snapshot.reserve_size,space.snapshot.used", "is_constituent=false"),
     ("luns", "/api/storage/luns", "name,svm.name,location.volume.name,space.size,space.used,status.state,status.container_state", ""),
     ("snapmirror", "/api/snapmirror/relationships", "source.path,destination.path,state,healthy,lag_time,unhealthy_reason", ""),
@@ -450,10 +494,10 @@ ONTAP_MAX_PAGES = 1000                  # pages one collection may take; a next 
 def iso_seconds(text):
     """an ISO 8601 duration (ONTAP's lag_time, "PT1H2M3S", "P1DT2H") -> seconds, None when there is none"""
     m = re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$", str(text or "").strip())
-    if not m or not any(m.groups()):
+    if not m or not any(m.groups()) or m.group().endswith("T"):
         return None
     d, h, mi, s = m.groups()
-    return int(d or 0) * 86400 + int(h or 0) * 3600 + int(mi or 0) * 60 + int(float(s or 0))
+    return int(d or 0) * 86400 + int(h or 0) * 3600 + int(mi or 0) * 60 + float(s or 0)
 
 
 def _g(d, path, default=None):
@@ -563,12 +607,11 @@ class OntapSource(object):
                 return None
         # Neon round 4: never a second GET for one collection - the node fields by the cluster's version (takeover_check: 9.8+)
         ver = c.get("version") if isinstance(c.get("version"), dict) else {}
-        try:
-            new = (int(ver.get("generation")), int(ver.get("major"))) >= (9, 8)
-        except (TypeError, ValueError):
-            new = False
-        nodes = one("nodes", lambda: self.records("/api/cluster/nodes", NODE_FIELDS if new else NODE_FIELDS_OLD))
+        version = (_int(ver.get("generation")), _int(ver.get("major")))
+        nodes = one("nodes", lambda: self.records("/api/cluster/nodes", NODE_FIELDS if version >= (9, 8) else NODE_FIELDS_OLD))
         for k, path, f, x in ONTAP_GETS:
+            if k == "volumes" and version < (9, 7):
+                f = f.replace("is_svm_root,", "")    # added in ONTAP 9.7
             got[k] = one(k, lambda path=path, f=f, x=x: self.records(path, f, x))
         return c, nodes, got, failed
 
@@ -602,9 +645,12 @@ class OntapSource(object):
             "cluster": c.get("name") or self.address, "version": _g(c, "version.full", "") or "", "failed": failed,
             "nodes": None if nodes is None else [{"name": n.get("name") or "", "state": txt(n.get("state")),
                                                   "takeover": tk(n) if isinstance(tk(n), bool) else None} for n in nodes],
-            "aggrs": rows("aggrs", lambda a: {"name": a.get("name") or "", "node": _g(a, "node.name", "") or "",
+            "aggrs": rows("aggrs", lambda a: {"is_root": a.get("is_root") is True or a.get("is_root_aggregate") is True,
+                                              "name": a.get("name") or "", "node": _g(a, "node.name", "") or "",
                                               "size": _int(_g(a, "space.block_storage.size"), None), "used": _int(_g(a, "space.block_storage.used"), None)}),
-            "volumes": rows("volumes", lambda v: {"name": v.get("name") or "", "svm": _g(v, "svm.name", "") or "", "state": txt(v.get("state")),
+            "volumes": rows("volumes", lambda v: {"type": v.get("type"), "is_svm_root": v.get("is_svm_root"),
+                                                  "is_node_root": v.get("is_node_root"), "destination_type": _g(v, "snapmirror.destination_type"),
+                                                  "name": v.get("name") or "", "svm": _g(v, "svm.name", "") or "", "state": txt(v.get("state")),
                                                   "size": _int(_g(v, "space.size"), None), "used": _int(_g(v, "space.used"), None),
                                                   "aggr": ((v.get("aggregates") or [{}])[0] or {}).get("name", "") if v.get("aggregates") else "",
                                                   "autosize": (_g(v, "autosize.mode", "off") or "off") != "off",
@@ -613,7 +659,7 @@ class OntapSource(object):
             "luns": rows("luns", lambda x: {"path": x.get("name") or "", "name": (x.get("name") or "").rsplit("/", 1)[-1], "svm": _g(x, "svm.name", "") or "",
                                             "volume": _g(x, "location.volume.name", "") or "", "size": _int(_g(x, "space.size"), None),
                                             "used": _int(_g(x, "space.used"), None), "state": lun_state(x)}),
-            "snapmirror": rows("snapmirror", lambda m: {"src": _g(m, "source.path", "") or "", "dst": _g(m, "destination.path", "") or "",
+            "snapmirror": rows("snapmirror", lambda m: {"type": m.get("type"), "src": _g(m, "source.path", "") or "", "dst": _g(m, "destination.path", "") or "",
                                                        "state": txt(m.get("state")), "healthy": m.get("healthy") if isinstance(m.get("healthy"), bool) else None,
                                                        "lag_s": iso_seconds(m.get("lag_time")),
                                                        "why": "; ".join(str(u.get("message") or "") for u in (m.get("unhealthy_reason") or [])
@@ -741,6 +787,8 @@ class Collector(object):
         self.st = dict((s.key, {"kind": s.kind, "name": s.name, "state": "never", "why": getattr(s, "why", "") if isinstance(s, BrokenSource) else "",
                                 "at": None, "tried": None, "next_try": None, "snap": None, "fail_since": None}) for s in self.sources)
         self.hist = {}
+        self.tools_seen = {}
+        self.instances = {}
         self.stop_ev = threading.Event()
         self.thread = None
         self.stopped = None                                    # why every login is stopped
@@ -763,6 +811,31 @@ class Collector(object):
                 self._open()
             except Exception as e:  # pylint: disable=broad-except  - never a stop of the portal: no logins instead
                 self._stop_all("the wall's journal could not be opened (%s)" % short(e), persist=False)
+            self._load_tools()
+
+    # ---- 1.131.1 (Codex #5): which VMs ran Tools, kept across restarts - a VM that hangs while the portal restarts stays watched
+    TOOLS_FILE, TOOLS_MAX = "wall-tools-seen.json", 4 * 1024 * 1024
+
+    def _load_tools(self):
+        try:
+            raw = _read_regular(self._path(self.TOOLS_FILE), self.TOOLS_MAX)
+            d = json.loads(raw.decode("utf-8"))
+        except FileNotFoundError:
+            return
+        except Exception as e:  # pylint: disable=broad-except  - an odd file: the history starts again, said
+            self.log({"event": "wall", "tools_seen": "not read", "why": short(e)})
+            return
+        if isinstance(d, dict):
+            for k, ids in d.items():
+                if isinstance(k, str) and isinstance(ids, list):
+                    self.tools_seen.setdefault(k, set()).update(str(i) for i in ids[:100000] if isinstance(i, (str, int)))
+
+    def _save_tools(self):
+        if not self.state_file:
+            return
+        with self.lock:
+            d = dict((k, sorted(v)) for k, v in self.tools_seen.items())
+        self._write_file(self._path(self.TOOLS_FILE), json.dumps(d))
 
     # ---- files --------------------------------------------------------------------------------------------------------
     def _path(self, name):
@@ -992,9 +1065,11 @@ class Collector(object):
                 self._load()
             if self.stopped and not self._resume():
                 return
-            for s in self.sources:
+            for s in list(self.sources):
                 if self.stop_ev.is_set() or self.off or self.stopped:
                     break
+                if s.key not in self.st:                        # alias merged earlier this cycle
+                    continue
                 now = self.clock()
                 try:
                     self._one(s, now)
@@ -1057,6 +1132,42 @@ class Collector(object):
                 self.log({"event": "wall", "source": s.key, "state": "not read", "why": short(e)})
             return
         self._done(s)
+        uuid = getattr(s, "instance_uuid", "")
+        if s.kind == "vcenter" and uuid:
+            canonical = self.instances.setdefault(uuid, s)
+            if canonical is not s:
+                with self.lock:
+                    other = (self.st.get(canonical.key) or {}).get("snap")
+                if not isinstance(other, dict) or _inventory(other) != _inventory(snap):
+                    # 1.131.1 (Codex #2): one instanceUuid is not proof (a cloned vCenter keeps it) - merged only when both
+                    # read the same inventory; else both stay, said once
+                    if ("uuid", s.key) not in self._said:
+                        self._said.add(("uuid", s.key))
+                        self.log({"event": "wall", "source": s.key, "state": "same instanceUuid",
+                                  "why": "as %s, but %s - both kept" % (canonical.name, "a different inventory" if isinstance(other, dict) else "not read yet")})
+                    canonical = s
+            if canonical is not s:
+                keep, drop = (s, canonical) if _fqdn(getattr(s, "host", "")) and not _fqdn(getattr(canonical, "host", "")) else (canonical, s)
+                with self.lock:
+                    retained = self.st[keep.key]
+                    dropped = self.st.pop(drop.key)
+                    retained["aliases"] = retained.get("aliases", []) + [drop.name] + dropped.get("aliases", [])
+                    self.sources.remove(drop)
+                    self.instances[uuid] = keep
+                    if drop.key in self.tools_seen:
+                        self.tools_seen[keep.key] = self.tools_seen.pop(drop.key)
+                    for k in [k for k in self.hist if k[0] == drop.key]:
+                        self.hist[(keep.key,) + k[1:]] = self.hist.pop(k)
+                bare, full = getattr(drop, "host", ""), getattr(keep, "host", "")
+                if bare and full and not _fqdn(bare) and _fqdn(full) and full.split(".", 1)[0].casefold() == bare.casefold():
+                    self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter",
+                              "why": "vCenter %s is %s: read once (same instanceUuid)" % (bare, full)})
+                else:
+                    self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter", "why": "same instanceUuid as " + keep.name})
+                if hasattr(drop, "forget"):
+                    drop.forget()
+                if keep is not s:
+                    return
         done = self.clock()
         with self.lock:
             st = self.st[s.key]
@@ -1064,6 +1175,9 @@ class Collector(object):
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
             if s.kind == "vcenter":
                 self._keep(s.key, snap, done)
+        if getattr(self, "_tools_dirty", False):
+            self._tools_dirty = False
+            self._save_tools()
         if was in ("auth", "error", "paused"):
             self.log({"event": "wall", "source": s.key, "state": "read again"})
 
@@ -1072,9 +1186,20 @@ class Collector(object):
         add = []
         for h in snap.get("hosts") or []:
             add += [(("host", h["name"], "cpu"), h.get("cpu_pct")), (("host", h["name"], "mem"), h.get("mem_pct"))]
+        seen = self.tools_seen.setdefault(key, set())
+        running = set()
         for v in snap.get("vms") or []:
-            if v.get("power") == "poweredOn":
+            identity = str(v.get("id") or "")              # 1.131.1: by moId only - never a display name
+            v["tools_seen"] = bool(identity) and identity in seen
+            if v.get("power") == "poweredOn" and v.get("template") is False and not v.get("vcls"):     # Codex #7: vCLS by managedBy only
+                if v.get("tools_version") != "guestToolsNotInstalled" and (v.get("tools") == "guestToolsRunning" or v.get("heartbeat") == "green"):
+                    running.add(identity)
                 add += [(("vm", v["name"], "cpu"), v.get("cpu_pct")), (("vm", v["name"], "mem"), v.get("mem_pct"))]
+        running.discard("")
+        new = running - seen
+        seen.update(running)
+        if new:
+            self._tools_dirty = True                       # written after the lock is let go (_run)
         for k, p in add:
             if p is not None:
                 self.hist.setdefault((key,) + k, collections.deque()).append((t, p))
@@ -1112,7 +1237,9 @@ def _endpoint(text, default_port=443):
     port = u.port or default_port                              # a bad port: ValueError from urlsplit
     if not 0 < port < 65536:
         raise ValueError("bad port in %r" % t)
-    host = u.hostname
+    host = u.hostname.rstrip(".")
+    if not host:
+        raise ValueError("empty host name")
     return ("[%s]" % host if ":" in host else host), port
 
 
@@ -1136,6 +1263,22 @@ def no_source_why(cfg, sources, left_out=None):
     return out
 
 
+def _inventory(snap):
+    """a read's inventory as compared for a duplicate vCenter: its hosts and VMs by moId"""
+    return (frozenset(str(h.get("id") or "") for h in snap.get("hosts") or []),
+            frozenset(str(v.get("id") or "") for v in snap.get("vms") or []))
+
+
+def _fqdn(host):
+    if "." not in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return False
+
+
 def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     """the secrets' JSON ({"vcenter": {user, password, hosts, verify}, "ontap": {user, password, clusters, verify}}) -> the
     sources. An entry that is no host (or no https address) is said in the log and left out - never a stop of the portal;
@@ -1145,21 +1288,22 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     out = []
     vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
     if str(vc.get("user") or "").strip() and vc.get("password"):
-        seen = set()
+        endpoints = {}
         for h in _hosts(vc.get("hosts")):
             try:
-                host, port = _endpoint(h)
-                src = VcenterSource(host.strip("[]"), vc["user"], vc["password"], verify=vc.get("verify", True) is not False, cafile=cafile,
-                                    timeout=timeout, port=port)
+                endpoints.setdefault(_endpoint(h), h)
             except (ValueError, TypeError) as e:
                 log({"event": "wall", "source": "vcenter", "state": "left out", "why": short(e)})
-                continue
-            except Exception as e:  # pylint: disable=broad-except  - a TLS bundle not readable ...: shown, never a stop of the portal
+        # 1.131.1 (Codex #1): never one dropped by its name before it was read - a short name may be another vCenter (the
+        # DNS search domain decides); duplicates are merged at run time only, by instanceUuid AND the same inventory
+        for (host, port), entry in endpoints.items():
+            try:
+                src = VcenterSource(host.strip("[]"), vc["user"], vc["password"], verify=vc.get("verify", True) is not False,
+                                    cafile=cafile, timeout=timeout, port=port)
+            except Exception as e:  # pylint: disable=broad-except  - e.g. a TLS bundle that cannot be read
                 log({"event": "wall", "source": "vcenter", "state": "not configured correctly", "why": short(e)})
-                src = BrokenSource("vcenter", h, e)
-            if src.key.lower() not in seen:
-                seen.add(src.key.lower())
-                out.append(src)
+                src = BrokenSource("vcenter", entry, e)
+            out.append(src)
     on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
     if str(on.get("user") or "").strip() and on.get("password"):
         seen = set()

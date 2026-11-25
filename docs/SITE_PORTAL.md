@@ -1106,8 +1106,10 @@ datastore -> volume / LUN path card, as information.
 (the "sustained for 15 min" rule needs its own history; the history is in memory, so after a restart a CPU or memory
 condition needs the full window again).
 - vCenter: **one login, kept** (the session cookie reused; a new login only when vCenter says the session is gone).
-  Each cycle is one property read (a container view and RetrievePropertiesEx): host connection state, power state and
-  maintenance mode, datastore capacity / free / accessible, host and VM quick stats. No performance-manager queries.
+  Each cycle reads the inventory through a container view and RetrievePropertiesEx. For red or yellow hosts with triggered
+  alarms, one additional property query resolves only the referenced alarms' `info.name`. All property reads follow pagination.
+  Case variants and short names that match a listed FQDN on the same port share a source. The log identifies each dropped
+  short name. Successful reads with the same vCenter `about.instanceUuid` also merge, with the FQDN preferred.
   Only these calls exist in the code: RetrieveServiceContent, Login, Logout, CreateContainerView, DestroyView,
   RetrievePropertiesEx, ContinueRetrievePropertiesEx, CancelRetrievePropertiesEx - any other is refused before it is
   sent (a test checks it).
@@ -1154,8 +1156,8 @@ condition needs the full window again).
   and draws every style and card: nothing may be green.
   A check that did not run (a cluster's SnapMirror or node collection not read whole) is grey "Not on the wall", never
   "None broken". **Green only from an allow-list:** a host is OK only when vCenter says exactly "connected" and its
-  maintenance mode is known; a VM's heartbeat only when "green" (gray, yellow or missing: unknown); a datastore only when
-  "accessible" is true; a SnapMirror relationship only when healthy is true and its state is snapmirrored or in_sync; a
+  maintenance mode is known and overallStatus is green; a watched VM's heartbeat only when "green" (gray, yellow or missing: unknown); a datastore only when
+  "accessible" is true; a SnapMirror relationship only when healthy is true and its state is snapmirrored or in_sync with measured lag within the warning threshold; a
   volume or LUN only when "online". Anything else is unknown: grey, the area not whole. On Lights the hosts are listed critical first, then warnings, then the rest;
   none that is not OK is ever left out.
 - Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), Storage
@@ -1179,6 +1181,45 @@ environment variables (`PORTAL_WALL_VCENTER_LOGIN`, `PORTAL_WALL_ONTAP_LOGIN`). 
 and `vmware_vcenters`; the clusters are `ontap_clusters`. `portal_wall_vcenter: false` / `portal_wall_ontap: false`
 keep a credential on the template but out of the portal; `portal_wall: false` turns the page and its tab off.
 
+### What the wall watches and excludes
+
+- **VM heartbeat and load.** Only powered-on workload VMs qualify. Templates, names beginning with `vCLS-`, and
+  vCLS agents identified by `config.managedBy` are outside both checks. The managed-by pairs are
+  `com.vmware.vim.eam / cluster-agent` and `VirtualCenter / vcls-entity`.
+  The collector remembers each VM by its vCenter object reference. A successful earlier inventory read must have shown
+  `guest.toolsRunningStatus=guestToolsRunning` or `guestHeartbeatStatus=green` before a red heartbeat or
+  `guestToolsNotRunning` can alert. An unknown heartbeat on a watched VM stays grey. The heartbeat card counts VMs
+  with no prior observation or an explicit `guestToolsNotInstalled` as **not watched**. The history (by VM moId) is kept in
+  the data volume (`wall-tools-seen.json`): a VM that hangs while the portal restarts stays watched.
+- **Host hardware.** The Host hardware light lists hosts with a triggered hardware alarm, red (critical) or yellow
+  (warning): vCenter's hardware alarm definitions by whole name (`portal_wall_hw_alarms`), never `overallStatus` (it also
+  covers configuration issues and usage alarms). A triggered alarm whose name could not be read leaves the host grey.
+- **Datastore capacity.** Every datastore that is not local (`summary.multipleHostAccess=false`) counts for a full alert
+  and the fullest gauge. A missing sharing flag makes coverage unknown but the measured fill still alerts. Local datastores
+  appear as **local - not watched**, names matching `portal_wall_ds_ignore` (whole-name globs, any case) as
+  **portal_wall_ds_ignore - not watched**. Their accessibility check still runs.
+- **Volume and LUN state.** ONTAP's `is_svm_root` (9.7+) identifies an SVM root. A returned `is_node_root=true`
+  flag or placement on an explicitly marked root aggregate identifies a node root. ONTAP volume `type=ls` identifies a load-sharing DP destination. If a reply uses
+  `type=dp`, the wall requires an explicit LS destination type or a SnapMirror LS relationship whose
+  `destination.path` matches that exact SVM and volume. A protection flag alone does not identify a load-sharing mirror.
+  LUNs inherit the exclusion through `svm.name` and `location.volume.name`. Names such as `vol0` and
+  `svm_root_LS_Mirror01` alone never suppress an offline or restricted alert.
+  [ONTAP volume fields](https://docs.netapp.com/us-en/ontap-restapi/get-storage-volumes.html)
+- **Aggregate capacity.** ONTAP's storage aggregates endpoint returns data aggregates. The wall also excludes records
+  explicitly marked `is_root` or `is_root_aggregate` from both rankings and full alerts. A name containing “root”
+  has no special meaning.
+  [ONTAP aggregate collection](https://docs.netapp.com/us-en/ontap-restapi-9181/storage_aggregates_endpoint_overview.html)
+- **SnapMirror.** Broken-off or unhealthy relationships warn. For healthy relationships in a known good state,
+  measured `lag_time` above the warning threshold is amber and above the critical threshold is red.
+  Missing or invalid lag stays grey and cannot clear an earlier alert.
+- **Site exclusions.** Set `portal_wall_exclude` to a dictionary of case-insensitive name globs keyed by
+  `vms`, `hosts`, `datastores`, `volumes` or `aggregates`. For example, `{vms: ['lab-*'], datastores: ['scratch-*']}`.
+  Matching objects are removed before evaluating conditions and picking the fullest or busiest object.
+  The corresponding detail cards list them as **excluded by portal_wall_exclude**.
+- **Reading the display.** **Why grey** on tiles and gauges names the source and gives its collector error, read age or
+  missing field. The Cockpit Now strip groups open conditions by kind, shows up to three names and the remaining count,
+  and opens the full group on click.
+
 ### Thresholds to confirm with each team
 
 The first showing uses these defaults; every one is a setting, and the page's *What the wall watches* shows the values
@@ -1191,7 +1232,11 @@ in force.
 | `portal_wall_high_pct` | 90 | a host's or VM's CPU or memory at this % or more ... | VMware |
 | `portal_wall_high_minutes` | 15 | ... for this many minutes: warning (shorter spikes stay off) | VMware |
 | `portal_wall_maintenance_expected` | [] | hosts whose maintenance mode is expected (any other: warning) | VMware |
-| `portal_wall_vm_heartbeat` | true | a powered-on VM with a red VMware Tools heartbeat: critical | VMware |
+| `portal_wall_vm_heartbeat` | true | watch for loss of previously running Tools on powered-on workload VMs | VMware |
+| `portal_wall_exclude` | {} | name globs by object kind | VMware and Storage |
+| `portal_wall_ds_ignore` | `['iso', 'isos', 'iso-*', 'iso_*', '*-iso', '*_iso', '*-isos', '*content-library*']` | datastore names outside the capacity watch (whole-name globs) | VMware and Storage |
+| `portal_wall_hw_alarms` | vCenter's default hardware alarm names | the triggered alarms (whole names, any case) that light Host hardware | VMware |
+| `portal_wall_snapmirror_lag_warn_hours` / `portal_wall_snapmirror_lag_crit_hours` | 24 / 72 | elapsed lag above each threshold | Storage |
 | `portal_wall_seconds` | 60 | how often vCenter and ONTAP are read | VMware and Storage |
 | `portal_wall_auth_retry_minutes` | 15 | after a refused login, the next try no sooner than this | VMware and Storage |
 

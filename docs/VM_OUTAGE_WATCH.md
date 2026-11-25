@@ -309,7 +309,12 @@ read and what the vCenter event read showed.
   listed under **Issues by type > VMs**, with its datastores when known.
 - **Back to normal** lists each recovered object once, with the hosts that regained access and the duration when known.
 
-With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
+The watch and both timelines first apply `vm_watch_usage_alarms` (default `[CPU usage, memory usage]`).
+Yellow is hidden unless `vm_watch_usage_show_yellow` is true. Red needs at least `vm_watch_usage_min_minutes`
+(default 15) of continuous, dated evidence inside the window. Qualifying groups list the affected names
+and the shortest confirmed duration in the group. The watch uses those groups for its severity and email decisions.
+
+With `vm_watch_review_noise: true`, remaining usage alarms, gray transitions, unpaired greens and brief flaps
 are counted by alarm and scope. A brief loss the watch observed during that span stays in the outage chain.
 A short storage-path flap that leads into the loss is the first signal.
 Each noise line gives every change, the number of objects, the time span and final state. On other VMs,
@@ -319,7 +324,7 @@ same time. Set `vm_watch_review_noise: false` to include these changes in the de
 *Issues by type* gives the objects and their states, worst first within each group. Follow an object's link to its
 timeline entry. Summed noise, *What else saw it* and *How it judged* follow.
 The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
-The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
+The workbook and matching CSV include the grouped usage alarms and each remaining source event returned by the read. The configured vCenter event cap applies.
 Their *Timeline* (1.116.6) reads in Excel: one row per event, the columns `#`, *Time (zone, ISO)* (for example
 `2026-11-23T07:15:58+01:00`), *Level*, *Kind* (host, datastore, vm, alarm, ticket, note), *Object*, *Host*, *Datastore*,
 *VM*, *What happened* (short), *In the story* and *Noise* (yes / no), *vCenter*, *Event type*, *Event key*, *Cluster*,
@@ -340,7 +345,7 @@ What it affected has three tiers, each VM in its highest one only:
 1. **Confirmed** - the watch or HA found it: counted.
 2. **Events during the outage** - its own events (power, heartbeat, a VM alarm, lost access, HA) fall inside a root's
    loss and touch that root: its datastore, a host that lost it, or the lost host. Each with its first event and time
-   (*sitea-vm07 (07:09:30 VM powered off)*). Usage alarms and gray are noise, never a signal. Not counted.
+   (*sitea-vm07 (07:09:30 VM powered off)*). Usage groups and gray transitions do not establish that a VM lost access.
 3. **Had files on / ran on** - the placement above. Not counted.
 
 The tile reads *no VM confirmed · 2 with events · 39 with files on ds_shared_01*; the workbook has the sheets *VMs with
@@ -384,7 +389,7 @@ The chart opens on **Outage only**, which zooms in on the chain. **Everything** 
 about the lost datastores, their hosts or affected VMs. A ring on a usage or gray-alarm bar means it contains an affected VM.
 The first tick and each midnight carry a date. A solid red outline covers the window across the lanes and a dashed
 extension identifies objects still down. Nearby events share a numbered mark. Hover or focus it for its events and times.
-The workbook and CSV preserve every source event. The scheduled watch retains its detailed four-lane timeline.
+The workbook and CSV use the same usage-alarm groups as the chart. The scheduled watch retains its detailed four-lane timeline.
 
 `outage_ops_center` sets the operations center name on the review cards, email, handoff and AAR (default `NOC`).
 The Word handoff filename uses letters, digits, hyphens and underscores in that name.
@@ -400,9 +405,9 @@ The Word link beside the cards says **Hand this to the NOC** by default and uses
   4. *the review was asked for*.
 - **The verdict chip** of a review is the watch's state now, and it says so: *Now: All good* (1.90.0). It is not a verdict on the outage.
 - **Alarm history:** `vm_watch_review_lookback_hours` reads earlier raises for alarms that clear in the window.
-  Short usage blips can still be skipped with `vm_watch_review_skip_blips` and `vm_watch_review_min_seconds`.
+  For alarm kinds outside `vm_watch_usage_alarms`, short usage blips can still be skipped with `vm_watch_review_skip_blips` and `vm_watch_review_min_seconds`.
 - **The email** follows the page order and includes the workbook and CSV. When Word output is enabled it attaches the AAR and operations handoff.
-- **The review workbook** has *Timeline* (every event), *Outage summary* and *Noise*.
+- **The review workbook** has *Timeline* (grouped usage alarms and individual events), *Outage summary* and *Noise*.
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
   down, hosts down, VMs restarted by HA), for a later workflow step. A review (1.112.0) also keeps `review: true` and its
   AAR draft (`aar`), which the AAR job reads back by this job's number.
@@ -469,7 +474,7 @@ someone opens it, checks it and writes the rest.
 - **Appendix A** follows the body on the same page. It groups matching events within three minutes by phase:
   Time, Level and What happened, with the names in the sentence. An APD and the datastore heartbeat loss of the same
   hosts within a minute are one row, with that burst's path redundancy and storage alarms. Their return is one row
-  too. Eight names, then *+N more*; the workbook and the CSV have every event. Noise is one line per alarm.
+  too. Eight names, then *+N more*; the workbook and the CSV carry each reported event or usage group. Noise is one line per alarm.
   By default it lists all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number
   omitted.
 - **Appendix B** contains the operations handoff with Down now, the objects that went down and their durations,
@@ -535,6 +540,9 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
 | `vm_watch_review_object` | "" | current or historical datastore or host name. Leave empty to review all roots |
+| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Whole alarm names (any case) for the watch and timelines; `CPU usage` and `memory usage` stand for vCenter's VM and host usage alarms. A name that only contains them (e.g. `CPU usage telemetry unavailable`) is an ordinary alarm. |
+| `vm_watch_usage_show_yellow` | `false` | Include matching yellow alarms as grouped warnings. |
+| `vm_watch_usage_min_minutes` | `15` | Continuous red minutes inside the window for a critical group. Unknown durations are hidden. |
 | `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
 | `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
 | `outage_ops_center` | `NOC` | What your site calls its operations center in the outage review. |

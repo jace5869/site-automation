@@ -637,6 +637,8 @@ body.kiosk .appbar{display:none}
 .lamp.s-off,.s-off.lamp{background:transparent;border:2px dashed var(--edge);color:var(--muted)}
 .s-off{--lc:var(--edge);--lk:var(--muted)}
 .lamp.s-off::after{opacity:0}
+/* 1.131.1 (field): a status word's icon is text-sized everywhere (the drawer, Lights, Map) - never the panel's width */
+.word svg{width:1em;height:1em;flex:none;vertical-align:-0.125em}
 .word.off,.wd.off,.w.off{color:var(--muted)}
 .amenu a.off{cursor:default;opacity:.75}
 .amenu a.off:hover{background:transparent}
@@ -800,3 +802,13 @@ body.kiosk .dsc .kxh{display:none}
   background:linear-gradient(var(--warning-bg),var(--warning-bg)),var(--card-strong);color:var(--ink);border-bottom:1px solid var(--warning-bd)}
 .wall-preview b{color:var(--warning);font-weight:700;margin-right:2px}
 .fl.f-info{fill:var(--muted);opacity:.55}
+
+.wall .grey-reason {
+  color: var(--muted);
+  font-size: .85em;
+  overflow-wrap: anywhere;
+}
+.sK .gauge.stale .why {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
