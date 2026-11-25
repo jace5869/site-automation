@@ -4,30 +4,12 @@ Every installed RPM package of your RHEL hosts, every night, and what changed si
 
 The job *Linux - software inventory* (`playbooks/linux_sw_inventory.yml`, 1.133.0) reads each host of its Limit and
 writes three exports: a **text file per host** (shield), a **CSV** and a **JSON**. They go to a folder, to a Windows
-file share, and with the report email. Optional: the report database and a SQL Server table.
-
-## What it reads
-
-On each host, one read-only script (`roles/sw_inventory/files/sw_read.sh`):
-
-| What | From |
-|---|---|
-| Every installed package: name, epoch, version, release, arch, vendor, install time, source RPM | `rpm -qa` |
-| The repository each package came from | `dnf repoquery --installed -C --disablerepo='*'` (RHEL 8, 9, 10), or `repoquery -C` (yum hosts) |
-| The OS (`rhel 9.4`) and the running kernel | `/etc/os-release`, `uname -r` |
-| When it was read | the host's clock, in UTC |
-
-- **No repository is ever contacted.** dnf reads only its own records and the local cache. A host whose dnf is busy
-  (a patch run holds its lock) or has no cache gets an empty repo column, never a failure.
-- **Every installed instance is kept.** Several kernels, or `glibc` for both `i686` and `x86_64`, are each a row.
-- **The hosts' reads stay out of AAP's job events.** Each host's read goes straight to a folder on the execution node;
-  the job output shows counts and the report. Only the workbook's rows reach the email step, as for every report,
-  at most `sw_inventory_xlsx_max_rows`.
+file share, and with the report email.
 
 ## Set it up
 
 1. Run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`. It makes the
-   template with the Linux Machine credential, the Limit prompted, **Concurrent jobs** off.
+   template: Linux Machine credential, Limit and Job type prompted, **Concurrent jobs** off.
 2. For the share: attach the **Windows file share** credential (**Modify** on the folder) and set the folder:
 
    ```yaml
@@ -36,8 +18,8 @@ On each host, one read-only script (`roles/sw_inventory/files/sw_read.sh`):
    ```
 
 3. For the email: `report_email_to`, as for the other reports.
-4. Launch it once with **Check** (reads the hosts, logs in to the share, writes nothing), then for real. Schedule it
-   **nightly at 02:00** with your Limit.
+4. Launch it with Job type **Check** (reads the hosts, logs in to the share and looks at its folder, writes nothing),
+   then **Run**. Schedule it **nightly at 02:00** with your Limit.
 
 Success looks like this at the end of the job output:
 
@@ -45,34 +27,40 @@ Success looks like this at the end of the job output:
 shield: 3 files in /var/lib/site-automation/sw-inventory
 csv: 2 files in /var/lib/site-automation/sw-inventory
 json: 2 files in /var/lib/site-automation/sw-inventory
-share: 9 files in \\fileserver.corp.example.mil\it\inventory\linux
+share: 8 files in \\fileserver.corp.example.mil\it\inventory\linux
 ```
 
-## The outputs
+## What it reads
 
-`sw_inventory_outputs` (default `[shield, csv, json]`). Each output is written on its own: one that fails says which,
-why (an `SA-SWI` code) and the fix, and the others are still written.
+One read-only script per host (`roles/sw_inventory/files/sw_read.sh`), sent to its shell; no file is left there.
 
-| Output | What is written | Where |
+- Every installed package from `rpm -qa`: name, epoch, version, release, arch, vendor, install time, source RPM.
+  Every installed instance is kept (several kernels, `i686` and `x86_64`).
+- The repository each came from: `dnf repoquery --installed -C --noplugins --disablerepo='*'` - dnf's own records,
+  no repository and no subscription service contacted (dnf adds a line to its own log). A busy dnf, or a host
+  without dnf, gives an empty repo column, never a failure.
+- The OS (`rhel 9.4`) and the running kernel.
+- A read with a row it cannot parse is not used: the host is listed as not read, its last files stay.
+
+## The exports
+
+`sw_inventory_outputs` (default `[shield, csv, json]`). Each is written on its own: one that fails says which, why
+(an `SA-SWI` code) and the fix, and the others are still written.
+
+| Export | Files | Where |
 |---|---|---|
-| `shield` | a text file per host, `<short host name>.txt` (*The shield file*) | `sw_inventory_dir/shield/`, the share |
-| `csv` | `sw-inventory-YYYYMMDD-HHMM.csv` and `sw-inventory-latest.csv`, a row per host and package | `sw_inventory_dir`, the share, the email |
-| `json` | `sw-inventory-YYYYMMDD-HHMM.json` and `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, the share, the email |
+| `shield` | `<short host name>.txt` per host (*The shield file*) | `sw_inventory_dir/shield/`, the share |
+| `csv` | `sw-inventory-YYYYMMDD-HHMM.csv`, `sw-inventory-latest.csv`: a row per host and package | `sw_inventory_dir`, the share, the email |
+| `json` | `sw-inventory-YYYYMMDD-HHMM.json`, `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, the share, the email |
 
-**Optional:**
+- **CSV columns:** `host, os, kernel, read_at, name, epoch, version, release, arch, vendor, installed_at, repo,
+  source_rpm`. Times UTC. An epoch of none is empty.
+- **What changed** comes from `sw-inventory-state.json`, beside the files and on the share: each host's last list.
+  A host not read this run keeps its own. A host seen for the first time has no changes until the next run.
+- **Dated files** older than `sw_inventory_keep_days` (90) are deleted, here and on the share - only those.
+- `sw_inventory_dir: ''` (the default) writes in the job's own folder, gone after the job: set it, or the share.
 
-| Output | When | What |
-|---|---|---|
-| `report_db` | added by itself when the template has the **Report database** credential (`sw_inventory_db_auto`) | the run, its hosts, packages and changes (*The report database*) |
-| `mssql` | only when listed, with `sw_inventory_mssql` | a row per host and package each run (*SQL Server*) |
-
-`sw-inventory-state.json` is written beside the files and on the share: each host's last list. Without the report
-database, the next run compares with it.
-
-**The CSV's columns:** `host, os, kernel, read_at, name, epoch, version, release, arch, vendor, installed_at, repo,
-source_rpm`. Times are UTC (`2026-11-25T02:00:05Z`). An epoch of none is empty.
-
-### The shield file
+## The shield file
 
 One file per host, `<short host name>.txt`, in `sw_inventory_dir/<sw_inventory_shield_subdir>/` (default `shield`)
 and in the same folder on the share. For example `rhel-app01.txt`:
@@ -103,154 +91,56 @@ The rows are sorted by name, then version and release in rpm's order; every inst
 ends, one at the end, UTF-8, no blank line. A host not read keeps its last file. Two hosts with the same short name:
 only the first gets a file, and the job output says so.
 
-### The share
+## The share
 
-`sw_inventory_share` takes a Windows file share's folder, `\\fileserver.corp.example.mil\share\folder`. The job writes
-over SMB with smbprotocol, the way the report website writes its share
-([REPORT_SHARE.md](REPORT_SHARE.md)): no mount, Kerberos first.
+`sw_inventory_share`: a Windows file share's folder, `\\fileserver.corp.example.mil\share\folder`, written over SMB
+the way the report website writes its share ([REPORT_SHARE.md](REPORT_SHARE.md)). A folder mounted on the execution
+nodes (`/mnt/inventory`) works too.
 
-- The login: the **Windows file share** credential, user name `svc_aap_inv@CORP.EXAMPLE.MIL` (the realm in capitals).
-  Without it, the **Report website** credential's login is used.
+- The login: the **Windows file share** credential, `svc_aap_inv@CORP.EXAMPLE.MIL` (the realm in capitals). Without
+  it, the **Report website** credential's. Never a user or password in `sw_inventory_share` itself.
 - `sw_inventory_share_auth` follows `report_web_smb_auth` (`negotiate`: Kerberos first, the only way under FIPS).
-  Name the server by its full name.
-- The folder must be there; the job never makes it. It makes `sw_inventory_share_subdir` and `shield` inside it.
-- A folder mounted on the execution nodes (`/mnt/inventory`) works too.
-- It deletes only its own dated files (`sw-inventory-YYYYMMDD-HHMM.*`) older than `sw_inventory_keep_days`.
+- The folder must be there; the job makes `sw_inventory_share_subdir` and `shield` inside it.
+- Each file is copied on its own; a file open on the share is tried again for a few seconds. The job lists every file
+  that could not be copied.
 
-### The email
+## The email and the report
 
-With `report_email_to` set, the report goes out like the other reports, with these attached:
+With `report_email_to`, the report goes out like the other reports with the run's **CSV**, **JSON**, a zip of the
+shield files (`sw-inventory-shield-YYYYMMDD.zip`) and the workbook (sheets **Packages** and **Changed since last
+run**). A file bigger than `sw_inventory_email_max_mb` (10) is left off; the email says where it is - on the share
+when the copy worked. `sw_inventory_email: false`: no email; the website still has the CSV and the JSON.
 
-- the run's CSV and JSON;
-- `sw-inventory-shield-YYYYMMDD.zip`: every host's shield file;
-- the workbook (`.xlsx`): sheets **Packages** and **Changed since last run**.
+The website and the email are sent on their own: one failing never stops the other.
 
-A file bigger than `sw_inventory_email_max_mb` (10) is left off; the email says where it is (the share). The website
-hosts the CSV, the JSON and the workbook beside the page, not the zip. `sw_inventory_email: false` sends no email.
-
-### The report database
-
-`report_db` (optional; added by itself when the template has the **Report database** credential) writes four tables
-in `site_reports`:
-`sw_inventory_run`, `sw_inventory_host`, `sw_inventory_pkg` and `sw_inventory_change`. The first run makes them. The
-statements, the sizes and the by-hand setup are in [REPORT_DATABASE.md](REPORT_DATABASE.md), *The software
-inventory*. `release` and `change` are MySQL reserved words: write them in backticks.
-
-```sql
-SELECT host, name, `change`, old_evr, new_evr
-  FROM sw_inventory_change
- WHERE run_id = (SELECT MAX(id) FROM sw_inventory_run);
-```
-
-### SQL Server
-
-`mssql` appends a row per host and package each run to one table, in one transaction (inserts of 1,000 rows).
-It never drops or deletes; keeping or trimming old runs is up to your DBA (`run_id` names the run:
-`<AAP job>-<UTC time>`).
-
-The login: the **SQL Server (certificate inventory)** credential, the same type the certificate inventory uses
-(`aap/credential_types/cert_inventory_sql.yml`). The driver: pymssql, in the all-in-one EE.
-
-```yaml
-sw_inventory_outputs: [shield, csv, json, mssql]
-sw_inventory_mssql:
-  server: sql01.corp.example.mil
-  port: 1433
-  database: Inventory
-  schema: dbo
-  table: sw_inventory
-  create_table: true      # false: the table must be there with the columns below
-  column_map: {}          # {our column: your column}; '' leaves one out
-```
-
-| Column | Type | What |
-|---|---|---|
-| `run_id` | nvarchar(64) NOT NULL | the run: `<AAP job>-<UTC time>` |
-| `read_at` | datetime2(0) NOT NULL | when the host was read (UTC) |
-| `host` | nvarchar(255) NOT NULL | the host's inventory name |
-| `os` | nvarchar(64) | `rhel 9.4` |
-| `kernel` | nvarchar(128) | the running kernel |
-| `name` | nvarchar(255) NOT NULL | the package |
-| `epoch` | int | NULL when none |
-| `version` | nvarchar(128) | |
-| `release` | nvarchar(128) | |
-| `arch` | nvarchar(32) | |
-| `vendor` | nvarchar(255) | |
-| `installed_at` | datetime2(0) | UTC |
-| `repo` | nvarchar(255) | empty when not known |
-
-With `create_table: true` the job makes the table (and an index on host and run) when it is not there; the login then
-needs CREATE TABLE once. Afterwards it needs SELECT on `INFORMATION_SCHEMA` and INSERT on the table.
-
-**Your own column names.** A table your DBA made with other names:
-
-```yaml
-sw_inventory_mssql:
-  server: sql01.corp.example.mil
-  database: Inventory
-  schema: cmdb
-  table: InstalledSoftware
-  create_table: false
-  column_map:
-    host: ComputerName
-    name: PackageName
-    installed_at: InstallDate
-    vendor: ''            # not in their table
-```
-
-Every name (schema, table, each column) must be letters, digits and `_` (at most 128). Values are always parameters,
-never part of the SQL text. With `create_table: false`, a missing table or column stops this output with the list of
-columns it expects.
-
-## The report
-
-Results first, empty sections left off:
-
-- **Hosts not read**: each with the reason (`NOT REACHED - ...`, `rpm is not on this host`, the read's error).
-- **Outputs not written**: which output, what failed, the fix.
-- **Software changes (last night)**: each changed host's added, removed and updated counts and packages.
-- **Top changed packages**: the package, the change, on how many hosts, from which version to which.
-- **Notes**: hosts with no earlier list, hosts without repository names, what it compared with, where it wrote.
-
-A host seen for the first time has no changes (no earlier list): its changes start the next night. A host not read
-never shows as "everything removed".
+The report, results first, empty sections left off: **Hosts not read** (with why), **Outputs not written**,
+**Software changes (last night)** (added, removed, updated per host), **Top changed packages**, **Notes**.
 
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| `sw_inventory_outputs` | `[shield, csv, json]` | Any of `shield`, `csv`, `json`; optional `report_db`, `mssql` |
-| `sw_inventory_db_auto` | `true` | Add `report_db` when the template has the Report database credential |
-| `sw_inventory_dir` | `''` | The files' folder on the execution node (a path AAP exposes to jobs). `''`: the job's own folder, gone after the job |
+| `sw_inventory_outputs` | `[shield, csv, json]` | The exports |
+| `sw_inventory_dir` | `''` | The files' folder on the execution node. `''`: the job's own folder, gone after the job |
 | `sw_inventory_shield_subdir` | `shield` | The shield files' folder, under `sw_inventory_dir` and on the share |
 | `sw_inventory_share` | `''` | `\\server\share\folder` (or a mounted folder) the files are copied to |
 | `sw_inventory_share_subdir` | `''` | A folder under the share's folder |
 | `sw_inventory_share_auth` | `report_web_smb_auth` | `negotiate`, `kerberos` or `ntlm` |
 | `sw_inventory_share_encrypt` | `report_web_smb_encrypt` | SMB 3 encryption always |
-| `sw_inventory_keep_days` | `90` | The report database's runs and the dated files kept. `0`: all |
-| `sw_inventory_db_create` | `true` | Make the report database's tables on the first run |
-| `sw_inventory_db_timeout` | `10` | Seconds to connect to the report database |
-| `sw_inventory_mssql` | (see *SQL Server*) | The SQL Server table |
+| `sw_inventory_keep_days` | `90` | Dated files kept. `0`: all |
 | `sw_inventory_email` | `true` | Email the report with the files (`report_email_to`) |
-| `sw_inventory_email_max_mb` | `10` | Each attachment at most: a bigger one is left off the email |
-| `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most (the CSV and the databases have all) |
+| `sw_inventory_email_max_mb` | `10` | Each attachment at most |
+| `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most (the CSV has all) |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
 | `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |
-| `sw_inventory_fail_on_output_error` | `true` | The job fails at its end when an output was not written (after the report and the other outputs) |
+| `sw_inventory_fail_on_output_error` | `true` | The job fails at its end when an export, the share, the website or the email failed |
 
 ## When something fails
 
-Each failure names the output, an SA-SWI code and the fix, in the job output and in the report.
-
 | Code | What | The fix |
 |---|---|---|
-| SA-SWI-01 | an output name not known | `sw_inventory_outputs`: shield, report_db, csv, json, mssql |
-| SA-SWI-10 | no PyMySQL in the EE | the all-in-one EE |
-| SA-SWI-11 | the report database's tables are not there, and `sw_inventory_db_create: false` | make them (REPORT_DATABASE.md), or `true` |
-| SA-SWI-12 | the tables are newer than this release | update site-automation |
-| SA-SWI-13 | the report database cannot be reached or logged in to | the Report database credential, TLS, the grants |
-| SA-SWI-14 | the rows could not be written (nothing kept) | the writer needs SELECT, INSERT, DELETE |
-| SA-SWI-20 | `sw_inventory_share` or its auth is not valid | `\\fileserver.corp.example.mil\share\folder`; `negotiate` |
+| SA-SWI-01 | an export name not known | `sw_inventory_outputs`: shield, csv, json |
+| SA-SWI-20 | `sw_inventory_share` or its auth is not valid (or has a user in it) | `\\fileserver.corp.example.mil\share\folder`; `negotiate` |
 | SA-SWI-21 | the share refused the login | the Windows file share credential's user name and password |
 | SA-SWI-22 | access denied | Modify on the folder |
 | SA-SWI-23 | no such share | the share's name in `sw_inventory_share` |
@@ -260,11 +150,8 @@ Each failure names the output, an SA-SWI code and the fix, in the job output and
 | SA-SWI-27 | no login for the share | attach the Windows file share credential |
 | SA-SWI-28 | the share's folder is not there | make it once by hand |
 | SA-SWI-29 | another SMB error | read the error line |
-| SA-SWI-30, 31 | `sw_inventory_dir` is not absolute, or cannot be written | a folder the job's user may write |
-| SA-SWI-40 | `sw_inventory_mssql` is not valid (a name, the column map) | correct it |
-| SA-SWI-41, 42 | no SQL Server credential, no pymssql | attach the credential; the all-in-one EE |
-| SA-SWI-43 | SQL Server cannot be reached or logged in to | the server, port 1433, the database, the login |
-| SA-SWI-44 | the rows could not be written (rolled back, nothing kept) | INSERT on the table; the error line |
+| SA-SWI-30 | a path or folder name not valid | an absolute `sw_inventory_dir`; plain sub folder names |
+| SA-SWI-31 | `sw_inventory_dir` cannot be written | a folder the job's user may write |
 
-A host that cannot be reached is listed in the report with the reason; it never fails the job
-(`site_unreachable_fails: true` fails it).
+A host that cannot be reached is listed with the reason and never fails the job (`site_unreachable_fails: true`
+fails it). The report goes out even when no host was reached.

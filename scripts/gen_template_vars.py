@@ -375,7 +375,7 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## check_disk part below), not check_disk_warn_pct / check_disk_crit_pct (the health check's)
 """),
     "linux_sw_inventory.yml": ("Linux - software inventory",
-                               "Machine (optional: Report database, SQL Server (certificate inventory), Windows file share)", "", """\
+                               "Machine (optional: Windows file share)", "", """\
 ## Read-only on the hosts; run it nightly (02:00) with a Limit. Exports: shield text files per host, CSV and JSON
 ## (sw_inventory_outputs); a share with sw_inventory_share and the Windows file share credential (docs/LINUX_SW_INVENTORY.md)
 """),

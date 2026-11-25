@@ -1,0 +1,64 @@
+---
+# LINUX SOFTWARE INVENTORY, on each host (playbooks/linux_sw_inventory.yml): reached or not - a host that cannot be
+# reached stays in the play (its reason kept), so the controller step after it always runs, also when no host at all
+# was reached. Then one read-only script (files/sw_read.sh: rpm -qa, dnf's own records with --noplugins -C
+# --disablerepo='*'), sent to the host's sh with raw (no Python needed on the host, no file staged there). Its output
+# goes to a folder on the controller - never into a task result (AAP keeps those). A host's file is named by the SHA-1
+# of its inventory name.
+- name: Software inventory | reach the host
+  ansible.builtin.raw: echo reached      # no Python, no module
+  become: false
+  changed_when: false
+  check_mode: false
+  ignore_unreachable: true
+  register: _sw_reach
+
+- name: Software inventory | reached?
+  ansible.builtin.set_fact:
+    site_host_unreached: >-
+      {{ ((_sw_reach.msg | default('', true) | string | trim | regex_replace('\s*[\r\n]+\s*', ' ')) or 'unreachable')
+         if _sw_reach.unreachable | default(false) else '' }}
+
+- name: Software inventory | not reached - listed in the report, the job goes on (site_unreachable_fails)
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; the report lists it."
+  when: site_host_unreached | length > 0
+
+- name: Software inventory | not reached - fail it (site_unreachable_fails)
+  ansible.builtin.fail:
+    msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}"
+  when: site_host_unreached | length > 0 and site_unreachable_fails | default(false) | bool
+
+- name: Software inventory | read the installed packages (rpm -qa; dnf from its own records only - read-only)
+  ansible.builtin.raw: |
+    SW_READ_TIMEOUT={{ sw_inventory_read_timeout | int }} sh -s <<'SW_READ_SCRIPT_END'
+    {{ lookup('ansible.builtin.file', 'sw_read.sh') }}
+    SW_READ_SCRIPT_END
+  args:
+    executable: /bin/sh                 # through a shell on every connection (podman's exec has none)
+  register: _sw_read
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true              # lost during the read: listed with why
+  check_mode: false                     # it only reads: a Check run lists the hosts' packages too
+  no_log: true                          # the package list is not kept in AAP's job events (the next step keeps it)
+  when: site_host_unreached | length == 0
+
+- name: Software inventory | the read, to the controller's folder
+  ansible.builtin.copy:
+    content: "{{ _sw_read.stdout | default('') }}"
+    dest: "{{ _sw_work_path }}/{{ inventory_hostname | hash('sha1') }}.read"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  check_mode: false                     # a temporary folder, deleted at the end
+  no_log: true
+  when: site_host_unreached | length == 0 and _sw_read.rc | default(1) == 0 and '@@end' in _sw_read.stdout | default('')
+
+- name: Software inventory | why a host was not read
+  ansible.builtin.set_fact:
+    _sw_fail: >-
+      {{ '' if site_host_unreached | length > 0 or (_sw_read.rc | default(1) == 0 and '@@end' in _sw_read.stdout | default('')) else
+         ('the read failed (exit ' ~ (_sw_read.rc | default('?')) ~ '): '
+          ~ ((_sw_read.stderr | default(_sw_read.msg | default(''), true) | string | trim | regex_replace('\s+', ' '))[-300:]
+             or 'no output')) }}

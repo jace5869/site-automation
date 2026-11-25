@@ -2479,28 +2479,24 @@ File: `roles/stigman_update/defaults/main.yml`
 
 File: `roles/sw_inventory/defaults/main.yml`
 
-> LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm and, from the host's own dnf records (cache only, never a repository), the repository it came from. Read-only on the hosts. Run it nightly (02:00). Each output below is written on its own: one that fails says which, why (an SA-SWI code) and the fix, and the others are still written.
+> LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm and, from the host's own dnf records (never a repository), the repository it came from. Read-only on the hosts. Run it nightly (02:00). Each export is written on its own: one that fails says which, why (an SA-SWI code) and the fix; the others are still written.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `sw_inventory_outputs` | `[shield, csv, json]` | Where the inventory goes: shield (a text file per host), csv, json (one file per run and a latest one); optional: report_db (the report database), mssql (a SQL Server table, sw_inventory_mssql) |
-| `sw_inventory_db_auto` | `true` | true = report_db is added by itself when the template has the "Report database" credential; false = only when listed |
+| `sw_inventory_outputs` | `[shield, csv, json]` | The exports: shield (a text file per host), csv, json (one file per run and a latest one) |
 | `sw_inventory_dir` | (empty) | The folder the files are written in, on the execution node: a path AAP exposes to jobs, or '' = the job's own folder (gone after the job - then set sw_inventory_share) |
 | `sw_inventory_shield_subdir` | `shield` | The shield files' folder, under sw_inventory_dir and under the share's folder: <short host name>.txt each |
 | `sw_inventory_share` | (empty) | A Windows file share's folder the files are copied to (\\fileserver.yourdomain.mil\share\folder), or a folder mounted on the execution nodes; '' = none. The login: the "Windows file share" credential (user@YOURDOMAIN.MIL, Modify on the folder). The folder must be there; the job makes the folders inside it. |
 | `sw_inventory_share_subdir` | (empty) | A folder under the share's folder for them ('' = the share's folder itself) |
 | `sw_inventory_share_auth` | `"{{ report_web_smb_auth \| default('negotiate') }}"` | How the share is logged in to: negotiate (Kerberos first - FIPS), kerberos or ntlm; the report website's setting |
 | `sw_inventory_share_encrypt` | `"{{ report_web_smb_encrypt \| default(false) }}"` | Encrypt every byte (SMB 3), also on a share that does not require it |
-| `sw_inventory_keep_days` | `90` | Days of runs kept: the report database's runs of this template, and the dated files (sw-inventory-YYYYMMDD-HHMM.*) here and on the share. 0 = all |
-| `sw_inventory_db_create` | `true` | Make the report database's four tables on the first run (false: made by hand, docs/REPORT_DATABASE.md) |
-| `sw_inventory_db_timeout` | `10` | Seconds to connect to the report database |
-| `sw_inventory_mssql` | `server: '' port: 1433 database: '' schema: dbo table: sw_inventory create_table: true col…` | SQL Server (output mssql): one row per host and package each run, appended in one transaction. The login: the "SQL Server (certificate inventory)" credential. column_map: {our column: your column}; '' leaves one out (never run_id, host or name). create_table false: the table must be there, with the columns docs/LINUX_… (all of it: the role file) |
+| `sw_inventory_keep_days` | `90` | Days the dated files (sw-inventory-YYYYMMDD-HHMM.csv / .json) are kept, here and on the share. 0 = all |
 | `sw_inventory_email` | `true` | The email (report_email_to): the report with the CSV, the JSON and a zip of the shield files attached. false = no email from this job (the report website page stays) |
 | `sw_inventory_email_max_mb` | `10` | Each attachment at most (MB): the CSV, the JSON and the shield zip each go when not bigger; one that is, is left off and the email says where it is |
 | `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most this many rows (0 = all); the CSV and the databases have them all |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
 | `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |
-| `sw_inventory_fail_on_output_error` | `true` | true = the job fails at its end when an output could not be written (after the report and the other outputs) |
+| `sw_inventory_fail_on_output_error` | `true` | true = the job fails at its end when an export, the share copy, the website or the email failed (after the rest) |
 
 ## tenable_scan
 

@@ -3,31 +3,25 @@
 ## 1.133.0 — 2026-11-25
 
 **To set up:** run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`; for the share,
-attach the **Windows file share** credential and set `sw_inventory_share`; for the email, `report_email_to`. Schedule it
-nightly at 02:00 with your Limit (Check first). Exports: `sw_inventory_outputs` (default `[shield, csv, json]`).
+attach the **Windows file share** credential and set `sw_inventory_share`; for the email, `report_email_to`.
+Run it with Check, then schedule it nightly at 02:00 with your Limit.
 
-- **New: Linux - software inventory** (`playbooks/linux_sw_inventory.yml`, `roles/sw_inventory`,
-  [docs/LINUX_SW_INVENTORY.md](docs/LINUX_SW_INVENTORY.md)): every installed RPM package of the RHEL hosts - name, epoch,
-  version, release, arch, vendor, install time, source RPM, and the repository from dnf's own records (`-C
-  --disablerepo='*'`: no repository contacted). Read-only; one script per host, parsed on the controller; the hosts'
-  reads stay out of AAP's job events.
-- **Exports, each on its own** (`sw_inventory_outputs`, default `[shield, csv, json]`): `shield` - a text file per host
-  (`<short name>.txt`, `#shield-host v1`, TAB rows sorted by name then version, every kernel kept); `csv` / `json` - one
-  file per run and a latest one. Optional: `report_db` - added by itself when the template has the Report database
-  credential (`sw_inventory_run`, `_host`, `_pkg`, `_change`, kept `sw_inventory_keep_days`: 90); `mssql` - a SQL
-  Server table (`sw_inventory_mssql`: inserts of 1,000 in one transaction, names checked, `column_map`,
-  `create_table`; never DROP). The shield files, CSV and JSON also go to a Windows file share over SMB
-  (`sw_inventory_share`, Kerberos as the report website's share).
-- **The email** attaches the CSV, the JSON and a zip of the shield files; one bigger than `sw_inventory_email_max_mb`
-  (10) is left off and the email says where it is.
-- **What changed since the last run**: added, removed, updated per host (several kernels at once included), compared
-  with the report database's last run of each host, else `sw-inventory-state.json`. The report: hosts not read (with
-  why), outputs not written, *Software changes (last night)*, top changed packages; a workbook with **Packages** and
-  **Changed since last run**.
-- **Failures say which output, why and the fix** (codes SA-SWI-01 to 44); the other outputs are still written; the job
-  fails at its end (`sw_inventory_fail_on_output_error: true`). A host not reached is listed, never a failed job.
-- Tests: `tests/test_sw_inventory.py`; `tests/swinv/run_sw_inventory_test.sh` (UBI 8, 9, 10 over podman) and
-  `tests/swinv/run_sw_inventory_db_test.sh` (MySQL 8.4), `tests/swinv/run_sw_inventory_mssql_test.sh` (SQL Server 2022).
+- **New: Linux - software inventory** (`playbooks/linux_sw_inventory.yml`,
+  [docs/LINUX_SW_INVENTORY.md](docs/LINUX_SW_INVENTORY.md)): every installed RPM package of the RHEL hosts (name, epoch,
+  version, release, arch, vendor, install time, source RPM; the repository from dnf's own records with `--noplugins -C
+  --disablerepo='*'`). Read-only; the script goes to the host's shell on its input, no file left there.
+- **Three exports** (`sw_inventory_outputs`, default `[shield, csv, json]`): a text file per host (`<short name>.txt`,
+  `#shield-host v1`, TAB rows sorted by name then version, every kernel kept), a CSV and a JSON (one per run and a
+  latest one). Copied to a Windows file share over SMB (`sw_inventory_share`, Kerberos as the report website's share),
+  each file on its own; the email attaches the CSV, the JSON and a zip of the shield files (each within
+  `sw_inventory_email_max_mb`: 10).
+- **What changed since the last run** (`sw-inventory-state.json`): added, removed, updated per host. The report: hosts
+  not read, outputs not written, *Software changes (last night)*, top changed packages; a workbook.
+- **Each export, the share, the website and the email on its own**: one that fails says why (codes SA-SWI-01 to 31) and
+  the fix, the rest still goes; the job fails at its end (`sw_inventory_fail_on_output_error`). A host not reached is
+  listed; the report goes out even when no host was reached.
+- Tests: `tests/test_sw_inventory.py`; `tests/swinv/run_sw_inventory_test.sh` (UBI 8, 9, 10 over podman, both
+  ansible-core versions).
 
 ## 1.130.0 — 2026-11-25
 

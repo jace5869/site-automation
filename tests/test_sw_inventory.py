@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """1.133.0: the Linux software inventory - plugins/module_utils/site_sw_inventory.py (the read's parsing, rpm's version
-order, what changed, the shield file byte for byte, CSV / JSON, the SQL Server statements) and
-roles/sw_inventory/library/site_sw_inventory.py (the report database's writer against SQLite standing in for MySQL, the
-share copy with a fake smbclient, the email's attachments and their size limit, every output on its own), the catalog
-entry. tests/swinv/run_sw_inventory_test.sh and run_sw_inventory_db_test.sh run the playbook on UBI containers and a real
-MySQL 8.4. Placeholders only.
+order, what changed, the shield file byte for byte, CSV / JSON, the state file) and
+roles/sw_inventory/library/site_sw_inventory.py (the share copy with a fake smbclient, the email's attachments and their
+size limit, every export on its own, the review's fixes), the catalog entry. tests/swinv/run_sw_inventory_test.sh runs the
+playbook on UBI containers. Placeholders only.
   python3 tests/test_sw_inventory.py"""
 import datetime
 import importlib.util
@@ -13,7 +12,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -24,9 +22,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "plugins", "module_utils"))
 import site_sw_inventory as sw  # noqa: E402
-import site_report_db  # noqa: E402
 import ansible.module_utils  # noqa: E402
-for _n, _m in (("site_sw_inventory", sw), ("site_report_db", site_report_db)):
+for _n, _m in (("site_sw_inventory", sw),):
     sys.modules["ansible.module_utils." + _n] = _m
     setattr(ansible.module_utils, _n, _m)
 _spec = importlib.util.spec_from_file_location("site_sw_inventory_module",
@@ -83,10 +80,13 @@ class Parse(unittest.TestCase):
 
     def test_fields_and_failures(self):
         weird = row("tool", "(none)", "1.0", "1", vendor="Acme | Tools, Inc.; \"x\"")
-        r = sw.parse_read(read_text(EXAMPLE_ROWS + [weird, "broken" + S + "line"],
+        r = sw.parse_read(read_text(EXAMPLE_ROWS + [weird],
                                     repos=[("nginx", "x86_64", "2", "1.20.1", "16.el9_4.1", "@appstream"), ("bash", "x86_64", "0", "5.1.8", "9.el9", "@System")]))
         self.assertTrue(r["ok"])
-        self.assertEqual(r["bad_lines"], 1)
+        # review 9: one row that cannot be read - the whole read is not used (no partial list, no false "removed")
+        broken = sw.parse_read(read_text(EXAMPLE_ROWS + ["broken" + S + "line"]))
+        self.assertFalse(broken["ok"])
+        self.assertIn("1 rpm rows could not be read", broken["error"])
         by = dict((p["name"], p) for p in r["packages"])
         self.assertEqual(by["tool"]["vendor"], "Acme | Tools, Inc.; \"x\"")
         self.assertEqual((by["nginx"]["epoch"], by["nginx"]["repo"]), (2, "appstream"))
@@ -203,214 +203,6 @@ class Files(unittest.TestCase):
         self.assertEqual(sw.stamp_name("2026-11-25T02:00:05Z"), "20261125-0200")
 
 
-# ---- SQL Server -------------------------------------------------------------------------------------------------------
-
-class FakeMssql(object):
-    """pymssql's shape: cursor().execute / executemany / fetchone / fetchall, commit, rollback. Every statement kept."""
-
-    def __init__(self, table=False, columns=(), fail_at=None):
-        self.table, self.columns, self.fail_at = table, list(columns), fail_at
-        self.sql, self.many, self.commits, self.rollbacks = [], [], 0, 0
-
-    def cursor(self):
-        conn = self
-
-        class C(object):
-            def execute(self, sql, args=()):
-                conn.sql.append((sql, args))
-                self.last = sql
-
-            def executemany(self, sql, rows):
-                conn.many.append((sql, list(rows)))
-                if conn.fail_at is not None and len(conn.many) == conn.fail_at:
-                    raise RuntimeError("the transaction log is full")
-
-            def fetchone(self):
-                return (1,) if "INFORMATION_SCHEMA.TABLES" in self.last and conn.table else None
-
-            def fetchall(self):
-                return [(c,) for c in conn.columns]
-        return C()
-
-    def commit(self):
-        self.commits += 1
-
-    def rollback(self):
-        self.rollbacks += 1
-
-
-def hosts_n(n_hosts, n_pkgs):
-    return [{"host": "srv-app%02d.corp.example.mil" % h, "os": "rhel 9.4", "kernel": "k", "read_at": "2026-11-25T02:00:05Z",
-             "packages": [dict(P("pkg%04d" % i, "1.0", "1.el9"), vendor="V", installed_at="2026-11-20T10:00:00Z", repo="appstream")
-                          for i in range(n_pkgs)]} for h in range(n_hosts)]
-
-
-class Mssql(unittest.TestCase):
-    def plan(self, **kw):
-        s = {"server": "sql01.corp.example.mil", "database": "inventory"}
-        s.update(kw)
-        return sw.mssql_plan(s)
-
-    def test_identifiers_checked(self):
-        for bad in ({"table": "sw; DROP TABLE x"}, {"schema": "dbo]"}, {"table": "1abc"}, {"table": ""}, {"table": "a" * 129},
-                    {"column_map": {"host": "host name"}}, {"column_map": {"nope": "x"}}, {"column_map": {"host": ""}},
-                    {"column_map": {"os": "Host"}}, {"server": ""}, {"column_map": ["x"]}):
-            with self.assertRaises(sw.SettingError, msg=bad):
-                self.plan(**bad)
-        self.assertEqual(self.plan(table="A" * 128)["table"], "A" * 128)
-
-    def test_column_map_and_parameters(self):
-        p = self.plan(schema="inv", table="Packages", column_map={"host": "HostName", "vendor": "", "release": "Rel"})
-        self.assertNotIn("vendor", [c for c, _, _ in p["columns"]])
-        self.assertTrue(p["insert"].startswith("INSERT INTO [inv].[Packages] ([run_id], [read_at], [HostName], "))
-        self.assertIn("[Rel]", p["insert"])
-        self.assertEqual(p["insert"].count("%s"), len(p["columns"]))
-        self.assertNotIn("'", p["insert"])
-        self.assertIn("CREATE TABLE [inv].[Packages] (", p["create_sql"])
-        self.assertIn("[HostName] nvarchar(255) NOT NULL", p["create_sql"])
-        self.assertIn("CREATE INDEX [IX_Packages_run] ON [inv].[Packages] ([HostName], [run_id])", p["create_sql"])
-
-    def test_chunks_one_commit_never_drop(self):
-        conn, p = FakeMssql(), self.plan()
-        n = sw.mssql_write(conn, p, "77-20261125T020005Z", hosts_n(5, 500))
-        self.assertEqual(n, 2500)
-        self.assertEqual([len(r) for _, r in conn.many], [1000, 1000, 500])
-        self.assertEqual(conn.commits, 1)
-        self.assertEqual(conn.rollbacks, 0)
-        first = conn.many[0][1][0]
-        self.assertEqual(first[0], "77-20261125T020005Z")
-        self.assertEqual(first[1], datetime.datetime(2026, 11, 25, 2, 0, 5))
-        self.assertIsNone(first[6])                                   # epoch none: NULL
-        every = " ".join(s for s, _ in conn.sql) + " ".join(s for s, _ in conn.many)
-        self.assertNotIn("DROP", every.upper())
-        self.assertNotIn("DELETE", every.upper())
-        self.assertNotIn("srv-app", every)                            # no value in any statement's text
-
-    def test_table_by_hand(self):
-        p = self.plan(create_table=False)
-        with self.assertRaises(sw.SettingError) as e:
-            sw.mssql_write(FakeMssql(), p, "r", hosts_n(1, 2))
-        self.assertIn("create_table is false - make it with these columns: run_id nvarchar(64) NOT NULL, read_at", str(e.exception))
-        conn = FakeMssql(table=True, columns=[c for c, _ in sw.MSSQL_COLUMNS if c != "repo"])
-        with self.assertRaises(sw.SettingError) as e:
-            sw.mssql_write(conn, p, "r", hosts_n(1, 2))
-        self.assertIn("has no column repo", str(e.exception))
-        self.assertEqual(conn.rollbacks, 1)
-        conn = FakeMssql(table=True, columns=[c.upper() for c, _ in sw.MSSQL_COLUMNS])
-        self.assertEqual(sw.mssql_write(conn, p, "r", hosts_n(1, 2)), 2)
-        self.assertFalse(any("CREATE" in s for s, _ in conn.sql))
-
-    def test_rollback_on_error(self):
-        conn = FakeMssql(fail_at=2)
-        with self.assertRaises(RuntimeError):
-            sw.mssql_write(conn, self.plan(), "r", hosts_n(3, 1000))
-        self.assertEqual((conn.commits, conn.rollbacks), (0, 1))
-
-
-# ---- the report database: SQLite in MySQL's place ---------------------------------------------------------------------
-
-def sqlite_sql(sql):
-    sql = sql.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE IF NOT EXISTS")
-    sql = re.sub(r"id BIGINT NOT NULL AUTO_INCREMENT", "id INTEGER", sql)
-    sql = re.sub(r", KEY \w+ \([^)]*\)", "", sql)
-    sql = sql.replace("PRIMARY KEY (id)", "PRIMARY KEY (id)").split(" ENGINE=")[0]
-    return sql.replace("UTC_TIMESTAMP()", "CURRENT_TIMESTAMP").replace("%s", "?")
-
-
-class Lite(object):
-    """A SQLite session that takes site_sw_inventory's MySQL statements (information_schema from sqlite_master)."""
-
-    def __init__(self):
-        self.db = sqlite3.connect(":memory:")
-        self.commits = 0
-
-    def cursor(self):
-        db = self.db
-
-        class C(object):
-            lastrowid, rows = None, []
-
-            def execute(self, sql, args=()):
-                if "information_schema.tables" in sql:
-                    names = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-                    self.rows = [(n,) for n in names if n in args]
-                    return len(self.rows)
-                args = tuple(x.strftime("%Y-%m-%d %H:%M:%S") if hasattr(x, "strftime") else x for x in args)
-                c = db.execute(sqlite_sql(sql), args)
-                self.lastrowid, self.rows = c.lastrowid, c.fetchall()
-                return c.rowcount
-
-            def executemany(self, sql, rows):
-                db.executemany(sqlite_sql(sql), [tuple(x.strftime("%Y-%m-%d %H:%M:%S") if hasattr(x, "strftime") else x for x in r) for r in rows])
-
-            def fetchall(self):
-                return self.rows
-
-            def fetchone(self):
-                return self.rows[0] if self.rows else None
-        return C()
-
-    def commit(self):
-        self.commits += 1
-        self.db.commit()
-
-    def rollback(self):
-        self.db.rollback()
-
-    def close(self):
-        pass                                    # the module closes its session; the test reads after it
-
-    def q(self, sql):
-        return self.db.execute(sql).fetchall()
-
-
-class ReportDb(unittest.TestCase):
-    def test_schema_write_baseline_prune(self):
-        lite = Lite()
-        self.addCleanup(lite.db.close)
-        self.assertEqual(mod.db_schema(lite, False), (False, False))
-        self.assertEqual(mod.db_schema(lite, True), (True, True))
-        self.assertEqual(mod.db_schema(lite, True), (True, False))
-        self.assertEqual(lite.q("SELECT component, version FROM schema_version"), [("sw_inventory", 1)])
-        h = hosts_n(2, 3)
-        now = datetime.datetime(2026, 11, 25, 2, 0, 5)
-        self.assertEqual(mod.db_baseline(lite, h, mod.db_next_id(lite)), {})
-        rid = mod.db_write(lite, now, 77, 5, h, [{"host": "gone01.corp.example.mil", "reason": "NOT REACHED - timed out"}], {})
-        lite.commit()
-        self.assertEqual(rid, 1)
-        self.assertEqual(lite.q("SELECT id, job, template_id, hosts_ok, hosts_failed FROM sw_inventory_run"), [(1, 77, 5, 2, 1)])
-        self.assertEqual(lite.q("SELECT COUNT(*) FROM sw_inventory_pkg WHERE run_id = 1"), [(6,)])
-        self.assertEqual(lite.q("SELECT status, reason FROM sw_inventory_host WHERE host = 'gone01.corp.example.mil'"), [("failed", "NOT REACHED - timed out")])
-        # run 2: srv-app00 lost a package, gone01 still not read, a host new
-        h2 = hosts_n(2, 3)
-        h2[0]["packages"] = h2[0]["packages"][:2]
-        h2.append(dict(hosts_n(3, 1)[2]))
-        base = mod.db_baseline(lite, h2, mod.db_next_id(lite))
-        self.assertEqual(sorted(base), ["srv-app00.corp.example.mil", "srv-app01.corp.example.mil"])
-        chg = dict((x["host"], sw.changes(base[x["host"]], x["packages"])) for x in h2 if x["host"] in base)
-        self.assertEqual(chg["srv-app00.corp.example.mil"], [{"name": "pkg0002", "arch": "x86_64", "change": "removed", "old_evr": "1.0-1.el9", "new_evr": ""}])
-        self.assertEqual(chg["srv-app01.corp.example.mil"], [])
-        rid2 = mod.db_write(lite, now + datetime.timedelta(days=1), 78, 5, h2, [], chg)
-        self.assertEqual(lite.q("SELECT run_id, host, name, `change` FROM sw_inventory_change"), [(rid2, "srv-app00.corp.example.mil", "pkg0002", "removed")])
-        self.assertEqual(lite.q("SELECT `release` FROM sw_inventory_pkg WHERE run_id = 2 LIMIT 1"), [("1.el9",)])
-        # prune: this template's runs only
-        mod.db_write(lite, now, 90, 6, hosts_n(1, 1), [], {})
-        n = mod.db_prune(lite, now + datetime.timedelta(days=91), 90, 5)
-        self.assertEqual(n, 1)
-        self.assertEqual(lite.q("SELECT id FROM sw_inventory_run ORDER BY id"), [(2,), (3,)])
-        self.assertEqual(lite.q("SELECT DISTINCT run_id FROM sw_inventory_pkg ORDER BY run_id"), [(2,), (3,)])
-        self.assertEqual(mod.db_prune(lite, now, 0, 5), 0)
-
-    def test_reserved_words_backticked(self):
-        for s in sw.DB_CREATE + (sw.DB_INSERT_PKG, sw.DB_INSERT_CHANGE, sw.DB_BASELINE):
-            self.assertIsNone(re.search(r"(?<!`)\b(release|change)\b(?!`)", s.replace("sw_inventory_change", "")), s)
-
-    def test_the_statements_in_the_doc_are_the_modules(self):
-        doc = text(os.path.join(ROOT, "docs", "REPORT_DATABASE.md"))
-        for part in sw.db_ddl(site_report_db.SCHEMA_VERSION_TABLE).split("\n\n"):
-            self.assertIn(part, doc, "docs/REPORT_DATABASE.md: the statement differs from site_sw_inventory.db_ddl()")
-
-
 # ---- the module: every output on its own, the share, the email's files ------------------------------------------------
 
 class FakeSmb(object):
@@ -462,29 +254,27 @@ class FakeSmb(object):
         pass
 
 
-class Module(unittest.TestCase):
+class ModuleBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.work = os.path.join(self.tmp, "work")
         os.makedirs(self.work)
-        shutil.copy(FIXTURE, os.path.join(self.work, "rhel-app01.corp.example.mil.read"))
-        with open(os.path.join(self.work, "rhel-db01.corp.example.mil.read"), "w") as f:
+        shutil.copy(FIXTURE, os.path.join(self.work, mod.read_name("rhel-app01.corp.example.mil")))
+        with open(os.path.join(self.work, mod.read_name("rhel-db01.corp.example.mil")), "w") as f:
             f.write(read_text(EXAMPLE_ROWS))
         env = {"SMB_SHARE_USERNAME": "svc_aap_inv@CORP.EXAMPLE.MIL", "SMB_SHARE_PASSWORD": "Test-Only-pw"}
         p = unittest.mock.patch.dict(os.environ, env)
         p.start()
         self.addCleanup(p.stop)
-        for k in ("REPORT_DB_HOST", "CERT_INVENTORY_SQL_USER"):
-            os.environ.pop(k, None)
 
     def params(self, **kw):
         p = dict(work_dir=self.work, hosts=[{"host": "rhel-app01.corp.example.mil"}, {"host": "rhel-db01.corp.example.mil"},
                                             {"host": "gone01.corp.example.mil", "reason": "NOT REACHED - ssh: connect timed out"},
                                             {"host": "win01.corp.example.mil", "skipped": True}],
-                 read_at="2026-11-25T02:00:05Z", job=77, template_id=5, outputs=["shield", "report_db", "csv"],
+                 read_at="2026-11-25T02:00:05Z", job=77, outputs=["shield", "csv"],
                  dir=os.path.join(self.tmp, "out"), shield_subdir="shield", share="", share_subdir="", share_auth="negotiate",
-                 share_encrypt=False, share_port=445, keep_days=90, db_create=True, db_timeout=5, mssql={}, xlsx_max_rows=20000,
+                 share_encrypt=False, share_port=445, keep_days=90, xlsx_max_rows=20000,
                  email_max_mb=10.0, top=15)
         p.update(kw)
         return p
@@ -492,9 +282,11 @@ class Module(unittest.TestCase):
     def state(self, res, name):
         return [x for x in res["outputs"] if x["name"] == name][0]
 
+
+class Module(ModuleBase):
+
     def test_files_report_and_email(self):
-        res = mod.run(self.params(outputs=["shield", "report_db", "csv", "json"]))
-        self.assertEqual(self.state(res, "report_db")["state"], "skipped")
+        res = mod.run(self.params(outputs=["shield", "csv", "json"]))
         self.assertEqual(res["failed_outputs"], [])
         out = os.path.join(self.tmp, "out")
         self.assertEqual(sorted(os.listdir(os.path.join(out, "shield"))), ["rhel-app01.txt", "rhel-db01.txt"])
@@ -511,7 +303,7 @@ class Module(unittest.TestCase):
         sheets = json.loads(text(res["sheets_file"]))
         self.assertEqual([s["name"] for s in sheets], ["Packages", "Changed since last run"])
         # the next run: one package gone on db01, compared with sw-inventory-state.json
-        with open(os.path.join(self.work, "rhel-db01.corp.example.mil.read"), "w") as f:
+        with open(os.path.join(self.work, mod.read_name("rhel-db01.corp.example.mil")), "w") as f:
             f.write(read_text(EXAMPLE_ROWS[:2] + [row("bash", "(none)", "5.1.8", "10.el9")]))
         res = mod.run(self.params(outputs=["shield", "csv", "json"]))
         doc = res["report"]
@@ -528,35 +320,29 @@ class Module(unittest.TestCase):
             ("csv", "sw-inventory-20261125-0200.csv"), ("json", "sw-inventory-20261125-0200.json"), ("zip", "sw-inventory-shield-20261125.zip")))
         self.assertTrue(size["zip"] < size["csv"] < size["json"], size)
         names = lambda r: [a["filename"] for a in r["attachments"]]     # noqa: E731
-        # all fit
+        notes = lambda r: [s for s in r["report"]["sections"] if s["title"] == "Notes"][0]["lines"]     # noqa: E731
         res = mod.run(self.params(outputs=out, email_max_mb=size["json"] / mb))
         self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json", "sw-inventory-shield-20261125.zip"])
-        # the JSON over: the CSV and the zip kept, the JSON said
+        # the JSON over: the CSV and the zip kept; where the JSON is: sw_inventory_dir, written
         res = mod.run(self.params(outputs=out, email_max_mb=(size["json"] - 1) / mb))
         self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-shield-20261125.zip"])
-        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
-        self.assertTrue(notes[0].startswith("sw-inventory-20261125-0200.json ("), notes[0])
-        self.assertIn("bigger than sw_inventory_email_max_mb", notes[0])
-        self.assertTrue(notes[0].endswith("- it is in sw_inventory_dir"), notes[0])
-        # only the zip fits
-        res = mod.run(self.params(outputs=out, email_max_mb=size["zip"] / mb))
-        self.assertEqual(names(res), ["sw-inventory-shield-20261125.zip"])
-        # the zip over too: none, and the email says the shield files are on the share
-        res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, share="/nonexistent-share-folder"), check=True)
-        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
+        self.assertTrue(notes(res)[0].startswith("sw-inventory-20261125-0200.json ("), notes(res)[0])
+        self.assertTrue(notes(res)[0].endswith("- it is in %s on the execution node" % os.path.join(self.tmp, "out")), notes(res)[0])
+        # review 22: no share, the job's own folder - never "on the share" nor a folder that is gone
+        res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, dir=""))
         self.assertEqual(names(res), [])
-        self.assertTrue(notes[2].endswith("- the shield files are on the share"), notes)
-
-    def test_report_db_added_with_the_credential(self):
-        with unittest.mock.patch.dict(os.environ, {"REPORT_DB_HOST": "db.example.mil"}), \
-                unittest.mock.patch.object(mod.db, "HAS_PYMYSQL", True), \
-                unittest.mock.patch.object(mod.db, "connect", side_effect=ConnectionRefusedError(111, "Connection refused")):
-            res = mod.run(self.params(outputs=["csv"]))
-            self.assertEqual(self.state(res, "report_db")["code"], "SA-SWI-13")
-            res = mod.run(self.params(outputs=["csv"], auto_db=False))
-            self.assertEqual([x["name"] for x in res["outputs"]], ["csv"])
-        res = mod.run(self.params(outputs=["csv"]))
-        self.assertEqual([x["name"] for x in res["outputs"]], ["csv"])            # no credential: nothing said
+        self.assertTrue(all(n.endswith("not kept anywhere else (set sw_inventory_share)") for n in notes(res)[:3]), notes(res))
+        # review 22: the share copy worked - its folder named
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb()}):
+            res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, share=unc))
+        self.assertTrue(notes(res)[2].endswith("- the shield files are on the share, " + unc), notes(res)[2])
+        # review 22: the share copy failed - not named
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(fail_login="STATUS_LOGON_FAILURE")}):
+            res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, share=unc))
+        self.assertNotIn("on the share", " ".join(notes(res)[:3]))
+        # review 23: the website's CSV and JSON whatever the email's limit
+        self.assertEqual([f["filename"] for f in res["web_files"]], ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json"])
 
     def test_share_copy_paths(self):
         fake = FakeSmb()
@@ -623,57 +409,122 @@ class Module(unittest.TestCase):
             res = mod.run(self.params(share=unc, outputs=["csv"]))
         self.assertEqual(self.state(res, "share")["code"], "SA-SWI-26")
 
-    def test_mssql_and_report_db_failures_are_said(self):
-        res = mod.run(self.params(outputs=["csv", "mssql", "nonsense"], mssql={"server": "sql01", "database": "inv", "table": "x;y"}))
-        self.assertEqual(self.state(res, "mssql")["code"], "SA-SWI-40")
-        self.assertEqual(self.state(res, "nonsense")["code"], "SA-SWI-01")
-        res = mod.run(self.params(outputs=["csv", "mssql"], mssql={"server": "sql01", "database": "inv"}))
-        self.assertEqual(self.state(res, "mssql")["code"], "SA-SWI-41")
-        self.assertEqual(self.state(res, "csv")["state"], "ok")
-        with unittest.mock.patch.dict(os.environ, {"CERT_INVENTORY_SQL_USER": "svc_inv", "CERT_INVENTORY_SQL_PASSWORD": "pw"}):
-            fake = FakeMssql()
-            fake.close = lambda: None
-            with unittest.mock.patch.object(mod, "HAS_PYMSSQL", True), \
-                    unittest.mock.patch.object(mod, "pymssql", unittest.mock.Mock(connect=unittest.mock.Mock(return_value=fake))):
-                res = mod.run(self.params(outputs=["mssql"], mssql={"server": "sql01", "database": "inv"}))
-            self.assertEqual(self.state(res, "mssql")["state"], "ok", res["outputs"])
-            self.assertEqual(sum(len(r) for _, r in fake.many), res["packages"])
-            self.assertEqual(fake.commits, 1)
-        with unittest.mock.patch.dict(os.environ, {"REPORT_DB_HOST": "127.0.0.1", "REPORT_DB_PORT": "9", "REPORT_DB_USER": "w", "REPORT_DB_PASSWORD": "x"}):
-            with unittest.mock.patch.object(mod.db, "HAS_PYMYSQL", True), \
-                    unittest.mock.patch.object(mod.db, "connect", side_effect=ConnectionRefusedError(111, "Connection refused")):
-                res = mod.run(self.params(outputs=["report_db", "csv"]))
-        self.assertEqual(self.state(res, "report_db")["code"], "SA-SWI-13")
-        self.assertEqual(self.state(res, "csv")["state"], "ok")
+class ReviewFixes(ModuleBase):
+    """1.133.0 review (Codex): a test per finding that still applies."""
 
-    def test_report_db_through_the_module(self):
-        lite = Lite()
-        self.addCleanup(lite.db.close)
-        with unittest.mock.patch.dict(os.environ, {"REPORT_DB_HOST": "db.example.mil"}), \
-                unittest.mock.patch.object(mod.db, "HAS_PYMYSQL", True), \
-                unittest.mock.patch.object(mod.db, "connect", return_value=(lite, "none")):
-            res = mod.run(self.params(outputs=["report_db"]))
-            self.assertEqual(self.state(res, "report_db")["state"], "ok", res["outputs"])
-            with open(os.path.join(self.work, "rhel-db01.corp.example.mil.read"), "w") as f:
-                f.write(read_text(EXAMPLE_ROWS[:2]))
-            res = mod.run(self.params(outputs=["report_db"]))
+    def test_05_a_bad_shield_folder_stops_the_shield_files_only(self):
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        fake = FakeSmb()
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(outputs=["shield", "csv", "json"], shield_subdir="../../etc", share=unc))
+        self.assertEqual((self.state(res, "shield")["state"], self.state(res, "shield")["code"]), ("failed", "SA-SWI-30"))
+        self.assertEqual((self.state(res, "csv")["state"], self.state(res, "json")["state"], self.state(res, "share")["state"]), ("ok", "ok", "ok"))
+        self.assertFalse(any(".." in k or "etc" in k for k in fake.files), sorted(fake.files))
+        for bad in ("a/../b", ".", "a b", "x\ny"):
+            self.assertRaises(mod.Fail, mod.safe_sub, bad, "s")
+        self.assertEqual(mod.safe_sub("linux/inventory", "s"), "linux/inventory")
+
+    def test_06_two_inventory_names_never_share_a_read(self):
+        self.assertNotEqual(mod.read_name("rack/node"), mod.read_name("rack_node"))
+        self.assertNotEqual(mod.read_name(".."), mod.read_name("__"))
+        self.assertTrue(re.match(r"^[0-9a-f]{40}\.read$", mod.read_name("../../x")))
+
+    def test_07_a_link_at_a_temporary_name_is_never_followed(self):
+        out = os.path.join(self.tmp, "o")
+        os.makedirs(out)
+        victim = os.path.join(self.tmp, "victim")
+        with open(victim, "w") as f:
+            f.write("keep")
+        os.symlink(victim, os.path.join(out, "sw-inventory-latest.csv.%d.tmp" % os.getpid()))
+        mod.LocalFolder(out).write("sw-inventory-latest.csv", b"new")
+        self.assertEqual(text(victim), "keep")
+        self.assertEqual(text(os.path.join(out, "sw-inventory-latest.csv")), "new")
+
+    def test_08_a_user_in_the_share_address_is_refused_never_shown(self):
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb()}):
+            res = mod.run(self.params(share="smb://svc:Secret-Value@fs01.corp.example.mil/it/inventory"))
+        s = self.state(res, "share")
+        self.assertEqual(s["code"], "SA-SWI-20")
+        self.assertNotIn("Secret-Value", json.dumps(res))
+        fake = FakeSmb(fail_login="logon failure for Test-Only-pw")
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(share="\\\\fs01.corp.example.mil\\it\\inventory"))
+        self.assertNotIn("Test-Only-pw", json.dumps(res))                 # the password never repeated
+
+    def test_09_a_partial_read_is_not_used(self):
+        with open(os.path.join(self.work, mod.read_name("rhel-db01.corp.example.mil")), "w") as f:
+            f.write(read_text(EXAMPLE_ROWS + ["half" + S + "a row"]))
+        res = mod.run(self.params(outputs=["shield", "csv"]))
+        self.assertIn("rhel-db01.corp.example.mil", [x["host"] for x in res["not_read"]])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "out", "shield", "rhel-db01.txt")))
+
+    def test_10_a_repository_only_for_its_own_instance(self):
+        rows = [row("kernel", "(none)", "5.14.0", "427.13.1.el9_4"), row("kernel", "(none)", "5.14.0", "503.11.1.el9_5")]
+        r = sw.parse_read(read_text(rows, repos=[("kernel", "x86_64", "0", "5.14.0", "503.11.1.el9_5", "@baseos")]))
+        self.assertEqual(sorted((p["release"], p["repo"]) for p in r["packages"]),
+                         [("427.13.1.el9_4", ""), ("503.11.1.el9_5", "baseos")])
+        r = sw.parse_read(read_text([row("nginx", "2", "1.20.1", "1")], repos=[("nginx", "x86_64", "1", "1.20.1", "1", "@appstream")]))
+        self.assertEqual(r["packages"][0]["repo"], "")                   # another epoch: not this instance
+
+    def test_12_a_damaged_state_entry_is_skipped_and_said(self):
+        out = os.path.join(self.tmp, "out")
+        os.makedirs(out)
+        with open(os.path.join(out, mod.STATE), "w") as f:
+            json.dump({"hosts": {"rhel-db01.corp.example.mil": {"packages": [["bash", "0"]]},
+                                 "rhel-app01.corp.example.mil": {"packages": [["bash", "0", "5", "1", "x86_64"]]}}}, f)
+        res = mod.run(self.params(outputs=["csv"]))
+        self.assertEqual(self.state(res, "csv")["state"], "ok")
         notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
-        self.assertIn("Compared with: the report database's last run of each host.", notes)
-        self.assertEqual(lite.q("SELECT run_id, host, name, `change` FROM sw_inventory_change"), [(2, "rhel-db01.corp.example.mil", "bash", "removed")])
-        self.assertEqual(lite.q("SELECT hosts_ok, hosts_failed FROM sw_inventory_run ORDER BY id"), [(2, 1), (2, 1)])
+        self.assertTrue(any("rhel-db01.corp.example.mil in sw-inventory-state.json could not be read" in n for n in notes), notes)
+        self.assertIn("rhel-db01.corp.example.mil", res["first_seen"])
+        with open(os.path.join(out, mod.STATE), "w") as f:
+            f.write("{not json")
+        res = mod.run(self.params(outputs=["csv"]))
+        self.assertEqual(self.state(res, "csv")["state"], "ok")
 
-    def test_report_db_check_mode(self):
-        lite = Lite()
-        self.addCleanup(lite.db.close)
-        with unittest.mock.patch.dict(os.environ, {"REPORT_DB_HOST": "db.example.mil"}), \
-                unittest.mock.patch.object(mod.db, "HAS_PYMYSQL", True), \
-                unittest.mock.patch.object(mod.db, "connect", return_value=(lite, "none")):
-            res = mod.run(self.params(outputs=["report_db"]), check=True)
-            self.assertEqual(self.state(res, "report_db")["state"], "ok")
-            self.assertIn("the first run makes the tables", self.state(res, "report_db")["where"])
-            self.assertEqual(lite.q("SELECT name FROM sqlite_master"), [])          # nothing made in check mode
-            res = mod.run(self.params(outputs=["report_db"], db_create=False), check=True)
-            self.assertEqual(self.state(res, "report_db")["code"], "SA-SWI-11")
+    def test_13_a_host_not_read_keeps_its_last_list(self):
+        mod.run(self.params(outputs=["csv"]))
+        os.remove(os.path.join(self.work, mod.read_name("rhel-db01.corp.example.mil")))
+        mod.run(self.params(outputs=["csv"]))
+        with open(os.path.join(self.tmp, "out", mod.STATE)) as f:
+            self.assertIn("rhel-db01.corp.example.mil", json.load(f)["hosts"])
+
+    def test_19_21_the_share_copy_goes_on_past_a_failed_file_and_counts_only_real_deletes(self):
+        unc = "\\\\fs01.corp.example.mil\\it\\inventory"
+        fake = FakeSmb()
+        fake.files[unc + "\\sw-inventory-20250101-0200.csv"] = b"old"
+        real_replace, real_remove = fake.replace, fake.remove
+
+        def replace(a, b, **kw):
+            if b.endswith("rhel-app01.txt"):
+                fake.files.pop(a, None)
+                raise OSError("STATUS_DISK_FULL")
+            return real_replace(a, b, **kw)
+
+        def remove(p, **kw):
+            if p.endswith("20250101-0200.csv"):
+                raise OSError("STATUS_CANNOT_DELETE")
+            return real_remove(p, **kw)
+        fake.replace, fake.remove = replace, remove
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}), unittest.mock.patch.object(mod, "WAIT", ()):
+            res = mod.run(self.params(share=unc, outputs=["shield", "csv", "json"]))
+        s = self.state(res, "share")
+        self.assertEqual(s["state"], "failed")
+        self.assertIn("1 of 7 files not copied", s["error"])
+        self.assertIn("rhel-app01.txt", s["error"])
+        for n in ("shield\\rhel-db01.txt", "sw-inventory-latest.csv", "sw-inventory-latest.json", "sw-inventory-state.json"):
+            self.assertIn(unc + "\\" + n, fake.files)                       # the rest copied
+        self.assertNotIn("old dated files deleted", s["where"])
+        self.assertTrue(any("1 old dated files could not be deleted: sw-inventory-20250101-0200.csv" in l for l in res["lines"]), res["lines"])
+
+    def test_26_check_looks_at_a_mounted_share(self):
+        res = mod.run(self.params(share="/nonexistent-share-folder"), check=True)
+        self.assertEqual(self.state(res, "share")["code"], "SA-SWI-28")
+        there = os.path.join(self.tmp, "mnt")
+        os.makedirs(there)
+        res = mod.run(self.params(share=there), check=True)
+        self.assertEqual(self.state(res, "share")["state"], "ok")
+        self.assertEqual(os.listdir(there), [])
 
 
 class Catalog(unittest.TestCase):
@@ -685,8 +536,9 @@ class Catalog(unittest.TestCase):
         t = t[0]
         self.assertEqual(t["playbook"], "playbooks/linux_sw_inventory.yml")
         self.assertEqual(t["credentials"], ["machine"])
-        self.assertEqual(sorted(t["optional_credentials"]), ["report_db", "sqlserver", "windows_share"])
+        self.assertEqual(sorted(t["optional_credentials"]), ["windows_share"])
         self.assertTrue(t["ask_limit"])
+        self.assertTrue(t["ask_job_type"])                          # Check, then Run, at launch
         self.assertFalse(t["allow_simultaneous"])
         for k in ("does", "targets", "produces", "supports"):
             self.assertTrue(t["description"][k])

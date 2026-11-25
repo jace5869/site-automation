@@ -1,14 +1,14 @@
 ---
 # LINUX - SOFTWARE INVENTORY. Every installed RPM package of the Linux hosts of the Limit (target, default all): name,
-# epoch, version, release, arch, vendor, install time, source rpm, and the repository it came from (dnf's own records,
-# the local cache only - never a repository contacted). Read-only on the hosts. Run it nightly (02:00). Its outputs
-# (sw_inventory_outputs: shield text files per host, the report database, CSV / JSON, SQL Server; a Windows file share
-# with sw_inventory_share) are each written on its own - one that fails says why and the fix, the others still go. A
-# host that cannot be reached is listed with the reason. An email (with the CSV and the shield files) and a web page
-# like the other reports: what changed since the last run. docs/LINUX_SW_INVENTORY.md
+# epoch, version, release, arch, vendor, install time, source rpm, and the repository it came from (dnf's own records
+# only - no repository contacted). Read-only on the hosts. Run it nightly (02:00). Three exports (sw_inventory_outputs):
+# a text file per host (shield), a CSV and a JSON - in sw_inventory_dir, on a Windows file share (sw_inventory_share)
+# and with the report email; what changed since the last run. Each export on its own: one that fails says why and the
+# fix, the others still go. A host that cannot be reached is listed with the reason; the report goes out even when no
+# host was reached. docs/LINUX_SW_INVENTORY.md
 #
 #   ansible-playbook playbooks/linux_sw_inventory.yml --limit rhel_servers
-#   ansible-playbook playbooks/linux_sw_inventory.yml -e '{"sw_inventory_outputs": ["shield", "csv", "json"]}'
+#   ansible-playbook playbooks/linux_sw_inventory.yml --check
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
   ansible.builtin.import_playbook: site_exclude.yml
 
@@ -24,11 +24,33 @@
         name: site_findings
         tasks_from: os_guard.yml
 
-    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
-      ansible.builtin.include_role:
-        name: site_findings
-        tasks_from: reach.yml
+    - name: A folder on the controller for the hosts' reads
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: sw-inventory-
+      register: _sw_work
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false
+
+    - name: The hosts of this run, that folder, the time
+      ansible.builtin.set_fact:
+        _sw_work_path: "{{ _sw_work.path }}"
+        _sw_targets: "{{ ansible_play_hosts_all }}"
+        _sw_read_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      run_once: true
   tasks:
-    - name: The installed packages, and the outputs
+    # reach (a host not reached stays in the play with its reason: the report always goes out) and read
+    - name: The installed packages
       ansible.builtin.include_role:
         name: sw_inventory
+        tasks_from: read.yml
+
+    - name: The exports, the share and the report (on the controller, once)
+      ansible.builtin.include_role:
+        name: sw_inventory
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false

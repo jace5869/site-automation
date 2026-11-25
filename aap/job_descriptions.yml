@@ -35,8 +35,8 @@ templates:
   "Linux - software inventory":
     does: "Lists every installed RPM package of the Linux hosts nightly (02:00) and what changed since the last run, for software audits."
     targets: "Linux hosts of the Limit, over SSH with sudo (Machine credential): rpm -qa and dnf repoquery from the local cache only"
-    produces: "Shield text files per host, CSV and JSON (a share when set); report database / SQL Server rows when set; an email with the files"
-    supports: "Run constraint=Read-only on target hosts; writes the report database, SQL Server, a file share, report email/website when set"
+    produces: "A shield text file per host, CSV and JSON; on a Windows file share when set; the report email with the files and a workbook"
+    supports: "Run constraint=Read-only on target hosts; writes a file share, report email/website when set"
   "Security - Java4Shell check (Keycloak)":
     does: "Checks CPU and each Keycloak container's running Java for CVE-2026-114938; reports other Java (ServiceNow); can add the JVM flag"
     targets: "Linux hosts of the Limit (Machine credential, sudo): the compose file (/podman/stigman) and the containers of podman or docker"

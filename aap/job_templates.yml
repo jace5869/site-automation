@@ -225,7 +225,7 @@ job_templates:
   - name: Linux - software inventory
     playbook: playbooks/linux_sw_inventory.yml
     credentials: [machine]
-    optional_credentials: [sqlserver, windows_share, report_db]
+    optional_credentials: [windows_share]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -233,16 +233,16 @@ job_templates:
     variables_file: aap/extra_vars/linux_sw_inventory.yml
     area: Linux
     skip_areas: [Reports, Linux]
+    ask_job_type: true
     allow_simultaneous: false
     description:
       does: Lists every installed RPM package of the Linux hosts nightly (02:00) and what changed since the last run, for
         software audits.
       targets: 'Linux hosts of the Limit, over SSH with sudo (Machine credential): rpm -qa and dnf repoquery from the local
         cache only'
-      produces: Shield text files per host, CSV and JSON (a share when set); report database / SQL Server rows when set; an
-        email with the files
-      supports: Run constraint=Read-only on target hosts; writes the report database, SQL Server, a file share, report email/website
-        when set
+      produces: A shield text file per host, CSV and JSON; on a Windows file share when set; the report email with the files
+        and a workbook
+      supports: Run constraint=Read-only on target hosts; writes a file share, report email/website when set
   - name: Linux - tmp cleanup
     playbook: playbooks/tmp_cleanup.yml
     credentials: [machine]

@@ -7,9 +7,7 @@
   vercmp(a, b), evr(p)        rpm's own version order; epoch:version-release
   changes(old, new)           added / removed / updated, per name and arch (several kernels at once included)
   shield_text(host)           the per-host text file (#shield-host v1)
-  csv_text, json_doc, state   the run's files
-  mysql DDL and statements    the report database's four tables (backticks: release and change are MySQL reserved words)
-  mssql_plan(settings)        the SQL Server table's statements, every identifier checked, every value a parameter
+  csv_text, json_doc, state   the run's files, and the change baseline (sw-inventory-state.json)
   report_doc(res, opts)       the email / website report and its workbook's sheets
 
 Standard library only."""
@@ -27,9 +25,7 @@ FIELDS = ("name", "epoch", "epochnum", "version", "release", "arch", "vendor", "
 NONE = "(none)"
 REPO_UNKNOWN = ("", "system", "<unknown>", "unknown", "installed", "@system", "(none)")
 UTC = datetime.timezone.utc
-IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-CHUNK = 1000
-OUTPUTS = ("shield", "report_db", "csv", "json", "mssql")
+OUTPUTS = ("shield", "csv", "json")
 CSV_COLUMNS = ("host", "os", "kernel", "read_at", "name", "epoch", "version", "release", "arch", "vendor", "installed_at",
                "repo", "source_rpm")
 
@@ -97,15 +93,17 @@ def parse_read(text):
         elif part == "repo":
             f = line.split(SEP)
             if len(f) == 6:                         # name arch epoch version release from_repo
-                repos.setdefault((f[0], f[1], f[3], f[4]), repo_name(f[5]))
-                repos.setdefault((f[0], f[1]), repo_name(f[5]))
-    for p in out["packages"]:
-        p["repo"] = repos.get((p["name"], p["arch"], p["version"], p["release"]), repos.get((p["name"], p["arch"]), ""))
+                repos.setdefault((f[0], f[1], f[2] if f[2].isdigit() else "0", f[3], f[4]), repo_name(f[5]))
+    for p in out["packages"]:                       # only the very instance: never another kernel's repository
+        p["repo"] = repos.get((p["name"], p["arch"], p["epochnum"], p["version"], p["release"]), "")
     out["os"] = os_label(out["os_id"], out["version_id"])
     if out["error"]:
         return out
     if not seen_end:
         out["error"] = "the read stopped before its end (a timeout, or the connection lost)"
+    elif out["bad_lines"]:
+        out["error"] = ("%d rpm rows could not be read - the list is incomplete, so nothing of this host is written this run "
+                        "(its last files stay)" % out["bad_lines"])
     elif not out["packages"]:
         out["error"] = "rpm listed no packages"
     else:
@@ -293,6 +291,22 @@ def json_doc(run, hosts, not_read, chg):
             "changes": chg}
 
 
+def state_hosts(state):
+    """sw-inventory-state.json -> ({host: [slim rows]}, [damaged hosts]): a host whose rows are not five texts each is
+    left out (no changes for it this run) and named."""
+    good, bad = {}, []
+    hosts = state.get("hosts") if isinstance(state, dict) else None
+    if not isinstance(hosts, dict):
+        return good, bad
+    for h, v in hosts.items():
+        rows = v.get("packages") if isinstance(v, dict) else None
+        if isinstance(rows, list) and all(isinstance(r, list) and len(r) == 5 and all(isinstance(x, str) for x in r) for r in rows):
+            good[str(h)] = rows
+        else:
+            bad.append(str(h))
+    return good, bad
+
+
 def state_merge(state, hosts):
     """The change baseline kept beside the files (sw-inventory-state.json): each host's last packages; a host not read
     this run keeps its own."""
@@ -303,207 +317,10 @@ def state_merge(state, hosts):
     return out
 
 
-# ---- the report database (MySQL) -----------------------------------------------------------------------------------
-
-TABLE_OPTS = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-DB_COMPONENT = "sw_inventory"
-DB_VERSION = 1
-DB_TABLES = ("sw_inventory_run", "sw_inventory_host", "sw_inventory_pkg", "sw_inventory_change")
-DB_CREATE = (
-    "CREATE TABLE IF NOT EXISTS sw_inventory_run (id BIGINT NOT NULL AUTO_INCREMENT, read_at DATETIME NOT NULL, "
-    "job BIGINT NOT NULL DEFAULT 0, template_id BIGINT NOT NULL DEFAULT 0, hosts_ok INT NOT NULL DEFAULT 0, "
-    "hosts_failed INT NOT NULL DEFAULT 0, PRIMARY KEY (id), KEY sw_inventory_run_template (template_id, read_at)) " + TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS sw_inventory_host (run_id BIGINT NOT NULL, host VARCHAR(191) NOT NULL, "
-    "status VARCHAR(8) NOT NULL DEFAULT 'ok', reason VARCHAR(500) NOT NULL DEFAULT '', os VARCHAR(64) NOT NULL DEFAULT '', "
-    "kernel VARCHAR(128) NOT NULL DEFAULT '', read_at DATETIME NULL, packages INT NOT NULL DEFAULT 0, "
-    "PRIMARY KEY (run_id, host), KEY sw_inventory_host_host (host, status, run_id)) " + TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS sw_inventory_pkg (run_id BIGINT NOT NULL, host VARCHAR(191) NOT NULL, "
-    "name VARCHAR(191) NOT NULL, epoch INT NULL, version VARCHAR(128) NOT NULL DEFAULT '', "
-    "`release` VARCHAR(128) NOT NULL DEFAULT '', arch VARCHAR(32) NOT NULL DEFAULT '', vendor VARCHAR(255) NOT NULL DEFAULT '', "
-    "installed_at DATETIME NULL, repo VARCHAR(191) NOT NULL DEFAULT '', KEY sw_inventory_pkg_run (run_id, host), "
-    "KEY sw_inventory_pkg_name (name, run_id)) " + TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS sw_inventory_change (run_id BIGINT NOT NULL, host VARCHAR(191) NOT NULL, "
-    "name VARCHAR(191) NOT NULL, arch VARCHAR(32) NOT NULL DEFAULT '', `change` VARCHAR(8) NOT NULL, "
-    "old_evr VARCHAR(300) NOT NULL DEFAULT '', new_evr VARCHAR(300) NOT NULL DEFAULT '', "
-    "KEY sw_inventory_change_run (run_id, host)) " + TABLE_OPTS)
-DB_INSERT_RUN = ("INSERT INTO sw_inventory_run (read_at, job, template_id, hosts_ok, hosts_failed) VALUES (%s, %s, %s, %s, %s)")
-DB_INSERT_HOST = ("INSERT INTO sw_inventory_host (run_id, host, status, reason, os, kernel, read_at, packages) "
-                  "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
-DB_INSERT_PKG = ("INSERT INTO sw_inventory_pkg (run_id, host, name, epoch, version, `release`, arch, vendor, installed_at, repo) "
-                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-DB_INSERT_CHANGE = ("INSERT INTO sw_inventory_change (run_id, host, name, arch, `change`, old_evr, new_evr) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)")
-DB_LAST_RUN = ("SELECT host, MAX(run_id) FROM sw_inventory_host WHERE status = 'ok' AND run_id < %s AND host IN ({marks}) "
-               "GROUP BY host")
-DB_BASELINE = "SELECT name, epoch, version, `release`, arch FROM sw_inventory_pkg WHERE run_id = %s AND host = %s"
-
-
 def stamp(text):
-    """'2026-11-25T02:00:05Z' -> a naive UTC datetime (what DATETIME holds), or None."""
+    """'2026-11-25T02:00:05Z' -> a naive UTC datetime, or None."""
     m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::(\d\d))?", str(text or ""))
     return datetime.datetime(*[int(x or 0) for x in m.groups()]) if m else None
-
-
-def pretty(sql):
-    """A CREATE TABLE as docs/REPORT_DATABASE.md shows it: a column or key per line."""
-    head, rest = sql.split(" (", 1)
-    body, tail = rest.rsplit(") ", 1)
-    parts, depth, cur = [], 0, ""
-    for ch in body:
-        depth += {"(": 1, ")": -1}.get(ch, 0)
-        if ch == "," and depth == 0:
-            parts.append(cur.strip())
-            cur = ""
-        else:
-            cur += ch
-    return "%s (\n  %s\n) %s;" % (head, ",\n  ".join(parts + [cur.strip()]), tail)
-
-
-def db_ddl(schema_version_table):
-    """The statements the first run sends, for making the tables by hand (sw_inventory_db_create: false). The doc
-    carries this text word for word; a test keeps them alike."""
-    return "\n\n".join([pretty(schema_version_table)] + [pretty(c) for c in DB_CREATE] +
-                       ["INSERT INTO schema_version (component, version, applied_at) VALUES ('%s', %d, UTC_TIMESTAMP());"
-                        % (DB_COMPONENT, DB_VERSION)])
-
-
-def _cut(v, n):
-    return str(v or "")[:n]
-
-
-def db_pkg_rows(run_id, h):
-    return [(run_id, _cut(h["host"], 191), _cut(p.get("name"), 191), p.get("epoch"), _cut(p.get("version"), 128),
-             _cut(p.get("release"), 128), _cut(p.get("arch"), 32), _cut(p.get("vendor"), 255), stamp(p.get("installed_at")),
-             _cut(p.get("repo"), 191)) for p in h.get("packages") or []]
-
-
-def chunks(rows, n=CHUNK):
-    rows = list(rows)
-    for i in range(0, len(rows), n):
-        yield rows[i:i + n]
-
-
-# ---- SQL Server ----------------------------------------------------------------------------------------------------
-
-MSSQL_COLUMNS = (("run_id", "nvarchar(64) NOT NULL"), ("read_at", "datetime2(0) NOT NULL"), ("host", "nvarchar(255) NOT NULL"),
-                 ("os", "nvarchar(64) NULL"), ("kernel", "nvarchar(128) NULL"), ("name", "nvarchar(255) NOT NULL"),
-                 ("epoch", "int NULL"), ("version", "nvarchar(128) NULL"), ("release", "nvarchar(128) NULL"),
-                 ("arch", "nvarchar(32) NULL"), ("vendor", "nvarchar(255) NULL"), ("installed_at", "datetime2(0) NULL"),
-                 ("repo", "nvarchar(255) NULL"))
-MSSQL_DEFAULTS = {"server": "", "port": 1433, "database": "", "schema": "dbo", "table": "sw_inventory", "create_table": True,
-                  "column_map": {}, "login_timeout": 30, "timeout": 300}
-
-
-class SettingError(ValueError):
-    pass
-
-
-def ident(value, what):
-    v = str(value if value is not None else "")
-    if not IDENT.match(v):
-        raise SettingError("%s %r is not a plain SQL name (letters, digits and _, not starting with a digit, at most 128)"
-                           % (what, v))
-    return v
-
-
-def q(name):
-    """A checked name in SQL Server's brackets."""
-    return "[%s]" % name
-
-
-def mssql_plan(settings):
-    """sw_inventory_mssql -> {columns: [(ours, theirs, type)], table, create, exists, columns_sql, insert}. Every name
-    checked (ident); column_map: {our column: their column}, '' leaves a column out (run_id, host and name never)."""
-    s = dict(MSSQL_DEFAULTS)
-    s.update(dict((k, v) for k, v in (settings or {}).items() if v is not None))
-    for k in ("server", "database"):
-        if not str(s.get(k) or "").strip():
-            raise SettingError("sw_inventory_mssql.%s is empty" % k)
-    schema, table = ident(s["schema"], "sw_inventory_mssql.schema"), ident(s["table"], "sw_inventory_mssql.table")
-    cmap = s.get("column_map") or {}
-    if not isinstance(cmap, dict):
-        raise SettingError("sw_inventory_mssql.column_map must be a mapping {our column: your column}")
-    ours = [c for c, _ in MSSQL_COLUMNS]
-    unknown = sorted(k for k in cmap if k not in ours)
-    if unknown:
-        raise SettingError("sw_inventory_mssql.column_map: no column %s here - ours are %s" % (", ".join(unknown), ", ".join(ours)))
-    cols, seen = [], set()
-    for c, typ in MSSQL_COLUMNS:
-        theirs = cmap.get(c, c)
-        if theirs in ("", None, False):
-            if c in ("run_id", "host", "name"):
-                raise SettingError("sw_inventory_mssql.column_map: %s cannot be left out" % c)
-            continue
-        theirs = ident(theirs, "sw_inventory_mssql.column_map.%s" % c)
-        if theirs.lower() in seen:
-            raise SettingError("sw_inventory_mssql.column_map: two columns named %s" % theirs)
-        seen.add(theirs.lower())
-        cols.append((c, theirs, typ))
-    full = "%s.%s" % (q(schema), q(table))
-    ix = ident(("IX_%s_run" % table)[:128], "index")
-    create = ("IF OBJECT_ID(N'%s', N'U') IS NULL\nBEGIN\nCREATE TABLE %s (\n    %s\n);\nCREATE INDEX %s ON %s (%s, %s);\nEND"
-              % (full.replace("'", "''"), full, ",\n    ".join("%s %s" % (q(t), typ) for _, t, typ in cols), q(ix), full,
-                 q(cols[[c for c, _, _ in cols].index("host")][1]), q(cols[0][1])))
-    return {"server": str(s["server"]).strip(), "port": int(s.get("port") or 1433), "database": str(s["database"]).strip(),
-            "schema": schema, "table": table, "full": full, "columns": cols, "create": bool(s.get("create_table")),
-            "login_timeout": int(s.get("login_timeout") or 30), "timeout": int(s.get("timeout") or 300),
-            "create_sql": create,
-            "exists_sql": "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-            "columns_sql": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-            "insert": "INSERT INTO %s (%s) VALUES (%s)" % (full, ", ".join(q(t) for _, t, _ in cols), ", ".join(["%s"] * len(cols)))}
-
-
-def mssql_expected(plan):
-    """The columns the table must have, in words (a table made by hand)."""
-    return ", ".join("%s %s" % (t, typ) for _, t, typ in plan["columns"])
-
-
-def mssql_rows(plan, run_id, hosts):
-    """A tuple per package, in the plan's column order."""
-    when = stamp
-    out = []
-    for h in hosts:
-        for p in h.get("packages") or []:
-            v = {"run_id": run_id, "read_at": when(h.get("read_at")), "host": h["host"], "os": h.get("os", ""),
-                 "kernel": h.get("kernel", ""), "name": p.get("name", ""), "epoch": p.get("epoch"), "version": p.get("version", ""),
-                 "release": p.get("release", ""), "arch": p.get("arch", ""), "vendor": p.get("vendor", ""),
-                 "installed_at": when(p.get("installed_at")), "repo": p.get("repo", "")}
-            out.append(tuple(v[c] for c, _, _ in plan["columns"]))
-    return out
-
-
-def mssql_write(conn, plan, run_id, hosts, chunk=CHUNK):
-    """The run's rows into the table, in one transaction (the caller's connection, autocommit off): the table made
-    when it is not there and create_table, else checked; inserts in chunks; commit once; on any error, rollback
-    and raise. Never DROP, never DELETE. -> rows written."""
-    cur = conn.cursor()
-    try:
-        cur.execute(plan["exists_sql"], (plan["schema"], plan["table"]))
-        there = cur.fetchone() is not None
-        if not there:
-            if not plan["create"]:
-                raise SettingError("the table %s is not in %s and create_table is false - make it with these columns: %s"
-                                   % (plan["full"], plan["database"], mssql_expected(plan)))
-            cur.execute(plan["create_sql"])
-        else:
-            cur.execute(plan["columns_sql"], (plan["schema"], plan["table"]))
-            have = set(str(r[0]).lower() for r in cur.fetchall())
-            missing = [t for _, t, _ in plan["columns"] if t.lower() not in have]
-            if missing:
-                raise SettingError("the table %s has no column %s - add it, or map ours to yours (sw_inventory_mssql.column_map); "
-                                   "the columns: %s" % (plan["full"], ", ".join(missing), mssql_expected(plan)))
-        n = 0
-        for part in chunks(mssql_rows(plan, run_id, hosts), chunk):
-            cur.executemany(plan["insert"], part)
-            n += len(part)
-        conn.commit()
-        return n
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:       # noqa: BLE001
-            pass
-        raise
 
 
 # ---- the report ----------------------------------------------------------------------------------------------------
@@ -577,7 +394,7 @@ def report_doc(res, opts=None):
         sections.append(sec)
     notes = []
     if first:
-        notes.append("No earlier list for %s (first run, or older than sw_inventory_keep_days): changes from the next run."
+        notes.append("No earlier list for %s (their first run): changes from the next run."
                      % _s(len(first), "host"))
     for x in outs:
         if x.get("state") == "skipped" and x.get("why"):
@@ -586,6 +403,9 @@ def report_doc(res, opts=None):
     if repo_notes:
         notes.append("No repository names on %s (dnf cache-only gave none): %s." % (
             _s(len(repo_notes), "host"), ", ".join(repo_notes[:10]) + (" ..." if len(repo_notes) > 10 else "")))
+    if res.get("state_damaged"):
+        notes.append("The last list of %s in sw-inventory-state.json could not be read: no changes for them this run, a new "
+                     "list from now." % ", ".join(res["state_damaged"][:10]))
     if res.get("baseline"):
         notes.append("Compared with: %s." % res["baseline"])
     written = [x for x in outs if x.get("state") == "ok"]
