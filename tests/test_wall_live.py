@@ -473,18 +473,28 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual([x["state"] for x in logs], ["not read", "read again"])
 
     def test_no_overlap(self):
-        slow = Fake(delay=0.6)
+        """Codex verify 4: one thread polls every source in turn - never two polls at once"""
+        slow = Fake(delay=0.3)
         quick = Fake(key="ontap:192.0.2.10", kind="ontap")
+        busy, seen = [], []
+        for f in (slow, quick):
+            inner = f.poll
+
+            def poll(inner=inner):
+                busy.append(1)
+                seen.append((len(busy), threading.current_thread()))
+                try:
+                    return inner()
+                finally:
+                    busy.pop()
+            f.poll = poll
         c, clock, _logs = self.make(slow, quick)
-        c.cycle()
-        time.sleep(0.1)
-        c.cycle()                                             # the slow one still reads: skipped
-        c.wait(10)
-        self.assertEqual((slow.calls, quick.calls), (1, 2))
-        self.assertEqual(c.view()["sources"][slow.key]["skipped"], 1)
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(slow.calls, 2)
+        t = threading.Thread(target=c.cycle)
+        t.start()
+        c.cycle()                                             # a second cycle waits for the first (one at a time)
+        t.join(10)
+        self.assertEqual((slow.calls, quick.calls), (2, 2))
+        self.assertEqual(max(n for n, _t in seen), 1)
 
     def test_history_window(self):
         snap = {"hosts": [{"name": "esx01", "cpu_pct": 95.0, "mem_pct": None}],
@@ -578,11 +588,10 @@ class SharedAccount(unittest.TestCase):
         dead = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=closed_port(), timeout=2)
         srcs = [dead] + [W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=p) for _v, p in stubs]
         c, clock, _logs = self.make(srcs)
-        self.step(c, clock)                                     # the first probe: no answer (not a refusal)
-        self.assertEqual([v.logins for v, _p in stubs], [0, 0])
-        self.step(c, clock)                                     # the next source probes, then the rest at once
+        self.step(c, clock)                                     # no connection: nothing was sent - not a refusal, no hold
         self.assertEqual([v.logins for v, _p in stubs], [1, 1])
         self.assertEqual(c.view()["sources"][dead.key]["state"], "error")
+        self.assertIsNone(c.view()["sources"][srcs[1].key]["next_try"])
 
     def test_other_accounts_are_not_held(self):
         (v1, p1), (v2, p2) = vim_stub(self), vim_stub(self)

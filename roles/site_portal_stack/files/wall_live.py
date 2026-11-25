@@ -7,11 +7,11 @@ portal itself - not by AAP jobs - so the wall's "as of" is a minute old, not an 
                  once per session: hosts, clusters, datastores and VMs, their state and quick stats. No performance
                  manager queries: "sustained for 15 min" comes from the collector's own history of those quick stats.
   OntapSource    one ONTAP cluster over its REST API: GETs with fields= naming only what the wall shows, page by page.
-  Collector      polls each source in its own thread every `seconds`: never two polls of one source at once (a source
-                 still reading is skipped that cycle, counted); a login refused stops that source at once - no more
-                 tries before auth_retry seconds (900: an account lockout policy never sees a retry loop), one log line
-                 per episode; any other fault is tried again at the next cycle (one line when it starts, one when it
-                 is over). The last good answer of each source is kept while it fails (the wall shows it grey).
+  Collector      polls every source in turn, in ONE thread, every `seconds` (never two polls at once); a login refused,
+                 or one whose answer did not come, stops every source of that account for auth_retry seconds (900: an
+                 account lockout policy never sees a retry loop), with a write-ahead back-off file a restart honours;
+                 one log line per episode; a source that could not be reached (nothing sent) is tried again at the next
+                 cycle. The last good answer of each source is kept while it fails (the wall shows it grey).
 
 The accounts are given by the caller (the portal's secrets site-portal-vcenter / site-portal-ontap): read-only roles
 are enough (docs/SITE_PORTAL.md, "The ops-center wall")."""
@@ -99,6 +99,18 @@ class Paused(Exception):
     """No login was sent: the attempt could not be written to the back-off file first (write-ahead)."""
 
 
+class NotSent(Exception):
+    """The connection did not open (name, refused, TLS): nothing - no credential - left the portal."""
+
+
+def _connect(conn, what):
+    """open the connection first, on its own: a failure here sent nothing (NotSent); after it, the request may have left"""
+    try:
+        conn.connect()
+    except OSError as e:                                       # socket errors, timeouts, TLS (ssl.SSLError is an OSError)
+        raise NotSent("%s: %s" % (what, short(e)))
+
+
 class SoapFault(Exception):
     def __init__(self, kind, text):
         Exception.__init__(self, "%s: %s" % (kind or "fault", text))
@@ -127,6 +139,12 @@ def _int(v, default=0):
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def _bool(v):
+    """vCenter's xsd:boolean -> True / False; anything else (not read, not a boolean): None - unknown, never False"""
+    t = str(v).strip().lower() if isinstance(v, (str, bool)) else ""
+    return True if t == "true" else False if t == "false" else None
 
 
 def short(e, n=200):
@@ -175,6 +193,7 @@ class VcenterSource(object):
         self.gate = Gate()
         self.cookie, self.sc, self.view, self.session_key = "", None, "", ""
         self.logins = 0                                        # how many times this source logged in (a test counts them)
+        self.login_sent = self.login_ok = False                # this poll: a login was sent / vCenter said it worked
         self.lock = threading.Lock()
 
     # -- the wire --------------------------------------------------------------------------------------------------------
@@ -187,6 +206,7 @@ class VcenterSource(object):
                'xmlns:xsi="%s"><soapenv:Body>%s</soapenv:Body></soapenv:Envelope>' % (NS["s"], NS["xsi"], body)).encode("utf-8")
         conn = http.client.HTTPSConnection(self.host, self.port, timeout=self.timeout, context=self.ctx)
         try:
+            _connect(conn, "vCenter %s" % self.name)
             h = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": '"%s"' % SOAP_ACTION}
             if self.cookie:
                 h["Cookie"] = self.cookie
@@ -230,6 +250,7 @@ class VcenterSource(object):
         with self.gate.lock:                                       # one login at a time for this account, none while it is bad
             self.gate.check()
             self.gate.before_login()
+            self.login_sent = True                             # from here on, only "the login worked" ends it without a hold
             try:
                 r = self._send("Login", '%s<userName>%s</userName><password>%s</password>'
                                % (_mor("_this", "SessionManager", self.sc["sessionManager"]), _xesc(self.user), _xesc(self._pw)))
@@ -243,6 +264,7 @@ class VcenterSource(object):
                     raise AuthError(AUTH_WHY)
                 raise
             self.logins += 1
+            self.login_ok = True
         self.session_key = r.findtext("v:returnval/v:key", "", NS).strip()     # this session's key (vCenter's Sessions list shows it)
         try:
             self._make_view()
@@ -294,6 +316,7 @@ class VcenterSource(object):
 
     def poll(self):
         with self.lock:
+            self.login_sent = self.login_ok = False
             fresh = False
             if not self.cookie or not self.view:
                 self._login()
@@ -338,7 +361,7 @@ def shape(objs):
             state = v.get("runtime.connectionState") or ""
             ok = state == "connected"
             hosts.append({"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
-                          "state": state, "maint": None if v.get("runtime.inMaintenanceMode") in (None, "") else str(v["runtime.inMaintenanceMode"]).lower() == "true", "power": v.get("runtime.powerState") or "",
+                          "state": state, "maint": _bool(v.get("runtime.inMaintenanceMode")), "power": v.get("runtime.powerState") or "",
                           "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
                           "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
                           "vms": sorted(nm(r) for r in v.get("vm") or [] if isinstance(r, tuple)),
@@ -347,7 +370,7 @@ def shape(objs):
             clusters.append({"name": v.get("name", i), "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple))})
         elif t == "Datastore":
             dss.append({"name": v.get("name", i), "type": v.get("summary.type") or "", "capacity": _int(v.get("summary.capacity"), None),
-                        "free": _int(v.get("summary.freeSpace"), None), "accessible": str(v.get("summary.accessible")).lower() == "true",
+                        "free": _int(v.get("summary.freeSpace"), None), "accessible": _bool(v.get("summary.accessible")),
                         "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple)), "vms": len(v.get("vm") or [])})
         elif t == "VirtualMachine":
             on = v.get("runtime.powerState") == "poweredOn"
@@ -370,6 +393,7 @@ ONTAP_GETS = (
     ("luns", "/api/storage/luns", "name,svm.name,location.volume.name,space.size,space.used,status.state,status.container_state", ""),
     ("snapmirror", "/api/snapmirror/relationships", "source.path,destination.path,state,healthy,lag_time,unhealthy_reason", ""),
 )
+BAD_STATES = ("offline", "restricted", "error", "mixed", "nvfail", "space_error", "foreign_lun_error", "aggregate_offline", "volume_offline")
 ONTAP_PAGE = 1000
 ONTAP_MAX_PAGES = 1000                  # pages one collection may take; a next link still there after them: the collection failed
 
@@ -410,13 +434,21 @@ class OntapSource(object):
         self.gate = Gate()
         self._auth = "Basic " + base64.b64encode(("%s:%s" % (user or "", password or "")).encode("utf-8")).decode("ascii")
         self.lock = threading.Lock()
+        self.login_sent = self.login_ok = False                # this poll: the credential sent / an answer that was not a refusal
         u = urllib.parse.urlsplit("https://" + self.address if "://" not in self.address else self.address)
         self._host, self._port = u.hostname, u.port or 443        # a bad port: ValueError (sources_from_config skips the entry)
         if not self._host:
             raise ValueError("no host in %r" % self.address)
 
     def _get(self, path):
-        return self._http("GET", path)
+        """one GET; an answer that is not a refusal (any other HTTP status) says the login worked"""
+        try:
+            d = self._http("GET", path)
+        except HttpStatus:
+            self.login_ok = True
+            raise
+        self.login_ok = True
+        return d
 
     def _http(self, verb, path):
         """the one ONTAP sender: GET only (HTTP_ALLOWED) - any other verb is refused before a connection is opened"""
@@ -424,6 +456,7 @@ class OntapSource(object):
             raise NotAllowed("HTTP %s is not on the wall's read-only list" % verb)
         conn = http.client.HTTPSConnection(self._host, self._port, timeout=self.timeout, context=self.ctx)
         try:
+            _connect(conn, "ONTAP %s" % self.name)
             conn.request(verb, path, headers={"Authorization": self._auth, "Accept": "application/json"})
             r = conn.getresponse()
             if r.status in (401, 403):                             # the status first: a cut 401 is still a refusal
@@ -448,10 +481,14 @@ class OntapSource(object):
         while nxt and seen < ONTAP_MAX_PAGES:
             seen += 1
             d = self._get(nxt)
-            if not isinstance(d, dict) or d.get("errors") or not isinstance(d.get("records"), list):
-                raise CollectionFailed("%s: %s" % (path, "errors in the answer" if isinstance(d, dict) and d.get("errors") else "no records in the answer"))
+            if not isinstance(d, dict) or "errors" in d or "error" in d or not isinstance(d.get("records"), list):
+                raise CollectionFailed("%s: %s" % (path, "an error in the answer" if isinstance(d, dict) and ("errors" in d or "error" in d)
+                                                   else "no records in the answer"))
             out.extend(d["records"])
+            links = d.get("_links") if isinstance(d.get("_links"), dict) else {}
             nxt = _g(d, "_links.next.href")
+            if "next" in links and not (isinstance(nxt, str) and nxt):
+                raise CollectionFailed("%s: a next page without its link" % path)
             if nxt and "fields=" not in nxt:                   # ONTAP keeps the query in next; never read every field
                 nxt += ("&" if "?" in nxt else "?") + "fields=" + fields
         if nxt:
@@ -485,8 +522,10 @@ class OntapSource(object):
     def poll(self):
         # every ONTAP request carries the login: the polls of one account one at a time, none while it is bad
         with self.lock, self.gate.lock:
+            self.login_sent = self.login_ok = False
             self.gate.check()
             self.gate.before_login()                               # every ONTAP request carries the password: written down first
+            self.login_sent = True
             try:
                 c, nodes, got, failed = self._read()
             except AuthError:
@@ -496,10 +535,15 @@ class OntapSource(object):
         txt = lambda v: str(v) if v not in (None, "") else None          # noqa: E731  - a state not given: unknown, never "online"
 
         def lun_state(x):
+            """a known bad state of the LUN or of its container: that; online only when both say online; else as read (the
+            wall's allow-list makes anything else unknown) - a container state not given never hides an offline LUN"""
             cs, st = txt(_g(x, "status.container_state")), txt(_g(x, "status.state"))
-            if cs is not None and cs != "online":
-                return cs
-            return st if cs is not None else None
+            for v in (st, cs):
+                if v in BAD_STATES:
+                    return v
+            if st == "online":
+                return "online" if cs == "online" else cs
+            return st
 
         rows = lambda k, fn: None if got.get(k) is None else [fn(r) for r in got[k]]    # noqa: E731
         return {
@@ -530,36 +574,40 @@ class OntapSource(object):
 
 # ---- the collector --------------------------------------------------------------------------------------------------------
 class Collector(object):
-    """Polls every source every `seconds`, each in its own thread; view() -> what the wall draws from (the module's doc)."""
+    """Polls every source in turn, every `seconds` - ONE thread for all of them (Codex verify 4: never two polls at once, so a
+    shared account's logins are one after the other by construction); view() -> what the wall draws from (the module's doc).
+
+    The login back-off (Codex verify 3/4), per account (the sources of one account share it):
+      - write-ahead: before any login the attempt is written durably to the back-off file (no write, no login);
+      - any outcome but a login that worked - a refusal, a timeout, an answer lost after the request left, any error after
+        it - holds the account one full window (auth_retry) from when that outcome came, written the same way; a connection
+        that never opened sent nothing and holds nothing;
+      - at the start, an attempt with no outcome holds its account one full window from now; a file that cannot be read, is
+        not UTF-8 JSON, or holds any entry that is not valid (each needs "until" or "attempt", finite numbers) holds every
+        account one window; a file that cannot be read while running: no login, and nothing written over it."""
 
     def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time, state_file=None):
         self.sources = list(sources)
         self.seconds, self.auth_retry, self.keep = max(1, int(seconds)), max(1, int(auth_retry)), int(keep_seconds)
         self.log = log or (lambda d: None)
         self.clock = clock
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()                           # the state (view() reads it from the web threads)
+        self.cycling = threading.Lock()                        # one cycle at a time (the collector's thread; a test)
         self.st = dict((s.key, {"kind": s.kind, "name": s.name, "state": "never", "why": "", "at": None, "tried": None, "next_try": None,
-                                "skipped": 0, "snap": None, "fail_since": None}) for s in self.sources)
+                                "snap": None, "fail_since": None}) for s in self.sources)
         self.hist = {}
-        self.running = {}
-        self.started = {}
         self.stop_ev = threading.Event()
         self.thread = None
-        # 1.129.0 review: the sources of one account (kind, user) share one bucket: a refused login backs them ALL off; after the
-        # start and after each back-off one source tries first (the probe) and the others wait for its answer
         self.buckets = {}
         for s in self.sources:
             cred = getattr(s, "cred", None) or (s.kind, s.key)
-            b = self.buckets.setdefault(cred, {"gate": getattr(s, "gate", None) or Gate(), "next_try": None, "verified": False, "keys": [],
-                                               "since": None, "errored": set()})
+            b = self.buckets.setdefault(cred, {"gate": getattr(s, "gate", None) or Gate(), "next_try": None, "keys": [], "since": None})
             b["keys"].append(s.key)
+            b["gate"].bad = False                              # a new collector: what holds an account comes from the file
             s.gate = b["gate"]
             s._bucket = cred
-        # Codex verify 3: the back-off file is WRITE-AHEAD - before any login the attempt is written durably (no write, no login);
-        # a refusal's deadline is written the same way; at the start an attempt with no outcome holds its account one window, and
-        # a file that cannot be read, is not JSON, or holds any entry that is not valid holds every account one window
         self.state_file = state_file
-        self.flock = threading.Lock()                          # the file's own lock (never self.lock: a source writes holding its gate)
+        self.flock = threading.Lock()
         self._said = set()
         for c, b in self.buckets.items():
             b["gate"].ahead = (lambda cred=c: self._ahead(cred)) if state_file else None
@@ -576,66 +624,67 @@ class Collector(object):
             self.log({"event": "wall", "backoff_file": self.state_file, "state": what, "why": why})
 
     def _hold(self, b, until, why):
-        b.update(next_try=max(b["next_try"] or 0, until), since=b["since"] or self.clock(), verified=False)
+        b.update(next_try=max(b["next_try"] or 0, until), since=b["since"] or self.clock())
         b["gate"].bad = True
         for k in b["keys"]:
             self.st[k].update(state="auth", why=why, next_try=b["next_try"])
 
+    @staticmethod
+    def _valid(e):
+        if not isinstance(e, dict) or not e or set(e) - {"attempt", "until"}:
+            return False
+        return all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0 for x in e.values())
+
     def _read(self):
-        """the file -> ({account key: {attempt, until}}, None), or ({}, why it cannot be used); no file yet: ({}, None)"""
+        """the file -> ({account key: {attempt?, until?}}, None), or ({}, why it cannot be used); no file yet: ({}, None)"""
         try:
-            with open(self.state_file, encoding="utf-8") as fh:
-                text = fh.read()
+            with open(self.state_file, "rb") as fh:
+                raw = fh.read()
         except FileNotFoundError:
             return {}, None
         except OSError:
             return {}, "cannot be read"
         try:
-            d = json.loads(text)
-        except ValueError:
-            return {}, "is not JSON"
+            d = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {}, "is not UTF-8 JSON"
         if not isinstance(d, dict) or d.get("v") != 2 or not isinstance(d.get("accounts"), dict):
             return {}, "is not in the wall's format"
-        out = {}
-        for k, e in d["accounts"].items():
-            if not isinstance(e, dict) or set(e) - {"attempt", "until"}:
+        for e in d["accounts"].values():
+            if not self._valid(e):
                 return {}, "holds an entry that is not valid"
-            for f, x in e.items():
-                if x is not None and not (isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0):
-                    return {}, "holds an entry that is not valid"
-            out[str(k)] = e
-        return out, None
+        return dict((str(k), e) for k, e in d["accounts"].items()), None
 
     def _restore(self):
         now = self.clock()
         d, why = self._read()
-        if why is None:
-            for e in d.values():
-                ends = [x for x in (e.get("until"), (e["attempt"] + self.auth_retry) if e.get("attempt") else None) if x]
-                if any(x > now + self.auth_retry + 1 for x in ends):
-                    why = "holds a deadline further than one window"
-                    break
+        if why is None and any((e.get("until") or 0) > now + self.auth_retry + 1 for e in d.values()):
+            why = "holds a deadline further than one window"
         if why is not None:
-            until = now + self.auth_retry
             for b in self.buckets.values():
-                self._hold(b, until, "the back-off file (%s) %s - every login held for %d s" % (os.path.basename(self.state_file), why, self.auth_retry))
+                self._hold(b, now + self.auth_retry, "the back-off file (%s) %s - every login held for %d s"
+                           % (os.path.basename(self.state_file), why, self.auth_retry))
             self._say("not usable", "%s: every account held for one window" % why)
             return
         for c, b in self.buckets.items():
             e = d.get(self._hkey(c))
             if not e:
                 continue
-            until = max(x for x in (e.get("until") or 0, (e["attempt"] + self.auth_retry) if e.get("attempt") else 0))
-            if until > now:
-                self._hold(b, until, AUTH_WHY + " (backed off before the portal restarted)" if e.get("until") else
+            if e.get("attempt"):                               # a login with no outcome: one full window from now
+                self._hold(b, max(now + self.auth_retry, e.get("until") or 0),
                            "a login was under way when the portal stopped - held one window")
+            elif e["until"] > now:
+                self._hold(b, e["until"], AUTH_WHY + " (backed off before the portal restarted)")
 
     def _write(self, mutate):
-        """read-modify-write under the file lock, durably (a temp file, fsync, rename, fsync of the folder); -> True, or False (said once)"""
+        """read-modify-write under the file lock, durably (a temp file, fsync, rename, fsync of the folder) -> True, or False
+        (said once). A file that cannot be read is never written over (the other accounts' entries stay)."""
         with self.flock:
             d, why = self._read()
             if why is not None:
-                d = {}                                         # not readable: written again from what this run knows
+                self._say("not read", "the back-off file %s - no login until it can be read" % why)
+                return False
+            self._said.discard("not read")
             mutate(d)
             tmp = "%s.%d.%d.tmp" % (self.state_file, os.getpid(), threading.get_ident())
             try:
@@ -663,21 +712,24 @@ class Collector(object):
     def _ahead(self, cred):
         """before a login: the attempt, written first - False: not written, so no login"""
         h, now = self._hkey(cred), self.clock()
-        return self._write(lambda d: d.setdefault(h, {}).update(attempt=now))
+
+        def m(d):
+            e = d.get(h) or {}
+            d[h] = dict({"attempt": now}, **({"until": e["until"]} if e.get("until") else {}))
+        return self._write(m)
 
     def _outcome(self, cred, until):
-        """after a login: the account's deadline (until), or nothing to hold (None: the login worked)"""
+        """after a login: the account's deadline (until), or nothing to hold (None: the login worked, or nothing was sent)"""
+        if not self.state_file:
+            return True
         h = self._hkey(cred)
 
         def m(d):
             if until is None:
                 d.pop(h, None)
             else:
-                e = d.setdefault(h, {})
-                e.pop("attempt", None)
-                e["until"] = max(e.get("until") or 0, until)
-        if self.state_file:
-            self._write(m)
+                d[h] = {"until": max((d.get(h) or {}).get("until") or 0, until)}
+        return self._write(m)
 
     def start(self):
         if self.thread is not None:
@@ -702,61 +754,49 @@ class Collector(object):
                 pass
 
     def cycle(self):
-        now = self.clock()
-        for s in self.sources:
-            with self.lock:
-                t = self.running.get(s.key)
-                st = self.st[s.key]
-                b = self.buckets[s._bucket]
-                if t is not None and t.is_alive():
-                    st["skipped"] += 1                         # the last poll still reads: never two at once
-                    continue
-                if b["next_try"] is not None:
-                    if now < b["next_try"]:
-                        continue                               # the account was refused: every source of it waits auth_retry
-                    b["next_try"], b["verified"] = None, False
-                    b["gate"].bad = False                      # the window is over: one source may try again
-                if not b["verified"]:
-                    if any(self.running.get(k) is not None and self.running[k].is_alive() for k in b["keys"]):
-                        continue                               # another source of this account is trying the login first
-                    if len(b["errored"]) >= len(b["keys"]):
-                        b["errored"] = set()
-                    if s.key in b["errored"]:
-                        continue                               # it did not answer at all last time: another one tries first
-                    b["probe_at"] = now
-                st["tried"] = now
-                self.started[s.key] = now
-                t = threading.Thread(target=self._run, args=(s, now), name="wall-" + s.key, daemon=True)
-                self.running[s.key] = t
-            t.start()
+        """every source once, one after the other, in this thread"""
+        with self.cycling:
+            for s in self.sources:
+                if self.stop_ev.is_set():
+                    break
+                now = self.clock()
+                with self.lock:
+                    b = self.buckets[s._bucket]
+                    if b["next_try"] is not None:
+                        if now < b["next_try"]:
+                            continue                           # the account is held: every source of it waits
+                        b["next_try"] = None
+                        b["gate"].bad = False                  # the window is over: the next source of it may try
+                    self.st[s.key]["tried"] = now
+                self._run(s, now)
 
     def wait(self, timeout=60):
-        """until every poll started has ended (the tests; a shutdown)"""
-        end = time.time() + timeout
-        for t in list(self.running.values()):
-            t.join(max(0.0, end - time.time()))
+        """kept for callers of the threaded collector: a cycle ends before cycle() returns"""
+        return None
+
+    def _hold_account(self, s, now, why, first_log):
+        """an outcome that is not a login that worked: the account held one window from now (the outcome's time)"""
+        until = self.clock() + self.auth_retry
+        with self.lock:
+            b = self.buckets[s._bucket]
+            first = b["since"] is None
+            until = max(b["next_try"] or 0, until)
+            b.update(next_try=until, since=b["since"] or now)
+            b["gate"].bad = True
+            for k in b["keys"]:
+                st = self.st[k]
+                st.update(state="auth", why=why if k == s.key else AUTH_WHY + " (the same account)", next_try=until,
+                          fail_since=st["fail_since"] or now)
+        self._outcome(s._bucket, until)                        # durably; if it cannot be, the attempt stays (a restart holds)
+        if first:
+            self.log({"event": "wall", "source": s.key, "state": first_log,
+                      "why": "%s; this account's %d source(s) not tried again for %d s" % (why, len(b["keys"]), self.auth_retry)})
 
     def _run(self, s, now):
-        logins = getattr(s, "logins", None)
         try:
             snap = s.poll()
         except AuthError as e:
-            with self.lock:
-                b = self.buckets[s._bucket]
-                first = b["since"] is None
-                # the deadline from when the refusal came (a read that waited behind another never shortens it); the latest wins
-                until = max(b["next_try"] or 0, self.clock() + self.auth_retry)
-                b.update(next_try=until, verified=False, since=b["since"] or now)
-                self._outcome(s._bucket, until)
-                b["gate"].bad = True
-                why = str(e) or AUTH_WHY
-                for k in b["keys"]:                            # every source of this account: stopped, said so
-                    st = self.st[k]
-                    st.update(state="auth", why=why if k == s.key else AUTH_WHY + " (the same account)", next_try=b["next_try"],
-                              fail_since=st["fail_since"] or now)
-            if first:
-                self.log({"event": "wall", "source": s.key, "state": "login refused",
-                          "why": "%s; this account's %d source(s) not tried again for %d s" % (why, len(b["keys"]), self.auth_retry)})
+            self._hold_account(s, now, str(e) or AUTH_WHY, "login refused")
             return
         except Paused:
             with self.lock:
@@ -767,61 +807,33 @@ class Collector(object):
                 self.log({"event": "wall", "source": s.key, "state": "login paused", "why": PAUSED_WHY})
             return
         except Exception as e:  # pylint: disable=broad-except
+            sent, ok = getattr(s, "login_sent", False), getattr(s, "login_ok", False)
+            if sent and not ok and not isinstance(e, NotSent):
+                # the credential left and no answer said it worked (a timeout, a lost or broken answer): as a refusal
+                self._hold_account(s, now, "the login's answer did not come (%s) - held one window as a refusal" % short(e), "login not answered")
+                return
+            if sent:
+                self._outcome(s._bucket, None)                 # it worked (an answer came), or nothing left (the connection never opened)
             with self.lock:
-                b = self.buckets[s._bucket]
-                if not b["verified"]:
-                    b["errored"].add(s.key)                    # not a refusal: the next cycle another source of the account tries
                 st = self.st[s.key]
                 first = st["state"] != "error"
                 st.update(state="error", why=short(e), next_try=None, fail_since=st["fail_since"] or now)
             if first:
                 self.log({"event": "wall", "source": s.key, "state": "not read", "why": short(e)})
             return
+        if getattr(s, "login_sent", False) or s.kind == "ontap":
+            self._outcome(s._bucket, None)                     # the login worked: nothing to hold after a restart
         done = self.clock()
         with self.lock:
             b = self.buckets[s._bucket]
+            b["since"] = None
             st = self.st[s.key]
             was = st["state"]
-            if b["next_try"] is not None:
-                # Codex 1.129.0: the account was refused while this read (on a session it already had) ran - its data is good, the
-                # back-off stays as it is (its deadline, its file): only a login after the window may end it
-                st.update(at=done, snap=snap)
-                if s.kind == "vcenter":
-                    self._keep(s.key, snap, done)
-                return
-            logged_in = s.kind == "ontap" or logins is None or getattr(s, "logins", None) != logins
-            kick = not b["verified"] and logged_in
-            if logged_in:
-                b.update(verified=True, since=None, errored=set())
-                self._outcome(s._bucket, None)                 # the login worked: nothing to hold after a restart
-            elif not b["verified"]:
-                b["errored"].add(s.key)                        # read on an old session: proves nothing of the password - another tries
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
             if s.kind == "vcenter":
                 self._keep(s.key, snap, done)
         if was in ("auth", "error", "paused"):
             self.log({"event": "wall", "source": s.key, "state": "read again"})
-        if kick and len(b["keys"]) > 1 and not self.stop_ev.is_set():
-            self._kick(b)                                      # the account answered: its other sources now, not a cycle later
-
-    def _kick(self, b):
-        """the sources of an account that waited for its probe: started now (each once)"""
-        start = []
-        with self.lock:
-            for s in self.sources:
-                if s.key not in b["keys"]:
-                    continue
-                t = self.running.get(s.key)
-                if (t is not None and t.is_alive()) or (self.started.get(s.key) or 0) >= b.get("probe_at", 0):
-                    continue
-                now = self.clock()
-                self.st[s.key]["tried"] = now
-                self.started[s.key] = now
-                t = threading.Thread(target=self._run, args=(s, now), name="wall-" + s.key, daemon=True)
-                self.running[s.key] = t
-                start.append(t)
-        for t in start:
-            t.start()
 
     def _keep(self, key, snap, t):
         """the quick stats of this poll into the history; samples older than keep_seconds dropped"""
