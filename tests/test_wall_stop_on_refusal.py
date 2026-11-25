@@ -920,7 +920,7 @@ class Crashes(Base):
         portal_log = mock.Mock()
         portal_log.add.side_effect = OSError(28, "No space left on device")
         cfg = mock.Mock(wall_opts={"high_minutes": 15, "seconds": 60}, wall_auth_retry=900, data=self.d, wall_logins={})
-        with mock.patch.object(sp, "wall_sources", lambda c: [self.vc()]):
+        with mock.patch.object(sp, "wall_sources", lambda c, **kw: [self.vc()]):
             w = sp.WallLive(cfg, portal_log, None)             # never raises
         w.collector and w.collector.stop()
 

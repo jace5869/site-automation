@@ -1106,7 +1106,9 @@ def _endpoint(text, default_port=443):
     t = str(text or "").strip()
     u = urllib.parse.urlsplit(t if "://" in t else "//" + t)
     if u.scheme not in ("", "https") or not u.hostname or u.username or u.password:
-        raise ValueError("not a host or https address: %r" % t)
+        if u.username or u.password:                           # 1.130.1: never the user or password into the log or the page
+            raise ValueError("an address with a user or password in it (%s): give the host name only" % (u.hostname or "?"))
+        raise ValueError("not a host or https address: %r" % t[:120])
     port = u.port or default_port                              # a bad port: ValueError from urlsplit
     if not 0 < port < 65536:
         raise ValueError("bad port in %r" % t)

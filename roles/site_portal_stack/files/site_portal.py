@@ -6079,9 +6079,10 @@ def wall_sources(cfg, log=None):
     except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
         log({"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
         return []
-    if cfg.wall_logins and not src:
+    logins = cfg.wall_logins if isinstance(getattr(cfg, "wall_logins", None), dict) else {}
+    if logins and not src:
         missing = [("%s: no %s" % (k, "vCenter address (portal_wall_vcenters)" if k == "vcenter" else "cluster (ontap_clusters)"))
-                   for k, v in cfg.wall_logins.items() if not (v.get("hosts") if k == "vcenter" else v.get("clusters"))]
+                   for k, v in logins.items() if isinstance(v, dict) and not (v.get("hosts") if k == "vcenter" else v.get("clusters"))]
         log({"event": "wall", "collector": "no sources", "why": "; ".join(missing) or "every entry was left out (see the lines above)"})
     return src
 
@@ -6096,7 +6097,8 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
-        for k in getattr(cfg, "wall_bad_logins", []):
+        bad = getattr(cfg, "wall_bad_logins", [])
+        for k in (bad if isinstance(bad, list) else []):
             _safe_add(log, {"event": "wall", "source": k, "state": "login not readable",
                             "why": "the %s login secret is not JSON - run Site portal - deploy again" % k})
         if self.collector is None and wall_live is not None:

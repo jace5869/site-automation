@@ -67,6 +67,13 @@ class WallSources(unittest.TestCase):
         self.assertEqual(sp.wall_sources(c, log=said.append), [])
         self.assertTrue(any(d.get("state") == "left out" for d in said), said)
 
+    def test_an_address_with_a_password_never_shows_it(self):
+        c = cfg(PORTAL_WALL_ONTAP_LOGIN=json.dumps(dict(ON, clusters=["https://admin:S3cretPw@cluster1.example.mil"])))
+        said = []
+        self.assertEqual(sp.wall_sources(c, log=said.append), [])
+        self.assertNotIn("S3cretPw", json.dumps(said))
+        self.assertTrue(any("user or password" in d.get("why", "") for d in said), said)
+
 
 class DeployWritesJson(unittest.TestCase):
     def test_every_use_of_the_value_is_json_after_a_space(self):
