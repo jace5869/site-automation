@@ -274,6 +274,13 @@
       {%- endfor -%}{{ n.c }}
   run_once: true
 
+- name: Settings | the wall runs on one portal host only (a reminder - separate runs are not checked)
+  ansible.builtin.debug:
+    msg: >-
+      One portal host runs the wall: its live logins (the shared vCenter / ONTAP accounts) are on this host. Never turn them
+      on on a second portal host, also not in a separate run - two walls would each log in on their own.
+  when: _portal_wall_vc | bool or _portal_wall_ontap | bool
+
 - name: Settings | the ops-center wall's settings are usable
   ansible.builtin.assert:
     that:
@@ -1217,6 +1224,24 @@
     scope: "{{ portal_scope }}"
   when: _portal_units is changed or _portal_units_gone is changed
 
+# 1.130.0: a new reset token on every run, written into the portal's data volume BEFORE the service (re)starts - so a refusal
+# at its first poll is recorded with THIS run's token and only the next deploy starts the logins again (one failed login per
+# deploy, never two). A one-off container of the same image writes it (its user, its labels); a restart alone never writes one.
+- name: Wall | the data volume (the token goes in before the service starts)
+  ansible.builtin.command:
+    argv: [podman, volume, create, --ignore, site-portal-data]
+  changed_when: false
+  when: (_portal_wall_vc | bool or _portal_wall_ontap | bool) and not ansible_check_mode
+
+- name: Wall | a new reset token in the portal's data volume
+  ansible.builtin.command:
+    argv: [podman, run, --rm, -i, --pull=never, --network, none, -v, "site-portal-data:/data:U,Z", -v, "{{ portal_config_dir }}/app:/app:ro,Z",
+           -e, PORTAL_DATA=/data, "{{ portal_image }}", /bin/sh, /app/start.sh, --wall-token]
+    stdin: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['0123456789abcdef']) }}"
+  changed_when: false
+  no_log: true
+  when: (_portal_wall_vc | bool or _portal_wall_ontap | bool) and not ansible_check_mode
+
 - name: Units | started
   ansible.builtin.systemd_service:
     name: "{{ item }}"
@@ -1316,16 +1341,6 @@
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
-
-# 1.130.0: a new reset token on every run - wall logins stopped by a refusal (or any doubt) start again once, on this new token;
-# a restart of the portal alone never starts them (the collector keeps the token it last used)
-- name: Wall | a new reset token in the portal's data volume
-  ansible.builtin.command:
-    argv: [podman, exec, -i, site-portal-app, /bin/sh, /app/start.sh, --wall-token]
-    stdin: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['0123456789abcdef']) }}"
-  changed_when: false
-  no_log: true
-  when: (_portal_wall_vc | bool or _portal_wall_ontap | bool) and not ansible_check_mode
 
 - name: Verify | what AAP said
   ansible.builtin.set_fact:

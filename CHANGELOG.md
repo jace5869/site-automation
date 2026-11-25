@@ -27,8 +27,9 @@ stopped: fix the cause, then run Site portal - deploy (every run lets the wall t
 - **Stop on any doubt (the wall's logins):** after the password left, anything but a clear success - a refusal, 401 /
   403 / 407, NoPermission, a timeout, a lost or odd answer, a 5xx - stops every wall login to every source at once (no
   Logout, no further source) and it stays stopped across restarts. To resume: fix the cause, then run Site portal -
-  deploy (every run writes a new reset token; the wall tries once). One collector per data volume, one wall host per
-  site (the deploy refuses more); the attempt is written before every poll; a poll marked at the start, or any doubt
+  deploy (every run writes a new reset token before the service restarts; a stop keeps the token it saw, so one deploy
+  costs at most one refused login). One collector per data volume, one portal host runs the wall (the deploy refuses
+  more in a run and reminds on every run); the attempt is written before every poll; a poll marked at the start, or any doubt
   about the journal, is a stop. The page says "Logins stopped at HH:MM: <source> <reason>. Fix the cause (password,
   account), then run Site portal - deploy."
 - **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
@@ -83,6 +84,10 @@ stopped: fix the cause, then run Site portal - deploy (every run lets the wall t
   - the NetApp page (report database) can keep green chips while its own header says Not current, and shows a
     SnapMirror row without health as Healthy (r5 #21, #22);
   - the fuzz scanner does not read pseudo-elements, gradients, the tooltip or right/bottom borders;
+  - once a source's password was accepted in a cycle, a later read error on it (an ONTAP collection not whole, an odd
+    vCenter answer) is a plain source error and the cycle goes on (Codex r7 #1, #3; the password was proven);
+  - a portal whose log volume is full can still fail to start through the portal's own startup log lines (r7 #17, not
+    the wall's).
   - a deleted object's alert stays "last seen" until the portal restarts; a paused or uninitialized but healthy
     SnapMirror relationship is grey; one unreachable source delays the others by up to its timeout each cycle.
 

@@ -1052,15 +1052,17 @@ condition needs the full window again).
     there, nothing more is sent (no Logout either). The wall shows "Logins stopped at HH:MM: <source> <reason>. Fix the
     cause (password, account), then run Site portal - deploy." It stays stopped across restarts.
   - **How to resume:** fix the cause (the password in AAP, the account), then run **Site portal - deploy**. Every deploy
-    writes a new reset token into the portal's data volume (`wall-reset-token`); the wall sees it within a minute and
-    tries once. A restart alone never starts the logins (the wall keeps the token it last used, `wall-token-used`).
+    writes a new reset token into the portal's data volume (`wall-reset-token`) before the service (re)starts; a stop
+    records the token that was there when it happened, and only a different one starts the logins again - the wall sees
+    it within a minute and tries once. A restart alone never starts them. One deploy can cost at most one refused login.
   - A source that could not even be reached (no connection: nothing was sent) is tried again the next cycle.
   - **Written ahead, one collector, one host.** Before every poll the attempt is written to the journal
     (`wall-backoff.json` in the portal's data volume) - no write, no poll; a poll still marked when the portal starts is a
     stop. One collector per data volume (it holds `wall-collector.lock`; a second one waits for it) and **one portal host
-    per site**: the deploy refuses to put the wall's logins on more than one host.
-  - **Any doubt about the journal is a stop** (missing - a new or emptied volume too -, unreadable, not valid, over 64 KB,
-    a link or a pipe) until the next Site portal - deploy. A first deploy starts it the same way, with its token.
+    runs the wall**: the deploy refuses to put the wall's logins on more than one host in a run, and says so on every run
+    - never turn them on on a second portal host in a separate run (two walls would each log in on their own).
+  - **Any doubt about the journal is a stop** (missing, unreadable, not valid or contradicting itself, over 64 KB, a link or
+    a pipe) until the next Site portal - deploy, which writes a clear one (a first deploy too).
   - One thread reads every source in turn; a vCenter login counts only on a whole answer (its session key and cookie); a
     vCenter whose session expired logs in again through the same gate; nothing is sent after the portal stops the
     collector; settings the portal cannot read turn the wall off (said in the log), never the portal.

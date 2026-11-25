@@ -210,11 +210,17 @@ class Base(unittest.TestCase):
         return W.Collector(list(srcs), seconds=60, auth_retry=WINDOW, clock=self.c.wall, mono=self.c.mono, state_file=self.path, log=log)
 
     def deploy(self, token=None):
-        """Site portal - deploy: a new reset token in the data volume"""
+        """Site portal - deploy: a new reset token in the data volume (the real writer: a missing or doubtful journal gets a
+        clear start too); a token that is not 32 hex is written raw (the writer refuses it)"""
         import secrets
+        import test_netapp_live  # noqa: F401  (its paths: the portal's modules)
+        import site_portal as sp
         tok = token if token is not None else secrets.token_hex(16)
-        with open(os.path.join(self.d, "wall-reset-token"), "wb") as fh:
-            fh.write(tok.encode("utf-8") if isinstance(tok, str) else tok)
+        try:
+            sp.write_wall_token(self.d, tok)
+        except ValueError:
+            with open(os.path.join(self.d, "wall-reset-token"), "wb") as fh:
+                fh.write(tok.encode("utf-8") if isinstance(tok, str) else tok)
         return tok
 
     def restart(self, col, *srcs):
@@ -283,7 +289,7 @@ class Lifecycle(Base):
         col.cycle()
         self.assertEqual(self.wire.logins(), 1)
         j = self.journal()
-        self.assertEqual((j["v"], j["stopped"], j["inflight"]), (4, False, []))
+        self.assertEqual((j["v"], j["stopped"], j["inflight"]), (5, False, []))
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         raw = open(self.path, "rb").read()
         self.assertNotIn(b"pass", raw)
@@ -529,7 +535,7 @@ class AnyDoubtStopsEverything(Base):
                 real = col._change
 
                 def no_stop(m):
-                    probe = {"v": 4, "stopped": False, "at": None, "why": "", "inflight": [self.h(col.sources[0])]}
+                    probe = {"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": [self.h(col.sources[0])]}
                     m(probe)
                     return False if probe["stopped"] else real(m)
                 col._change = no_stop
@@ -577,6 +583,65 @@ class NeonR6(Base):
         s._get = lambda path: {"records": [], "num_records": 3, "errors": [{"message": "x"}]}
         with self.assertRaises(RuntimeError):                  # the error wins over the count: the poll stops
             s.records("/api/cluster/nodes", "state")
+
+
+class R7(Base):
+    """Codex r7 #2, #4, #5, #18; Neon r7 #1-#3 - the bar: no account gets a second failed authentication until a person deploys"""
+
+    def test_r7_4_a_token_from_a_healthy_deploy_never_ends_a_later_stop(self):
+        col = self.coll(self.vc())
+        col.cycle()                                            # healthy
+        self.deploy()                                          # a deploy while healthy: its token is just there
+        self.wire.vc["vc1"].update(password="rotated", drop=True)
+        self.c.step(60)
+        col.cycle()                                            # the session ends; the re-login refused: stopped with that token
+        n = self.wire.logins()
+        self.run_for(col, 3 * 3600)
+        self.assertEqual(self.wire.logins(), n)
+
+    def test_neon_r7_2_one_deploy_one_failed_login(self):
+        """the deploy writes its token BEFORE the service restarts: a refusal at the first poll is recorded with it"""
+        col = self.coll(self.vc())
+        col.cycle()
+        col.stop()
+        self.deploy()                                          # the deploy (a bad credential this time): token first ...
+        self.wire.vc["vc1"]["password"] = "rotated"
+        col = self.coll(self.vc())                             # ... then the restart
+        self.run_for(col, 3 * 3600)
+        self.assertEqual(self.wire.logins(), 2)               # the first run's login + ONE refused - never a second
+
+    def test_neon_r7_3_no_separate_history_to_lose(self):
+        col = self.coll(self.vc(pw="wrong"))
+        self.wire.add_vc("vc1", password="right")
+        col.cycle()
+        col.stop()
+        for junk in ("wall-token-used",):                      # a file of the old design: never read
+            open(os.path.join(self.d, junk), "w").write("garbage")
+        col = self.coll(self.vc(pw="wrong"))
+        self.run_for(col, 3600)
+        self.assertEqual(self.wire.logins(), 1)
+
+    def test_r7_18_a_source_name_that_cannot_be_encoded(self):
+        class Odd(object):                                     # a name that cannot be encoded; nothing sent
+            kind, key, name, login_sent, secret = "ontap", "ontap:\ud800bad", "\ud800bad", False, None
+
+            def poll(self):
+                raise W.NotSent("no connection")
+
+            def close(self):
+                pass
+        bad, good = Odd(), self.vc()
+        col = self.coll(bad, good)
+        col.cycle()                                            # never raises; the good source is read
+        self.assertEqual(col.view()["sources"]["vcenter:vc1"]["state"], "ok")
+
+    def test_r7_2_a_fault_text_never_triggers_a_new_login(self):
+        col = self.coll(self.vc())
+        col.cycle()
+        self.wire.hook = lambda h, w: (500, [], fault("SystemError", "the session is not authenticated (sort of)")) if w == "RetrievePropertiesEx" else None
+        self.c.step(60)
+        col.cycle()
+        self.assertEqual(self.wire.logins(), 1)               # no new password login on a text match
 
 
 class Resume(Base):
@@ -627,10 +692,10 @@ class Resume(Base):
                 self.run_for(col, 600)
                 self.assertEqual(self.wire.logins(), 1)
 
-    def test_r6_5_the_spent_token_cannot_be_written(self):
+    def test_r6_5_the_clear_record_cannot_be_written(self):
         col = self.stop()
         self.deploy()
-        with mock.patch.object(W.Collector, "_use", lambda me, t: False):
+        with mock.patch.object(W.Collector, "_save", lambda me, d: False):
             self.run_for(col, 600)
         self.assertEqual(self.wire.logins(), 1)
 
@@ -660,16 +725,21 @@ class Journal(Base):
 
     def make_lock(self):
         open(os.path.join(self.d, "wall-collector.lock"), "w").close()
-        os.unlink(os.path.join(self.d, "wall-reset-token"))   # no new token from a deploy: the doubt stays a stop
+        for n in ("wall-reset-token", "wall-backoff.json"):
+            if os.path.exists(os.path.join(self.d, n)):
+                os.unlink(os.path.join(self.d, n))           # no deploy since: the doubt stays a stop
 
     def payloads(self):
-        good = {"v": 4, "stopped": False, "at": None, "why": "", "inflight": []}
+        good = {"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}
         j = lambda **kw: json.dumps(dict(good, **kw)).encode()   # noqa: E731
-        return [b"", b"\xff\xfe\x00\x80", b"{not json", b"[]", b"null", b"123", b'"s"', j(v=3), j(v=True), b'{"v": 4}', j(extra=1),
-                j(stopped=None), j(stopped="no"), b'{"v": 4, "stopped": false, "at": NaN, "why": "", "inflight": []}', b'{"v": 4, "at": 1e400}',
-                j(at=-5), j(at="1900"), j(inflight={}), j(inflight=[1]),
-                ('{"v": 4, "stopped": false, "at": %s, "why": "", "inflight": []}' % ("9" * 401)).encode(),
-                b"[" * 100000 + b"]" * 100000, b'{"v": 4, "v": 4}', b" " * (70 * 1024) + b"{}"]
+        return [b"", b"\xff\xfe\x00\x80", b"{not json", b"[]", b"null", b"123", b'"s"', j(v=4), j(v=True), b'{"v": 5}', j(extra=1),
+                j(stopped=None), j(stopped="no"), b'{"v": 5, "stopped": false, "at": NaN, "why": "", "token": "", "inflight": []}',
+                b'{"v": 5, "at": 1e400}', j(at=-5), j(at="1900"), j(inflight={}), j(inflight=[1]), j(token=None),
+                ('{"v": 5, "stopped": false, "at": %s, "why": "", "token": "", "inflight": []}' % ("9" * 401)).encode(),
+                b"[" * 100000 + b"]" * 100000, b'{"v": 5, "v": 5}', b" " * (70 * 1024) + b"{}",
+                # Codex r7 #6: records that contradict themselves
+                j(at=1000.0), j(why="refused"), j(token="0" * 32), j(stopped=True), j(stopped=True, at=1000.0, why="x", token="nothex"),
+                j(stopped=True, at=1000.0, why="", token="")]
 
     def test_every_doubtful_journal_stops_every_login(self):
         for raw in self.payloads() + ["missing", "unreadable", "directory", "fifo", "symlink"]:
@@ -685,7 +755,7 @@ class Journal(Base):
                     os.mkfifo(self.path)
                 elif raw == "symlink":
                     good = os.path.join(self.d, "elsewhere.json")
-                    open(good, "w").write(json.dumps({"v": 4, "stopped": False, "at": None, "why": "", "inflight": []}))
+                    open(good, "w").write(json.dumps({"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}))
                     os.symlink(good, self.path)
                 elif raw != "missing":
                     self.raw(raw)
@@ -710,6 +780,8 @@ class Journal(Base):
     def test_an_empty_volume_waits_for_the_deploys_token(self):
         """Neon r6 #2 / Codex r5 #7: no journal (a new, emptied or restored volume) is never "first use" - it waits for a token"""
         os.unlink(os.path.join(self.d, "wall-reset-token"))
+        os.unlink(self.path)                                   # an empty volume: no token, no journal
+        open(os.path.join(self.d, "wall-collector.lock"), "w").close()
         col = self.coll(self.vc())
         self.run_for(col, 3600)
         self.assertEqual(self.wire.logins(), 0)
@@ -731,7 +803,7 @@ class Journal(Base):
         col.lock_fd is not None and os.close(col.lock_fd)
         os.unlink(os.path.join(self.d, "wall-reset-token"))
         os.mkfifo(os.path.join(self.d, "wall-reset-token"))
-        self.assertIsNone(self.coll(self.vc())._token("wall-reset-token"))   # returns at once
+        self.assertEqual(self.coll(self.vc())._token(), W.UNREADABLE)        # returns at once
         self.setUp()
         os.mkfifo(os.path.join(self.d, "wall-collector.lock"))
         col = self.coll(self.vc())

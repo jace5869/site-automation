@@ -6640,6 +6640,25 @@ def write_wall_token(data_dir, text):
         os.fsync(dfd)
     finally:
         os.close(dfd)
+    # the journal missing (a first deploy, an emptied volume) or in doubt: a person ran the deploy - a clear one (a valid stop
+    # record is never touched: the new token above is what starts it, once)
+    if wall_live is not None:
+        jp = os.path.join(data_dir, "wall-backoff.json")
+        try:
+            wall_live._parse_journal(wall_live._read_regular(jp, wall_live.JOURNAL_MAX))
+        except (OSError, ValueError):
+            fd, tmp = tempfile.mkstemp(prefix="wall-backoff.json.", suffix=".tmp", dir=data_dir)
+            try:
+                os.write(fd, json.dumps({"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}).encode("ascii"))
+                os.fsync(fd)
+                os.close(fd)
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, jp)
+            except OSError:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

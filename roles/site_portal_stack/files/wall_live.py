@@ -254,7 +254,7 @@ class VcenterSource(object):
 
     @staticmethod
     def _gone(e):
-        return isinstance(e, SoapFault) and (e.kind == "NotAuthenticated" or "not authenticated" in e.text.lower())
+        return isinstance(e, SoapFault) and e.kind == "NotAuthenticated"     # a parsed fault type only - never its text (r7 #2)
 
     # -- the session ----------------------------------------------------------------------------------------------------
     def _login(self):
@@ -625,11 +625,10 @@ class OntapSource(object):
 
 # ---- the collector --------------------------------------------------------------------------------------------------------
 JOURNAL_MAX = 64 * 1024                 # bytes: a bigger journal is not trusted (stop)
-JOURNAL_KEYS = {"v", "stopped", "at", "why", "inflight"}
+JOURNAL_KEYS = {"v", "stopped", "at", "why", "token", "inflight"}
 TOKEN_RX = re.compile(r"^[0-9a-f]{32}$")
 TOKEN_FILE = "wall-reset-token"         # written by Site portal - deploy on every run (32 hex): a new one starts stopped logins
-TOKEN_USED = "wall-token-used"          # the last token that started them (so a restart never starts them again)
-
+UNREADABLE = "unreadable"               # the token file was there but not readable when the stop was written: only a person
 
 def _parse_journal(raw):
     """the journal's bytes -> dict, or raise ValueError (never anything else: a journal never stops the portal)"""
@@ -639,13 +638,19 @@ def _parse_journal(raw):
         d = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
     except (ValueError, UnicodeError, OverflowError, RecursionError, MemoryError, TypeError) as e:
         raise ValueError("not strict UTF-8 JSON (%s)" % type(e).__name__)
-    if not isinstance(d, dict) or set(d) != JOURNAL_KEYS or type(d["v"]) is not int or d["v"] != 4:
-        raise ValueError("not in the wall's format (v4)")
-    ok = (type(d["stopped"]) is bool and isinstance(d["why"], str) and len(d["why"]) <= 500
+    if not isinstance(d, dict) or set(d) != JOURNAL_KEYS or type(d["v"]) is not int or d["v"] != 5:
+        raise ValueError("not in the wall's format (v5)")
+    ok = (type(d["stopped"]) is bool and isinstance(d["why"], str) and len(d["why"]) <= 500 and isinstance(d["token"], str)
           and (d["at"] is None or (type(d["at"]) in (int, float) and 0 < d["at"] < 1e11))
           and isinstance(d["inflight"], list) and len(d["inflight"]) <= 1000 and all(isinstance(x, str) and len(x) <= 64 for x in d["inflight"]))
     if not ok:
         raise ValueError("holds a value that is not valid")
+    # Codex r7 #6: a record that contradicts itself is in doubt - a clear one has no stop time, reason or token; a stop has all
+    if d["stopped"]:
+        if d["at"] is None or not d["why"] or not (d["token"] in ("", UNREADABLE) or TOKEN_RX.match(d["token"])):
+            raise ValueError("a stop record without its time, reason or token")
+    elif d["at"] is not None or d["why"] or d["token"]:
+        raise ValueError("a clear record that still holds a stop's time, reason or token")
     return d
 
 
@@ -743,7 +748,7 @@ class Collector(object):
         self.flock = threading.Lock()
         self.journal = None
         self.lock_fd = None
-        self.used = None                                       # the token that last started the logins
+        self.stop_token = None                                 # the deploy's token there when the logins stopped
         self.lock_busy = False
         self._said = set()
         for s in self.sources:
@@ -762,13 +767,20 @@ class Collector(object):
     def _path(self, name):
         return os.path.join(os.path.dirname(os.path.abspath(self.state_file)), name)
 
-    def _token(self, name):
-        """a token file -> its 32 hex, or None (missing, not a regular file, anything else in it)"""
+    def _token(self, name=TOKEN_FILE):
+        """the deploy's token now -> its 32 hex; "" when there is no file; UNREADABLE for anything else (not a regular file,
+        not readable, not exactly 32 lowercase hex)"""
         try:
-            t = _read_regular(self._path(name), 200).decode("ascii").strip()
-        except (OSError, ValueError, UnicodeError):
-            return None
-        return t if TOKEN_RX.match(t) else None
+            raw = _read_regular(self._path(name), 200)
+        except FileNotFoundError:
+            return ""
+        except (OSError, ValueError):
+            return UNREADABLE
+        try:
+            t = raw.decode("ascii").strip()
+        except UnicodeError:
+            return UNREADABLE
+        return t if TOKEN_RX.match(t) else UNREADABLE
 
     def _open(self):
         if not self._take_lock():
@@ -802,7 +814,6 @@ class Collector(object):
     def _load(self):
         """the journal: valid and clean - logins on; stopped, a poll marked, missing or in any doubt - every login stopped until a
         NEW token from Site portal - deploy (never "first use": a volume found empty waits for the deploy's token too)"""
-        self.used = self._token(TOKEN_USED)
         try:
             raw, why = _read_regular(self.state_file, JOURNAL_MAX), None
         except FileNotFoundError:
@@ -815,17 +826,18 @@ class Collector(object):
                 d = _parse_journal(raw)
             except ValueError as e:
                 why = str(e)
-        if d is None:
+        if d is None:                                         # in doubt: stopped; the token there now is the one it stopped with
             self._stop_all("the wall's journal is %s" % why, persist=False)
             return
         self.journal = d
-        if d["inflight"]:
-            self._stop_all("a poll was under way when the portal stopped - its outcome is not known", persist=False)
-        elif d["stopped"]:
-            self._stop_all(d["why"] or "logins stopped", persist=False)
+        if d["stopped"]:
+            self.stop_token = d["token"]
+            self._stop_all(d["why"], persist=False, keep_token=True)
+        elif d["inflight"]:
+            self._stop_all("a poll was under way when the portal stopped - its outcome is not known", persist=True)
 
     def _fresh(self):
-        return {"v": 4, "stopped": False, "at": None, "why": "", "inflight": []}
+        return {"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}
 
     def _write_file(self, path, text):
         """durably: a temp file, fsync, rename, fsync of the folder -> True, or False (said once)"""
@@ -858,12 +870,6 @@ class Collector(object):
     def _save(self, d):
         return self._write_file(self.state_file, json.dumps(d))
 
-    def _use(self, tok):
-        if not self._write_file(self._path(TOKEN_USED), tok):
-            return False
-        self.used = tok
-        return True
-
     def _change(self, mutate):
         """the journal changed and written: True, or False (not written - the change is NOT kept)"""
         with self.flock:
@@ -878,23 +884,22 @@ class Collector(object):
 
     @staticmethod
     def _hkey(key):
-        return hashlib.sha256(("src|%s" % key).encode("utf-8")).hexdigest()[:24]
+        return hashlib.sha256(("src|%s" % key).encode("utf-8", "backslashreplace")).hexdigest()[:24]   # never raises (r7 #18)
 
     def _resume(self):
-        """while stopped: a NEW token from the deploy (not the one used last) starts the logins - once"""
+        """while stopped: a NEW, well-formed token from Site portal - deploy - different from the token there when the logins
+        stopped - starts them again (Codex r7 #4/#5: the stop record holds that token; no separate history to lose)"""
         if self.off or not self.state_file or self.lock_fd is None:
             return False
-        tok = self._token(TOKEN_FILE)
-        if not tok or tok == self.used:
-            return False
-        if not self._use(tok):                                 # the token is spent first: never two starts from one token
+        tok = self._token()
+        if not TOKEN_RX.match(tok) or self.stop_token == UNREADABLE or tok == self.stop_token:
             return False
         d = self._fresh()
         if not self._save(d):
             return False
         with self.flock:
             self.journal = d
-        self.stopped = None
+        self.stopped, self.stop_token = None, None
         for s in self.sources:
             s.gate.bad = False
         with self.lock:
@@ -918,9 +923,12 @@ class Collector(object):
             s.gate.bad = True
         self._say("login off", self.off)
 
-    def _stop_all(self, why, persist=True, src=None):
-        """every login to every source stopped; persisted when it comes from a poll (its write-ahead mark replaced)"""
-        text = "Logins stopped at %s: %s. Fix the cause (password, account), then run Site portal - deploy." % (
+    def _stop_all(self, why, persist=True, src=None, keep_token=False):
+        """every login to every source stopped - with the deploy's token there NOW (only a different one starts them again);
+        persisted when it comes from a poll (its write-ahead mark replaced)"""
+        if not keep_token:
+            self.stop_token = self._token() if self.state_file else ""
+        text = why if keep_token else "Logins stopped at %s: %s. Fix the cause (password, account), then run Site portal - deploy." % (
             time.strftime("%H:%M", time.localtime(self.clock())), why)
         self.stopped = text
         for s in self.sources:
@@ -932,7 +940,7 @@ class Collector(object):
             h = self._hkey(src.key) if src is not None else None
 
             def m(d):
-                d.update(stopped=True, at=self.clock(), why=text[:500])
+                d.update(stopped=True, at=self.clock(), why=text[:500], token=self.stop_token)
                 if h in d["inflight"]:
                     d["inflight"].remove(h)
             if not self._change(m):
@@ -987,19 +995,27 @@ class Collector(object):
                 if self.stop_ev.is_set() or self.off or self.stopped:
                     break
                 now = self.clock()
+                try:
+                    self._one(s, now)
+                except Exception as e:  # pylint: disable=broad-except  - one source never stops the others (r7 #18)
+                    with self.lock:
+                        if s.key in self.st:
+                            self.st[s.key].update(state="error", why="not configured correctly: %s" % short(e))
+
+    def _one(self, s, now):
+        with self.lock:
+            self.st[s.key]["tried"] = now
+        if self.state_file and not isinstance(s, BrokenSource):
+            h = self._hkey(s.key)
+            if not self._change(lambda d: d["inflight"].append(h) if h not in d["inflight"] else None):
                 with self.lock:
-                    self.st[s.key]["tried"] = now
-                if self.state_file and not isinstance(s, BrokenSource):
-                    h = self._hkey(s.key)
-                    if not self._change(lambda d: d["inflight"].append(h) if h not in d["inflight"] else None):
-                        with self.lock:
-                            st = self.st[s.key]
-                            first = st["state"] != "paused"
-                            st.update(state="paused", why=PAUSED_WHY, next_try=None, fail_since=st["fail_since"] or now)
-                        if first:
-                            self.log({"event": "wall", "source": s.key, "state": "login paused", "why": PAUSED_WHY})
-                        continue
-                self._run(s, now)
+                    st = self.st[s.key]
+                    first = st["state"] != "paused"
+                    st.update(state="paused", why=PAUSED_WHY, next_try=None, fail_since=st["fail_since"] or now)
+                if first:
+                    self.log({"event": "wall", "source": s.key, "state": "login paused", "why": PAUSED_WHY})
+                return
+        self._run(s, now)
 
     def wait(self, timeout=60):
         return None
