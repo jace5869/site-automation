@@ -12,7 +12,7 @@ below (the deploy then stops and says so) or sets an old and a new access name t
 - **No doubt counts.** The account is looked up over the whole domain with `userPrincipalName` and `sAMAccountName`
   read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches, a
   returned account cannot be fully read, or the account's values name another EDIPI. A membership counts only for that
-  account's DN and objectGUID. After a refused LDAP login the portal binds no more until the next deploy, even when a
+  account's DN and objectGUID (AD's binary and text forms of one GUID compare equal). After a refused LDAP login the portal binds no more until the next deploy, even when a
   group read was already under way.
 - **Plain access names:** `portal_viewers`, `portal_view_groups`, `portal_runners`, `portal_run_groups`,
   `portal_approve_groups` (were `portal_readers`, `portal_reader_groups`, `portal_requesters`,

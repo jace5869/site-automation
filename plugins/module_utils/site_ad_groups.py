@@ -10,6 +10,7 @@ __metaclass__ = type
 
 import re
 import threading
+import uuid
 import time
 
 try:
@@ -158,10 +159,11 @@ def card_pattern(cn, match="{edipi}@mil", attribute=None):
 
 
 def _guid(v):
-    """objectGUID as compared: lower-case hex, whatever form the library gave (bytes, '{...}' text)"""
+    """objectGUID as compared: its GUID text form in lower-case hex, whatever form the library gave - the 16 bytes as AD
+    stores them (the first three fields little-endian, Codex r4 new #5) or '{...}' text"""
     v = v[0] if isinstance(v, list) and v else v
     if isinstance(v, (bytes, bytearray)):
-        return bytes(v).hex()
+        return uuid.UUID(bytes_le=bytes(v)).hex if len(v) == 16 else ""
     t = str(v or "").strip().strip("{}").replace("-", "").lower()
     return t if re.fullmatch(r"[0-9a-f]{32}", t, re.ASCII) else ""
 
@@ -442,6 +444,9 @@ class Groups(object):
         return bool(self.want.get(role)) if role else any(self.want.values())
 
     def refresh(self):
+        with self.lock:
+            if self.__dict__.get("_held"):
+                return self.last                          # a refused login: no bind at all until the next deploy
         r = self.reader.read(self.want)
         if not r["ok"] and "invalidCredentials" in str(r.get("error")):
             r["error"] += " - not tried again until the portal is deployed again with the right login (the account would lock out)"

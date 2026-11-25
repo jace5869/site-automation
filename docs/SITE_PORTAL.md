@@ -652,7 +652,7 @@ portal_run_groups: []                            # the same for who may run the 
   | `userPrincipalName` | `{edipi}{digits6}@mil` | `1234567890123456@mil` (16 digits) |
   | `sAMAccountName` | `{edipi}.ctr` | `1234567890.ctr` |
   | `sAMAccountName` | `{edipi}.civ` | `1234567890.civ` |
-  | `sAMAccountName` | `{edipi}.mil` | `1234567890.mil` |
+  | `sAMAccountName` | `{edipi}.mil` | the ten digits, then `.mil` |
 
   All five are on by default. Any other form, attribute (`altSecurityIdentities`, `employeeID` ...), `*` or `?` stops
   the deploy. The old pair `portal_ad_card_attribute` / `portal_ad_card_match` still works when it is one of the five,

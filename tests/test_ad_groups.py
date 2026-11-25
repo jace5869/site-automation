@@ -552,8 +552,25 @@ class CodexR4(DirectorC):
         self.assertGreater(g.next_at, time.time() + 10 ** 8)                  # held until the next deploy
         tries = []
         g.reader.opener = lambda _o: (tries.append(1), (FakeConn(), "dc01", ""))[1]
+        g.reader.read = real_read
         self.assertIsNone(g.account("DOE.JANE.Q.1234567890")[0])
+        g.refresh()                                                           # a refresh called while held
         self.assertEqual(tries, [])                                           # no further bind
+        self.assertFalse(g.last["ok"])
+
+    def test_neon_r4_2_escaped_bytes_in_a_cn_stay_as_they_are(self):
+        import site_portal as sp
+        h = lambda d: {"X-SSL-Client-Verify": "SUCCESS", "X-SSL-Client-S-DN": d}      # noqa: E731
+        self.assertNotEqual(sp.who(h(r"CN=EXAMPLE.ADMIN\20,O=Example"))[0], "EXAMPLE.ADMIN")
+        self.assertNotEqual(sp.who(h(r"CN=TEST.1111111111\C2\A0,O=Example"))[0], "TEST.1111111111")
+        self.assertNotIn("\x00", sp.who(h(r"CN=\00a blank entry,O=Example"))[0] or "")
+
+    def test_new_05_one_objectguid_in_binary_and_text(self):
+        import uuid
+        u = uuid.UUID("00112233-4455-4677-8899-aabbccddeeff")
+        self.assertEqual(G._guid(u.bytes_le), G._guid("{00112233-4455-4677-8899-aabbccddeeff}"))
+        self.assertEqual(G._guid([u.bytes_le]), "00112233445546778899aabbccddeeff")
+        self.assertEqual(G._guid(b"short"), "")
 
 
     def test_neon_r4_1_an_incomplete_candidate_naming_another_edipi_still_counts(self):
