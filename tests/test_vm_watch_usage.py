@@ -96,7 +96,7 @@ class Usage(unittest.TestCase):
         left = change("example-a", "green", "red", 2000)
         right = change("example-a", "red", "green", 3400)
         d = watch([left, dict(right, vcenter="vc-b.example.mil"), dict(right, entity_moid="id-b"),
-                   dict(right, alarm="Other CPU utilization"), dict(right, **{"from": "yellow"})])
+                   dict(right, alarm="Host CPU usage"), dict(right, **{"from": "yellow"})])
         self.assertEqual(w.vm_watch_conditions(d), [])
         for view in views(d):
             self.assertEqual(view["sheet"]["rows"], [])
@@ -150,7 +150,7 @@ class Usage(unittest.TestCase):
         self.assertEqual(w.vm_watch_conditions(d, dict(usage_alarms=[])), [])
 
     def test_live_usage_cannot_supply_minutes_to_a_shorter_review(self):
-        d = watch(states=[state("example-vm", "red", 1800, alarm="VM memory usage")])
+        d = watch(states=[state("example-vm", "red", 1800, alarm="Virtual machine memory usage")])
         triggers = w.vm_watch_conditions(d)
         self.assertEqual([c["summary"] for c in triggers], ["1 VM: memory usage red 30+ min (example-vm)"])
         for review in (False, True):
@@ -177,6 +177,132 @@ class Usage(unittest.TestCase):
             result = mail.vm_watch_email_floor(changed, runs, dict(opts, now=END + 300))
             self.assertFalse(result["send"] or result["held"])
             self.assertEqual(result["state"]["ids"], state_before["ids"])
+
+
+def read(triggered, names, fault=None, events=()):
+    """wt._read on a fake vCenter: triggered alarm states, {alarm moid: definition name}; fault raised by the definitions read."""
+    import os
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+    import ansible.module_utils
+    from test_vmware_modules import wt
+
+    labels = {s.entity._moId: {"name": "example-" + s.entity._moId} for s in triggered if getattr(s, "entity", None)}
+
+    def props(content, objects, kind, paths):
+        if paths[0] == "info.name":
+            if fault is not None:
+                raise fault
+            return dict((m, {"info.name": n}) for m, n in names.items())
+        return labels if objects else {}
+
+    utils = os.path.join(os.path.dirname(__file__), "..", "plugins", "module_utils")
+    params = dict(datacenter="", window_minutes=30, event_types=wt.EVENT_TYPES, usage_alarms=["CPU usage", "memory usage"])
+    with patch.object(ansible.module_utils, "__path__", [*ansible.module_utils.__path__, utils]), \
+            patch.object(wt, "vim", create=True), patch.object(wt, "vmodl", NS(MethodFault=Fault), create=True), \
+            patch.object(wt, "_props", return_value={}), patch.object(wt, "_objs_props", side_effect=props), \
+            patch.object(wt, "_events", Mock(side_effect=[[], list(events)])):
+        return wt._read(NS(rootFolder=NS(triggeredAlarmState=list(triggered))), params, END, VC), wt
+
+
+class Fault(Exception):
+    """vmodl.MethodFault, as pyVmomi raises it."""
+
+
+def triggered(moid, color="red", at=2400, alarm="alarm-1"):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    return NS(entity=NS(_moId=moid, _wsdlName="VirtualMachine"), alarm=NS(_moId=alarm), overallStatus=color,
+              time=datetime.fromtimestamp(at, timezone.utc))
+
+
+class CodexReview(unittest.TestCase):
+    """1.131.1: the Codex review of the usage tuning (#12-#17)."""
+
+    def recovered(self, result, wt):
+        """The last email said the red CPU group; this run's read -> does the email say it recovered?"""
+        before = w.vm_watch_conditions(watch(states=[state("example-vm", "red", 2400)]))
+        opts = dict(now=END, report_on=["critical"], min_minutes=0)
+        runs = [dict(artifacts=dict(vm_watch_email_state=mail.vm_watch_email_floor(before, [], opts)["state"]))]
+        d = wt.mark_incomplete(dict(result, vcenters=[{"name": VC, "ok": True, "error": ""}], suspects=[], vms_unread=[],
+                                    read_at=END, window_minutes=30))
+        unread = any(st.get("incomplete") for st in d["vcenters"])      # watch_email.yml's unread
+        cs = w.vm_watch_conditions(d)
+        decision = mail.vm_watch_email_floor(cs, runs, dict(opts, now=END + 600, unread=unread))
+        return d, cs, decision
+
+    def test_12_failed_alarm_read_is_no_recovery(self):
+        result, wt = read([triggered("vm-1")], {"alarm-1": "Virtual machine CPU usage"}, fault=Fault("NoPermission"))
+        d, cs, decision = self.recovered(result, wt)
+        self.assertIn("usage alarms", d["vcenters"][0].get("incomplete", ""))
+        self.assertNotEqual(decision["kind"], "recovered")
+        self.assertFalse(decision["changed"])
+        self.assertEqual(w.vm_watch_health(d, cs)[VC]["checks_failed"], ["vm_watch"])      # its tickets: none cleared
+
+    def test_13_a_record_without_its_object_keeps_the_rest(self):
+        from types import SimpleNamespace as NS
+        broken = [NS(entity=None, alarm=NS(_moId="alarm-1"), overallStatus="red", time=None),
+                  NS(entity=NS(_moId="vm-2", _wsdlName="VirtualMachine"), alarm=None, overallStatus="red", time=None),
+                  NS(entity=None, alarm=None, overallStatus="gray", time=None)]          # not counted: no usage alarm is gray
+        result, wt = read(broken + [triggered("vm-1")], {"alarm-1": "Virtual machine CPU usage"})
+        self.assertEqual([a["entity_moid"] for a in result["alarms"]], ["vm-1"])
+        self.assertIn("2 triggered alarm(s)", str(result["warnings"]))
+
+    def test_13_an_unexpected_error_marks_only_the_alarms_unread(self):
+        result, wt = read([triggered("vm-1")], {"alarm-1": "Virtual machine CPU usage"}, fault=KeyError("info.name"))
+        self.assertEqual(result["alarms"], [])
+        self.assertEqual([u["vcenter"] for u in result["alarms_unread"]], [VC])
+        d, _, decision = self.recovered(result, wt)
+        self.assertTrue(d["vcenters"][0].get("incomplete"))
+        self.assertNotEqual(decision["kind"], "recovered")
+
+    def test_14_whole_alarm_names_only(self):
+        other = "CPU usage telemetry unavailable"
+        ev = change("example-vm", "green", "red", 3000, alarm=other)
+        ordinary, groups = w._usage.usage_window([ev], [state("example-vm", "red", 1800, alarm=other)], END, 1800, END,
+                                                 dict(usage_alarms=["CPU usage"]))
+        self.assertEqual((ordinary, groups), ([ev], []))
+        result, _ = read([triggered("vm-1"), triggered("vm-2", alarm="alarm-2")],
+                         {"alarm-1": "Virtual machine CPU usage", "alarm-2": other})
+        self.assertEqual([a["alarm"] for a in result["alarms"]], ["Virtual machine CPU usage"])
+        for name in ("Host CPU usage", "virtual  machine MEMORY usage"):
+            self.assertTrue(w._usage.usage_window([], [state("example-vm", "red", 1800, alarm=name)], END, 1800, END,
+                                                  dict(usage_alarms=["CPU usage", "memory usage"]))[1], name)
+
+    def test_15_a_short_window_measures_red_from_its_trigger(self):
+        d = data(alarms=[state("example-vm", "red", END - 40 * 60)], read_at=END, window_minutes=5)
+        self.assertEqual([c["summary"] for c in w.vm_watch_conditions(d)], ["1 VM: CPU usage red 40+ min (example-vm)"])
+        # a red interval that ended is still clipped to the window
+        d = data(events=[change("example-vm", "green", "red", END - 40 * 60), change("example-vm", "red", "green", END - 60)],
+                 read_at=END, window_minutes=5)
+        self.assertEqual(w.vm_watch_conditions(d), [])
+
+    def test_16_no_object_id_never_pairs_by_name(self):
+        def anon(row):
+            return dict((k, v) for k, v in row.items() if k != "entity_moid")
+        d = watch([anon(change("example-vm", "green", "red", 1900)), anon(change("example-vm", "red", "green", 3300))])
+        self.assertEqual(w.vm_watch_conditions(d), [])
+        # two same-named VMs without ids: two members, never one 20-minute VM
+        d = watch(states=[anon(state("example-vm", "red", 2400)), anon(state("example-vm", "red", 2400))])
+        self.assertEqual([c["summary"] for c in w.vm_watch_conditions(d)], ["2 VMs: CPU usage red 20+ min (example-vm, example-vm)"])
+
+    def test_17_a_vm_joining_a_group_is_emailed(self):
+        one = w.vm_watch_conditions(watch(states=[state("example-a", "red", 2400)]))
+        two = w.vm_watch_conditions(watch(states=[state("example-a", "red", 2400), state("example-b", "red", 2400)]))
+        self.assertEqual([c["id"] for c in one], [c["id"] for c in two])
+        opts = dict(now=END, report_on=["critical"], min_minutes=30)
+        first = mail.vm_watch_email_floor(one, [], opts)
+        self.assertTrue(first["send"])
+        runs = [dict(artifacts=dict(vm_watch_email_state=first["state"]))]
+        held = mail.vm_watch_email_floor(two, runs, dict(opts, now=END + 300))
+        self.assertTrue(held["held"] and not held["send"])
+        runs = [dict(artifacts=dict(vm_watch_email_state=held["state"]))]
+        later = mail.vm_watch_email_floor(two, runs, dict(opts, now=END + 2400))
+        self.assertTrue(later["send"])
+        self.assertEqual(later["kind"], "change")
+        self.assertIn("Changed: usage:vm:cpu usage:red in %s (critical, 1 joined, 0 left)" % VC, later["changed"])
+        runs = [dict(artifacts=dict(vm_watch_email_state=later["state"]))]
+        self.assertFalse(mail.vm_watch_email_floor(two, runs, dict(opts, now=END + 4800))["send"])     # no change: quiet
 
 
 if __name__ == "__main__":

@@ -161,12 +161,13 @@ def vm_watch_conditions(data, opts=None):
     events = d.get("events") or []
     if end is not None:
         begin = end - 60 * float(d.get("window_minutes", 15))
-        events, usage = _usage.usage_window(events, d.get("alarms"), end, begin, end, o)
+        # 1.131.1 (Codex #15): a red alarm triggered before a short window still counts from its trigger time
+        events, usage = _usage.usage_window(events, d.get("alarms"), end, begin, end, dict(o, usage_live=True))
         for group in usage:
             obj = "%s %s" % (group["fragment"], group["color"])
             condition = _cond(group["severity"], "usage", "alarm", obj, group, group["message"],
                               "Review the performance charts for the listed objects in vCenter.")
-            condition["id"] = group["id"]
+            condition.update(id=group["id"], usage_members=group["usage_members"])
             out.append(condition)
     for s in d.get("vcenters") or []:
         if s.get("error"):
@@ -687,6 +688,16 @@ def vm_watch_artifact(data, conditions, actions=None):
 EMAIL_STATE = "vm_watch_email_state"
 
 
+def _email_key(c):
+    return "%s@%s" % (c["id"], c["vcenter"]) if c.get("vcenter") else c["id"]
+
+
+def _email_members(conditions, ids):
+    """1.131.1 (Codex #17): {id: members} of the grouped conditions an email is about (a usage group: its objects)."""
+    return dict((_email_key(c), list(c["usage_members"])) for c in conditions or []
+                if isinstance(c, dict) and c.get("id") and isinstance(c.get("usage_members"), list) and _email_key(c) in ids)
+
+
 def vm_watch_email_ids(conditions, report_on=None):
     """{id: severity} of the conditions an email is about: those of vm_watch_report_on, folded to their root as the tickets
     are (vm_watch_health) - a VM under a lost datastore or a down host is that datastore's or host's id, not its own.
@@ -706,9 +717,7 @@ def vm_watch_email_ids(conditions, report_on=None):
                 return roots[(vc, "datastore", ds)]
         return roots.get((vc, "host", (c.get("vm") or {}).get("esxi_host") or ""))
 
-    def key(c):
-        return "%s@%s" % (c["id"], c["vcenter"]) if c.get("vcenter") else c["id"]
-
+    key = _email_key
     out = {}
     for c in conditions:
         if c.get("severity") not in want:
@@ -793,7 +802,9 @@ def vm_watch_email_decision(conditions, runs=None, opts=None):
         return {"send": bool(send), "kind": kind, "review": review, "report": bool(ids) or review or kind == "recovered",
                 "why": why_line, "lines": lines, "changed": changed or [], "state": state, "carry": carry if send else state}
 
-    sent = {"sent_at": _utc(now), "sent_ts": now, "ids": ids}
+    members = _email_members(conditions, ids)
+    prev_members = (prev or {}).get("members")
+    sent = {"sent_at": _utc(now), "sent_ts": now, "ids": ids, "members": members}
     if not o.get("on_change", True):
         return out(bool(ids) or review, "always", None)
     if why:
@@ -807,16 +818,24 @@ def vm_watch_email_decision(conditions, runs=None, opts=None):
     # a window's event that ages out is no recovery; nothing counts as cleared while a vCenter (or a suspect) was not read -
     # and what could not be seen stays in the state until a full read settles it (Codex review)
     cleared = [] if unread else sorted(i for i in prev_ids if i not in ids and not _windowed(i))
+    # 1.131.1 (Codex #17): a group whose objects changed is news (a state from before 1.131.1 has no members: no change)
+    # - with a vCenter not read, only one that joined (one not seen may still be in it)
+    was = prev_members if isinstance(prev_members, dict) else {}
+    regrouped = sorted(i for i in ids if i in prev_ids and i in members and isinstance(was.get(i), list)
+                       and (set(members[i]) - set(was[i]) if unread else set(members[i]) != set(was[i])))
     if unread:
         seen, ids = ids, dict(prev_ids)
         ids.update(seen)
         sent["ids"] = ids
+        sent["members"] = dict(was, **dict((i, sorted(set(m) | set(was.get(i) or []))) for i, m in members.items()))
     # the events that aged out leave the state without an email, so the same event again is new (Codex review)
     prev = dict(prev, ids=dict((i, v) for i, v in prev_ids.items() if unread or i in ids or not _windowed(i))) if prev else prev
     keep[0] = prev
     changed = (["New: %s (%s)" % (_shown_id(i), ids[i]) for i in new]
                + ["Worse: %s (%s, was %s)" % (_shown_id(i), ids[i], prev_ids[i]) for i in worse]
-               + ["Cleared: %s (was %s)" % (_shown_id(i), prev_ids[i]) for i in cleared])
+               + ["Cleared: %s (was %s)" % (_shown_id(i), prev_ids[i]) for i in cleared]
+               + ["Changed: %s (%s, %d joined, %d left)" % (_shown_id(i), ids[i], len(set(members[i]) - set(was[i])),
+                                                              len(set(was[i]) - set(members[i]))) for i in regrouped])
     if review:
         return out(True, "review", sent, changed=changed)
     if prev is None:
@@ -826,7 +845,7 @@ def vm_watch_email_decision(conditions, runs=None, opts=None):
             return out(True, "recovered", dict(sent, ids={}),
                        changed=["Cleared: %s (was %s)" % (_shown_id(i), prev_ids[i]) for i in sorted(prev_ids)])
         return out(False, "none", prev)
-    if new or worse or cleared:
+    if new or worse or cleared or regrouped:
         return out(True, "change", sent, changed=changed)
     last = float(prev.get("sent_ts") or 0)
     if every > 0 and now - last >= every * 3600:

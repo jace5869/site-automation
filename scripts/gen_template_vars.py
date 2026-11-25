@@ -784,7 +784,7 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
                             "review's VMs and other sources)", "", """\
 ## Every 5 to 15 minutes, in a workflow: [VM - outage watch] --Always--> [ServiceNow tickets]; Concurrent jobs off
 # vm_watch_window_minutes: 15                    # the schedule's interval
-# vm_watch_usage_alarms: [CPU usage, memory usage]  # Case-insensitive name fragments.
+# vm_watch_usage_alarms: [CPU usage, memory usage]  # Whole alarm names (any case; CPU usage / memory usage = the VM and host alarms).
 # vm_watch_usage_show_yellow: false              # Include matching yellow alarms as grouped warnings.
 # vm_watch_usage_min_minutes: 15                 # Continuous red minutes inside the window.
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)

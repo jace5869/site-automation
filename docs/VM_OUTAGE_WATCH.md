@@ -540,7 +540,7 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
 | `vm_watch_review_object` | "" | current or historical datastore or host name. Leave empty to review all roots |
-| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Case-insensitive alarm name fragments for the watch and timelines. |
+| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Whole alarm names (any case) for the watch and timelines; `CPU usage` and `memory usage` stand for vCenter's VM and host usage alarms. A name that only contains them (e.g. `CPU usage telemetry unavailable`) is an ordinary alarm. |
 | `vm_watch_usage_show_yellow` | `false` | Include matching yellow alarms as grouped warnings. |
 | `vm_watch_usage_min_minutes` | `15` | Continuous red minutes inside the window for a critical group. Unknown durations are hidden. |
 | `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |

@@ -18,6 +18,29 @@ def alarm_kind(name, fragments):
     return ""
 
 
+# 1.131.1 (Codex #14): the vCenter alarm definitions a short kind of vm_watch_usage_alarms stands for, whole names only
+USAGE_NAMES = {"cpu usage": ("virtual machine cpu usage", "host cpu usage"),
+               "memory usage": ("virtual machine memory usage", "host memory usage"),
+               "disk usage": ("datastore usage on disk",)}
+
+
+def _whole(name):
+    return re.sub(r"utili[sz]ation", "usage", " ".join(str(name or "").lower().split()))
+
+
+def usage_kind(name, alarms):
+    """1.131.1 (Codex #14): the entry of alarms this alarm name is - its whole name, or one of the definitions of a short
+    kind (USAGE_NAMES), case-insensitive. Never a fragment: "CPU usage telemetry unavailable" is no usage alarm."""
+    name = _whole(name)
+    if not name:
+        return ""
+    for entry in alarms or []:
+        want = _whole(entry)
+        if want and (name == want or name in USAGE_NAMES.get(want, ())):
+            return entry
+    return ""
+
+
 def timestamp(value):
     if value is None or value == "" or isinstance(value, bool):
         return None
@@ -35,16 +58,19 @@ def timestamp(value):
 def _entity(row):
     name = row.get("entity") or row.get("vm") or row.get("host") or ""
     kind = row.get("entity_type") or ("host" if name == row.get("host") else "vm")
-    return kind, row.get("entity_moid") or row.get("moid") or name, name
+    # 1.131.1 (Codex #16): the object id only - a row without one is its own object, never a namesake's
+    return kind, row.get("entity_moid") or row.get("moid") or ("?%d" % id(row)), name
 
 
 def usage_window(events, states, read_at, begin, end, opts):
-    """Return ordinary events and one summary per vCenter, alarm fragment, entity type and colour.
+    """Return ordinary events and one summary per vCenter, alarm kind, entity type and colour.
     Only a matching transition or an observed state can close a red interval. Clip before measuring.
+    opts.usage_live (the watch, 1.131.1 Codex #15): a triggered state counts from its trigger time, not clipped to the window.
     """
     fragments = opts.get("usage_alarms", DEFAULT_ALARMS)
     minimum = max(0, float(opts.get("usage_min_minutes", 15))) * 60
     show_yellow = opts.get("usage_show_yellow", False)
+    live = opts.get("usage_live", False)
     ordinary, changes, groups = [], defaultdict(list), defaultdict(dict)
     begin, end, read_at = map(timestamp, (begin, end, read_at))
 
@@ -52,23 +78,29 @@ def usage_window(events, states, read_at, begin, end, opts):
         kind, obj, _ = _entity(row)
         return row.get("vcenter", ""), kind, obj, row["alarm"].lower()
 
-    def count(row, color, start, stop):
-        if start is None or stop is None or begin is None or end is None or end <= begin:
+    def count(row, color, start, stop, state=False):
+        if start is None or stop is None or end is None:
             return
-        start, stop = max(begin, start), min(end, stop)
+        if state and live:
+            stop = min(end, stop)
+        elif begin is None or end <= begin:
+            return
+        else:
+            start, stop = max(begin, start), min(end, stop)
         seconds = stop - start
         if seconds < 0 or (color == "red" and seconds < minimum) or (color == "yellow" and not show_yellow):
             return
         kind, obj, name = _entity(row)
-        if not obj or color not in ("red", "yellow"):
+        if color not in ("red", "yellow"):
             return
-        group = groups[row.get("vcenter", ""), alarm_kind(row["alarm"], fragments), kind, color]
+        group = groups[row.get("vcenter", ""), usage_kind(row["alarm"], fragments), kind, color]
         before = group.get(obj)
-        group[obj] = (name or obj, min(start, before[1]) if before else start,
-                      max(seconds, before[2]) if before else seconds)
+        member = obj if not obj.startswith("?") else "name:%s" % name
+        group[obj] = (name or member, min(start, before[1]) if before else start,
+                      max(seconds, before[2]) if before else seconds, member)
 
     for row in events or []:
-        if not isinstance(row, dict) or row.get("type") != "AlarmStatusChangedEvent" or not alarm_kind(row.get("alarm"), fragments):
+        if not isinstance(row, dict) or row.get("type") != "AlarmStatusChangedEvent" or not usage_kind(row.get("alarm"), fragments):
             ordinary.append(row)
             continue
         changes[identity(row)].append(row)
@@ -96,7 +128,7 @@ def usage_window(events, states, read_at, begin, end, opts):
                 count(row, color, at, at)
 
     for row in states or []:
-        if not alarm_kind(row.get("alarm"), fragments) or read_at is None:
+        if not usage_kind(row.get("alarm"), fragments) or read_at is None:
             continue
         color = str(row.get("status") or "").lower()
         start = timestamp(row.get("time"))
@@ -106,7 +138,7 @@ def usage_window(events, states, read_at, begin, end, opts):
                 start = max(start, previous[1]) if start is not None else previous[1]
             elif start is not None and start <= previous[1]:
                 start = None
-        count(row, color, read_at if color == "yellow" and start is None else start, read_at)
+        count(row, color, read_at if color == "yellow" and start is None else start, read_at, state=True)
 
     summaries = []
     for (vc, fragment, kind, color), members in sorted(groups.items()):
@@ -117,5 +149,7 @@ def usage_window(events, states, read_at, begin, end, opts):
         group_id = "vm-watch:usage:%s:%s:%s" % (kind, fragment.lower(), color)
         summaries.append(dict(id=group_id, type="VmWatchUsage", vcenter=vc, time=min(val[1] for val in members.values()),
                               message=summary, severity="critical" if color == "red" else "warning",
-                              fragment=fragment, entity_type=kind, color=color))
+                              fragment=fragment, entity_type=kind, color=color,
+                              # 1.131.1 (Codex #17): who is in it, so the email sees a VM join or leave
+                              usage_members=sorted(set(val[3] for val in members.values()))))
     return ordinary, summaries

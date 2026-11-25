@@ -2271,7 +2271,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_ontap_clusters` | `"{{ ontap_clusters \| default([], true) }}"` | the clusters read live (management names or addresses) |
 | `portal_wall_ontap_validate_certs` | `"{{ ontap_validate_certs \| default(true) }}"` | ONTAP's certificate checked (the CAs: portal_trust_host_cas) |
 | `portal_wall_exclude` | `{}` | case-insensitive name globs by kind (vms, hosts, datastores, volumes, aggregates), before alerts and rankings |
-| `portal_wall_ds_ignore` | `['*iso*', '*library*', '*content*']` | ignore these datastore names for capacity only, like local datastores |
+| `portal_wall_hw_alarms` | `["Host hardware fan status", "Host hardware power status", "Host hardware temperature sta…` | 1.131.1: the Host hardware light - these triggered vCenter alarms by whole name (any case; vCenter's default hardware alarm definitions; add a site's own hardware alarm by its exact name). Never overallStatus (it also covers config issues). |
+| `portal_wall_ds_ignore` | `['iso', 'isos', 'iso-*', 'iso_*', '*-iso', '*_iso', '*-isos', '*content-library*']` | datastore names left out of the capacity watch (whole-name globs, any case; 1.131.1: never a fragment like *iso*, which hid prod-isolated) |
 | `portal_wall_snapmirror_lag_warn_hours` | `24` | healthy relationship with measured lag above this many hours is amber |
 | `portal_wall_snapmirror_lag_crit_hours` | `72` | healthy relationship with measured lag above this many hours is red |
 | `portal_wall_datastore_warn` | `85` | a datastore this % used or more: warning (VMware / Storage team) |
@@ -2785,7 +2786,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_net_drops_warn_per_hour` | `100` | dropped packets an hour (received + sent) of one host or VM from this many -> warning |
 | `vm_net_errors_warn_per_hour` | `10` | network errors an hour (received + sent) of one host or VM from this many -> warning |
 | `vm_watch_window_minutes` | `15` | The HA and storage events of the last this many minutes (set it to the schedule's interval). |
-| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Case-insensitive alarm name fragments subject to usage filtering. |
+| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Whole alarm names (any case); CPU usage / memory usage = the VM and host alarms. |
 | `vm_watch_usage_show_yellow` | `false` | Include matching yellow alarms as grouped warnings. |
 | `vm_watch_usage_min_minutes` | `15` | Continuous red minutes required inside the window. Unknown durations are hidden. |
 | `vm_watch_min_up_minutes` | `15` | A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet). |

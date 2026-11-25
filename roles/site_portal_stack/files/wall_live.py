@@ -176,7 +176,8 @@ def _val(el):
     """a propSet <val> -> a Python value: text, a (type, id) reference, or a list of either (ArrayOf...)"""
     xt = el.get(XSI_TYPE) or ""
     if xt.rsplit(":", 1)[-1] == "ArrayOfAlarmState":
-        return [("Alarm", alarm.text.strip()) for state in el
+        # 1.131.1: each triggered alarm with its own color (the host's hardware light comes from its hardware alarms)
+        return [("Alarm", alarm.text.strip(), state.findtext("v:overallStatus", "", NS)) for state in el
                 if state.findtext("v:overallStatus", "", NS) in ("red", "yellow")
                 for alarm in state.findall("v:alarm", NS) if alarm.text]
     kids = list(el)
@@ -275,7 +276,7 @@ class VcenterSource(object):
     # -- the session ----------------------------------------------------------------------------------------------------
     def _login(self):
         self.cookie, self.view = "", ""
-        if self.sc is None:
+        if True:                                                   # 1.131.1 (Codex #2): every login - a repointed name is another vCenter
             rc = self._send("RetrieveServiceContent", _mor("_this", "ServiceInstance", "ServiceInstance"))
             rv = rc.find("v:returnval", NS)
             self.instance_uuid = rv.findtext("v:about/v:instanceUuid", "", NS).strip().casefold()
@@ -343,17 +344,19 @@ class VcenterSource(object):
         spec = ('<specSet>%s<objectSet>%s<skip>true</skip><selectSet xsi:type="TraversalSpec"><name>view</name><type>ContainerView</type>'
                 '<path>view</path><skip>false</skip></selectSet></objectSet></specSet>' % (props, _mor("obj", "ContainerView", self.view)))
         objs = self._properties(spec)
-        alarms = sorted({ref[1] for typ, _, v in objs if typ == "HostSystem" and v.get("overallStatus") in ("red", "yellow")
+        alarms = sorted({ref[1] for typ, _, v in objs if typ == "HostSystem"
                          for ref in v.get("triggeredAlarmState") or [] if isinstance(ref, tuple) and ref[0] == "Alarm"})
         if alarms:
             refs = "".join("<objectSet>%s</objectSet>" % _mor("obj", "Alarm", a) for a in alarms)
             alarm_spec = "<specSet><propSet><type>Alarm</type><pathSet>info.name</pathSet></propSet>%s</specSet>" % refs
             try:
                 objs.extend(self._properties(alarm_spec))
-            except SoapFault as e:
-                if e.kind != "ManagedObjectNotFound":
-                    raise
-                # An alarm definition disappeared since the inventory read. Host overallStatus is still available.
+            except (NotSent, AuthError):
+                raise
+            except Exception:  # pylint: disable=broad-except
+                # 1.131.1 (Codex #10): the alarm's display name is optional - a timeout or a vanished definition never costs
+                # the inventory already read (the red host and the disconnected ones are in it); the name is just not shown
+                pass
         return objs
 
     def _properties(self, spec):
@@ -441,8 +444,11 @@ def shape(objs):
             state = v.get("runtime.connectionState") or ""
             ok = state == "connected"
             hosts.append({"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
-                          "hardware": v.get("overallStatus"), "alarms": sorted({alarms[ref[1]] for ref in v.get("triggeredAlarmState") or []
-                                                                                if isinstance(ref, tuple) and ref[1] in alarms}),
+                          "overall": v.get("overallStatus"),
+                          # 1.131.1 (Codex #11): the triggered alarms by name (None: its name not read) and color - the model
+                          # lights Host hardware from the hardware alarms only, never from overallStatus
+                          "triggered": [[alarms.get(ref[1]), ref[2] if len(ref) > 2 else ""] for ref in v.get("triggeredAlarmState") or []
+                                        if isinstance(ref, tuple) and ref[0] == "Alarm"],
                           "state": state, "maint": _bool(v.get("runtime.inMaintenanceMode")), "power": v.get("runtime.powerState") or "",
                           "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
                           "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
@@ -805,6 +811,31 @@ class Collector(object):
                 self._open()
             except Exception as e:  # pylint: disable=broad-except  - never a stop of the portal: no logins instead
                 self._stop_all("the wall's journal could not be opened (%s)" % short(e), persist=False)
+            self._load_tools()
+
+    # ---- 1.131.1 (Codex #5): which VMs ran Tools, kept across restarts - a VM that hangs while the portal restarts stays watched
+    TOOLS_FILE, TOOLS_MAX = "wall-tools-seen.json", 4 * 1024 * 1024
+
+    def _load_tools(self):
+        try:
+            raw = _read_regular(self._path(self.TOOLS_FILE), self.TOOLS_MAX)
+            d = json.loads(raw.decode("utf-8"))
+        except FileNotFoundError:
+            return
+        except Exception as e:  # pylint: disable=broad-except  - an odd file: the history starts again, said
+            self.log({"event": "wall", "tools_seen": "not read", "why": short(e)})
+            return
+        if isinstance(d, dict):
+            for k, ids in d.items():
+                if isinstance(k, str) and isinstance(ids, list):
+                    self.tools_seen.setdefault(k, set()).update(str(i) for i in ids[:100000] if isinstance(i, (str, int)))
+
+    def _save_tools(self):
+        if not self.state_file:
+            return
+        with self.lock:
+            d = dict((k, sorted(v)) for k, v in self.tools_seen.items())
+        self._write_file(self._path(self.TOOLS_FILE), json.dumps(d))
 
     # ---- files --------------------------------------------------------------------------------------------------------
     def _path(self, name):
@@ -1105,6 +1136,17 @@ class Collector(object):
         if s.kind == "vcenter" and uuid:
             canonical = self.instances.setdefault(uuid, s)
             if canonical is not s:
+                with self.lock:
+                    other = (self.st.get(canonical.key) or {}).get("snap")
+                if not isinstance(other, dict) or _inventory(other) != _inventory(snap):
+                    # 1.131.1 (Codex #2): one instanceUuid is not proof (a cloned vCenter keeps it) - merged only when both
+                    # read the same inventory; else both stay, said once
+                    if ("uuid", s.key) not in self._said:
+                        self._said.add(("uuid", s.key))
+                        self.log({"event": "wall", "source": s.key, "state": "same instanceUuid",
+                                  "why": "as %s, but %s - both kept" % (canonical.name, "a different inventory" if isinstance(other, dict) else "not read yet")})
+                    canonical = s
+            if canonical is not s:
                 keep, drop = (s, canonical) if _fqdn(getattr(s, "host", "")) and not _fqdn(getattr(canonical, "host", "")) else (canonical, s)
                 with self.lock:
                     retained = self.st[keep.key]
@@ -1116,7 +1158,12 @@ class Collector(object):
                         self.tools_seen[keep.key] = self.tools_seen.pop(drop.key)
                     for k in [k for k in self.hist if k[0] == drop.key]:
                         self.hist[(keep.key,) + k[1:]] = self.hist.pop(k)
-                self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter", "why": "same instanceUuid as " + keep.name})
+                short, full = getattr(drop, "host", ""), getattr(keep, "host", "")
+                if short and full and not _fqdn(short) and _fqdn(full) and full.split(".", 1)[0].casefold() == short.casefold():
+                    self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter",
+                              "why": "vCenter %s is %s: read once (same instanceUuid)" % (short, full)})
+                else:
+                    self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter", "why": "same instanceUuid as " + keep.name})
                 if hasattr(drop, "forget"):
                     drop.forget()
                 if keep is not s:
@@ -1128,6 +1175,9 @@ class Collector(object):
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
             if s.kind == "vcenter":
                 self._keep(s.key, snap, done)
+        if getattr(self, "_tools_dirty", False):
+            self._tools_dirty = False
+            self._save_tools()
         if was in ("auth", "error", "paused"):
             self.log({"event": "wall", "source": s.key, "state": "read again"})
 
@@ -1139,13 +1189,17 @@ class Collector(object):
         seen = self.tools_seen.setdefault(key, set())
         running = set()
         for v in snap.get("vms") or []:
-            identity = v.get("id", v["name"])
-            v["tools_seen"] = identity in seen
-            if v.get("power") == "poweredOn" and v.get("template") is False and not v.get("vcls") and not v["name"].startswith("vCLS-"):
+            identity = str(v.get("id") or "")              # 1.131.1: by moId only - never a display name
+            v["tools_seen"] = bool(identity) and identity in seen
+            if v.get("power") == "poweredOn" and v.get("template") is False and not v.get("vcls"):     # Codex #7: vCLS by managedBy only
                 if v.get("tools_version") != "guestToolsNotInstalled" and (v.get("tools") == "guestToolsRunning" or v.get("heartbeat") == "green"):
                     running.add(identity)
                 add += [(("vm", v["name"], "cpu"), v.get("cpu_pct")), (("vm", v["name"], "mem"), v.get("mem_pct"))]
+        running.discard("")
+        new = running - seen
         seen.update(running)
+        if new:
+            self._tools_dirty = True                       # written after the lock is let go (_run)
         for k, p in add:
             if p is not None:
                 self.hist.setdefault((key,) + k, collections.deque()).append((t, p))
@@ -1209,6 +1263,12 @@ def no_source_why(cfg, sources, left_out=None):
     return out
 
 
+def _inventory(snap):
+    """a read's inventory as compared for a duplicate vCenter: its hosts and VMs by moId"""
+    return (frozenset(str(h.get("id") or "") for h in snap.get("hosts") or []),
+            frozenset(str(v.get("id") or "") for v in snap.get("vms") or []))
+
+
 def _fqdn(host):
     if "." not in host:
         return False
@@ -1234,12 +1294,9 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
                 endpoints.setdefault(_endpoint(h), h)
             except (ValueError, TypeError) as e:
                 log({"event": "wall", "source": "vcenter", "state": "left out", "why": short(e)})
-        qualified = {(host.split(".", 1)[0], port): host for host, port in endpoints if _fqdn(host)}
+        # 1.131.1 (Codex #1): never one dropped by its name before it was read - a short name may be another vCenter (the
+        # DNS search domain decides); duplicates are merged at run time only, by instanceUuid AND the same inventory
         for (host, port), entry in endpoints.items():
-            if (host, port) in qualified:
-                log({"event": "wall", "source": "vcenter:" + host, "state": "duplicate short name",
-                     "why": "using " + qualified[(host, port)]})
-                continue
             try:
                 src = VcenterSource(host.strip("[]"), vc["user"], vc["password"], verify=vc.get("verify", True) is not False,
                                     cafile=cafile, timeout=timeout, port=port)

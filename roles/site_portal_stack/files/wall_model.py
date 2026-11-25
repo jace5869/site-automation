@@ -47,10 +47,16 @@ NOT_ON_WALL = {
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
 }
 
+# 1.131.1 (Codex #11): vCenter's default hardware alarm definitions, by whole name (any case) - portal_wall_hw_alarms
+HW_ALARMS = ["Host hardware fan status", "Host hardware power status", "Host hardware temperature status",
+             "Host hardware voltage", "Host hardware system board status", "Host memory status", "Host processor status",
+             "Host storage status", "Host battery status", "Host IPMI System Event Log status",
+             "Host Baseboard Management Controller status", "Status of other host hardware objects"]
+
 DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97.0, "high_pct": 90.0, "high_minutes": 15,
-            "exclude": {}, "ds_ignore": ["*iso*", "*library*", "*content*"], "snapmirror_lag_warn_hours": 24.0, "snapmirror_lag_crit_hours": 72.0,
+            "exclude": {}, "ds_ignore": ["iso", "isos", "iso-*", "iso_*", "*-iso", "*_iso", "*-isos", "*content-library*"], "snapmirror_lag_warn_hours": 24.0, "snapmirror_lag_crit_hours": 72.0,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
-            "netmap_sites": {}, "late": LATE_S, "stale": STALE_S}
+            "netmap_sites": {}, "hw_alarms": list(HW_ALARMS), "late": LATE_S, "stale": STALE_S}
 
 
 def opts_of(o):
@@ -95,7 +101,7 @@ def kinds(o):
     return {
         "vc": {"area": "vmware", "sev": "crit", "label": "vCenter not answering, or its login failed", "grp": "hostvc"},
         "host": {"area": "vmware", "sev": "crit", "label": "Host not responding or disconnected", "grp": "hostvc"},
-        "hardware": {"area": "vmware", "sev": "crit", "levels": "warning / critical", "label": "Host hardware (overall status red or yellow)", "grp": "hostvc"},
+        "hardware": {"area": "vmware", "sev": "crit", "levels": "warning / critical", "label": "Host hardware (a hardware alarm red or yellow)", "grp": "hostvc"},
         "maint": {"area": "vmware", "sev": "warn", "label": "Host in maintenance mode (not listed as expected)", "grp": "hostvc"},
         "dsi": {"area": "vmware", "sev": "crit", "label": "Datastore inaccessible", "grp": "dsvm"},
         "vmhung": {"area": "vmware", "sev": "crit", "label": "Watched VM lost its Tools heartbeat or Tools stopped", "grp": "dsvm"},
@@ -195,6 +201,32 @@ def place_of(site, o):
 def netmap_places(o):
     """how many netmap_sites entries the wall can use (valid {lat, lon}) - the deploy summary's count"""
     return sum(1 for v in (o.get("netmap_sites") or {}).values() if _lonlat(v) is not None)
+
+
+
+
+def hardware_of(h, o):
+    """a host's hardware light: red / yellow from its triggered hardware alarms (whole names), green when none of them is
+    triggered and every triggered alarm's name was read, None (grey) when a triggered alarm's name is unknown and no hardware
+    alarm is red. h["alarms"] is set to the hardware alarms' names. A host without "triggered" (an older read): its
+    "hardware" value as given."""
+    if "triggered" not in h:
+        return h.get("hardware")
+    want = set(str(x).strip().casefold() for x in (o.get("hw_alarms") or HW_ALARMS))
+    names, colors, unknown = [], set(), False
+    for item in h.get("triggered") or []:
+        nm, color = (list(item) + [None, None])[:2] if isinstance(item, (list, tuple)) else (None, None)
+        if not isinstance(nm, str) or not nm.strip():
+            unknown = True
+        elif nm.strip().casefold() in want:
+            names.append(nm.strip())
+            colors.add(color)
+    h["alarms"] = sorted(set(names))
+    if "red" in colors:
+        return "red"
+    if unknown:
+        return None
+    return "yellow" if "yellow" in colors else "green"
 
 
 def site_of(rx, *names):
@@ -393,7 +425,7 @@ def vmware_part(view, o, now):
                 part["incomplete"].append("host %s: state not read" % hn)
             elif st == "connected" and (row["cpu"] is None or row["mem"] is None):
                 part["incomplete"].append("host %s: CPU or memory not read" % hn)
-            hardware = h.get("hardware")
+            hardware = hardware_of(h, o)
             hid = "hardware:%s:%s" % (name, hn)
             if hardware == "green":
                 ok.append((fk, hid))
@@ -415,12 +447,14 @@ def vmware_part(view, o, now):
             if excluded(part, o, "datastores", dn, name):
                 continue
             shared = d.get("shared")
-            local = shared is False or matches(dn, o["ds_ignore"])
-            if local:
-                excluded(part, o, "datastores", dn, name, "local - not watched")
+            ignored = matches(dn, o["ds_ignore"])
+            local = shared is False
+            if local or ignored:
+                excluded(part, o, "datastores", dn, name, "local - not watched" if local else "portal_wall_ds_ignore - not watched")
             elif shared is not True:
+                # 1.131.1 (Codex #3): sharing not read - said, but its measured capacity still counts (never hidden for it)
                 part["incomplete"].append("datastore %s: multipleHostAccess not read" % dn)
-            capacity_watched = shared is True and not local
+            capacity_watched = not local and not ignored
             cap, free = int(d.get("capacity") or 0), d.get("free")
             # not read, or impossible (free below 0 or over the capacity): unknown - never 100 %, never OK (Codex r5 #14)
             pct = round(100.0 * (cap - int(free)) / cap, 1) if cap and free is not None and 0 <= int(free) <= cap else None
@@ -429,10 +463,10 @@ def vmware_part(view, o, now):
                 part["incomplete"].append("datastore %s: capacity or free space not read" % (d.get("name") or "?"))
             acc = d.get("accessible") if isinstance(d.get("accessible"), bool) else None
             r = {"n": d.get("name") or "", "vc": name, "feed": fk, "type": d.get("type") or "", "size": cap, "free": free, "v": pct,
-                 "accessible": acc, "capacity_watched": capacity_watched, "hosts": sorted(d.get("hosts") or []), "nvms": int(d.get("vms") or 0)}
+                 "accessible": acc, "capacity_watched": capacity_watched, "sharing_unknown": capacity_watched and shared is not True, "hosts": sorted(d.get("hosts") or []), "nvms": int(d.get("vms") or 0)}
             r["site"] = site_of(rx, r["n"], (r["hosts"] or [""])[0])
             if not capacity_watched:
-                r["watch_reason"] = "local - not watched" if local else "multipleHostAccess not read"
+                r["watch_reason"] = "local - not watched" if local else "portal_wall_ds_ignore - not watched"
             dsrows.append(r)
             if acc is None:
                 part["incomplete"].append("datastore %s: accessibility not read" % r["n"])
@@ -456,7 +490,7 @@ def vmware_part(view, o, now):
             if excluded(part, o, "vms", vn, name):
                 continue
             part["vms"] += 1
-            if v.get("vcls") is True or str(vn).startswith("vCLS-") or v.get("template") is True:
+            if v.get("vcls") is True or v.get("template") is True:     # 1.131.1 (Codex #7): vCLS by its managedBy, never its name
                 continue
             if power not in POWER_KNOWN:
                 part["incomplete"].append("VM %s: power state not read" % vn)
@@ -466,9 +500,13 @@ def vmware_part(view, o, now):
                 ok.append((fk, heartbeat_id))
                 ok.extend((fk, x % (name, vn)) for x in ("cpu:vm:%s:%s", "mem:vm:%s:%s"))
                 continue
+            known = v.get("tools_seen") is True         # its Tools ran in an earlier read: a workload VM
             if v.get("template") is not False:
                 part["incomplete"].append("VM %s: template flag not read" % vn)
-                continue
+                if not known:
+                    continue
+                # 1.131.1 (Codex #6): a VM known to run Tools stays watched for its heartbeat when a later read leaves the
+                # template flag out (a template is never powered on); its load is not counted from this read
             vm_host[vn] = v.get("host") or ""
             if v.get("cpu_pct") is None or v.get("mem_pct") is None:
                 part["incomplete"].append("VM %s: CPU or memory not read" % vn)
@@ -477,7 +515,7 @@ def vmware_part(view, o, now):
                     ok.append((fk, "%s:vm:%s:%s" % (metric, name, vn)))
             if o["vm_heartbeat"]:
                 hb, tools = v.get("heartbeat"), v.get("tools")
-                if v.get("tools_version") == "guestToolsNotInstalled" or v.get("tools_seen") is False:
+                if not known and (v.get("tools_version") == "guestToolsNotInstalled" or v.get("tools_seen") is False):
                     part["heartbeat_unwatched"] += 1
                     if not (hb or tools or v.get("tools_version")):
                         part["incomplete"].append("VM %s: Tools and heartbeat not read" % vn)
@@ -621,10 +659,12 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                     elif v.get("type") == "ls" or (v.get("type") == "dp" and (dest in ls_destinations or v.get("destination_type") == "ls")):
                         reason = "load-sharing mirror destination"
                     if excluded(part, o, "volumes", nm_, addr, reason):
-                        skipped_volumes.add(identity)
+                        if v.get("svm") and nm_:        # 1.131.1 (Codex #8): its LUNs inherit it only by a known SVM and name
+                            skipped_volumes.add(identity)
                         continue
                     part["volumes"] += 1
-                elif (v.get("svm"), v.get("volume")) in skipped_volumes or matches(v.get("volume"), o["exclude"].get("volumes")):
+                elif ((v.get("svm") and v.get("volume") and (v.get("svm"), v.get("volume")) in skipped_volumes)
+                      or matches(v.get("volume"), o["exclude"].get("volumes"))):
                     continue
                 vs, cid = v.get("state"), "voloff:%s:%s:%s" % (addr, v.get("svm"), nm_)
                 if vs == "online":
@@ -683,6 +723,8 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                     part["incomplete"].append("vCenter %s: datastore %s: multipleHostAccess not read" % (d["vc"], d["n"]))
                 continue
             part["ds"].append(dict(d))
+            if d.get("sharing_unknown"):              # 1.131.1 (Codex #3): watched, its sharing said as not read
+                part["incomplete"].append("vCenter %s: datastore %s: multipleHostAccess not read" % (d["vc"], d["n"]))
             if d.get("v") is None:
                 part["incomplete"].append("datastore %s: capacity or free space not read" % d["n"])
             if d.get("accessible") is None:
@@ -727,6 +769,14 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             for alias in src.get("aliases", []):
                 tracker.merge_vcenter(alias, src["name"])
     conds = tracker.update(c1 + c2, now, ok_ids) if tracker is not None else [dict(c, start=c.get("start") or now) for c in c1 + c2]
+    # 1.131.1 (Codex #9): a SnapMirror condition still open as last known (no recovery observed) stays on the SnapMirror
+    # panel - never "None over threshold" while the wall keeps it
+    listed = set(b["cond"] for b in st["smBroken"])
+    for c in conds:
+        if c.get("kind") == "sm" and c.get("end") is None and c["id"] not in listed:
+            st["smBroken"].append({"dst": c.get("obj_name") or "", "src": "", "why": "last known - not seen recovered", "word": "Last known",
+                                   "cond": c["id"], "c": c.get("cluster") or "", "feed": c.get("feed"), "sev": c.get("sev") or "warn",
+                                   "last_known": True})
     # a datastore / aggregate row points at its condition
     by = {}
     for c in conds:

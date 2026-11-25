@@ -66,8 +66,9 @@ class WallTuning(unittest.TestCase):
         for vm in self.vc.result["vms"]:
             vm["heartbeat"] = "red"
         answer = self.read()
-        self.assertEqual([c["vm"] for c in self.active(answer, "vmhung")], ["workload"])
-        self.assertEqual([c["obj_name"] for c in self.active(answer, "cpu")], ["workload"])
+        # 1.131.1 (Codex #7): vCLS by its managedBy only - a VM merely named vCLS-... is a workload
+        self.assertEqual(sorted(c["vm"] for c in self.active(answer, "vmhung")), ["vCLS-01", "workload"])
+        self.assertEqual(sorted(c["obj_name"] for c in self.active(answer, "cpu")), ["vCLS-01", "workload"])
 
     def test_excluded_objects_do_not_contribute_to_conditions_or_rankings(self):
         self.vc.result = {"hosts": [demo.host("Skip-host", "cluster", 99, 99, [], [], state="disconnected"),
@@ -94,13 +95,16 @@ class WallTuning(unittest.TestCase):
         stores[0]["accessible"] = False
         self.vc.result = {"datastores": stores}
         answer = self.read()
-        self.assertEqual([d["n"] for d in answer["storage"]["ds"]], ["work"])
-        self.assertEqual([c["ds"] for c in self.active(answer, "dsfull")], ["work"])
+        # 1.131.1 (Codex #3, #4): whole-name ignore globs (CONTENT-a and my-Library are workloads now); sharing not read
+        # still alerts on the measured fill
+        self.assertEqual(sorted(d["n"] for d in answer["storage"]["ds"]), ["CONTENT-a", "my-Library", "unread", "work"])
+        self.assertEqual(sorted(c["ds"] for c in self.active(answer, "dsfull")), ["CONTENT-a", "my-Library", "unread", "work"])
         self.assertEqual([c["ds"] for c in self.active(answer, "dsi")], ["local"])
-        self.assertEqual([x["reason"] for x in answer["vmware"]["excluded"]], ["local - not watched"] * 4)
+        self.assertEqual([x["reason"] for x in answer["vmware"]["excluded"]], ["local - not watched", "portal_wall_ds_ignore - not watched"])
         self.assertFalse(next(a for a in answer["areas"] if a["id"] == "storage")["complete"])
-        stores[-2]["shared"] = None
-        self.assertTrue(self.active(self.read(), "dsfull")[0]["last_known"])
+        stores[-2]["shared"] = None                     # Codex #3: sharing not read - the measured fill still alerts, live
+        work = [c for c in self.active(self.read(), "dsfull") if c["ds"] == "work"][0]
+        self.assertFalse(work.get("last_known"))
         self.opts = {"ds_ignore": []}
         self.assertIn("Shared-ISO", [c["ds"] for c in self.active(self.read(), "dsfull")])
 
@@ -159,13 +163,173 @@ class WallTuning(unittest.TestCase):
         self.assertFalse(self.active(self.read(), "hardware"))
 
 
+class Codex1311(WallTuning):
+    """1.131.1: Codex's review of the wall tuning - one test per wall finding (each fails before its fix)"""
+
+    def test_01_a_short_name_is_never_dropped_before_it_is_read(self):
+        sources = W.sources_from_config({"vcenter": {"user": "reader", "password": "example", "verify": False,
+                                                     "hosts": ["vc1", "vc1.other.example.mil"]}})
+        self.assertEqual([s.name for s in sources], ["vc1", "vc1.other.example.mil"])
+
+    def test_02_one_instance_uuid_with_another_inventory_is_kept(self):
+        a = Fake("vcenter:vc-a.example.mil", result={"hosts": [demo.host("host-a", "c", 5, 5, [], [])]})
+        b = Fake("vcenter:vc-b.example.mil", result={"hosts": [demo.host("host-b", "c", 5, 5, [], [])]})
+        for s, h in ((a, "host-a"), (b, "host-b")):
+            s.host, s.instance_uuid = s.name, "cloned-uuid"
+            s.result["hosts"][0]["id"] = h
+        collector = W.Collector([a, b], clock=self.clock)
+        collector.cycle()
+        collector.cycle()
+        self.assertEqual(sorted(collector.view()["sources"]), ["vcenter:vc-a.example.mil", "vcenter:vc-b.example.mil"])
+        # the service content (instanceUuid) is read again at every login: a repointed name is not its predecessor
+        src = W.VcenterSource("vc.example.mil", "reader", "example", verify=False)
+        uuids = iter(["first", "second"])
+
+        def reply(method, args):
+            if method == "Login":
+                src.cookie = "example"
+            content = ("<about><instanceUuid>%s</instanceUuid></about><sessionManager>sm</sessionManager>" % next(uuids)
+                       if method == "RetrieveServiceContent" else "<key>k</key>" if method == "Login"
+                       else "view" if method == "CreateContainerView" else "")
+            return ET.fromstring('<%sResponse xmlns="urn:vim25"><returnval>%s</returnval></%sResponse>' % (method, content, method))
+        src._send = Mock(side_effect=reply)
+        src._login()
+        src._login()
+        self.assertEqual(src.instance_uuid, "second")
+
+    def ds_answer(self, **ds):
+        self.vc.result = {"datastores": [dict({"name": "work", "capacity": 100, "free": 0, "accessible": True}, **ds)]}
+        return self.read()
+
+    def test_03_sharing_not_read_still_alerts_on_the_fill(self):
+        answer = self.ds_answer(shared=None, hosts=["h1", "h2"])
+        self.assertEqual([c["ds"] for c in self.active(answer, "dsfull")], ["work"])
+        self.assertEqual([d["n"] for d in answer["storage"]["ds"]], ["work"])
+
+    def test_04_the_default_ignore_globs_are_whole_names(self):
+        answer = self.ds_answer(name="prod-isolated", shared=True)
+        self.assertEqual([c["ds"] for c in self.active(answer, "dsfull")], ["prod-isolated"])
+        self.assertFalse(self.active(self.ds_answer(name="ISO-images", shared=True), "dsfull") and
+                         [c for c in self.active(self.read(), "dsfull") if c["ds"] == "ISO-images"])
+
+    def test_05_a_hang_across_a_portal_restart_stays_watched(self):
+        import os
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(shutil.rmtree, d, True)
+        state = os.path.join(d, "wall-backoff.json")
+        import secrets
+        import test_netapp_live  # noqa: F401  (its paths: the portal's modules)
+        import site_portal as sp
+        sp.write_wall_token(d, secrets.token_hex(16))             # as Site portal - deploy starts the journal
+        vm = self.vm("app1", tools="guestToolsRunning", heartbeat="green")
+        vc = Fake(result={"vms": [vm]})
+        first = W.Collector([vc], clock=self.clock, state_file=state)
+        first.cycle()
+        self.assertTrue(os.path.exists(os.path.join(d, "wall-tools-seen.json")))
+        vm.update(tools="guestToolsNotRunning", heartbeat="red")
+        first.stop()
+        again = W.Collector([vc], clock=self.clock, state_file=state)      # the portal restarted
+        self.clock.t += 60
+        again.cycle()
+        answer = M.build(again.view(), None, None, {}, M.Tracker(), self.clock())
+        self.assertEqual([c["vm"] for c in self.active(answer, "vmhung")], ["app1"])
+
+    def test_06_a_later_read_never_unwatches_a_known_vm(self):
+        vm = self.vm("app1", tools="guestToolsRunning", heartbeat="green")
+        self.vc.result = {"vms": [vm]}
+        self.read()
+        vm.update(tools="guestToolsNotRunning", heartbeat="red", template=None, tools_version="guestToolsNotInstalled")
+        self.assertEqual([c["vm"] for c in self.active(self.read(), "vmhung")], ["app1"])
+
+    def test_07_a_vm_named_vcls_without_the_vcls_identity_is_watched(self):
+        vm = self.vm("vCLS-payroll", tools="guestToolsRunning", heartbeat="green")
+        self.vc.result = {"vms": [vm]}
+        self.read()
+        vm.update(tools="guestToolsNotRunning", heartbeat="red")
+        self.assertEqual([c["vm"] for c in self.active(self.read(), "vmhung")], ["vCLS-payroll"])
+
+    def test_08_an_unnamed_svm_never_carries_a_root_exclusion(self):
+        raw = {"aggrs": [], "snapmirror": [],
+               "volumes": [{"name": "data", "is_svm_root": True, "state": "online"}],
+               "luns": [{"name": "/vol/data/lun0", "location": {"volume": {"name": "data"}}, "status": {"state": "offline"}}]}
+        source = W.OntapSource("array.example.mil", "reader", "example", verify=False)
+        source._read = Mock(return_value=({"name": "array"}, [], raw, {}))
+        self.storage.result = source.poll()
+        self.assertEqual([c["obj_name"] for c in self.active(self.read(), "voloff")], ["/vol/data/lun0"])
+
+    def test_09_a_last_known_snapmirror_condition_stays_on_the_panel(self):
+        self.storage.result["snapmirror"] = [{"dst": "svm:vol", "state": "in_sync", "healthy": True, "lag_s": 10 ** 6}]
+        self.assertTrue(self.active(self.read(), "sm"))
+        self.storage.result["snapmirror"] = []
+        answer = self.read()
+        self.assertTrue(self.active(answer, "sm"))
+        self.assertEqual([b["dst"] for b in answer["storage"]["smBroken"]], ["svm:vol"])
+
+    def test_10_an_alarm_name_that_cannot_be_read_keeps_the_inventory(self):
+        alarm_state = "<AlarmState><alarm type='Alarm'>alarm-1</alarm><overallStatus>red</overallStatus></AlarmState>"
+        host = ("HostSystem", "host-1", [("name", "xsd:string", "host1", ""), ("runtime.connectionState", "HostSystemConnectionState", "disconnected", ""),
+                                         ("triggeredAlarmState", "ArrayOfAlarmState", alarm_state, "")])
+
+        def response(row):
+            return ET.fromstring('<response xmlns="urn:vim25" xmlns:xsi="%s"><returnval>%s</returnval></response>' % (W.NS["xsi"], obj_xml(row)))
+        src = W.VcenterSource("vc.example.mil", "reader", "example", verify=False)
+        src.sc, src.view = {"propertyCollector": "collector"}, "view"
+        src._send = Mock(side_effect=[response(host), TimeoutError("timed out")])
+        h, = W.shape(src._retrieve())["hosts"]
+        self.assertEqual((h["name"], h["state"]), ("host1", "disconnected"))
+        self.assertEqual(h["triggered"], [[None, "red"]])
+
+    def test_11_host_hardware_only_from_hardware_alarms(self):
+        host = demo.host("host1", "cluster", 10, 20, [], [])
+        host.pop("hardware", None)
+        self.vc.result = {"hosts": [host]}
+        host["triggered"] = [["Host CPU usage", "red"]]                     # a usage alarm is not hardware
+        self.assertFalse(self.active(self.read(), "hardware"))
+        host["triggered"] = [["Host hardware fan status", "yellow"]]
+        self.assertEqual([c["sev"] for c in self.active(self.read(), "hardware")], ["warn"])
+        host["triggered"] = [[None, "red"]]                                 # a name not read: grey, never green
+        answer = self.read()
+        self.assertTrue(self.active(answer, "hardware")[0]["last_known"])
+        host["triggered"] = []
+        self.assertFalse(self.active(self.read(), "hardware"))
+
+
+    def test_field_a_short_credential_name_and_its_fqdn_are_one_vcenter(self):
+        import site_portal_filters as F
+        line = F.site_portal_wall_summary({"vc_on": True, "vc_host": "vc01", "vcenters": ["vc01.corp.example.mil", "vc02.corp.example.mil"]})
+        self.assertIn("VMware on (vCenter vc01 is vc01.corp.example.mil: read once)", line)
+        self.assertNotIn("read once", F.site_portal_wall_summary({"vc_on": True, "vc_host": "vc01", "vcenters": ["vc01.corp.example.mil:8443"]}))
+        log = []
+        short = Fake("vcenter:vc01", result={"hosts": [dict(demo.host("h1", "c", 5, 5, [], []), id="host-1")]})
+        full = Fake("vcenter:vc01.corp.example.mil", result={"hosts": [dict(demo.host("h1", "c", 5, 5, [], []), id="host-1")]})
+        for s in (short, full):
+            s.host, s.instance_uuid = s.name, "one-uuid"
+        collector = W.Collector([short, full], clock=self.clock, log=log.append)
+        collector.cycle()
+        collector.cycle()
+        self.assertEqual(sorted(collector.view()["sources"]), ["vcenter:vc01.corp.example.mil"])
+        self.assertIn("vCenter vc01 is vc01.corp.example.mil: read once (same instanceUuid)", [x.get("why") for x in log])
+        other = Fake("vcenter:vc02", result=dict(short.result))
+        other.host, other.instance_uuid = "vc02", "another-uuid"                 # never merged: another instanceUuid
+        c2 = W.Collector([other, full], clock=self.clock)
+        c2.cycle()
+        self.assertEqual(sorted(c2.view()["sources"]), ["vcenter:vc01.corp.example.mil", "vcenter:vc02"])
+
+
+for _n in [n for n in vars(WallTuning) if n.startswith("test_")]:
+    setattr(Codex1311, _n, None)                    # (it shares WallTuning's setup; only its own tests run there)
+
+
 class CollectorReads(unittest.TestCase):
     def test_names_and_authenticated_uuid_merge(self):
         log = []
         sources = W.sources_from_config({"vcenter": {"user": "reader", "password": "example", "verify": False,
                            "hosts": ["VC01", "Alias", "vc01.example.mil", "VC01.EXAMPLE.MIL", "vc01:8443"]}}, log=log.append)
-        self.assertEqual([s.name for s in sources], ["alias", "vc01.example.mil", "vc01:8443"])
-        self.assertEqual(log[0]["state"], "duplicate short name")
+        # 1.131.1 (Codex #1): no source dropped by its name before it was read - the short one is merged at run time only
+        self.assertEqual([s.name for s in sources], ["vc01", "alias", "vc01.example.mil", "vc01:8443"])
+        self.assertFalse([x for x in log if x.get("state") == "duplicate short name"])
         # Read the UUID via the real login path. The other port represents a distinct instance.
         for source in sources:
             def reply(method, args, s=source):
@@ -230,7 +394,8 @@ class CollectorReads(unittest.TestCase):
         src.sc, src.view = {"propertyCollector": "collector"}, "view"
         src._send = Mock(side_effect=[response(host), response(alarm)])
         h, = W.shape(src._retrieve())["hosts"]
-        self.assertEqual((h["hardware"], h["alarms"]), ("red", ["Fan sensor"]))
+        self.assertEqual(h["triggered"], [["Fan sensor", "red"]])
+        self.assertEqual(M.hardware_of(dict(h), M.opts_of({"hw_alarms": ["fan sensor"]})), "red")       # whole name, any case
         first, second = src._send.call_args_list
         for prop in ("overallStatus", "triggeredAlarmState", "guest.toolsRunningStatus", "guest.toolsVersionStatus2",
                      "config.template", "config.managedBy.type", "config.managedBy.extensionKey", "summary.multipleHostAccess"):

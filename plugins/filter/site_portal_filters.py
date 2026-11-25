@@ -861,6 +861,22 @@ def site_portal_wall_summary(w):
     places = sum(1 for v in (w.get("netmap_sites") or {}).values() if _lonlat_ok(v)) if isinstance(w.get("netmap_sites"), dict) else 0
     if on(w.get("vc_on")):
         vc = "VMware on"
+        # 1.131.1 (field): the credential's short name and an FQDN of the list whose first label is that name - one vCenter
+        # (read once, once both answered with the same instanceUuid)
+        names = [str(x).strip() for x in [w.get("vc_host")] + list(w.get("vcenters") or []) if str(x or "").strip()]
+        hosts = [n.split("://")[-1].split("/")[0] for n in names]
+        same = []
+        for h in hosts:
+            bare, port = (h.rsplit(":", 1) + [""])[:2] if h.count(":") == 1 else (h, "")
+            if "." in bare or not bare:
+                continue
+            for f in hosts:
+                fb, fp = (f.rsplit(":", 1) + [""])[:2] if f.count(":") == 1 else (f, "")
+                if "." in fb and fb.split(".", 1)[0].casefold() == bare.casefold() and (fp or "443") == (port or "443"):
+                    same.append("vCenter %s is %s: read once" % (bare, fb))
+                    break
+        if same:
+            vc += " (" + "; ".join(sorted(set(same))) + ")"
     elif str(w.get("vc_mode", "auto")).strip().lower() in ("false", "no", "off", "0"):
         vc = "VMware off (portal_wall_vcenter: false)"
     elif not str(w.get("vc_host") or "").strip() and not w.get("vcenters"):

@@ -25,10 +25,10 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
 }
 # 1.131.1 changes only the usage-alarm read, conditions and timeline rows.
 FROZEN_11312 = {
-    "roles/vmware_vm/library/site_vmware_watch.py": "59628630e9108b1e8ebccea75dadb6d8153fd280ed49a9d2d82bc5dc05b5756f",
-    "plugins/filter/vmware_watch_filters.py": "0a2e2b081ceb785d35587ff612eab8e17e4db20f4a4b2b03194202042b6889a1",
+    "roles/vmware_vm/library/site_vmware_watch.py": "9b04da3944d3cc1a090f242bed8b557f6709cc96973129715ea901bcd1f24871",
+    "plugins/filter/vmware_watch_filters.py": "8fa8a1bbc403a91e16d6cd533a007ab8127c953fed918551240500878e590aa2",
     "plugins/module_utils/outage_timeline_1184.py": "4a5a8571cce598c526c6c40b11bb4d6272b70e1a6bc23a3cb1df582bb0a9f569",
-    "plugins/module_utils/vm_watch_usage.py": "5706bee517db86e0e3fe15a142554e979a3c6e49dd1fbde44d343eaba1b64fc8",
+    "plugins/module_utils/vm_watch_usage.py": "d206f445b6ef2b7857cd875db7cc2ea086c76a9944c9a1b2121190d52f357f1f",
 }
 # 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
 # its own, with tests/test_vm_watch_email.py.

@@ -29,7 +29,7 @@ options:
   vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   window_minutes: {description: How far back to read HA and storage events, in minutes. 0 = no events., type: float, default: 15}
-  usage_alarms: {description: Alarm name fragments to read for the watch., type: list, elements: str, default: [CPU usage, memory usage]}
+  usage_alarms: {description: "Usage alarms to read for the watch: whole alarm names, or CPU usage / memory usage for vCenter's VM and host alarms of that name (any case; never a part of a name).", type: list, elements: str, default: [CPU usage, memory usage]}
   min_up_minutes: {description: A VM powered on for less than this is not judged (it may still be starting)., type: float, default: 15}
   skip_vms: {description: VM names never judged (* and ? allowed, any case)., type: list, elements: str, default: []}
   skip_folders: {description: VM folder paths never judged (e.g. /DC1/vm/Lab*)., type: list, elements: str, default: []}
@@ -71,6 +71,10 @@ events:
   returned: success
 alarms:
   description: Matching triggered alarm states with their current color and trigger time.
+  type: list
+  returned: success
+alarms_unread:
+  description: "1.131.1: [{vcenter, why}] the vCenters whose usage alarms were not read (fully); each is incomplete this run."
   type: list
   returned: success
 vms_lost:
@@ -401,19 +405,28 @@ def _traffic(content, vms, since):
 
 
 def _triggered_usage(content, root, fragments, excluded):
-    from ansible.module_utils.vm_watch_usage import alarm_kind
+    """-> (rows, skipped): the triggered usage alarms, and how many red or yellow records had no object or alarm (1.131.1
+    Codex #13: skipped, never the whole vCenter's read)."""
+    from ansible.module_utils.vm_watch_usage import usage_kind
 
-    states = [s for s in root.triggeredAlarmState or [] if s.entity._moId not in excluded
-              and str(s.overallStatus) in ("red", "yellow")]
+    states, skipped = [], 0
+    for s in root.triggeredAlarmState or []:
+        ent, alarm = getattr(getattr(s, "entity", None), "_moId", None), getattr(getattr(s, "alarm", None), "_moId", None)
+        if ent in excluded or str(getattr(s, "overallStatus", "")) not in ("red", "yellow"):
+            continue
+        if not ent or not alarm:
+            skipped += 1
+            continue
+        states.append(s)
     alarms = {s.alarm._moId: s.alarm for s in states}
     definitions = _objs_props(content, list(alarms.values()), vim.alarm.Alarm, ["info.name"])
-    names = {moid: fields["info.name"] for moid, fields in definitions.items() if alarm_kind(fields.get("info.name"), fragments)}
+    names = {moid: fields.get("info.name") for moid, fields in definitions.items() if usage_kind(fields.get("info.name"), fragments)}
     matched = [s for s in states if s.alarm._moId in names]
     entities = {s.entity._moId: s.entity for s in matched}
     labels = _objs_props(content, list(entities.values()), vim.ManagedEntity, ["name"])
     return [dict(alarm=names[s.alarm._moId], entity=labels.get(s.entity._moId, {}).get("name", s.entity._moId),
                  entity_moid=s.entity._moId, entity_type=_alarm_entity_type(s.entity),
-                 status=str(s.overallStatus), time=_iso(s.time)) for s in matched]
+                 status=str(s.overallStatus), time=_iso(getattr(s, "time", None))) for s in matched], skipped
 
 
 def _alarm_entity_type(entity):
@@ -583,7 +596,7 @@ def _read(content, p, now, vcenter):
                         "busy": busy_task(_tasks(content, tasks_of.get(o._moId, {}).get("recentTask") or []))}]
         res["suspects"].append(v)
 
-    res["alarms"] = []
+    res["alarms"], res["alarms_unread"] = [], []
     ev_root = next((o for o, pr in dcs.values() if pr.get("name") == p["datacenter"]), None) if p["datacenter"] else None
     if p["window_minutes"] and p["window_minutes"] > 0:
         begin = datetime.datetime.fromtimestamp(now - p["window_minutes"] * 60, tz=datetime.timezone.utc)
@@ -591,26 +604,32 @@ def _read(content, p, now, vcenter):
             e["vcenter"] = vcenter
             res["events"].append(e)
         if p.get("usage_alarms"):
-            from ansible.module_utils.vm_watch_usage import alarm_kind
+            from ansible.module_utils.vm_watch_usage import usage_kind
 
             # Keep the usage collector separate so a burst cannot displace HA or storage events at the cap.
             try:
                 for e in _events(content, ev_root, begin, ["AlarmStatusChangedEvent"]):
-                    if e.get("entity_moid") not in excluded and alarm_kind(e.get("alarm"), p["usage_alarms"]):
+                    if e.get("entity_moid") not in excluded and usage_kind(e.get("alarm"), p["usage_alarms"]):
                         res["events"].append(dict(e, vcenter=vcenter))
-            except vmodl.MethodFault as exc:
-                res.setdefault("warnings", []).append("Usage alarm changes on %s could not be read: %s" % (vcenter, exc))
+            except Exception as exc:            # noqa: BLE001 - 1.131.1 (Codex #12/#13): the alarm part unread, not the vCenter
+                res["alarms_unread"].append({"vcenter": vcenter, "why": "usage alarm changes not read: %s" % exc})
     if p.get("usage_alarms"):
         try:
-            res["alarms"] = [dict(row, vcenter=vcenter) for row in
-                             _triggered_usage(content, ev_root or root, p["usage_alarms"], excluded)]
-        except vmodl.MethodFault as exc:
-            res.setdefault("warnings", []).append("Triggered usage alarms on %s could not be read: %s" % (vcenter, exc))
+            rows, skipped = _triggered_usage(content, ev_root or root, p["usage_alarms"], excluded)
+            res["alarms"] = [dict(row, vcenter=vcenter) for row in rows]
+            if skipped:                         # 1.131.1 (Codex #13): one may be the red one reported before - unread, said
+                res["alarms_unread"].append({"vcenter": vcenter, "why": "%d triggered alarm(s) without their object or alarm" % skipped})
+        except Exception as exc:                # noqa: BLE001 - 1.131.1 (Codex #12): no alarm read is no recovery
+            res["alarms"] = []
+            res["alarms_unread"].append({"vcenter": vcenter, "why": "triggered usage alarms not read: %s" % exc})
+    for u in res["alarms_unread"]:
+        res.setdefault("warnings", []).append("Usage alarms on %s: %s" % (u["vcenter"], u["why"]))
     return res
 
 
 def mark_incomplete(res):
-    """1.118.4: a vCenter with a VM it could not read (first or second read), or that could not be read again, is incomplete:
+    """1.118.4: a vCenter with a VM it could not read (first or second read), or that could not be read again (1.131.1: or
+    its usage alarms, alarms_unread), is incomplete:
     its vm_watch check is not complete this run (vm_watch_health: checks_failed), so the tickets job clears none of its
     tickets, and the email does not count a missing condition as cleared (watch_email.yml unread)."""
     short = {}
@@ -620,6 +639,8 @@ def mark_incomplete(res):
         for c in v["checks"][1:]:
             if c.get("unread") or str(c.get("busy", "")).startswith("vCenter could not be read again"):
                 short.setdefault(v["vcenter"], []).append("%s (%s)" % (v["name"], c.get("busy") or "not read again"))
+    for u in res.get("alarms_unread") or []:     # 1.131.1 (Codex #12): its alarms not read - no alarm counts as cleared
+        short.setdefault(u["vcenter"], []).append("usage alarms (%s)" % u["why"])
     for st in res.get("vcenters") or []:
         if st.get("name") in short:
             st["incomplete"] = "; ".join(sorted(set(short[st["name"]])))
@@ -680,13 +701,14 @@ def main():
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_minutes": p["window_minutes"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
            "alarms": [], "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "vms_unread": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
+           "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "vms_unread": [], "alarms_unread": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
            "confirm": {"checks": checks, "seconds": p["confirm_seconds"]}}
     for _, part in done:
         for warning in part.get("warnings", []):
             module.warn(warning)
         for k in ("alarms", "hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected", "vms_unread"):
             res[k] += part[k]
+        res["alarms_unread"] += part.get("alarms_unread") or []
         res["vms_read"] += part["vms_read"]
         res["vms_checked"] += part["vms_checked"]
         res["vms_skipped"] += part["vms_skipped"]
