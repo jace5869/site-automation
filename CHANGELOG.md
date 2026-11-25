@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.133.0 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**. Nothing to change unless your site uses a card form other than the five
+below (the deploy then stops and says so) or sets an old and a new access name to different lists.
+
+- **A card is one AD account, by five forms only** (`portal_ad_card_matches`): `userPrincipalName` `{edipi}@mil` or
+  `{edipi}{digits6}@mil` (16 digits), `sAMAccountName` `{edipi}.ctr`, `.civ` or `.mil`. All five by default; a site
+  keeps a subset. Any other form, attribute, `*` or `?` stops the deploy. The old `portal_ad_card_attribute` /
+  `portal_ad_card_match` pair still works when it is one of the five.
+- **No doubt counts.** The account is looked up over the whole domain with `userPrincipalName` and `sAMAccountName`
+  read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches, a
+  returned account cannot be fully read, or the account's values name another EDIPI. A membership counts only for that
+  account's DN and objectGUID. After a refused LDAP login the portal binds no more until the next deploy, even when a
+  group read was already under way.
+- **Plain access names:** `portal_viewers`, `portal_view_groups`, `portal_runners`, `portal_run_groups`,
+  `portal_approve_groups` (were `portal_readers`, `portal_reader_groups`, `portal_requesters`,
+  `portal_requester_groups`, `portal_approver_groups`; the old names still work). The portal's messages use the new names.
+- **Deploy refusals:** an old and a new name set to different lists; a blank entry, `false` or `null` in any access
+  list (approvers and runners too).
+- Records, approvals and job visibility are unchanged.
+- Tests: `tests/test_ad_groups.py`, `tests/test_portal_access_settings.py`, `tests/test_portal_readers.py`; the portal
+  e2e checks the card forms reach the portal.
+
 ## 1.132.0 — 2026-11-25
 
 **To set up:** run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`; for the share,

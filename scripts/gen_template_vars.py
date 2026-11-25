@@ -684,6 +684,13 @@ portal_reports_dir: /srv/reports
 ## The AAP inventory an action's host must be in, and who may decide approvals here (the CN of each card)
 portal_inventory: Site hosts
 portal_approvers: [DOE.JANE.Q.1234567890]
+## Optional access lists. The old names still work. If you set both names, their lists must match.
+## For groups, attach LDAP Bind Account and use a group name or DN. Only listed cards count during an AD outage.
+# portal_run_groups: ["<run group>"]
+# portal_runners: ["<card CN>"]
+# portal_approve_groups: ["<approve group>"]
+# portal_view_groups: ["<view group>"]
+# portal_viewers: ["<card CN>"]
 ## The address people open
 portal_public_url: https://stigman.example.mil/portal/
 """),

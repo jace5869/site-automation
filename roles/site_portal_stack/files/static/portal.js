@@ -1172,7 +1172,7 @@ function whyEl(a) {
   const box = el("div", "dwhy"), t = el("span");
   const code = (x) => el("code", "", x);
   if (a.why === "approvers") t.append(el("b", "", "You are not an approver"), document.createTextNode(" ("), code("portal_approvers"), document.createTextNode(", "),
-                                      code("portal_approver_groups"), document.createTextNode(") - only the approvers decide."));
+                                      code("portal_approve_groups"), document.createTextNode(") - only the approvers decide."));
   else if (a.why === "self") t.append(el("b", "", "You started this run"), document.createTextNode(" - another approver decides ("), code("portal_allow_self_approval"), document.createTextNode(")."));
   else if (a.why === "role") t.append(el("b", "", "The portal's account has no Approve role on this workflow"), document.createTextNode(" - give it Approve in AAP, or decide there."));
   else t.textContent = a.reason || "Decide it in AAP.";

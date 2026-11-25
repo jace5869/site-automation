@@ -744,7 +744,7 @@ class Live(unittest.TestCase):
         self.assertIn(b'data-approver="0"', raw)
         code, r = self.post("/api/approvals/%d/approve" % aid, {})
         self.assertEqual(code, 403)
-        self.assertIn("You are not an approver (portal_approvers, portal_approver_groups)", r["error"])
+        self.assertIn("You are not an approver (portal_approvers, portal_approve_groups)", r["error"])
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR, token="")
         self.assertEqual(code, 403)                                                   # the CSRF check for approvals too
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR)
@@ -880,7 +880,7 @@ class Live(unittest.TestCase):
         wid, aid = self._scheduled_approval()
         try:
             a = next(x for x in json.loads(self.req("/api/approvals")[1])["approvals"] if x["id"] == aid)               # a person who is no approver sees it, cannot decide it
-            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not an approver (portal_approvers, portal_approver_groups) - only the approvers decide."))
+            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not an approver (portal_approvers, portal_approve_groups) - only the approvers decide."))
             self.assertEqual(self.post("/api/approvals/%d/approve" % aid, {})[0], 403)
         finally:
             self._gone(wid, aid)
@@ -994,7 +994,7 @@ class Live(unittest.TestCase):
         self.assertEqual(self.req("/jobs/%d?via=%d" % (child, jid), dn=RROE)[0], 404)
         self.assertEqual(self.req("/api/jobs/%d?via=%d" % (child, jid), dn=PPOE)[0], 200)
         other = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
-        self.assertEqual(self.req("/api/jobs/%d" % other, dn=RROE)[0], 200)       # stig_recheck: anyone (portal_requesters [])
+        self.assertEqual(self.req("/api/jobs/%d" % other, dn=RROE)[0], 200)       # stig_recheck: anyone (portal_runners [])
 
     def test_16_approvals_by_the_same_rule(self):
         wf = self.post("/api/actions/ckl_import", {"vars": {}})[1]["job_id"]
@@ -2459,7 +2459,7 @@ class Found(unittest.TestCase):
 
     def test_61_only_the_people_who_may_see_the_job(self):
         jid = self.run_job(["web01.example.mil"])
-        self.assertEqual(self.portal.progress(jid, "ROE.RICHARD.A.2345678901")[0], 200)                       # portal_requesters is empty: any card may
+        self.assertEqual(self.portal.progress(jid, "ROE.RICHARD.A.2345678901")[0], 200)                       # portal_runners is empty: any card may
         self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890"]
         try:
             self.assertEqual(self.portal.progress(jid, "ROE.RICHARD.A.2345678901")[0], 404)                   # not listed: not even said to exist

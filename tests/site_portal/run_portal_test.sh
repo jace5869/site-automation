@@ -101,7 +101,9 @@ cat > "$work/vars.json" <<EOF
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
- "portal_approver_groups": ["AAP-Approvers"], "portal_ldap_server": "dc01.corp.example.mil",
+ "portal_approve_groups": ["AAP-Approvers"], "portal_ldap_server": "dc01.corp.example.mil",
+ "portal_ad_card_matches": [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}, {"attribute": "sAMAccountName", "match": "{edipi}.ctr"},
+   {"attribute": "userPrincipalName", "match": "{edipi}{digits6}@mil"}],
  "portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
    "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
    "limit_from": "target", "approval": false, "fixes": false}},
@@ -385,7 +387,7 @@ r="$(c "$k/jdoe" launch ckl_import '{"stigman_ckl_import_mode": "import and scor
 wf="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
 aid="$(c "$k/appr" get /portal/api/approvals | jq_ '[a["id"] for a in d["json"]["approvals"] if a["workflow_job"] == '"${wf:-0}"'][0]')"
 r="$(c "$k/jdoe" decide "$aid" approve)"
-case "$r" in *'"code": 403'*"You are not an approver (portal_approvers, portal_approver_groups)"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
+case "$r" in *'"code": 403'*"You are not an approver (portal_approvers, portal_approve_groups)"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
 r="$(c "$k/appr" decide "$aid" approve)"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && grep -q "workflow_approvals/$aid/approve/" "$work/aap/aap.jsonl"; then pass "approve by an approver: AAP got it"
 else fail "approve by an approver" "$r"; fi
@@ -491,6 +493,14 @@ if podman secret inspect site-portal-ldap >/dev/null 2>&1 && grep -q "Secret=sit
     && "$py" -c 'import json, sys; assert json.load(open(sys.argv[1]))["PORTAL_APPROVER_GROUPS"] == ["AAP-Approvers"]' "$work/etc/settings.json" \
     && [ -z "$leak" ]; then
     pass "1.120.0: the AD groups' LDAP login: the podman secret site-portal-ldap, not in a file, a unit, the log or podman inspect"
+# 1.133.0: the card forms (sAMAccountName {edipi}.ctr, the 16-digit {digits6} UPN) reach the portal as written, and it
+# starts with them (no stand-in LDAP here: the matching itself is in tests/test_ad_groups.py)
+if "$py" -c 'import json, sys; m = json.load(open(sys.argv[1]))["PORTAL_AD_CARD_MATCHES"]; m = json.loads(m) if isinstance(m, str) else m
+assert [(x["attribute"], x["match"]) for x in m] == [("userPrincipalName", "{edipi}@mil"), ("sAMAccountName", "{edipi}.ctr"),
+    ("userPrincipalName", "{edipi}{digits6}@mil")], m' "$work/etc/settings.json" \
+    && podman exec site-portal-app true; then
+    pass "1.133.0: the card forms (sAMAccountName {edipi}.ctr, {edipi}{digits6}@mil) reach the portal, and it runs with them"
+else fail "the card forms in the portal's settings" "$(grep -A8 PORTAL_AD_CARD_MATCHES "$work/etc/settings.json" | head -12)"; fi
 else fail "the AD groups' secret" "leak: $leak; secret: $(podman secret inspect site-portal-ldap >/dev/null 2>&1 && echo there || echo missing); unit: $(grep -c site-portal-ldap "$units/site-portal-app.container"); groups: $(grep -A2 PORTAL_APPROVER_GROUPS "$work/etc/settings.json" | tr -d ' \n')"; fi
 r="$(c "$k/appr" get /portal/approvals)"
 if echo "$r" | grep -q 'AD not read</span><b>Only the named approvers may decide</b>: 1 in <code>portal_approvers</code>' \

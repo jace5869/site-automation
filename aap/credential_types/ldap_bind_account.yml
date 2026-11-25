@@ -1,5 +1,5 @@
 # Credential type: "LDAP Bind Account"
-# 1.120.0: a plain domain account the site portal reads its AD groups with (portal_reader_groups, portal_approver_groups, portal_requester_groups:
+# 1.120.0: a plain domain account the site portal reads its AD groups with (portal_view_groups, portal_approve_groups, portal_run_groups:
 # docs/SITE_PORTAL.md, "Approvers from AD groups") - read-only, nothing granted: any domain user may read group members
 # and the users' userPrincipalName. The user as AD takes it: a UPN (svc_aap_adreader@corp.example.mil), DOMAIN\user or a DN.
 # The injector sets microsoft.ad's own environment pair, so the microsoft.ad modules and lookups take it as it is too. A

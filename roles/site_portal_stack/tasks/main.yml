@@ -6,6 +6,77 @@
 # other container are only read (the network's DNS address) - the nginx lines to add are written to a file for a
 # person to paste. With portal_own_nginx it also makes its own nginx container and network.
 
+- name: Preflight | check renamed access lists
+  ansible.builtin.assert:
+    that: item.old not in vars or lookup('ansible.builtin.vars', item.new) == lookup('ansible.builtin.vars', item.old)
+    fail_msg: "{{ item.new }} and {{ item.old }} are both set and differ. Use one name or give both the same list."
+    quiet: true
+  loop:
+    - {new: portal_run_groups, old: portal_requester_groups}
+    - {new: portal_runners, old: portal_requesters}
+    - {new: portal_approve_groups, old: portal_approver_groups}
+    - {new: portal_view_groups, old: portal_reader_groups}
+    - {new: portal_viewers, old: portal_readers}
+  loop_control:
+    label: "{{ item.new }} / {{ item.old }}"
+
+- name: Preflight | resolve AD card matches
+  block:
+    - name: Preflight | check the AD card match settings
+      ansible.builtin.assert:
+        that:
+          # With a legacy override the role leaves the new name undefined. An explicit list always conflicts.
+          - not _portal_legacy_card_rule or portal_ad_card_matches is undefined
+          - _portal_legacy_card_rule or (portal_ad_card_matches is sequence and portal_ad_card_matches is not string and portal_ad_card_matches is not mapping)
+        fail_msg: >-
+          portal_ad_card_matches must be a list and cannot be used with a non-default
+          portal_ad_card_attribute or portal_ad_card_match.
+        quiet: true
+
+    - name: Preflight | select the AD card match rules
+      ansible.builtin.set_fact:
+        _portal_ad_card_matches: >-
+          {{ [{'attribute': portal_ad_card_attribute, 'match': portal_ad_card_match}] if _portal_legacy_card_rule else portal_ad_card_matches }}
+
+    - name: Preflight | every AD card match identifies the person
+      ansible.builtin.assert:
+        that:
+          - item is mapping and item.attribute is defined and item.attribute is string and item.attribute | trim | length > 0
+          - item.match is defined and item.match is string and ('{edipi}' in item.match or '{cn}' in item.match)
+        fail_msg: "Each portal_ad_card_matches entry (or legacy card rule) needs an attribute and a match containing {edipi} or {cn} to identify the person."
+        quiet: true
+      loop: "{{ _portal_ad_card_matches }}"
+
+    # 1.133.0: exact forms only - no * or ? anywhere ({digits6} is the only variable part); userPrincipalName or
+    # sAMAccountName only (altSecurityIdentities and other attributes were removed)
+    - name: Preflight | no AD card match takes in other accounts
+      ansible.builtin.assert:
+        that:
+          - item.match is not search('[*?]')
+        fail_msg: >-
+          portal_ad_card_matches: "{{ item.match }}" ({{ item.attribute }}) has a * or ?: it
+          would match other accounts of the same person or other people - list the exact suffixes (for example
+          {edipi}@mil, {edipi}.ctr@mil). Nothing was changed.
+        quiet: true
+      loop: "{{ _portal_ad_card_matches }}"
+      loop_control:
+        label: "{{ item.attribute }}"
+
+    - name: Preflight | a card is matched by the five forms only
+      ansible.builtin.assert:
+        that:
+          - (item.attribute | trim | lower) ~ ' ' ~ (item.match | trim | lower) in ['userprincipalname {edipi}@mil',
+            'userprincipalname {edipi}{digits6}@mil', 'samaccountname {edipi}.ctr', 'samaccountname {edipi}.civ', 'samaccountname {edipi}.mil']
+        fail_msg: >-
+          portal_ad_card_matches (or portal_ad_card_attribute / _match): "{{ item.attribute }}" "{{ item.match }}" is not a card
+          form. 1.133.0 accepts exactly these (a site picks a subset): userPrincipalName "{edipi}@mil" or "{edipi}{digits6}@mil",
+          sAMAccountName "{edipi}.ctr", "{edipi}.civ" or "{edipi}.mil" (altSecurityIdentities, employeeID and other forms were
+          removed). Nothing was changed.
+        quiet: true
+      loop: "{{ _portal_ad_card_matches }}"
+      loop_control:
+        label: "{{ item.attribute }}"
+
 - name: Stack | paths for this scope
   ansible.builtin.set_fact:
     _portal_quadlet_dir: >-
@@ -208,8 +279,8 @@
     fail_msg: "portal_theme_season is {{ portal_theme_season }}; it must be none, christmas or auto (report_theme_season_style 16bit or 8bit) - nothing was changed"
     quiet: true
 
-# A blank reader entry could turn a restricted portal into an open one.
-- name: Settings | check the card reader list and AD group lists
+# A blank view entry could turn a restricted portal into an open one. 1.133.0: false or null is refused too (never "anyone").
+- name: Settings | check the access lists
   ansible.builtin.assert:
     that:
       - item.entries is sequence and item.entries is not string and item.entries is not mapping
@@ -217,18 +288,20 @@
     fail_msg: "{{ item.setting }} must be a list of nonblank strings."
     quiet: true
   loop:
-    - {setting: portal_readers, entries: "{{ portal_readers }}"}
-    - {setting: portal_reader_groups, entries: "{{ portal_reader_groups }}"}
-    - {setting: portal_requester_groups, entries: "{{ portal_requester_groups | default([], true) }}"}
-    - {setting: portal_approver_groups, entries: "{{ portal_approver_groups | default([], true) }}"}
+    - {setting: portal_viewers, entries: "{{ portal_viewers }}"}
+    - {setting: portal_runners, entries: "{{ portal_runners }}"}      # 1.133.0: a blank entry never opens Run
+    - {setting: portal_approvers, entries: "{{ portal_approvers }}"}
+    - {setting: portal_view_groups, entries: "{{ portal_view_groups }}"}
+    - {setting: portal_run_groups, entries: "{{ portal_run_groups }}"}
+    - {setting: portal_approve_groups, entries: "{{ portal_approve_groups }}"}
   loop_control:
     label: "{{ item.setting }}"
 
 - name: Settings | the AD groups and domain controllers
   ansible.builtin.set_fact:
     _portal_ldap_on: >-
-      {{ (portal_reader_groups | length > 0) or (portal_approver_groups | default([], true) | length > 0)
-         or (portal_requester_groups | default([], true) | length > 0)
+      {{ (portal_view_groups | length > 0) or (portal_approve_groups | default([], true) | length > 0)
+         or (portal_run_groups | default([], true) | length > 0)
          or (portal_wall | bool and portal_wall_feedback | bool and ((portal_wall_feedback_groups | default([], true) | length > 0)
              or (portal_wall_feedback_readers | default([], true) | length > 0))) }}
     _portal_ldap_servers: >-
@@ -243,8 +316,8 @@
 - name: Settings | AD groups need a domain controller to ask
   ansible.builtin.assert:
     that: >-
-      not ((portal_reader_groups | default([], true) | length > 0) or (portal_approver_groups | default([], true) | length > 0)
-           or (portal_requester_groups | default([], true) | length > 0))
+      not ((portal_view_groups | default([], true) | length > 0) or (portal_approve_groups | default([], true) | length > 0)
+           or (portal_run_groups | default([], true) | length > 0))
       or (_portal_ldap_servers | length > 0) or (portal_ldap_domain | default('', true) | string | trim | length > 0)
     fail_msg: >-
       AD groups are set but the portal has no domain controller to ask: set portal_ldap_server: "dc01.<domain>,dc02.<domain>" or
@@ -740,7 +813,7 @@
     msg: >-
       WARNING - portal AD groups are set, but this job has no LDAP login: attach the "LDAP Bind Account"
       credential to its template (portal_ldap_vars names where its user and password are). Until then the portal reads no group: only
-      portal_readers, portal_approvers and portal_requesters count toward group-restricted access. docs/SITE_PORTAL.md, "Approvers from AD groups".
+      portal_viewers, portal_approvers and portal_runners count toward group-restricted access. docs/SITE_PORTAL.md, "Approvers from AD groups".
   when: _portal_ldap_on | bool and not ((_portal_ldap_login | from_json).user | length > 0 and (_portal_ldap_login | from_json).password | length > 0)
 
 - name: Secret | the AD groups' LDAP login - current state
@@ -1020,16 +1093,16 @@
       PORTAL_AAP_UI: "{{ portal_aap_ui | trim }}"
       PORTAL_AAP_TIMEOUT: "{{ portal_aap_timeout | string }}"
       PORTAL_INVENTORY: "{{ portal_inventory }}"
-      PORTAL_READERS: "{{ portal_readers }}"
+      PORTAL_READERS: "{{ portal_viewers }}"
       PORTAL_ACCESS_CONTACT: "{{ portal_access_contact | default('', true) | string }}"
-      PORTAL_READER_GROUPS: "{{ portal_reader_groups }}"
-      PORTAL_REQUESTERS: "{{ portal_requesters }}"
+      PORTAL_READER_GROUPS: "{{ portal_view_groups }}"
+      PORTAL_REQUESTERS: "{{ portal_runners }}"
       PORTAL_APPROVERS: "{{ portal_approvers }}"
       # 1.120.0: approvers and requesters from AD groups (the login: the secret site-portal-ldap)
-      PORTAL_APPROVER_GROUPS: "{{ portal_approver_groups | default([], true) }}"
-      PORTAL_REQUESTER_GROUPS: "{{ portal_requester_groups | default([], true) }}"
-      PORTAL_AD_CARD_ATTRIBUTE: "{{ portal_ad_card_attribute }}"
-      PORTAL_AD_CARD_MATCH: "{{ portal_ad_card_match }}"
+      # 1.133.0: a false or null list is refused above - written as it is, never turned into "anyone"
+      PORTAL_APPROVER_GROUPS: "{{ portal_approve_groups }}"
+      PORTAL_REQUESTER_GROUPS: "{{ portal_run_groups }}"
+      PORTAL_AD_CARD_MATCHES: "{{ _portal_ad_card_matches }}"
       PORTAL_AD_GROUPS_SECONDS: "{{ portal_ad_groups_seconds | string }}"
       PORTAL_LDAP_SERVERS: "{{ _portal_ldap_servers | to_json }}"
       PORTAL_LDAP_DOMAIN: "{{ portal_ldap_domain | default('', true) | trim }}"

@@ -120,12 +120,14 @@ class Readers(unittest.TestCase):
 
         class Directory(FakeConn):
             def search(self, base, flt, scope, attributes=None, **kw):
-                m = re.search(r"\(userPrincipalName=([^)]+)\)\)$", flt)
-                if m:
+                ups = re.findall(r"\(userPrincipalName=([^)]+)\)", flt) if "objectCategory=person" in flt and "memberOf" not in flt else []
+                if ups:
                     self.searches.append((base, flt))
                     import fnmatch
-                    hits = [u for u, a in TA.USERS.items() if fnmatch.fnmatchcase(a["upn"], m.group(1))]   # the LDAP filter's * as AD reads it
-                    return self._set([{"dn": u, "attributes": {"userPrincipalName": TA.USERS[u]["upn"]}} for u in hits])
+                    hits = [u for u, a in TA.USERS.items() if any(fnmatch.fnmatchcase(a["upn"], x) for x in ups)]   # the LDAP filter's * as AD reads it
+                    return self._set([{"dn": u, "attributes": {"userPrincipalName": TA.USERS[u]["upn"], "userAccountControl": TA.USERS[u]["uac"],
+                                                                       "objectGUID": TA.guid(u), "sAMAccountName": "acct%d" % i}}
+                                      for i, u in enumerate(hits) if not TA.USERS[u]["uac"] & 2])
                 return FakeConn.search(self, base, flt, scope, attributes, **kw)
         self.configure(PORTAL_READERS=["reader"], PORTAL_READER_GROUPS=["Platform-Leads", "No-Such-Group"], PORTAL_ACCESS_CONTACT="<Desk>")
         groups = self.cfg.ad_groups
@@ -167,7 +169,7 @@ class Readers(unittest.TestCase):
 
     def test_named_access_and_implied_roles(self):
         self.configure(PORTAL_READERS=["reader"], PORTAL_REQUESTERS=["admin"], PORTAL_APPROVERS=["approver"])
-        for cn, setting in [("reader", "portal_readers"), ("admin", "portal_requesters"), ("approver", "portal_approvers")]:
+        for cn, setting in [("reader", "portal_viewers"), ("admin", "portal_runners"), ("approver", "portal_approvers")]:
             self.assertEqual(self.request(cn=cn)[0], 200)
             code, page = self.request("/approvals", cn)
             self.assertEqual(code, 200)
@@ -182,7 +184,7 @@ class Readers(unittest.TestCase):
                        PORTAL_READER_GROUPS=[dn("Platform-Leads")], PORTAL_REQUESTER_GROUPS=["AAP-Operators"],
                        PORTAL_APPROVER_GROUPS=["AAP-Approvers"])
         groups = self.cfg.ad_groups
-        roles = {"EXAMPLE.6789012345": "portal_reader_groups", "EXAMPLE.2345678901": "portal_requester_groups"}
+        roles = {"EXAMPLE.6789012345": "portal_view_groups", "EXAMPLE.2345678901": "portal_run_groups"}
         for state in ("startup", "fresh", "failed", "expired"):
             with self.subTest(state=state):
                 if state == "fresh":
@@ -209,7 +211,7 @@ class Readers(unittest.TestCase):
         self.assertEqual(self.request()[0], 403)
         self.cfg.ad_groups.reader.opener = opener()
         self.cfg.ad_groups.refresh()
-        for cn, setting in [("EXAMPLE.2345678901", "portal_reader_groups"), ("EXAMPLE.6789012345", "portal_approver_groups")]:
+        for cn, setting in [("EXAMPLE.2345678901", "portal_view_groups"), ("EXAMPLE.6789012345", "portal_approve_groups")]:
             self.assertEqual(self.cfg.reader_match(cn), setting)
             self.assertEqual(self.request(cn=cn)[0], 200)
         self.assertEqual(self.request()[0], 403)
@@ -276,11 +278,11 @@ class LdapAssert(unittest.TestCase):
         self.assertNotIn("when", t)                                   # Check and Run alike
         self.assertIn("no domain controller to ask", t["ansible.builtin.assert"]["fail_msg"])
         cond = jinja2.Environment().compile_expression(t["ansible.builtin.assert"]["that"].strip())
-        base = {"portal_reader_groups": [], "portal_approver_groups": [], "portal_requester_groups": [], "_portal_ldap_servers": [], "portal_ldap_domain": ""}
-        cases = [({}, True), ({"portal_requester_groups": ["Ops"]}, False), ({"portal_reader_groups": ["R"]}, False),
-                 ({"portal_approver_groups": ["A"], "portal_ldap_domain": "corp.example.mil"}, True),
-                 ({"portal_approver_groups": ["A"], "_portal_ldap_servers": [{"name": "dc01.corp.example.mil"}]}, True),
-                 ({"portal_approver_groups": ["A"], "portal_ldap_domain": "  "}, False)]
+        base = {"portal_view_groups": [], "portal_approve_groups": [], "portal_run_groups": [], "_portal_ldap_servers": [], "portal_ldap_domain": ""}
+        cases = [({}, True), ({"portal_run_groups": ["Ops"]}, False), ({"portal_view_groups": ["R"]}, False),
+                 ({"portal_approve_groups": ["A"], "portal_ldap_domain": "corp.example.mil"}, True),
+                 ({"portal_approve_groups": ["A"], "_portal_ldap_servers": [{"name": "dc01.corp.example.mil"}]}, True),
+                 ({"portal_approve_groups": ["A"], "portal_ldap_domain": "  "}, False)]
         for change, ok in cases:
             with self.subTest(change=change):
                 self.assertEqual(bool(cond(**dict(base, **change))), ok)

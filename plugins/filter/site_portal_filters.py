@@ -16,7 +16,7 @@ An action (roles/site_portal_stack/files/actions.yml, or the setting portal_acti
       # each may also have: label, required (default true), default
     limit_from: target                      # optional: a var of kind inventory_host - the launch's limit
     approval: true | false                  # shown on the page; the workflow's approval node is what holds it
-    who: any | [CN, ...]                    # optional: who may run it; left out = portal_requesters
+    who: any | [CN, ...]                    # optional: who may run it; left out = portal_runners
 """
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -393,7 +393,7 @@ def check_values(action, sent, host_known=None, expand=None):
 
 
 def may_run(action, cn, requesters):
-    """Whether this person (their certificate's CN) may run the action: its own who, else portal_requesters (empty = any
+    """Whether this person (their certificate's CN) may run the action: its own who, else portal_runners (empty = any
     person with a verified card)."""
     who = action.get("who")
     if who == "any":

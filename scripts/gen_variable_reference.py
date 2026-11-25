@@ -134,6 +134,14 @@ def roles_with_settings():
     return found
 
 
+def portal_access_renames(settings):
+    """The 1.133.0 aliases documented inline with their role defaults."""
+    for setting in settings:
+        old = re.search(r"\bwas (portal_\w+)", " ".join(setting["doc"]))
+        if old:
+            yield setting["name"], old.group(1)
+
+
 def render():
     out = [
         "# Every setting and its default",
@@ -173,6 +181,11 @@ def render():
                 doc = doc[:MAX_DOC - 1].rstrip() + "… (all of it: the role file)"
             out.append("| `%s` | %s | %s |" % (s["name"], cell(shorten(s["value"])), cell(doc)))
         out.append("")
+        if role == "site_portal_stack":
+            out.extend(["### Renamed in 1.133.0", "", "| New setting | Old setting |", "|---|---|"])
+            for new, old in portal_access_renames(settings):
+                out.append("| `%s` | `%s` |" % (new, old))
+            out.extend(["", "Use either name. Setting both to different lists stops the deploy.", ""])
     out += ["## Settings of one host",
             "",
             "Set these on the host itself: its host variables in the inventory, or the host's **Variables** box",

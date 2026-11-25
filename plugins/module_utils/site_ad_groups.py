@@ -2,14 +2,12 @@
 """The site portal's readers, approvers and requesters from AD groups:
 each group's members - nested groups too (LDAP_MATCHING_RULE_IN_CHAIN), never a disabled account - read over LDAP,
 read-only, with the "LDAP Bind Account" login, in ONE shared read every few minutes and kept. A person's card CN
-(LAST.FIRST.MI.1234567890) is matched to their AD account by its EDIPI: userPrincipalName = <EDIPI>@mil by default
-(portal_ad_card_attribute, portal_ad_card_match). When AD cannot be read - or has not been yet - nobody is a member:
-the portal falls back to the named lists only for group-based access. The connection is
+(LAST.FIRST.MI.1234567890) is matched against the account attributes in portal_ad_card_matches.
+When AD cannot be read - or has not been yet - nobody is a member: the portal falls back to the named lists only for group-based access. The connection is
 the AD report's (site_ldap). Standard library and ldap3 (dnspython for the DCs of a domain, when it is here)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import fnmatch
 import re
 import threading
 import time
@@ -33,35 +31,139 @@ BIT_AND = "1.2.840.113556.1.4.803"                 # LDAP_MATCHING_RULE_BIT_AND
 DISABLED = 0x2                                     # userAccountControl ACCOUNTDISABLE
 ROLES = ("approvers", "requesters", "readers", "wall_feedback", "wall_readers")   # 1.130.0: portal readers; the wall's Feedback button and list
 SECONDS, RETRY = 300, 60                           # read every 5 minutes; 60 s after a failure
+# 1.133.0: a card is matched only by exact forms of two attributes (the director's cut: altSecurityIdentities and any
+# other attribute are gone). No * or ? anywhere; {digits6} (six ASCII digits) is the only variable part.
+CARD_ATTRIBUTES = {"userprincipalname": "userPrincipalName", "samaccountname": "sAMAccountName"}
+# 1.133.0 (director): a CLOSED list - exactly these five forms, a site picks a subset; nothing user-defined. Each form names
+# the EDIPI it carries (group 1); values are ASCII only (any other character: no match), compared in ASCII lower case.
+CARD_FORMS = {
+    ("userPrincipalName", "{edipi}@mil"): re.compile(r"([0-9]{10})@mil", re.ASCII),
+    ("userPrincipalName", "{edipi}{digits6}@mil"): re.compile(r"([0-9]{10})[0-9]{6}@mil", re.ASCII),
+    ("sAMAccountName", "{edipi}.ctr"): re.compile(r"([0-9]{10})\.ctr", re.ASCII),
+    ("sAMAccountName", "{edipi}.civ"): re.compile(r"([0-9]{10})\.civ", re.ASCII),
+    ("sAMAccountName", "{edipi}.mil"): re.compile(r"([0-9]{10})\.mil", re.ASCII),
+}
+ALL_FORMS = [{"attribute": a, "match": m} for a, m in CARD_FORMS]      # every form: what an account's values name
+DEFAULT_CARD_MATCHES = [
+    {"attribute": "userPrincipalName", "match": "{edipi}@mil"},
+    {"attribute": "sAMAccountName", "match": "{edipi}.ctr"},
+    {"attribute": "sAMAccountName", "match": "{edipi}.civ"},
+    {"attribute": "sAMAccountName", "match": "{edipi}.mil"},
+    {"attribute": "userPrincipalName", "match": "{edipi}{digits6}@mil"},
+]
+WILD_AFTER = re.compile(r"[*?]")
+WILD_WHY = "would match other accounts of the same person or other people - list the exact suffixes"
+FORMS_WHY = ("a card is matched by these forms only: userPrincipalName {edipi}@mil or {edipi}{digits6}@mil, sAMAccountName "
+             "{edipi}.ctr, {edipi}.civ or {edipi}.mil")
+
+
+def _form(attribute, pattern):
+    """(canonical attribute, canonical match) of one of the five forms, or None"""
+    a = CARD_ATTRIBUTES.get(str(attribute or "").strip().lower())
+    key = (a, str(pattern or "").strip().lower())
+    return key if key in CARD_FORMS else None
+
+
+def card_rule_problem(attribute, pattern):
+    """'' when a card rule is one of the five forms, else why not (the deploy and the portal refuse it alike)"""
+    if WILD_AFTER.search(str(pattern or "")):
+        return "a * or ? in a card rule " + WILD_WHY
+    if _form(attribute, pattern) is None:
+        return "%s / %s: %s" % (str(attribute or "")[:40], str(pattern or "")[:40], FORMS_WHY)
+    return ""
+
+
+def card_matches(entries, attribute="userPrincipalName", match="{edipi}@mil"):
+    """Resolve the deployed list or the settings file from an older deployment -> [{attribute, match}] of the five forms."""
+    if attribute != "userPrincipalName" or match != "{edipi}@mil":
+        if entries is not None:
+            raise ValueError("portal_ad_card_matches conflicts with portal_ad_card_attribute or portal_ad_card_match")
+        entries = [{"attribute": attribute, "match": match}]
+    if entries is None:
+        entries = DEFAULT_CARD_MATCHES
+    if not isinstance(entries, list):
+        raise ValueError("portal_ad_card_matches must be a list")
+    result = []
+    for i, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict) or not isinstance(entry.get("attribute"), str) or not entry["attribute"].strip():
+            raise ValueError("portal_ad_card_matches entry %d needs an attribute name" % i)
+        pattern = entry.get("match")
+        if not isinstance(pattern, str) or ("{edipi}" not in pattern and "{cn}" not in pattern):
+            raise ValueError("portal_ad_card_matches entry %d needs {edipi} or {cn} to identify the person" % i)
+        why = card_rule_problem(entry["attribute"], pattern)
+        if why:
+            raise ValueError("portal_ad_card_matches entry %d: %s" % (i, why))
+        a, m = _form(entry["attribute"], pattern)
+        result.append({"attribute": a, "match": m})
+    return result
 
 
 def edipi(cn):
-    """The EDIPI at the end of a card's CN (LAST.FIRST.MI.1234567890) -> '1234567890', or '' when it has none."""
-    m = re.search(r"(?:^|\.)(\d{10})$", str(cn or "").strip())
+    """The EDIPI at the end of a card's CN (LAST.FIRST.MI.1234567890) -> '1234567890', or '' when it has none (ASCII digits only)."""
+    m = re.search(r"(?:^|\.)([0-9]{10})$", str(cn or "").strip(), re.ASCII)
     return m.group(1) if m else ""
 
 
-def card_key(cn, match="{edipi}@mil"):
-    """What the card's AD account holds in the card attribute: match with {edipi} and {cn} filled in (lower case);
-    '' when the CN has no EDIPI and the match needs one, or the match names neither (it would match anyone)."""
-    e = edipi(cn)
-    if ("{edipi}" not in match and "{cn}" not in match) or ("{edipi}" in match and not e):
+def value_edipi(rule, value):
+    """the EDIPI a value carries under one card rule, or '' (not that form, or not ASCII)"""
+    v = str(value if value is not None else "")
+    rx = CARD_FORMS.get(_form(rule["attribute"], rule["match"]) or ("", ""))
+    if rx is None or not v.isascii():
         return ""
-    if "{cn}" in match and not str(cn or "").strip():
-        return ""                                         # 1.122.2: no CN, nothing to match (never the template's own text)
-    return match.replace("{edipi}", e).replace("{cn}", str(cn or "").strip()).lower()
+    m = rx.fullmatch(v.lower())
+    return m.group(1) if m else ""
 
 
-def card_pattern(cn, match="{edipi}@mil"):
-    """The card's key as a compiled whole-value pattern: the template's own * and ? match anything, the person's EDIPI
-    and CN only themselves (a * in a CN is a *). None when the card cannot match (card_key '')."""
-    if not card_key(cn, match):
+def entry_edipis(rules, attrs):
+    """every EDIPI the account's values carry under the site's rules (an account with two is refused for both cards)"""
+    out = set()
+    for r in rules:
+        v = attrs.get(r["attribute"])
+        for x in (v if isinstance(v, list) else [v]):
+            e = value_edipi(r, x)
+            if e:
+                out.add(e)
+    return out
+
+
+def _values(v):
+    """an attribute's values as a list, without the empty ones"""
+    return [x for x in (v if isinstance(v, list) else [v]) if x not in (None, "", b"")]
+
+
+class _CardForm(object):
+    def __init__(self, rule, e):
+        self.rule, self.e = rule, e
+
+    def fullmatch(self, value):
+        return value_edipi(self.rule, value) == self.e or None
+
+
+def card_key(cn, match="{edipi}@mil"):
+    """the value a card's account holds under one form (lower case), '' when the card has no EDIPI or the form is unknown"""
+    e = edipi(cn)
+    if not e or not any(m == str(match or "").strip().lower() for _a, m in CARD_FORMS):
+        return ""
+    return str(match).strip().lower().replace("{edipi}", e)
+
+
+def card_pattern(cn, match="{edipi}@mil", attribute=None):
+    """an object whose fullmatch(value) is true for exactly this card's value under that form (ASCII only); None when the
+    card has no EDIPI or the form is not one of the five"""
+    e = edipi(cn)
+    forms = [k for k in CARD_FORMS if k[1] == str(match or "").strip().lower() and (attribute is None or k == _form(attribute, match))]
+    if not e or not forms:
         return None
-    ident = {"{edipi}": re.escape(edipi(cn)), "{cn}": re.escape(str(cn or "").strip().lower())}
-    out = []
-    for part in re.split(r"(\{edipi\}|\{cn\}|\*|\?)", match.lower()):
-        out.append(ident[part] if part in ident else {"*": ".*", "?": "."}.get(part) or re.escape(part))
-    return re.compile("".join(out) + r"\Z", re.S)        # used with fullmatch: the whole value, no trailing newline
+    return _CardForm({"attribute": forms[0][0], "match": forms[0][1]}, e)
+
+
+def _guid(v):
+    """objectGUID as compared: lower-case hex, whatever form the library gave (bytes, '{...}' text)"""
+    v = v[0] if isinstance(v, list) and v else v
+    if isinstance(v, (bytes, bytearray)):
+        return bytes(v).hex()
+    t = str(v or "").strip().strip("{}").replace("-", "").lower()
+    return t if re.fullmatch(r"[0-9a-f]{32}", t, re.ASCII) else ""
 
 
 def is_dn(name):
@@ -88,11 +190,15 @@ def short_name(name):
 class Reader(object):
     """One read of every group: read() -> {ok, error, at, server, groups: {role: [{name, dn, found, count, keys}]}}.
     opts: servers [{fqdn, address}], domain, base, user, password, ports {ldaps, ldap}, starttls, validate, ca_file,
-    timeout, attribute. opener (the tests): a callable (opts) -> (conn, server, error) in place of the real connection."""
+    timeout, attribute or matches. opener (the tests): a callable (opts) -> (conn, server, error) in place of the real connection."""
 
-    def __init__(self, opts, opener=None):
+    def __init__(self, opts, opener=None, match="{edipi}@mil"):
         self.o = opts
         self.opener = opener
+        self.matches = card_matches(opts.get("matches"), opts.get("attribute", "userPrincipalName"), match)
+        # 1.133.0 (Codex r4 #2): both attributes are always read, whatever subset of the forms the site enabled - an account
+        # whose values name another EDIPI under ANY of the five forms is nobody's
+        self.attributes = ["userPrincipalName", "sAMAccountName"]
 
     def servers(self):
         """The DCs to ask: [{fqdn, address}] - the deploy's (portal_ldap_server, the inventory's DCs: {name, address}), else
@@ -184,6 +290,21 @@ class Reader(object):
         v = ((r[0].get("attributes") or {}).get("defaultNamingContext") if r else "") or ""
         return v[0] if isinstance(v, list) and v else str(v or "")
 
+    def root(self, c):
+        """1.133.0 (director C): the domain root - the DC's defaultNamingContext, else the domain's own base - never
+        portal_ldap_base (an account elsewhere in the domain must still count); '' when not known (the lookup fails closed)"""
+        try:
+            r = self.search(c, "", "(objectClass=*)", ["defaultNamingContext"], "base")
+            v = ((r[0].get("attributes") or {}).get("defaultNamingContext") if r else "") or ""
+            v = v[0] if isinstance(v, list) and v else str(v or "")
+        except Exception:                                 # noqa: BLE001
+            v = ""
+        if v.strip():
+            return v.strip()
+        first = (self.servers() or [{}])[0].get("fqdn") or ""
+        dom = str(self.o.get("domain") or "").strip() or (first.split(".", 1)[1] if "." in first and not re.match(r"^[0-9.:]+$", first) else "")
+        return base_of(dom)
+
     def group_dn(self, c, base, name):
         """-> (dn, why): the group's DN, or '' and why not (not found; two or more of that name: give its DN)."""
         if is_dn(name):
@@ -196,12 +317,13 @@ class Reader(object):
             return "", "%d groups have this name - give its DN" % len(dns)       # never one of them by chance
         return (dns[0], "") if dns else ("", "not found in AD")
 
-    def members(self, c, base, dn, attr):
-        """The enabled users in the group, nested groups too -> [[their attr values, lower case]]."""
+    def members(self, c, base, dn):
+        """The enabled users in the group, nested groups too with values kept under the attribute they came from."""
         flt = "(&(objectCategory=person)(objectClass=user)(memberOf:%s:=%s)(!(userAccountControl:%s:=%d)))" % (
             IN_CHAIN, escape_filter_chars(dn), BIT_AND, DISABLED)
         out = []
-        for e in self.search(c, base, flt, [attr, "userAccountControl"]):
+        attrs = list(dict.fromkeys(self.attributes + ["userAccountControl", "objectGUID"]))
+        for e in self.search(c, base, flt, attrs):
             a = e.get("attributes") or {}
             uac = a.get("userAccountControl")
             uac = uac[0] if isinstance(uac, list) and uac else uac
@@ -210,10 +332,52 @@ class Reader(object):
                     continue                              # disabled - or not said: never a member, whatever the DC's filter did
             except (TypeError, ValueError):
                 continue
-            v = a.get(attr)
-            vals = [str(x).lower() for x in (v if isinstance(v, list) else [v]) if x not in (None, "")]
-            if vals:
-                out.append(vals)
+            member = {"dn": str(e.get("dn") or ""), "guid": _guid(a.get("objectGUID"))}    # which account it is: DN and objectGUID
+            for attr in self.attributes:
+                v = a.get(attr)
+                vals = [str(x) for x in (v if isinstance(v, list) else [v]) if x not in (None, "")]
+                if vals:
+                    member[attr] = vals
+            out.append(member)              # Codex #21: every enabled member counts; one with no card value just matches no card
+        return out
+
+    def accounts(self, c, base, cn):
+        """1.133.0: the candidate accounts of a card, from the domain root -> {dn: {"attr", "enabled", "edipis", "guid"}}.
+        The filter takes the site's forms; userPrincipalName AND sAMAccountName are read for every entry, whatever forms the
+        site enabled (Codex r4 #2). edipis: every EDIPI its values name under ANY of the five forms (two: refused for both
+        cards). attr: the site's form that matched this card, None when none did. A candidate is every entry whose values
+        name this card under the site's forms, and every entry not fully read - an attribute the filter could have matched
+        on, or its sAMAccountName (every AD account has one), missing: it may be this card's (Codex r4 #4). A fully read
+        entry that does not name this card (the 16-digit filter's neighbour: 1234567890.adm@mil) is not one.
+        enabled: True (userAccountControl read, ACCOUNTDISABLE not set), None (not known)."""
+        e_ = edipi(cn)
+        rules = [r for r in self.matches if _form(r["attribute"], r["match"])]
+        if not rules or not base or not e_:
+            return {}
+        terms = []
+        for r in rules:
+            key = r["match"].replace("{edipi}", e_).replace("{digits6}", "*")
+            terms.append("(%s=%s)" % (r["attribute"], "*".join(escape_filter_chars(p) for p in key.split("*"))))
+        attrs = ["userPrincipalName", "sAMAccountName", "userAccountControl", "objectGUID"]
+        needed = set(["sAMAccountName"] + [r["attribute"] for r in rules])
+        flt = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:%s:=%d))(|%s))" % (BIT_AND, DISABLED, "".join(terms))
+        out = {}
+        for n, e in enumerate(self.search(c, base, flt, attrs)):
+            a = e.get("attributes") or {}
+            uac = a.get("userAccountControl")
+            uac = uac[0] if isinstance(uac, list) and uac else uac
+            try:
+                enabled = None if uac in (None, "") else not (int(uac) & DISABLED)
+            except (TypeError, ValueError):
+                enabled = None
+            if enabled is False:
+                continue                                  # disabled: not an account of the card (the DC's filter said so too)
+            attr = next((r["attribute"] for r in rules if any(value_edipi(r, x) == e_ for x in _values(a.get(r["attribute"])))), None)
+            full = all(_values(a.get(x)) for x in needed)
+            if attr is None and full:
+                continue                                  # fully read and not this card's (the broad 16-digit filter's neighbour)
+            dn = str(e.get("dn") or "") or "<no dn %d>" % n
+            out[dn] = {"attr": attr, "enabled": enabled, "edipis": entry_edipis(ALL_FORMS, a), "guid": _guid(a.get("objectGUID"))}
         return out
 
     def read(self, groups):
@@ -235,7 +399,6 @@ class Reader(object):
             res["error"] = err or "AD did not answer"
             return res
         res["server"] = server
-        attr = str(self.o.get("attribute") or "userPrincipalName")
         try:
             base = self.base(c)
             if not base:
@@ -245,7 +408,7 @@ class Reader(object):
                 for name in want[role]:
                     if name not in seen:
                         dn, why = self.group_dn(c, base, name)
-                        seen[name] = {"name": short_name(name), "dn": dn, "found": bool(dn), "why": why, "keys": self.members(c, base, dn, attr) if dn else []}
+                        seen[name] = {"name": short_name(name), "dn": dn, "found": bool(dn), "why": why, "keys": self.members(c, base, dn) if dn else []}
                         seen[name]["count"] = len(seen[name]["keys"])
                     res["groups"][role].append(seen[name])
             res["ok"] = True
@@ -266,8 +429,7 @@ class Groups(object):
 
     def __init__(self, groups, opts, match="{edipi}@mil", seconds=SECONDS, opener=None, on_change=None):
         self.want = dict((r, [str(g).strip() for g in (groups or {}).get(r) or [] if str(g).strip()]) for r in ROLES)
-        self.reader = Reader(opts, opener)
-        self.match = str(match or "{edipi}@mil")
+        self.reader = Reader(opts, opener, match)
         self.seconds = max(60, int(seconds or SECONDS))
         self.on_change = on_change
         self.lock = threading.Lock()
@@ -285,8 +447,16 @@ class Groups(object):
             r["error"] += " - not tried again until the portal is deployed again with the right login (the account would lock out)"
         with self.lock:
             before = self.last
+            self._gen = self.__dict__.get("_gen", 0) + 1        # 1.133.0: every group read drops the card lookups
+            self.__dict__.setdefault("_accts", {}).clear()
+            if self.__dict__.get("_held"):
+                # Codex r4 #7: a refused login (a card lookup's, while this read was under way) holds until the next
+                # deploy - a read that was already bound never lifts it, nor sets a next read
+                return self.last
             self.last = r
-            self.next_at = r["at"] + (self.seconds if r["ok"] else 10 ** 9 if "invalidCredentials" in str(r.get("error")) else RETRY)
+            if "invalidCredentials" in str(r.get("error")) and not r["ok"]:
+                self._held = True
+            self.next_at = r["at"] + (self.seconds if r["ok"] else 10 ** 9 if self.__dict__.get("_held") else RETRY)
         if self.on_change and (before is None or before["ok"] != r["ok"] or (not r["ok"] and before.get("error") != r["error"])):
             self.on_change(r)
         return r
@@ -297,10 +467,16 @@ class Groups(object):
 
         def run():
             while not self.stop.is_set():
+                if time.time() < self.next_at:
+                    # Codex r3 #7: a hold set meanwhile (a card lookup's refused login) is honoured - never a bind before it
+                    self.stop.wait(min(60.0, max(1.0, self.next_at - time.time())))
+                    continue
                 try:
                     self.refresh()
                 except Exception as e:                    # noqa: BLE001 - never kills the thread: said as not read
                     with self.lock:
+                        if self.__dict__.get("_held"):
+                            continue                      # the hold stands (Codex r4 #7)
                         self.last = {"ok": False, "error": "LDAP: " + sl.short_err(self.reader.scrub(getattr(e, "message", "") or e)), "at": time.time(), "server": "",
                                      "groups": dict((r, []) for r in ROLES)}
                         self.next_at = time.time() + RETRY
@@ -314,69 +490,108 @@ class Groups(object):
         return bool(r and r.get("ok")) and -RETRY <= age <= self.seconds + 2 * RETRY    # the clock set back: no read either
 
     def has(self, role, cn):
+        return next(self.group_matches(role, cn), None) is not None
+
+    def group_matches(self, role, cn):
+        """Yield each of the role's groups the card's one AD account is a member of (its name) and the attribute that matched."""
         if not self.want.get(role):
-            return False
-        pat = card_pattern(cn, self.match)
-        if pat is None:
-            return False
+            return
         with self.lock:
             r = self.last
         if not self.fresh(r):
-            return False                                  # fail closed: the named lists only
+            return                                  # fail closed: the named lists only
+        # 1.133.0 (Codex r2 #2): the card is ONE AD account first (every card rule over the whole directory); none, or
+        # more than one (a separate .adm account, two 16-digit forms): no group counts. Then only that account's memberships.
+        found = self.account(cn)
+        if not found[0]:
+            return
+        dn, attr, guid = found
         for g in r["groups"].get(role) or []:
-            for vals in g.get("keys") or []:
-                if any(pat.fullmatch(v) for v in vals):
-                    return True
-        return False
+            # the member entry must be that account - its DN (any case) AND its objectGUID (Codex r3 #5: a DN reused for a
+            # new account never passes the old one's membership on) - and its own values must name this card's EDIPI only,
+            # under any of the five forms (Codex r4 #2)
+            if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") and m.get("guid") == guid
+                   and entry_edipis(ALL_FORMS, m) == {edipi(cn)} for m in g.get("keys") or []):
+                yield g["name"], attr
 
-    def card_found(self, cn, now=None):
-        """1.130.0: does the card's person have an AD account (portal_ad_card_attribute / card_match)? -> True / False / None
-        (not known). From the last read's member keys first; else one LDAP lookup, at most once per person per 5 minutes."""
-        now = time.time() if now is None else now
-        pat = card_pattern(cn, self.match)
-        if pat is None:
-            return False
+    def account(self, cn, now=None):
+        """-> (the card's one enabled AD account's DN, the attribute that matched) or (None, why). Looked up from the domain
+        root, at most once per person per CARD_CHECK_S (a failed lookup: RETRY). The cache is per CN and dropped at every
+        group read (generation); a lookup stores its answer only when no newer one was stored meanwhile (sequence) - an
+        older "yes" never overwrites a newer "no". The bind goes through the group read's guard: a refused login holds every
+        lookup until the next deploy, as it holds the group reads."""
+        now = time.monotonic() if now is None else now           # Neon r2 #3: the cache's clock never steps back
         with self.lock:
-            r = self.last
-            cache = self.__dict__.setdefault("_cards", {})
+            cache = self.__dict__.setdefault("_accts", {})
+            gen = self.__dict__.setdefault("_gen", 0)
             hit = cache.get(cn)
-        if r and r.get("ok"):
-            for gs in (r.get("groups") or {}).values():
-                for g in gs:
-                    if any(any(pat.fullmatch(v) for v in vals) for vals in g.get("keys") or []):
-                        return True
-        if not (r and r.get("ok")):
-            return None                                   # AD not read: not known - and no lookup while it is down
-        if hit and now - hit[0] < CARD_CHECK_S:
-            return hit[1]
-        found = None
+            if hit and hit[3] == gen and 0 <= now - hit[0] < hit[2]:
+                return hit[1]
+            self._seq = self.__dict__.get("_seq", 0) + 1
+            seq = self._seq
+            held = self.__dict__.get("_held") or (self.last and "invalidCredentials" in str(self.last.get("error") or ""))
+        if held:
+            return (None, "the LDAP login was refused - held until the next deploy")
+        res, ttl = (None, "not looked up"), RETRY
         try:
-            c, _server, _err = self.reader.open()
-            if c is not None:
+            c, _server, err = self.reader.open()
+            if c is None:
+                res = (None, "AD did not answer")
+                if "invalidCredentials" in str(err):
+                    with self.lock:                       # the same hold as a group read's (the account would lock)
+                        self._held = True
+                        self.last = dict(self.last or {}, ok=False, error=err, at=time.time())
+                        self.next_at = time.time() + 10 ** 9
+            else:
                 try:
-                    base = self.reader.base(c)
-                    key = card_key(cn, self.match)
-                    val = "*".join(escape_filter_chars(p) for p in key.split("*"))
-                    attr = str(self.reader.o.get("attribute") or "userPrincipalName")
-                    rows = self.reader.search(c, base, "(&(objectCategory=person)(objectClass=user)(%s=%s))" % (attr, val), [attr]) if base else []
-                    found = False
-                    for e in rows:
-                        v = (e.get("attributes") or {}).get(attr)
-                        if any(pat.fullmatch(str(x).lower()) for x in (v if isinstance(v, list) else [v]) if x not in (None, "")):
-                            found = True
+                    root = self.reader.root(c)
+                    found = self.reader.accounts(c, root, cn) if root else None
                 finally:
                     try:
                         c.unbind()
                     except Exception:                     # noqa: BLE001
                         pass
-        except Exception:                                 # noqa: BLE001 - not known
-            found = None
+                if found is None:
+                    res = (None, "the domain root is not known")
+                else:
+                    ttl = CARD_CHECK_S
+                    if len(found) == 1:
+                        dn, x = next(iter(found.items()))
+                        if x["enabled"] is not True or dn.startswith("<no dn") or not x["guid"] or not x["attr"]:
+                            res = (None, "the card's AD account state is not known")
+                        elif x["edipis"] != {edipi(cn)}:
+                            # Codex r3 #2: an account whose values name two EDIPIs is nobody's (refused for both cards)
+                            res = (None, "the card's AD account also carries another EDIPI - none counts")
+                        else:
+                            res = (dn, x["attr"], x["guid"])
+                    elif not found:
+                        res = (None, "no AD account matches this card")
+                    else:
+                        res = (None, "more than one AD account matches this card (%d) - none counts" % len(found))
+        except Exception:                                 # noqa: BLE001 - not known: no group counts
+            res = (None, "the card's AD account could not be looked up")
         with self.lock:
-            cache[cn] = (now, found)                      # "not known" too: at most one lookup per person per 5 minutes
-            if len(cache) > 1000:
-                for k in sorted(cache, key=lambda k: cache[k][0])[:500]:
+            cur = cache.get(cn)
+            if self.__dict__.get("_gen", 0) == gen and (cur is None or cur[3] != gen or cur[4] < seq):
+                cache[cn] = (now, res, ttl, gen, seq)
+            if len(cache) > 2000:
+                for k in sorted(cache, key=lambda k: cache[k][0])[:1000]:
                     cache.pop(k, None)
-        return found
+        return res
+
+    def card_found(self, cn, now=None):
+        """1.130.0: does the card's person have an AD account (any rule of portal_ad_card_matches)? -> True / False / None
+        (not known). 1.133.0: the same lookup as the access check (Groups.account) - never while AD is not read."""
+        with self.lock:
+            r = self.last
+        if not (r and r.get("ok")):
+            return None                                   # AD not read: not known - and no lookup while it is down
+        if not [e for e in self.reader.matches if card_pattern(cn, e["match"]) is not None]:
+            return False
+        dn, why = self.account(cn, now)[:2]
+        if dn or why.startswith("more than one"):
+            return True
+        return False if why.startswith("no AD account") else None
 
     def diag(self, cn):
         """1.130.0: for a refused person - is AD read (and the short reason when not), each configured group (found, how many
@@ -434,7 +649,7 @@ CARD_CHECK_S = 300                      # a card's account looked up at most onc
 
 
 class People(list):
-    """A role's people (1.120.0): the named list (portal_approvers / portal_requesters: card CNs) - a list as before, so
+    """A role's people (1.120.0): the named list (portal_approvers / portal_runners: card CNs) - a list as before, so
     it is written and compared as one - and the members of the role's AD groups. `cn in people`: named, or a member in
     the last good read. True when anyone or any group is set: an empty named list with groups set is not "anyone"."""
 

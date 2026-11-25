@@ -46,11 +46,16 @@ Every person needs a verified card. Each role accepts exact card CNs and members
 
 | Role | Settings | Access |
 |---|---|---|
-| Readers | `portal_readers`, `portal_reader_groups` | Open portal pages and APIs, including reports, AD, NetApp, jobs and approvals. The wall’s kiosk mode also requires reader access. Individual job visibility still applies. |
-| Admins (requesters) | `portal_requesters`, `portal_requester_groups` | Read automatically and run actions. An action's own `who` overrides its requester rule. When both requester lists are empty, any reader can run actions that use the default rule. |
-| Approvers | `portal_approvers`, `portal_approver_groups` | Read automatically and approve or deny eligible workflows. With both approver lists empty, nobody may decide in the portal. |
+| Viewers | `portal_viewers`, `portal_view_groups` | Open portal pages and APIs, including reports, AD, NetApp, jobs and approvals. The wall’s kiosk mode also requires reader access. Individual job visibility still applies. |
+| Runners | `portal_runners`, `portal_run_groups` | Read automatically and run actions. An action's own `who` overrides its requester rule. When both requester lists are empty, any reader can run actions that use the default rule. |
+| Approvers | `portal_approvers`, `portal_approve_groups` | Read automatically and approve or deny eligible workflows. With both approver lists empty, nobody may decide in the portal. |
 
-With both **reader** lists empty (the default), any verified card may view the portal. Set either list to
+**1.133.0 names.** `portal_viewers`, `portal_view_groups`, `portal_runners`, `portal_run_groups` and
+`portal_approve_groups` replace `portal_readers`, `portal_reader_groups`, `portal_requesters`, `portal_requester_groups`
+and `portal_approver_groups`. The old names still work. Setting both names of one list to different values stops the
+deploy. Each list must be a list of nonblank strings: a blank entry, `false` or `null` stops the deploy too.
+
+With both **view** lists empty (the default), any verified card may view the portal. Set either list to
 restrict viewing to the readers, requesters and approvers. If your site used requester lists to restrict entry,
 set a reader list when you deploy this version. To give people view-only access, also configure
 who may run actions and check any action-specific `who` settings. The Approvals page shows which list grants your card access.
@@ -64,7 +69,7 @@ A refused reader receives HTTP 403 with their card CN and the contact in `portal
 reader refusal per person per hour.
 The refusal also says what the portal knows of AD for that person (1.130.0): whether AD was read (and, if not, a short
 reason: bind refused, no DC answered, LDAPS certificate ...), each configured group found yes / no with its member count,
-and whether their card matched an AD account (portal_ad_card_attribute / portal_ad_card_match) - yes / no only. Never
+and whether their card matched an AD account (`portal_ad_card_matches`) - yes / no only. Never
 member names, the bind account or the domain controllers. The `/api` refusal carries the same as JSON (`ad`). It comes
 from the kept AD read; a card not in any group is looked up at most once per person per 5 minutes (none while AD is down).
 
@@ -267,7 +272,7 @@ actions:
     approval: false                             # shown on the page; the workflow's approval node holds it
     area: ACT                                   # optional: the group of the Actions page (left out: Other)
     summary: ACT reads one finding and drafts the next step.   # optional: the card's one line
-    who: any                                    # optional: any, or a list of CNs; left out = portal_requesters
+    who: any                                    # optional: any, or a list of CNs; left out = portal_runners
 ```
 
 | A var's kind | Its rule |
@@ -601,12 +606,12 @@ one that has timed out is left out. Each shows the workflow, who or what started
 the check's plan (*What it will change*, below) and the report the steps before it left (a job artifact `site_report_url`) as a button: **Open the full report**.
 
 - **Approve** and **Deny** are there only for the approvers - `portal_approvers`, and since 1.120.0 the members of
-  `portal_approver_groups` (*Approvers from AD groups*, below) - and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
+  `portal_approve_groups` (*Approvers from AD groups*, below) - and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
   (*Sure? Yes, approve / Back*).
   - A decision AAP refuses (1.110.0) shows its message. Decided already, timed out or not allowed: the list is read
     again after 3 seconds. Anything else: **Approve** and **Deny** are back, to try again. The list keeps updating.
 - **Everyone else sees why, in words to act on**, with the setting's name:
-  - *You are not an approver* (`portal_approvers`, `portal_approver_groups`) - only the approvers decide.
+  - *You are not an approver* (`portal_approvers`, `portal_approve_groups`) - only the approvers decide.
   - *You started this run* - another approver decides (`portal_allow_self_approval`).
   - *The portal's account has no Approve role on this workflow* - give it Approve in AAP, or decide there.
 - **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
@@ -631,32 +636,48 @@ the check's plan (*What it will change*, below) and the report the steps before 
 Readers, approvers and requesters can be AD groups as well as names. Each person still needs a verified card.
 
 ```yaml
-portal_approver_groups: [AAP-Approvers]          # a group's name (cn or sAMAccountName) or its DN
-portal_requester_groups: []                      # the same for who may run the actions
+portal_approve_groups: [AAP-Approvers]           # a group's name (cn or sAMAccountName) or its DN
+portal_run_groups: []                            # the same for who may run the actions
 ```
 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
-  account never counts. The named lists (`portal_readers`, `portal_approvers`, `portal_requesters`) count as well.
-- **A card and its AD account.** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). By default the portal looks
-  for the AD account whose `userPrincipalName` is exactly `1234567890@mil` (`{edipi}@mil`). A site whose accounts carry
-  a suffix sets it exactly, e.g. `portal_ad_card_match: "{edipi}.ctr@mil"`. Never put `*` after `{edipi}`: it would also
-  match the same person's other accounts (a privileged `1234567890.adm@mil`) or a longer number (1.130.1). Another attribute: `portal_ad_card_attribute` and
-  `portal_ad_card_match` (`{edipi}`, `{cn}`; `*` and `?` match anything). For example
-  `portal_ad_card_attribute: altSecurityIdentities` with `portal_ad_card_match: "*CN={cn}"`.
+  account never counts. The named lists (`portal_viewers`, `portal_approvers`, `portal_runners`) count as well.
+- **A card and its AD account (1.133.0).** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). The portal
+  finds the person's ONE AD account by `portal_ad_card_matches`, a closed list of five forms - a site keeps the ones it
+  uses:
+
+  | Attribute | Form | Example |
+  |---|---|---|
+  | `userPrincipalName` | `{edipi}@mil` | `1234567890@mil` |
+  | `userPrincipalName` | `{edipi}{digits6}@mil` | `1234567890123456@mil` (16 digits) |
+  | `sAMAccountName` | `{edipi}.ctr` | `1234567890.ctr` |
+  | `sAMAccountName` | `{edipi}.civ` | `1234567890.civ` |
+  | `sAMAccountName` | `{edipi}.mil` | `1234567890.mil` |
+
+  All five are on by default. Any other form, attribute (`altSecurityIdentities`, `employeeID` ...), `*` or `?` stops
+  the deploy. The old pair `portal_ad_card_attribute` / `portal_ad_card_match` still works when it is one of the five,
+  and cannot be set together with the list. Values are compared in ASCII lower case only.
+- **One card, one account.** The account is looked up over the whole domain (its root, not `portal_ldap_base`), with
+  both `userPrincipalName` and `sAMAccountName` read for every candidate whatever forms the site kept. No group counts
+  for the card when: no enabled account matches; more than one does (a separate `.adm` account with a matching value,
+  two 16-digit UPNs); a returned account cannot be fully read (it may be the card's); or the account's values name
+  another EDIPI under any of the five forms. A group membership counts only for that account's DN and objectGUID.
+  Lookups are kept per person for 5 minutes and dropped at every group read.
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
   failed read it tries again in a minute.
 - **AD down: the named lists only.** When AD cannot be read, or before the first read, nobody counts as a group member. Only
-  `portal_readers`, `portal_approvers` and `portal_requesters` count for restricted roles. The Approvals page says so, and so does the portal's log
-  (`ad-groups` events). It never falls open: with `portal_requester_groups` set, an empty `portal_requesters` means nobody,
+  `portal_viewers`, `portal_approvers` and `portal_runners` count for restricted roles. The Approvals page says so, and so does the portal's log
+  (`ad-groups` events). It never falls open: with `portal_run_groups` set, an empty `portal_runners` means nobody,
   not everyone.
 - **`portal_allow_self_approval`** is unchanged. A new card of the same person (the same EDIPI under a new name) is the same
   person: they never approve their own run.
 - **A group's name in two places.** When two groups have the name, neither counts and the page says so: give its DN.
 - **Not counted:** members only through their primary group (`primaryGroupID`, e.g. *Domain Users*) - use a group they are
   members of. A member whose `userAccountControl` cannot be read is not counted either.
-- **The match must name the person.** `portal_ad_card_match` needs `{edipi}` or `{cn}`; the card's own number and CN are
-  matched as they are (a `*` in a CN is a `*`). A read older than the interval and two retries counts for nobody.
-- **A wrong password** is tried on one DC only, once per read (the shared account would lock out).
+- **A read older than the interval and two retries** counts for nobody.
+- **A wrong password** is tried on one DC only, once per read (the shared account would lock out). After a refused
+  login, by a group read or a card lookup, the portal binds no more until it is deployed again (1.133.0: also when a
+  group read was already under way).
 
 **The login: the "LDAP Bind Account" credential.** Attach it to the portal deploy's job template. Any domain user will do,
 with nothing granted.
@@ -753,7 +774,7 @@ A launch line holds the person (`user`), the action, the values, the job's id (`
 
 **Who may see a job.** A job's page at `/portal/jobs/<id>` shows its values, its output and its results. Only three
 kinds of people see it: the person who started it, the approvers (`portal_approvers`), and the people its action
-allows (its `who`, else `portal_requesters`). The same rule holds for each step of a workflow and for the approvals
+allows (its `who`, else `portal_runners`). The same rule holds for each step of a workflow and for the approvals
 list. Anyone else gets *Not here*, the same answer as for a job that does not exist, so the page never says that a
 job number is in use.
 
@@ -1257,7 +1278,7 @@ on the wall: `Wall: VMware on|off (why), Storage on|off (why), Map places from n
   by area, **Download CSV**. Its readers see a **Feedback list** link in the wall's header.
 - Who: `portal_wall_feedback` (true) turns it on or off. `portal_wall_feedback_groups` - AD groups that see and may use
   the button; empty = everyone who may open the wall. `portal_wall_feedback_readers` - AD groups that may open the list;
-  default `portal_approver_groups` (empty: the approvers, `portal_approvers`). Both are checked on the server with the
+  default `portal_approve_groups` (empty: the approvers, `portal_approvers`). Both are checked on the server with the
   same LDAP read as the approvers' groups: the button is hidden and the send refused for others, the list answers 403.
   Groups set but AD not read: nobody (closed). A list given with blank names only is refused by the deploy and, in the
   service, means nobody (never "everyone" or "the approvers").
@@ -1788,9 +1809,9 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it (an air-gapped host loads it: [ENCLAVES.md](ENCLAVES.md), section 5) |
 | `portal_reports_dir` | `/srv/reports` | the folder the report jobs write to, on this server |
 | `portal_inventory` | | the AAP inventory an action's host must be in |
-| `portal_readers`, `portal_reader_groups` | `[]` | reader card CNs and AD group names or DNs. Both empty allows any verified card. |
+| `portal_viewers`, `portal_view_groups` | `[]` | (were `portal_readers`, `portal_reader_groups`) viewer card CNs and AD group names or DNs. Both empty allows any verified card. |
 | `portal_access_contact` | `""` | contact to ask for reader access |
-| `portal_requesters` | `[]` | card CNs allowed to run actions. Both requester lists empty allows any reader, subject to the action's own `who`. |
+| `portal_runners`, `portal_run_groups` | `[]` | (were `portal_requesters`, `portal_requester_groups`) card CNs and AD groups allowed to run actions. Both empty allows any viewer, subject to the action's own `who`. |
 | `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |

@@ -24,6 +24,13 @@ portal_reports_dir: /srv/reports
 ## The AAP inventory an action's host must be in, and who may decide approvals here (the CN of each card)
 portal_inventory: Site hosts
 portal_approvers: [DOE.JANE.Q.1234567890]
+## Optional access lists. The old names still work. If you set both names, their lists must match.
+## For groups, attach LDAP Bind Account and use a group name or DN. Only listed cards count during an AD outage.
+# portal_run_groups: ["<run group>"]
+# portal_runners: ["<card CN>"]
+# portal_approve_groups: ["<approve group>"]
+# portal_view_groups: ["<view group>"]
+# portal_viewers: ["<card CN>"]
 ## The address people open
 portal_public_url: https://stigman.example.mil/portal/
 
@@ -89,21 +96,8 @@ portal_public_url: https://stigman.example.mil/portal/
 ## start - see docs/SITE_PORTAL.md, SELinux)
 # portal_reports_mount: ro,z
 
-## ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890)
-## ------------------------------- card CNs allowed to view. With both reader lists empty, any
-## verified card may view.
-# portal_readers: []
-
-## AD groups allowed to view (names or DNs). Named and AD requesters and approvers always have
-## reader access.
-# portal_reader_groups: []
-
-## contact shown on reader refusal. Empty uses "your portal administrator".
+## contact shown when view access is refused. Empty uses "your portal administrator".
 # portal_access_contact: ""
-
-## card CNs allowed to run actions. Both requester lists empty = any reader. An action's own who
-## overrides.
-# portal_requesters: []
 
 ## one person's launches in an hour, at most
 # portal_launches_per_hour: 20
@@ -114,27 +108,18 @@ portal_public_url: https://stigman.example.mil/portal/
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 
-## Readers, approvers and requesters from AD groups (each person still needs a verified card). A
-## group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled
-## account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template
-## (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only explicitly named card
-## CNs count for those roles (with groups set, an empty portal_requesters is nobody - never
-## everyone). 1.129.1: DOMAIN\Group works too (the DOMAIN\ part is dropped) - in YAML write it in
-## SINGLE quotes ('CORP\Group'): in double quotes a backslash starts an escape (\U, \x ...) and
-## all.yml no longer loads. e.g. [AAP-Approvers] or ["CN=AAP-
-## Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
-# portal_approver_groups: []
-
-## the same for who may run the actions (with portal_requesters); [] = none
-# portal_requester_groups: []
-
-## the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine)
+## legacy attribute. Changing either legacy setting selects just that rule.
 # portal_ad_card_attribute: userPrincipalName
 
-## its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match
-## anything. 1.130.1: exact again - a contractor site sets "{edipi}.ctr@mil"; never a * after
-## {edipi}: it would also match the same person's other accounts (1234567890.adm@mil)
+## legacy pattern. A non-default legacy setting conflicts with an explicit list.
 # portal_ad_card_match: "{edipi}@mil"
+
+## 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName
+## {edipi}@mil or {edipi}{digits6}@mil (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ
+## or {edipi}.mil ({edipi} = the last ten digits of the card CN). Nothing else; never a * or ?. A
+## card must be exactly one enabled account in the domain whose values name no other EDIPI.
+# portal_ad_card_matches: >-
+#   {{ undef() if _portal_legacy_card_rule else _portal_default_card_matches }}
 
 ## how often the members are read (60 to 3600); 60 s after a failed read
 # portal_ad_groups_seconds: 300
@@ -523,7 +508,7 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_wall_feedback_groups: []
 
 ## AD groups that may open the list (the approvers' groups by default)
-# portal_wall_feedback_readers: "{{ portal_approver_groups | default([], true) }}"
+# portal_wall_feedback_readers: "{{ portal_approve_groups | default([], true) }}"
 
 ## The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when
 ## this deploy's job template has a "Report database" credential - attach it with the read-only

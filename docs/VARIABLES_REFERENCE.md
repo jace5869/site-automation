@@ -2181,18 +2181,19 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_logo_src` | (empty) | the image on the controller, copied to portal_logo by the deploy ("" = nothing copied) |
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
 | `portal_reports_mount` | `ro,z` | how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a folder another container mounts with :Z, a private label, is relabeled by that container's next start - see docs/SITE_PORTAL.md, SELinux) |
-| `portal_readers` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- card CNs allowed to view. With both reader lists empty, any verified card may view. |
-| `portal_reader_groups` | `[]` | AD groups allowed to view (names or DNs). Named and AD requesters and approvers always have reader access. |
-| `portal_access_contact` | (empty) | contact shown on reader refusal. Empty uses "your portal administrator". |
-| `portal_requesters` | `[]` | card CNs allowed to run actions. Both requester lists empty = any reader. An action's own who overrides. |
+| `portal_viewers` | `"{{ portal_readers \| default([]) }}"` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- was portal_readers. Card CNs allowed to view. With both view lists empty, any verified card may view. |
+| `portal_view_groups` | `"{{ portal_reader_groups \| default([]) }}"` | was portal_reader_groups. AD groups allowed to view. Run and approve access also grant view access. |
+| `portal_access_contact` | (empty) | contact shown when view access is refused. Empty uses "your portal administrator". |
+| `portal_runners` | `"{{ portal_requesters \| default([]) }}"` | was portal_requesters. Card CNs allowed to run actions. Both run lists empty = anyone who can view. An action's own who overrides. |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
 | `portal_vm_deploy_placement_template` | `"VM - deploy placement change"` | AAP job that checks and records a placement before approval |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
-| `portal_approver_groups` | `[]` | Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_gr… (all of it: the role file) |
-| `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
-| `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
-| `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything. 1.130.1: exact again - a contractor site sets "{edipi}.ctr@mil"; never a * after {edipi}: it would also match the same person's other accounts (1234567890.adm@mil) |
+| `portal_approve_groups` | `"{{ portal_approver_groups \| default([]) }}"` | View, approve and run access from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_… (all of it: the role file) |
+| `portal_run_groups` | `"{{ portal_requester_groups \| default([]) }}"` | was portal_requester_groups. AD groups allowed to run actions (with portal_runners); [] = none. |
+| `portal_ad_card_attribute` | `userPrincipalName` | legacy attribute. Changing either legacy setting selects just that rule. |
+| `portal_ad_card_match` | `"{edipi}@mil"` | legacy pattern. A non-default legacy setting conflicts with an explicit list. |
+| `portal_ad_card_matches` | (worked out by the role; see its file) | 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName {edipi}@mil or {edipi}{digits6}@mil (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ or {edipi}.mil ({edipi} = the last ten digits of the card CN). Nothing else; never a * or ?. A card must be exactly one enabled acco… (all of it: the role file) |
 | `portal_ad_groups_seconds` | `300` | how often the members are read (60 to 3600); 60 s after a failed read |
 | `portal_ldap_server` | (empty) | a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS |
 | `portal_ldap_domain` | `"{{ ad_reader_domain \| default('') }}"` | the domain's DNS name (its DCs from DNS; the base DN from it) |
@@ -2287,7 +2288,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
-| `portal_wall_feedback_readers` | `"{{ portal_approver_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
+| `portal_wall_feedback_readers` | `"{{ portal_approve_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
 | `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
 | `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
 | `portal_report_db_port` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') \| default('3309', true) \| int }}"` | its port (the credential's) |
@@ -2305,6 +2306,18 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_vcenter_password` | `"{{ lookup('ansible.builtin.env', 'VMWARE_PASSWORD') }}"` | its password (secret) |
 | `portal_wall_ontap_username` | `"{{ lookup('ansible.builtin.env', 'ONTAP_USERNAME') \| trim }}"` | the "NetApp ONTAP" credential's account |
 | `portal_wall_ontap_password` | `"{{ lookup('ansible.builtin.env', 'ONTAP_PASSWORD') }}"` | its password (secret) |
+
+### Renamed in 1.133.0
+
+| New setting | Old setting |
+|---|---|
+| `portal_viewers` | `portal_readers` |
+| `portal_view_groups` | `portal_reader_groups` |
+| `portal_runners` | `portal_requesters` |
+| `portal_approve_groups` | `portal_approver_groups` |
+| `portal_run_groups` | `portal_requester_groups` |
+
+Use either name. Setting both to different lists stops the deploy.
 
 ## solarwinds_report
 

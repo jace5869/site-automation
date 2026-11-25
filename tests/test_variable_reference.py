@@ -76,6 +76,8 @@ def undocumented():
     sets. Neither tests/ nor inventories/ count: a test or an example setting it does not document it."""
     files = sorted(glob.glob(os.path.join(ROOT, "playbooks", "*.yml")) + glob.glob(os.path.join(ROOT, "roles", "*", "*", "*")))
     known = {s["name"] for p in glob.glob(os.path.join(ROOT, "roles", "*", "defaults", "main.yml")) for s in gen.parse_defaults(p)[1]}
+    portal = gen.parse_defaults(os.path.join(ROOT, "roles/site_portal_stack/defaults/main.yml"))[1]
+    known.update(old for _, old in gen.portal_access_renames(portal))
     known |= {name for _, name, _, _ in gen.HOST_SETTINGS} | set(INTERNAL)
     found, given = {}, set()
     for path in files:
