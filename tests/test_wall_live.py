@@ -916,7 +916,7 @@ class BackoffContract(unittest.TestCase):
         c.cycle()
         st = c.view()["sources"][src.key]
         self.assertEqual((st["state"], st["next_try"]), ("auth", 1900))
-        self.assertEqual(list(self.journal(path).values()), [{"until": 1900}])
+        self.assertEqual([e["until"] for e in self.journal(path).values()], [1900])
         n = len(o.paths)
         for t in (1060, 1500, 1899):
             clock.t = t
@@ -938,7 +938,7 @@ class BackoffContract(unittest.TestCase):
         clock.t = 1060
         c.cycle()                                                         # the new login: written ahead, refused, held
         self.assertEqual(vim.methods.count("Login"), 2)
-        self.assertEqual(list(self.journal(path).values()), [{"until": 1960}])
+        self.assertEqual([e["until"] for e in self.journal(path).values()], [1960])
         clock.t = 1900
         c.cycle()
         self.assertEqual(vim.methods.count("Login"), 2)                   # no login inside the window
