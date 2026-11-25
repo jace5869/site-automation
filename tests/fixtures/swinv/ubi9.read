@@ -1,0 +1,60 @@
+@@sw-read 1
+@@read_at 2026-11-25T12:33:05Z
+@@os_id rhel
+@@version_id 9.8
+@@pretty Red Hat Enterprise Linux 9.8 (Plow)
+@@kernel 5.14.0-611.5.1.el9_7.x86_64
+@@rpm
+redhat-release(none)09.81.0.el9x86_64Red Hat, Inc.1791765514redhat-release-9.8-1.0.el9.src.rpm
+gpg-pubkey(none)0fd431d514ae0493b(none)(none)1791765514(none)
+gpg-pubkey(none)05a6340b36229229e(none)(none)1791765514(none)
+setup(none)02.13.710.el9noarchRed Hat, Inc.1791765518setup-2.13.7-10.el9.src.rpm
+filesystem(none)03.165.el9x86_64Red Hat, Inc.1791765518filesystem-3.16-5.el9.src.rpm
+tzdata(none)02026e1.el9_8noarchRed Hat, Inc.1791765518tzdata-2026e-1.el9_8.src.rpm
+basesystem(none)01113.el9noarchRed Hat, Inc.1791765518basesystem-11-13.el9.src.rpm
+python3-setuptools-wheel(none)053.0.015.el9noarchRed Hat, Inc.1791765518python-setuptools-53.0.0-15.el9.src.rpm
+pcre2-syntax(none)010.406.el9noarchRed Hat, Inc.1791765518pcre2-10.40-6.el9.src.rpm
+ncurses-base(none)06.212.20210508.el9noarchRed Hat, Inc.1791765518ncurses-6.2-12.20210508.el9.src.rpm
+ncurses-libs(none)06.212.20210508.el9x86_64Red Hat, Inc.1791765518ncurses-6.2-12.20210508.el9.src.rpm
+bash(none)05.1.89.el9x86_64Red Hat, Inc.1791765518bash-5.1.8-9.el9.src.rpm
+libgcc(none)011.5.014.el9x86_64Red Hat, Inc.1791765518gcc-11.5.0-14.el9.src.rpm
+glibc-minimal-langpack(none)02.34283.el9_8x86_64Red Hat, Inc.1791765518glibc-2.34-283.el9_8.src.rpm
+glibc-common(none)02.34283.el9_8x86_64Red Hat, Inc.1791765518glibc-2.34-283.el9_8.src.rpm
+glibc(none)02.34283.el9_8x86_64Red Hat, Inc.1791765518glibc-2.34-283.el9_8.src.rpm
+zlib(none)01.2.1140.el9x86_64Red Hat, Inc.1791765519zlib-1.2.11-40.el9.src.rpm
+bzip2-libs(none)01.0.811.el9x86_64Red Hat, Inc.1791765519bzip2-1.0.8-11.el9.src.rpm
+libacl(none)02.4.01.el9_8x86_64Red Hat, Inc.1791765519acl-2.4.0-1.el9_8.src.rpm
+xz-libs(none)05.2.58.el9_0x86_64Red Hat, Inc.1791765519xz-5.2.5-8.el9_0.src.rpm
+libzstd(none)01.5.51.el9x86_64Red Hat, Inc.1791765519zstd-1.5.5-1.el9.src.rpm
+sqlite-libs(none)03.34.111.el9_8x86_64Red Hat, Inc.1791765519sqlite-3.34.1-11.el9_8.src.rpm
+libgpg-error(none)01.425.el9x86_64Red Hat, Inc.1791765519libgpg-error-1.42-5.el9.src.rpm
+libxml2(none)02.9.1314.el9_8.5x86_64Red Hat, Inc.1791765519libxml2-2.9.13-14.el9_8.5.src.rpm
+libcap(none)02.4810.el9_8.1x86_64Red Hat, Inc.1791765519libcap-2.48-10.el9_8.1.src.rpm
+@@repo
+aclx86_6402.4.01.el9_8rhel-9-for-x86_64-baseos-rpms
+
+alternativesx86_6401.242.el9rhel-9-for-x86_64-baseos-rpms
+
+attrx86_6402.6.01.el9_8rhel-9-for-x86_64-baseos-rpms
+
+audit-libsx86_6403.1.58.el9rhel-9-for-x86_64-baseos-rpms
+
+basesystemnoarch01113.el9rhel-9-for-x86_64-baseos-rpms
+
+bashx86_6405.1.89.el9rhel-9-for-x86_64-baseos-rpms
+
+bzip2-libsx86_6401.0.811.el9rhel-9-for-x86_64-baseos-rpms
+
+ca-certificatesnoarch02025.2.80_v9.0.30591.el9rhel-9-for-x86_64-baseos-rpms
+
+coreutils-singlex86_6408.3241.el9_8.1rhel-9-for-x86_64-baseos-rpms
+
+cracklibx86_6402.9.628.el9rhel-9-for-x86_64-baseos-rpms
+
+cracklib-dictsx86_6402.9.628.el9rhel-9-for-x86_64-baseos-rpms
+
+crypto-policiesnoarch0202602241.gitea0f072.el9_8rhel-9-for-x86_64-baseos-rpms
+
+crypto-policies-scriptsnoarch0202602241.gitea0f072.el9_8rhel-9-for-x86_64-baseos-rpms
+@@repo_rc 0 dnf
+@@end

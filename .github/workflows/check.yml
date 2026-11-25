@@ -165,6 +165,7 @@ jobs:
           python tests/test_ontap_capacity.py
           python tests/test_ontap_expand.py
           python tests/test_ucs_inventory.py
+          python tests/test_sw_inventory.py
           python tests/test_netmap.py
           python tests/test_java4shell.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_java4shell.py

@@ -222,6 +222,27 @@ job_templates:
         42's approval
       supports: Run constraint=Read-only on target hosts (adds its disk-history sample and syslog lines); writes the report
         email and website when set
+  - name: Linux - software inventory
+    playbook: playbooks/linux_sw_inventory.yml
+    credentials: [machine]
+    optional_credentials: [sqlserver, windows_share, report_db]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/linux_sw_inventory.yml
+    area: Linux
+    skip_areas: [Reports, Linux]
+    allow_simultaneous: false
+    description:
+      does: Lists every installed RPM package of the Linux hosts nightly (02:00) and what changed since the last run, for
+        software audits.
+      targets: 'Linux hosts of the Limit, over SSH with sudo (Machine credential): rpm -qa and dnf repoquery from the local
+        cache only'
+      produces: Shield text files per host, CSV/JSON, report database rows, SQL Server rows when set; a report email with
+        the files and a workbook
+      supports: Run constraint=Read-only on target hosts; writes the report database, SQL Server, a file share, report email/website
+        when set
   - name: Linux - tmp cleanup
     playbook: playbooks/tmp_cleanup.yml
     credentials: [machine]

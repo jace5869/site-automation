@@ -1,0 +1,141 @@
+---
+# LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md). On each host one read-only
+# script (files/sw_read.sh: rpm -qa, dnf repoquery from the local cache only); its output goes to a folder on the
+# controller (never into a task result: AAP keeps those) and one step there (library/site_sw_inventory.py) parses every
+# host, compares it with its last list and writes each output of sw_inventory_outputs. Then the report (email, website,
+# workbook) and, with sw_inventory_fail_on_output_error, a failed job when an output could not be written.
+- name: Software inventory | a folder for the hosts' reads (on the controller)
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: sw-inventory-
+  register: _sw_work
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false
+
+- name: Software inventory | the run's start
+  ansible.builtin.set_fact:
+    _sw_read_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+  run_once: true
+
+- name: Software inventory | read the installed packages (rpm -qa; dnf from the local cache only - read-only)
+  ansible.builtin.script:
+    cmd: sw_read.sh
+    executable: /bin/sh
+  environment:
+    SW_READ_TIMEOUT: "{{ sw_inventory_read_timeout | int }}"
+  register: _sw_read
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true              # lost during the read: listed with why, like a host not reached
+  check_mode: false                     # it only reads: a Check run lists the hosts' packages too
+  no_log: true                          # the package list is not kept in AAP's job events (the next step keeps it)
+
+- name: Software inventory | the read, to the controller's folder
+  ansible.builtin.copy:
+    content: "{{ _sw_read.stdout | default('') }}"
+    dest: "{{ _sw_work.path }}/{{ inventory_hostname | regex_replace('[^A-Za-z0-9._-]', '_') }}.read"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  check_mode: false                     # a temporary folder, deleted at the end
+  no_log: true
+  when: _sw_read.rc | default(1) == 0 and _sw_read.stdout | default('') | length > 0
+
+- name: Software inventory | why a host was not read
+  ansible.builtin.set_fact:
+    _sw_fail: >-
+      {{ '' if (_sw_read.rc | default(1) == 0 and _sw_read.stdout | default('') | length > 0) else
+         ('the read failed (exit ' ~ (_sw_read.rc | default('?')) ~ '): '
+          ~ ((_sw_read.stderr | default(_sw_read.msg | default(''), true) | string | trim | regex_replace('\s+', ' '))[-300:]
+             or 'no output')) }}
+
+- name: Software inventory | parse, compare with the last run, write the outputs ({{ sw_inventory_outputs | join(', ') }})
+  site_sw_inventory:
+    work_dir: "{{ _sw_work.path }}"
+    hosts: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set why = hv.site_host_unreached | default('', true) or hv._sw_fail | default('', true) -%}
+      {%-   set _ = out.append({'host': h, 'reason': ('NOT REACHED - ' ~ why) if hv.site_host_unreached | default('', true) else why,
+                                'skipped': hv._sw_fail is not defined and not hv.site_host_unreached | default('', true)}) -%}
+      {%- endfor -%}
+      {{ out }}
+    read_at: "{{ _sw_read_at }}"
+    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    template_id: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
+    outputs: "{{ (sw_inventory_outputs | replace(',', ' ')).split() if sw_inventory_outputs is string else sw_inventory_outputs }}"
+    dir: "{{ sw_inventory_dir | default('', true) }}"
+    shield_subdir: "{{ sw_inventory_shield_subdir }}"
+    share: "{{ sw_inventory_share | default('', true) }}"
+    share_subdir: "{{ sw_inventory_share_subdir | default('', true) }}"
+    share_auth: "{{ sw_inventory_share_auth }}"
+    share_encrypt: "{{ sw_inventory_share_encrypt | bool }}"
+    keep_days: "{{ sw_inventory_keep_days | int }}"
+    db_create: "{{ sw_inventory_db_create | bool }}"
+    db_timeout: "{{ sw_inventory_db_timeout | int }}"
+    mssql: "{{ sw_inventory_mssql }}"
+    xlsx_max_rows: "{{ sw_inventory_xlsx_max_rows | int }}"
+    email_max_mb: "{{ sw_inventory_email_max_mb | float }}"
+    top: "{{ sw_inventory_report_top | int }}"
+  register: _sw
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Software inventory | {{ _sw.report.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_sw.report | report_text).splitlines() + _sw.lines }}"
+  run_once: true
+
+- name: Software inventory | the counts as job artifacts (sw_inventory)
+  ansible.builtin.set_stats:
+    data:
+      sw_inventory:
+        read_at: "{{ _sw_read_at }}"
+        hosts_read: "{{ _sw.hosts_read }}"
+        hosts_not_read: "{{ _sw.not_read }}"
+        packages: "{{ _sw.packages }}"
+        hosts_changed: "{{ _sw.hosts_changed }}"
+        outputs: "{{ _sw.outputs | items2dict(key_name='name', value_name='state') }}"
+  run_once: true
+
+- name: Software inventory | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    _report: "{{ _sw.report }}"
+    _report_xlsx: "{{ lookup('ansible.builtin.file', _sw.sheets_file) | from_json }}"
+    _report_xlsx_desc: "Excel workbook - Packages (every host's) and Changed since last run"
+    _report_workbook_stem: "sw-inventory-{{ _sw_read_at[:10] }}"
+    _report_attachments: "{{ _sw.attachments if sw_inventory_email | bool else [] }}"
+    _report_email_skip: "{{ not sw_inventory_email | bool }}"     # false: the website only
+  when: >-
+    (sw_inventory_email | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0))
+    or report_web_dest | default('') | length > 0
+
+- name: Software inventory | the controller's folder
+  ansible.builtin.file:
+    path: "{{ _sw_work.path }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false
+
+- name: Software inventory | every output written (sw_inventory_fail_on_output_error)
+  ansible.builtin.assert:
+    that: _sw.failed_outputs | length == 0
+    fail_msg: >-
+      Not written: {{ _sw.outputs | selectattr('state', 'equalto', 'failed')
+                      | map(attribute='name') | join(', ') }} - the report and the lines above say why and the fix; the other
+      outputs were written. sw_inventory_fail_on_output_error: false keeps the job green.
+    quiet: true
+  run_once: true
+  when: sw_inventory_fail_on_output_error | bool

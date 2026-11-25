@@ -374,6 +374,11 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## Read-only; the job stays green. Its limits are disk_report_warn_pct / disk_report_crit_pct (85, 90; in the
 ## check_disk part below), not check_disk_warn_pct / check_disk_crit_pct (the health check's)
 """),
+    "linux_sw_inventory.yml": ("Linux - software inventory",
+                               "Machine (optional: Report database, SQL Server (certificate inventory), Windows file share)", "", """\
+## Read-only on the hosts; run it nightly (02:00) with a Limit. Where it goes: sw_inventory_outputs (shield text files per host,
+## report_db, csv, json, mssql); a share with sw_inventory_share and the Windows file share credential (docs/LINUX_SW_INVENTORY.md)
+"""),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
     "ontap_capacity_trends.yml": ("NetApp ONTAP - capacity trends",

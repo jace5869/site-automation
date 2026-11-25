@@ -32,6 +32,11 @@ templates:
     targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential)"
     produces: "The disk space report by email and on the report website when set; a tmp cleanup plan artifact for workflow 42's approval"
     supports: "Run constraint=Read-only on target hosts (adds its disk-history sample and syslog lines); writes the report email and website when set"
+  "Linux - software inventory":
+    does: "Lists every installed RPM package of the Linux hosts nightly (02:00) and what changed since the last run, for software audits."
+    targets: "Linux hosts of the Limit, over SSH with sudo (Machine credential): rpm -qa and dnf repoquery from the local cache only"
+    produces: "Shield text files per host, CSV/JSON, report database rows, SQL Server rows when set; a report email with the files and a workbook"
+    supports: "Run constraint=Read-only on target hosts; writes the report database, SQL Server, a file share, report email/website when set"
   "Security - Java4Shell check (Keycloak)":
     does: "Checks CPU and each Keycloak container's running Java for CVE-2026-114938; reports other Java (ServiceNow); can add the JVM flag"
     targets: "Linux hosts of the Limit (Machine credential, sudo): the compose file (/podman/stigman) and the containers of podman or docker"

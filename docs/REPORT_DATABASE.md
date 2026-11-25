@@ -457,7 +457,7 @@ INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES ('netm
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4; 1.111.0 `netmap`: 1; 1.118.8 `vm_watch_email`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4; 1.111.0 `netmap`: 1; 1.118.8 `vm_watch_email`: 1; 1.133.0 `sw_inventory`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
@@ -467,6 +467,7 @@ INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES ('netm
 | `ad_run`, `ad_dc`, `ad_link` | 1.101.2: each AD run, its DCs and its replication links, for the portal's live AD page (*The AD runs for the portal*) |
 | `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |
 | `vm_watch_email_state` | 1.118.8: one row per outage watch template - its last email (*The outage watch's last email*) |
+| `sw_inventory_run`, `sw_inventory_host`, `sw_inventory_pkg`, `sw_inventory_change` | 1.133.0: each software inventory run, its hosts, their packages and what changed (*The software inventory*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
 | `insights_v_month_run` | The newest run of each month, per instance and period |
@@ -1296,6 +1297,110 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4,
 | `ad_db` | `true` | Keep each run here when the template has the credential |
 | `ad_db_create` | `true` | Make the tables on the first run |
 | `ad_db_keep_days` | `400` | Delete this template's older runs. `0`: never |
+
+## The software inventory (1.133.0)
+
+*Linux - software inventory* ([LINUX_SW_INVENTORY.md](LINUX_SW_INVENTORY.md)) keeps each night's packages here when
+`report_db` is in `sw_inventory_outputs` (the default) and the template has the **Report database** credential.
+
+1. Add the **Report database** credential (the writer's) to *Linux - software inventory*. The template setup job
+   attaches it when `aap_templates_credentials` maps `report_db`.
+2. Launch the job: the first run makes the tables and writes its run. From the second run, `sw_inventory_change` has
+   what changed on each host.
+
+| | |
+|---|---|
+| What a run writes | one row in `sw_inventory_run` (`id`, when, the job, its template, hosts read and not read), a row per host in `sw_inventory_host` (`ok` with its OS, kernel, read time and package count, or `failed` with the reason), a row per installed package in `sw_inventory_pkg` (host, name, epoch, version, `release`, arch, vendor, installed_at, repo) and a row per change in `sw_inventory_change` (host, name, arch, `change`: added, removed or updated, old_evr, new_evr) |
+| What it compares with | each host's newest earlier run in `sw_inventory_host` with status `ok`. A host seen for the first time gets no change rows. A host not read gets none either (never "all removed") |
+| Reserved words | `release` and `change` are MySQL reserved words: write them in backticks (`` SELECT `release` FROM sw_inventory_pkg ``) |
+| Schema version | 1 (`schema_version` component `sw_inventory`) |
+| How much | a row per host and package each run: 300 hosts of 1,500 packages are 450,000 rows a night. Keep `sw_inventory_keep_days` short on a large site |
+| What a run deletes | its own template's runs older than `sw_inventory_keep_days` (90), with their rows |
+| When the database is down | the output `report_db` fails with its SA-SWI code and the fix; the other outputs are still written; the job fails at its end (`sw_inventory_fail_on_output_error`) |
+| A dry run (Check) | logs in and looks at the tables, writes nothing |
+| Turning it off | take `report_db` out of `sw_inventory_outputs`. Without the credential the job says it once and goes on |
+| Removing it | `DROP TABLE sw_inventory_change, sw_inventory_pkg, sw_inventory_host, sw_inventory_run;` and `DELETE FROM schema_version WHERE component = 'sw_inventory';` |
+
+**By hand.** If the writer may not create tables, set `sw_inventory_db_create: false` and make them once as root, in
+`site_reports`. The writer then needs SELECT, INSERT and DELETE.
+
+<!-- the statements: the software inventory, site_sw_inventory.db_ddl(), word for word (tests/test_sw_inventory.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_inventory_run (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  template_id BIGINT NOT NULL DEFAULT 0,
+  hosts_ok INT NOT NULL DEFAULT 0,
+  hosts_failed INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY sw_inventory_run_template (template_id, read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_inventory_host (
+  run_id BIGINT NOT NULL,
+  host VARCHAR(191) NOT NULL,
+  status VARCHAR(8) NOT NULL DEFAULT 'ok',
+  reason VARCHAR(500) NOT NULL DEFAULT '',
+  os VARCHAR(64) NOT NULL DEFAULT '',
+  kernel VARCHAR(128) NOT NULL DEFAULT '',
+  read_at DATETIME NULL,
+  packages INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, host),
+  KEY sw_inventory_host_host (host, status, run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_inventory_pkg (
+  run_id BIGINT NOT NULL,
+  host VARCHAR(191) NOT NULL,
+  name VARCHAR(191) NOT NULL,
+  epoch INT NULL,
+  version VARCHAR(128) NOT NULL DEFAULT '',
+  `release` VARCHAR(128) NOT NULL DEFAULT '',
+  arch VARCHAR(32) NOT NULL DEFAULT '',
+  vendor VARCHAR(255) NOT NULL DEFAULT '',
+  installed_at DATETIME NULL,
+  repo VARCHAR(191) NOT NULL DEFAULT '',
+  KEY sw_inventory_pkg_run (run_id, host),
+  KEY sw_inventory_pkg_name (name, run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_inventory_change (
+  run_id BIGINT NOT NULL,
+  host VARCHAR(191) NOT NULL,
+  name VARCHAR(191) NOT NULL,
+  arch VARCHAR(32) NOT NULL DEFAULT '',
+  `change` VARCHAR(8) NOT NULL,
+  old_evr VARCHAR(300) NOT NULL DEFAULT '',
+  new_evr VARCHAR(300) NOT NULL DEFAULT '',
+  KEY sw_inventory_change_run (run_id, host)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('sw_inventory', 1, UTC_TIMESTAMP());
+```
+<!-- end of the software inventory statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `sw_inventory_outputs` | `[shield, report_db, csv]` | `report_db` in it: keep each run here |
+| `sw_inventory_db_create` | `true` | Make the tables on the first run |
+| `sw_inventory_keep_days` | `90` | Delete this template's older runs. `0`: never |
 
 ## The NetApp page's runs (portal)
 

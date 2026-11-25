@@ -37,6 +37,7 @@
 #   - cert_report.yml
 #   - disk_report.yml
 #   - tmp_cleanup.yml
+#   - linux_sw_inventory.yml
 #   - database_health.yml
 #   - esxi_security.yml
 #   - fapolicyd.yml

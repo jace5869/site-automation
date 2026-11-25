@@ -29,6 +29,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Patch hosts | `playbooks/patch_hosts.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#patch-hosts), workflows 3 and 4: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#3-patch-with-checks) |
 | Patch hosts (dry run) | `playbooks/patch_hosts.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check (Job type on the template), the dry run before workflow 4's approval | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#4-patch-with-a-dry-run-first) |
 | Linux - disk space report | `playbooks/disk_report.yml` | Report | [DISK_SPACE.md](DISK_SPACE.md#set-it-up), workflow 42: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#42-disk-space-and-the-tmp-cleanup-with-an-approval) |
+| Linux - software inventory | `playbooks/linux_sw_inventory.yml` | Report (nightly, 02:00) | [LINUX_SW_INVENTORY.md](LINUX_SW_INVENTORY.md#set-it-up) |
 | Linux - tmp cleanup | `playbooks/tmp_cleanup.yml` | After an approval (on its own: Check, then `tmp_cleanup_confirm`) | [DISK_SPACE.md](DISK_SPACE.md#what-the-cleanup-deletes) |
 | ACT - find and replace old copies | `playbooks/act_old_copies.yml` | Change (Check first); every job that can run ACT on a host does it too | [ADDING_ACT.md](ADDING_ACT.md#old-copies-of-act) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | After an approval | [SETUP_AAP.md](SETUP_AAP.md#apply-approved-act-fix), workflow 5: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act) |

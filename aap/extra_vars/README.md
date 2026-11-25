@@ -68,6 +68,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | Linux - auditd tuning | `playbooks/auditd_tuning.yml` | [auditd_tuning.yml](auditd_tuning.yml) |
 | Linux - disk space report | `playbooks/disk_report.yml` | [disk_report.yml](disk_report.yml) |
+| Linux - software inventory | `playbooks/linux_sw_inventory.yml` | [linux_sw_inventory.yml](linux_sw_inventory.yml) |
 | Linux - tmp cleanup | `playbooks/tmp_cleanup.yml` | [tmp_cleanup.yml](tmp_cleanup.yml) |
 | Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | [mail_relay_approved.yml](mail_relay_approved.yml) |

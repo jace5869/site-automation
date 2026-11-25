@@ -1,0 +1,73 @@
+---
+# LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package
+# of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm and, from the
+# host's own dnf records (cache only, never a repository), the repository it came from. Read-only on the hosts. Run it
+# nightly (02:00). Each output below is written on its own: one that fails says which, why (an SA-SWI code) and the
+# fix, and the others are still written.
+
+# Where the inventory goes: any of shield (a text file per host), report_db (the report database), csv, json (one file
+# per run and a latest one), mssql (a SQL Server table, sw_inventory_mssql)
+sw_inventory_outputs: [shield, report_db, csv]
+
+# The folder the files are written in, on the execution node: a path AAP exposes to jobs, or '' = the job's own folder
+# (gone after the job - then set sw_inventory_share)
+sw_inventory_dir: ''
+
+# The shield files' folder, under sw_inventory_dir and under the share's folder: <short host name>.txt each
+sw_inventory_shield_subdir: shield
+
+# A Windows file share's folder the files are copied to (\\fileserver.yourdomain.mil\share\folder), or a folder mounted
+# on the execution nodes; '' = none. The login: the "Windows file share" credential (user@YOURDOMAIN.MIL, Modify on
+# the folder). The folder must be there; the job makes the folders inside it.
+sw_inventory_share: ''
+
+# A folder under the share's folder for them ('' = the share's folder itself)
+sw_inventory_share_subdir: ''
+
+# How the share is logged in to: negotiate (Kerberos first - FIPS), kerberos or ntlm; the report website's setting
+sw_inventory_share_auth: "{{ report_web_smb_auth | default('negotiate') }}"
+
+# Encrypt every byte (SMB 3), also on a share that does not require it
+sw_inventory_share_encrypt: "{{ report_web_smb_encrypt | default(false) }}"
+
+# Days of runs kept: the report database's runs of this template, and the dated files (sw-inventory-YYYYMMDD-HHMM.*)
+# here and on the share. 0 = all
+sw_inventory_keep_days: 90
+
+# Make the report database's four tables on the first run (false: made by hand, docs/REPORT_DATABASE.md)
+sw_inventory_db_create: true
+
+# Seconds to connect to the report database
+sw_inventory_db_timeout: 10
+
+# SQL Server (output mssql): one row per host and package each run, appended in one transaction. The login: the "SQL
+# Server (certificate inventory)" credential. column_map: {our column: your column}; '' leaves one out (never run_id,
+# host or name). create_table false: the table must be there, with the columns docs/LINUX_SW_INVENTORY.md lists
+sw_inventory_mssql:
+  server: ''
+  port: 1433
+  database: ''
+  schema: dbo
+  table: sw_inventory
+  create_table: true
+  column_map: {}
+
+# The email (report_email_to): the report with the CSV and a zip of the shield files attached. false = no email from
+# this job (the report website page stays)
+sw_inventory_email: true
+
+# The shield zip at most (MB): a bigger one is left off the email and the email says the files are on the share; the CSV
+# always goes
+sw_inventory_email_max_mb: 10
+
+# The workbook's Packages sheet at most this many rows (0 = all); the CSV and the databases have them all
+sw_inventory_xlsx_max_rows: 20000
+
+# The report's top changed packages
+sw_inventory_report_top: 15
+
+# Seconds rpm and dnf may take on a host
+sw_inventory_read_timeout: 120
+
+# true = the job fails at its end when an output could not be written (after the report and the other outputs)
+sw_inventory_fail_on_output_error: true

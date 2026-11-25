@@ -1,0 +1,34 @@
+---
+# LINUX - SOFTWARE INVENTORY. Every installed RPM package of the Linux hosts of the Limit (target, default all): name,
+# epoch, version, release, arch, vendor, install time, source rpm, and the repository it came from (dnf's own records,
+# the local cache only - never a repository contacted). Read-only on the hosts. Run it nightly (02:00). Its outputs
+# (sw_inventory_outputs: shield text files per host, the report database, CSV / JSON, SQL Server; a Windows file share
+# with sw_inventory_share) are each written on its own - one that fails says why and the fix, the others still go. A
+# host that cannot be reached is listed with the reason. An email (with the CSV and the shield files) and a web page
+# like the other reports: what changed since the last run. docs/LINUX_SW_INVENTORY.md
+#
+#   ansible-playbook playbooks/linux_sw_inventory.yml --limit rhel_servers
+#   ansible-playbook playbooks/linux_sw_inventory.yml -e '{"sw_inventory_outputs": ["shield", "csv", "json"]}'
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Linux - software inventory
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_report_title: Linux software inventory
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: The installed packages, and the outputs
+      ansible.builtin.include_role:
+        name: sw_inventory

@@ -98,6 +98,8 @@ LAUNCH_DOCS = {
     # docs/NETAPP.md, Expand a volume: Check = the plan only; one run at a time (Codex 1.128.0: two could both grow into one
     # aggregate's room - Concurrent jobs off, and the run asks AAP too)
     "NetApp - expand a volume": {"ask_job_type": True, "allow_simultaneous": False},
+    # 1.133.0: docs/LINUX_SW_INVENTORY.md - nightly with a Limit; one run at a time (two would write the same files and runs)
+    "Linux - software inventory": {"ask_limit": True, "allow_simultaneous": False},
     # docs/WINDOWS.md, Schedule a restart: Check = the plan; the site portal launches them (its Hosts box = the Limit)
     # one run at a time: two could both find a SolarWinds node without an unmanage window and both write (Concurrent jobs off)
     "Windows - schedule a restart": {"ask_job_type": True, "portal": True, "allow_simultaneous": False},
