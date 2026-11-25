@@ -254,7 +254,7 @@ def list_cluster(c, opts):
                              "uuid": v.get("uuid") or "", "root": bool(v.get("is_svm_root")) or v.get("name") == "vol0" or not svm})
             continue
         base = {"cluster": name, "address": c.address, "svm": svm, "volume": vi["name"], "size": vi["size"], "used": vi["used"],
-                "aggr": a["name"], "aggr_free": aggr_free(a), "available": vi["available"], "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
+                "aggr": a["name"], "aggr_free": aggr_free(a), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
                 "nfs_ips": addr.get(svm, []), "lun": "", "luns": 0, "naa": ""}
         mine = sorted(luns.get((svm, vi["name"]), []), key=lambda x: x.get("name") or "")
         for l_ in mine or [None]:
@@ -296,13 +296,12 @@ def read_one(c, key, opts, size_text):
         if lrec.get("uuid") != key.get("lun_uuid"):
             raise Failed("LUN %s is not the one the list showed (it was made again since): run NetApp - refresh volume list and pick it "
                          "again" % key["lun"])
-        lun = {"name": lrec["name"], "size": gb_of(lrec, "space", "size"), "used": opt_of(lrec, "space", "used"), "thick": lun_thick(lrec),
+        lun = {"name": lrec["name"], "size": gb_of(lrec, "space", "size"), "used": gb_of(lrec, "space", "used"), "thick": lun_thick(lrec),
                "total": sum(gb_of(x, "space", "size") for x in luns)}
     elif count and not X.excluded(v, opts["exclude"], opts.get("clusters") or ()):
         raise Failed("volume %s holds %d LUN(s): pick its LUN in the list (each LUN is its own choice), so the LUN grows with it"
                      % (key["volume"], count))
     p = X.plan(vi, aggr, key["listed"], opts, lun=lun, size_text=size_text, lun_listed=key.get("lun_listed") or 0)
-    p["used_known"] = vi.get("used") is not None and (lun is None or lun.get("used") is not None)   # Codex r6 #11: the report says "use unknown"
     nfs_path = (v.get("nas") or {}).get("path") or ""
     p.update(volume_uuid=v.get("uuid"), lun_uuid=(lrec or {}).get("uuid") or "", naa=X.naa((lrec or {}).get("serial_number")),
              nfs_path=nfs_path, nfs_ips=ips(c).get(key["svm"], []) if nfs_path and not lrec else [], luns=count,

@@ -19,8 +19,6 @@ AGGR = {"name": "aggr1", "size": 20 * TB, "used": int(14.24 * TB)}
 def vol(size=10 * GB, used=int(8.8 * GB), **kw):
     v = {"name": "vol_ds01", "svm": "svm_vmware", "size": size, "used": used, "state": "online", "type": "rw", "style": "flexvol"}
     v.update(kw)
-    if "available" not in kw and v.get("used") is not None and v.get("size"):
-        v["available"] = max(0, int(v["size"]) - int(v["used"]))      # 1.130.0: a LUN plan needs space.available (as ONTAP gives it)
     return v
 
 
@@ -1130,7 +1128,7 @@ class Choices(unittest.TestCase):
         got = XF.ontap_expand_choices([thick, nas, ds], [{}, {}, {"datastore": "DS9", "capacity": 89 * GB, "free": 4 * GB}])["choices"]
         self.assertEqual([X.parse_choice(t)["uuid"] for t in got], ["d", "n", "t"])        # the volume's own 99 % counts for nothing
         self.assertTrue(got[0].startswith("vol_ds (svm_vmware) - LUN 89.0 GB, 4% free [VMware datastore DS9, LUN]"), got[0])
-        self.assertTrue(got[2].startswith("vol_thick (svm_vmware) - LUN 90.0 GB, 66% free [LUN]"), got[2])
+        self.assertTrue(got[2].startswith("vol_thick (svm_vmware) - LUN 90.0 GB, 67% free [LUN]"), got[2])
         # display only: the key keeps the listed volume and LUN sizes the expand job plans with
         self.assertEqual((X.parse_choice(got[0])["listed"], X.parse_choice(got[0])["lun_listed"]), (100 * GB, 90 * GB))
 
@@ -1392,57 +1390,6 @@ class Vcenter(unittest.TestCase):
         self.assertTrue(steps[0]["ok"])
         self.assertTrue(self.nfs.refreshed)
         self.assertEqual(steps[0]["result"], "Done - NFS-DS02 shows 550.0 GB")
-
-
-
-class CodexR6Expand(unittest.TestCase):
-    """1.130.0 - Codex round 6 B3: refuse unmeasured or impossible values; never advertise more than was measured"""
-
-    def test_r6_8_a_lun_plan_needs_the_volumes_free_space(self):
-        v = vol(100 * GB, 99 * GB, available=None, guarantee="none")
-        l = {"name": "/vol/vol_ds01/l", "size": 40 * GB, "used": 30 * GB, "thick": True, "total": 40 * GB}
-        p = X.plan(v, AGGR, 100 * GB, {}, lun=l, size_text="20GB", lun_listed=40 * GB)
-        self.assertEqual(p["status"], "refused")
-        self.assertIn("space.available", p["why"])
-        ok = X.plan(vol(100 * GB, 50 * GB, guarantee="none"), AGGR, 100 * GB, {}, lun=dict(l, thick=False), size_text="2GB", lun_listed=40 * GB)
-        self.assertEqual(ok["status"], "grow", ok["why"])
-        self.assertIn("space.available", X.recheck(ok, dict(vol(100 * GB, 50 * GB, guarantee="none"), available=None, aggregates=[ok["aggr"]]), AGGR))
-
-    def test_r6_9_impossible_values_are_refused(self):
-        for v, a in ((vol(100 * GB, 50 * GB), dict(AGGR, used=-10 * GB)), (vol(100 * GB, 50 * GB), dict(AGGR, used=AGGR["size"] + 1)),
-                     (vol(100 * GB, 120 * GB, available=0), AGGR), (vol(100 * GB, 50 * GB, available=-1), AGGR), (vol(-5, 0, available=0), AGGR)):
-            with self.subTest(v=(v["size"], v.get("used"), v.get("available")), a=a.get("used")):
-                p = X.plan(v, a, max(1, v["size"]), {}, size_text="2GB")
-                self.assertEqual(p["status"], "refused")
-        good = X.plan(vol(100 * GB, 50 * GB), AGGR, 100 * GB, {}, size_text="2GB")
-        self.assertEqual(good["status"], "grow", good["why"])
-        self.assertIn("cannot be", X.recheck(good, dict(vol(100 * GB, 50 * GB), aggregates=[good["aggr"]]), dict(AGGR, used=-10 * GB)) + " cannot be")
-        self.assertTrue(X.recheck(good, dict(vol(100 * GB, 50 * GB), aggregates=[good["aggr"]]), dict(AGGR, used=-10 * GB)))
-
-    def test_r6_10_the_nfs_free_space_is_the_least_measured(self):
-        e = {"volume": "v", "svm": "s", "address": "c1.example.mil", "cluster": "c1", "size": 100 * GB, "used": 90 * GB, "available": 5 * GB, "lun": ""}
-        self.assertEqual(X.lun_fullness(e), (100 * GB, 95 * GB, "volume"))
-        self.assertIn("5% free", X.choice_shown(X.choice_text(e)))
-        e2 = dict(e, available=None, ds_capacity=100 * GB, ds_free=5 * GB)
-        self.assertIn("5% free", X.choice_shown(X.choice_text(e2)))
-
-    def test_r6_11_the_report_says_use_unknown(self):
-        p = dict(X.plan(vol(100 * GB, 0), AGGR, 100 * GB, {}, size_text="2GB"), used_known=False, cluster="c1")
-        doc = XF_doc({"plan": p, "ontap_steps": []})
-        now = [x for x in doc["summary"] if x["label"] in ("Volume now", "Volume before")][0]
-        self.assertEqual(now["note"], "use unknown")
-        self.assertNotEqual(now["status"], "ok")
-        src = open(os.path.join(REPO, "roles", "ontap_report", "library", "site_ontap_volume.py"), encoding="utf-8").read()
-        self.assertIn('p["used_known"] = vi.get("used") is not None', src)
-
-    def test_r6_12_advertised_figures_round_down(self):
-        p = X.plan(vol(100 * GB, 50 * GB), dict(AGGR, size=100 * GB, used=97 * GB - 2000 * MB), 100 * GB, {"max_pct": 97}, size_text="2GB")
-        doc = XF_doc({"plan": dict(p, cluster="c1"), "ontap_steps": []})
-        import json
-        text = json.dumps(doc)
-        self.assertNotIn("up to +2.0 GB", text)
-        e = {"volume": "v", "svm": "s", "address": "c1.example.mil", "cluster": "c1", "size": 1000 * GB, "used": int(994 * GB), "lun": ""}
-        self.assertIn("0% free", X.choice_shown(X.choice_text(e)))      # 0.6 % measured: never "1% free"
 
 
 if __name__ == "__main__":

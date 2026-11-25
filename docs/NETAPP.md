@@ -358,11 +358,7 @@ from the first day, whatever is written on it. So for a LUN the list, the job an
 - The list's choice shows the LUN's size and free space: *vol_ds01 (svm_vmware) - LUN 2.00 TB, 18% free [VMware
   datastore DS01, LUN]*. A LUN whose size or blocks written ONTAP did not give (and no datastore figure): *LUN 100.0 GB,
   use unknown* (or *LUN size unknown, use unknown*) - never the volume's numbers - and it sorts first, as the least free.
-  The same for a volume whose use was not read. A volume's free space shown is the least that was measured (size - used,
-  ONTAP's space.available, an NFS datastore's own free space), and every figure offered rounds down. The job refuses a
-  LUN growth when the volume's free space (space.available) was not read, and any plan or final check on an impossible
-  measurement (used below 0 or over the size, free below 0, a size of 0 or less); the report says "use unknown" when the
-  volume's use was not read. An aggregate whose use was not read shows its free space as "?" (never
+  The same for a volume whose use was not read. An aggregate whose use was not read shows its free space as "?" (never
   all of it), and the portal's NetApp page never puts an OK chip on a count that has unknown rows in it.
 - **The order** (the list and the portal's NetApp page): the volumes and LUNs on a VMware datastore first, then the rest;
   each least free first, by the fullness above; ties by name. When vCenter was not read, no row counts as a datastore:

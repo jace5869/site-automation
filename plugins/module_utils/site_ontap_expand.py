@@ -143,7 +143,7 @@ def choice_text(e, show_cluster=False):
     fsize, fused, _src = lun_fullness(e)
     return "%s (%s) - %s%s, %s%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
         name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), "LUN " if e.get("lun") else "", human(fsize) if fsize else "size unknown",
-        "use unknown" if fused is None else "%d%% free" % max(0, int(math.floor(100.0 * (fsize - fused) / fsize))),   # never up
+        "use unknown" if fused is None else "%d%% free" % max(0, 100 - int(round(pct(fused, fsize)))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
 
@@ -181,11 +181,6 @@ def plan(vol, aggr, listed, opts, lun=None, size_text="", lun_listed=0):
            "style": vol.get("style"), "is_svm_root": vol.get("is_svm_root"), "aggregates": vol.get("aggregates") or [aggr.get("name")]}
     if not vol.get("size") or not listed:
         return {"status": "refused", "why": "the size of volume %s could not be read - nothing is changed without it" % vol.get("name"),
-                "volume": vol.get("name"), "svm": vol.get("svm"), "size": 0, "used": 0, "growth": 0, "target": 0, "lun": None,
-                "aggr": aggr.get("name"), "max_pct": float(o["max_pct"]), "listed": int(listed or 0)}
-    bad = impossible(vol, aggr)
-    if bad:
-        return {"status": "refused", "why": "%s - nothing is changed on a measurement that cannot be" % bad,
                 "volume": vol.get("name"), "svm": vol.get("svm"), "size": 0, "used": 0, "growth": 0, "target": 0, "lun": None,
                 "aggr": aggr.get("name"), "max_pct": float(o["max_pct"]), "listed": int(listed or 0)}
     size, used = int(vol["size"]), int(vol.get("used") or 0)
@@ -266,8 +261,8 @@ def lun_fullness(e):
     A volume without a LUN (NFS): the volume's."""
     if e.get("lun"):
         cap, free = e.get("ds_capacity"), e.get("ds_free")
-        if cap and free is not None and int(cap) > 0 and 0 <= int(free) <= int(cap):
-            return int(cap), int(cap) - int(free), "datastore"
+        if cap and free is not None and int(cap) > 0:
+            return int(cap), max(0, int(cap) - int(free)), "datastore"
         # Codex verify 3/4: a LUN is judged by its LUN, never by its volume - its size or its blocks written not read: the use
         # is unknown (None), and so is the size when it was not read (None)
         size = int(e.get("lun_size") or 0) or None
@@ -275,19 +270,7 @@ def lun_fullness(e):
         return size, (None if used is None or size is None else int(used)), "LUN"
     # a volume whose use ONTAP did not give: unknown (None), never 0 % used; its size not given: both unknown (never "100 % free")
     size = int(e.get("size") or 0) or None
-    if size is None:
-        return None, None, "volume"
-    frees = []
-    if e.get("used") is not None and 0 <= int(e["used"]) <= size:
-        frees.append(size - int(e["used"]))
-    if e.get("available") is not None and 0 <= int(e["available"]) <= size:
-        frees.append(int(e["available"]))                       # 1.130.0 (Codex r6 #10): space.available when ONTAP gave it
-    cap, dfree = e.get("ds_capacity"), e.get("ds_free")
-    if cap and dfree is not None and 0 <= int(dfree) <= int(cap):
-        frees.append(int(dfree))                                # an NFS datastore's own free space
-    if not frees:
-        return size, None, "volume"
-    return size, size - min(frees), "volume"                    # never more free than any measurement says
+    return size, (None if e.get("used") is None or size is None else int(e["used"])), "volume"
 
 
 def fullness_text(e):
@@ -390,9 +373,6 @@ def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
     if not lun.get("size"):
         p["why"] = "the size of LUN %s could not be read - nothing is changed without it" % lun["name"]
         return p
-    if vol.get("available") is None:                   # 1.130.0 (Codex r6 #8): the room in the volume not measured
-        p["why"] = "the free space of volume %s (space.available) could not be read - nothing is changed without it" % vol["name"]
-        return p
     try:
         g = parse_size(size_text) if p["by"] == "size" else default_growth(lun_listed, o["pct"], o["min_gb"], o["max_gb"])
     except ValueError as e:
@@ -456,27 +436,6 @@ def _plan_lun(p, vol, lun, listed, lun_listed, o, size_text):
     return p
 
 
-def impossible(vol, aggr):
-    """1.130.0 (Codex r6 #9): a measurement that cannot be (used below 0 or over the size, free below 0, a size of 0 or less)
-    -> why, else ''. Such a value is never planned on."""
-    try:
-        vs = int(vol.get("size") or 0)
-        if vs <= 0:
-            return "volume %s reads a size of %s" % (vol.get("name"), vol.get("size"))
-        for k in ("used", "available"):
-            v = vol.get(k)
-            if v is not None and not 0 <= int(v) <= vs:
-                return "volume %s reads %s %s of %s" % (vol.get("name"), k, v, vs)
-        a_size, a_used = aggr.get("size"), aggr.get("used")
-        if a_size is not None and int(a_size) <= 0 and a_used is not None:
-            return "aggregate %s reads a size of %s" % (aggr.get("name"), a_size)
-        if a_used is not None and a_size and not 0 <= int(a_used) <= int(a_size):
-            return "aggregate %s reads used %s of %s" % (aggr.get("name"), a_used, a_size)
-    except (TypeError, ValueError):
-        return "a size or use of volume %s or aggregate %s is not a number" % (vol.get("name"), aggr.get("name"))
-    return ""
-
-
 def recheck(p, vol, aggr, exclude=(), clusters=()):
     """Right before the change: '' when the volume and its aggregate still are as planned, else why it stops. vol: the volume
     read again ({name, svm, size, state, type, style, is_svm_root, aggregates}), aggr: its aggregate now."""
@@ -489,11 +448,6 @@ def recheck(p, vol, aggr, exclude=(), clusters=()):
         return "the volume moved to aggregate %s since the plan - nothing was changed" % vol["aggregates"][0]
     if aggr.get("used") is None or not aggr.get("size"):
         return "the space of aggregate %s could not be read again - nothing was changed" % p["aggr"]
-    bad = impossible(vol, aggr)
-    if bad:
-        return "%s - nothing was changed" % bad
-    if p.get("lun") and vol.get("available") is None:
-        return "the free space of volume %s (space.available) could not be read again - nothing was changed" % p["volume"]
     if abs(int(vol["size"]) - int(p["size"])) > SLACK:
         return "the volume changed between the plan and the change (%s, now %s) - nothing was changed" % (human(p["size"]), human(vol["size"]))
     left = room(int(aggr.get("size") or 0), int(aggr.get("used") or 0), p["max_pct"])
