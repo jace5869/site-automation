@@ -113,6 +113,7 @@ portal_label_approval: portal-approval            # a template with this label t
 portal_label_alone: portal-alone                  # 1.92.0: a workflow step with this label too keeps its own card (a useful report alone)
 portal_area_rules: []                             # 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins)
 portal_label_area: "portal-area:"                 # a label that starts with this puts the card in an area (the rest of the label is its name)
+portal_label_icon: "portal-icon:"                 # prefix for an optional card icon label, e.g. portal-icon:users (see Card icons in docs/SITE_PORTAL.md)
 portal_approval_required: []                      # template names that are marked "approval" without the label
 portal_inventories_max: 10                        # 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason
 portal_limit_max: 50                              # a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500)

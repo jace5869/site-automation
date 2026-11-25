@@ -223,6 +223,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a label that starts with this puts the card in an area (the rest of the label is its name)
 # portal_label_area: "portal-area:"
 
+## prefix for an optional card icon label, e.g. portal-icon:users (see Card icons in
+## docs/SITE_PORTAL.md)
+# portal_label_icon: "portal-icon:"
+
 ## template names that are marked "approval" without the label
 # portal_approval_required: []
 

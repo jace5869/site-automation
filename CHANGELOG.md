@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.131.0 (part: card icons) — 2026-11-25
+
+To set up: run Site portal - deploy. Optionally add `portal-icon:<name>` to an AAP template to choose its card icon.
+
+Actions cards now show an icon based on the template name or group. A pen and **Changes servers** mark names that indicate a change.
+
 ## 1.129.1 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,

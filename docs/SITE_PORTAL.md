@@ -841,6 +841,26 @@ Without scripts, Run is a link to the confirm page. An action that asks for a ho
 **Details** is a panel (a page without scripts) with the description, the type, the labels, what it asks for, the survey's questions
 (names and types only - never a default), its last five runs and Run.
 
+## Card icons
+
+On the Actions page, the portal first checks the AAP template for a `portal-icon:<name>` label. For example,
+`portal-icon:users` selects the group-of-people icon. Set `portal_label_icon` to use a different prefix.
+The portal hides labels with this prefix and skips unknown icon names.
+
+Without a valid override, the first matching rule on the AAP template name chooses the icon, even when the card has a custom title.
+For example, *Cancel a scheduled restart* gets `cancel`, and *Certificate report* gets `cert`. If no rule matches,
+the card uses its group's icon. *Other* and custom groups use `job`. The group also sets the tile tint. Off cards use grey.
+
+| Selectable icons | Names |
+|---|---|
+| Name rules, in priority order | `cancel`, `restart`, `restore`, `cleanup`, `deploy`, `patch`, `expand`, `connect`, `health`, `troubleshoot`, `stig`, `cert`, `snapshot`, `backup`, `sync`, `setup`, `ticket`, `ask`, `report` |
+| Additional group and fallback icons | `linux`, `windows`, `users`, `server`, `desktop`, `storage`, `network`, `admin`, `job` |
+
+The pen beside **Changes servers** follows the template name independently of the icon. It appears for
+`restart`, `reboot`, `shut down`, `cancel`, `expand`, `space request`, `deploy`, `install`, `patch`, `apply`, `approved`,
+`allow`, `delete`, `clean up`, `cleanup`, `change`, `load`, `push` or `restore`. A name containing `(dry run)`,
+`- check`, or the word `plan`, `report` or `finder` suppresses the chip.
+
 ## Quick ways around
 
 These need scripts and are kept in this browser only; without scripts every page works as before.
@@ -1166,6 +1186,7 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label` | `portal` | the label that marks a template (`''` = no discovery) |
 | `portal_discover_seconds` | 60 | how long what was found is kept (10 to 3600) |
 | `portal_label_area` | `portal-area:` | the start of an area label |
+| `portal_label_icon` | `portal-icon:` | prefix for a template's optional card icon label |
 | `portal_area_rules` | `[]` | `[{match: "Linux - *", area: Linux}]`: the area of a found template with no area label and no area for its playbook (`*` and `?` only, any case, the first match wins) |
 | `portal_label_approval` | `portal-approval` | the approval label |
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |

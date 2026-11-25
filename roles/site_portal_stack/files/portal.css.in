@@ -298,8 +298,21 @@ details.hlp code{font-family:var(--mono);font-size:12.5px}
 .tcard .lab .tg{font:inherit;font-size:12px;border:1px solid var(--edge);border-radius:999px;padding:1px 9px;color:var(--muted);background:var(--card-strong)}
 .ty{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border:1px solid var(--edge);border-radius:6px;padding:1px 7px;color:var(--label)}
 .tcard .acts2{display:flex;gap:8px;margin-top:auto;padding-top:4px}
-.ico{display:inline-flex;width:34px;height:34px;border-radius:10px;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-ink);flex:none}
-.ico svg{width:18px;height:18px}
+.card-sprite{position:absolute;pointer-events:none}
+.card-glyph{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.tint-slate{--tile-tint:light-dark(#475569,#cbd5e1)}
+.tint-sky{--tile-tint:light-dark(#0369a1,#72d4ff)}
+.tint-indigo{--tile-tint:light-dark(#4338ca,#bac1ff)}
+.tint-violet{--tile-tint:light-dark(#7e3fbf,#deb6ff)}
+.tint-plum{--tile-tint:light-dark(#a3307f,#ffa4df)}
+.ico{display:inline-flex;width:40px;height:40px;border-radius:11px;align-items:center;justify-content:center;flex:none;
+  color:var(--tile-tint);background:color-mix(in srgb,currentColor 12%,var(--card));
+  border:1px solid light-dark(color-mix(in srgb,currentColor 26%,transparent),color-mix(in srgb,currentColor 48%,transparent))}
+.ico svg{width:22px;height:22px}
+.tcard:not(.off):is(:hover,:focus-within) .ico{background:color-mix(in srgb,currentColor 20%,var(--card))}
+.changes-servers{display:inline-flex;align-items:center;gap:4px;padding:0 7px 0 5px;border:1px solid var(--muted);border-radius:6px;
+  color:var(--ink);font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.changes-servers svg{width:13px;height:13px}
 .tcard[hidden],.acts.cols3>li[hidden]{display:none}
 /* 1.78.4: what can be started and what cannot look different in every look. Available: a solid accent border and top bar, a filled Run. Off: a neutral grey surface, a dashed
    border, muted ink, a lock chip and its reason on one line, no Run; the accent colour is never used for it. */
@@ -312,7 +325,8 @@ details.hlp code{font-family:var(--mono);font-size:12.5px}
 .tcard.off::before{content:"Off";position:absolute;top:0;right:0;padding:3px 12px 4px 14px;border-bottom-left-radius:10px;font-size:11px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;background:var(--muted);color:var(--card);pointer-events:none}          /* a corner tab: inside the card (a turned ribbon would overflow it) */
 .tcard:not(.off){border-top-width:4px}
 .tcard.off h3,.tcard.off p,.tcard.off .meta,.tcard.off .ty{color:var(--muted)}
-.tcard.off .ico{background:var(--line);color:var(--muted)}
+.tcard.off .ico{background:var(--line);color:var(--muted);border-color:transparent}
+.tcard.off .changes-servers{color:var(--muted);border-color:var(--edge)}
 .tcard.off .btn{background:transparent;color:var(--ink);border-color:var(--muted)}
 .tcard.off .badge.off{display:inline-flex;align-items:center;gap:4px;border-style:solid;border-color:var(--muted);background:transparent;color:var(--ink)}
 .tcard.off .badge.off svg{width:12px;height:12px}

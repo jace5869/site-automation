@@ -436,6 +436,7 @@ class Config(object):
         self.discover_seconds = max(10, min(3600, int(g("PORTAL_DISCOVER_SECONDS", "60"))))
         self.label_approval = g("PORTAL_LABEL_APPROVAL", "portal-approval").strip()
         self.label_alone = g("PORTAL_LABEL_ALONE", "portal-alone").strip()          # 1.92.0: a workflow step with it keeps its card
+        self.label_icon = g("PORTAL_LABEL_ICON", "portal-icon:").strip()
         self.label_area = g("PORTAL_LABEL_AREA", "portal-area:").strip()
         self.motion = str(g("PORTAL_MOTION", "auto")).strip().lower()                  # 1.78.3: auto (the system's reduced-motion request) | always | off
         if self.motion not in ("auto", "always", "off"):
@@ -1092,11 +1093,11 @@ class Aap(object):
         desc = lines.get("Does") or " ".join(str(r.get("description") or "").split())
         action = {
             "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area, "area_from": area_from,
-            "described": lines,
+            "described": lines, "icon_override": icon_label(labels, cfg.label_icon),
             "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
             "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "limit_inv_name": "", "who": None, "discovered": True, "tid": tid, "started_by": named,
             "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
-                             and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
+                             and not (cfg.label_title and l.startswith(cfg.label_title)) and not (cfg.label_icon and l.startswith(cfg.label_icon)))[:8],
             "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
             "approval": cfg.label_approval in labels or tname in cfg.approval_required,
             # a job template that asks its Job type at launch (Prompt on launch): the Run dialog offers Check and Run
@@ -1289,18 +1290,21 @@ class Aap(object):
             self.inv_id = int(rows[0]["id"])
         return self.inv_id
 
-    def last_info(self, tids):
-        """tids {"job_templates": [ids], "workflow_job_templates": [ids]} -> {(kind, id): {id, status, finished}} - the last run of each, one call per kind."""
+    def last_info(self, tids, builtins):
+        """Last run by (template kind, id). The same AAP rows supply icon labels for built-in actions."""
         out = {}
         for kind, ids in tids.items():
             if not ids:
                 continue
-            code, data = self.call("GET", "%s/?id__in=%s&page_size=200" % (kind, ",".join(str(int(i)) for i in sorted(ids))))
-            if code != 200:
+            rows, why = self._paged("%s/?id__in=%s&page_size=200" % (kind, ",".join(str(int(i)) for i in sorted(ids))))
+            if why:
                 continue
-            for r in data.get("results") or []:
+            for r in rows:
                 lj = (r.get("summary_fields") or {}).get("last_job") or {}
-                out[(kind, int(r["id"]))] = {"id": lj.get("id"), "status": lj.get("status", ""), "finished": lj.get("finished") or lj.get("created") or ""}
+                key = (kind, int(r["id"]))
+                out[key] = {"id": lj.get("id"), "status": lj.get("status", ""), "finished": lj.get("finished") or lj.get("created") or ""}
+                if key in builtins and self.cfg.label_icon:
+                    out[key]["icon_override"] = icon_label(self.labels_of(kind, r) or [], self.cfg.label_icon)
         return out
 
     def recent_runs(self, kind, tid, n=5):
@@ -2388,7 +2392,7 @@ class Portal(object):
             # 1.129.0: schema 4 - a playbook's own cap and the Windows rule are part of the saved forms (a tightened cap never
             # comes back from an older catalog)
             scope = [4, cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
-                     cfg.label, cfg.label_approval, cfg.label_area,
+                     cfg.label, cfg.label_approval, cfg.label_area, cfg.label_icon,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.workflow_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
             self.catalog_key = hmac.digest(self.key, json.dumps(scope, sort_keys=True).encode(), "sha256")
@@ -2839,24 +2843,32 @@ class Portal(object):
         restoring = getattr(self, "restored", False)
         if not restoring and t - getattr(self, "last_at", 0) > self.LAST_TTL:
             self.last_at = t
-            need = [a for a in acts if not a.get("discovered") and a["name"] not in self.aap.ids]
+            # This cache serves every requester, including those who see different built-in actions.
+            all_actions = list(self.actions.values())
+            need = [a for a in all_actions if not a.get("discovered") and a["name"] not in self.aap.ids]
             if need:
                 self.aap.resolve(dict((a["name"], a) for a in need))
             tids = {"job_templates": set(), "workflow_job_templates": set()}
             keyed = {}
-            for a in acts:
+            builtin_ids = set()
+            for a in all_actions:
                 tid = a["tid"] if a.get("discovered") else (self.aap.ids.get(a["name"]) or (None, ""))[0]
                 if tid:
                     kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
                     tids[kind].add(int(tid))
                     keyed[a["name"]] = (kind, int(tid))
-            info = self.aap.last_info(tids)
+                    if not a.get("discovered"):
+                        builtin_ids.add(keyed[a["name"]])
+            info = self.aap.last_info(tids, builtin_ids)
             self.last = dict((n, info.get(k, {})) for n, k in keyed.items())
         out = []
         for a in sorted(acts, key=lambda x: x["title"].lower()):
             _, off = self.aap.ids.get(a["name"], (None, self.cached_off.get(a["name"], "") if restoring else ""))
             last = (getattr(self, "last", {}) or {}).get(a["name"]) or a.get("last") or {}
-            out.append({"name": a["name"], "title": a["title"], "line": a.get("summary") or a.get("description") or "", "wf": a["aap"]["type"] == "workflow",
+            template = a["aap"]["name"]
+            override = a.get("icon_override") if a.get("discovered") else last.get("icon_override")
+            out.append({"icon": card_icon(template, a.get("area"), override), "changes_servers": changes_servers(template),
+                        "name": a["name"], "title": a["title"], "line": a.get("summary") or a.get("description") or "", "wf": a["aap"]["type"] == "workflow",
                         "approval": bool(a["approval"]) and a["aap"]["type"] == "workflow", "labels": a.get("labels") or [], "area": a.get("area") or AREA_OTHER,
                         "last": {"status": last.get("status", ""), "finished": last.get("finished", "")} if last.get("status") else {}, "off": off,
                         "dialog": not picker_vars(a)})
@@ -3601,6 +3613,107 @@ def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
 
+CARD_ICONS = {
+    "report": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 12.5h6M9 16.5h6"/>',
+    "health": '<path d="M3 12h4l2.5-6 5 12 2.5-6H21"/>',
+    "troubleshoot": '<path d="M14.5 4a5 5 0 0 0-4.6 6.9L4.3 16.5a2 2 0 0 0 2.9 2.9l5.6-5.6A5 5 0 0 0 19.8 9.3l-2.9 2.9-2.8-.4-.4-2.8 2.9-2.9A5 5 0 0 0 14.5 4z"/>',
+    "connect": '<path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
+    "restart": '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/><path d="M12 8v4"/>',
+    "cancel": '<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>',
+    "expand": '<path d="M4 14v6h6M20 10V4h-6M4 20l7-7M20 4l-7 7"/>',
+    "deploy": '<path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+    "patch": '<rect x="2.5" y="8" width="19" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M10.6 10.6h.01M13.4 13.4h.01M13.4 10.6h.01M10.6 13.4h.01"/>',
+    "cert": '<circle cx="12" cy="9" r="5.5"/><path d="M8.6 13.4L7.5 21l4.5-2.4 4.5 2.4-1.1-7.6"/>',
+    "stig": '<path d="M12 3l7.5 3v5.5c0 4.4-3.1 8.2-7.5 9.5-4.4-1.3-7.5-5.1-7.5-9.5V6z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/>',
+    "snapshot": '<path d="M4 7.5h3l1.8-2.5h6.4L17 7.5h3a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.6"/>',
+    "backup": '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>',
+    "restore": '<path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v5h5"/><path d="M12 8v4l3 2"/>',
+    "sync": '<path d="M4.5 10.5A8 8 0 0 1 18.4 7L20 8.5"/><path d="M20 4v4.5h-4.5"/><path d="M19.5 13.5A8 8 0 0 1 5.6 17L4 15.5"/><path d="M4 20v-4.5h4.5"/>',
+    "cleanup": '<path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13"/><path d="M10 11v5.5M14 11v5.5"/>',
+    "setup": '<path d="M18.6 10.2L20.9 10.6 20.9 13.4 18.6 13.8 17.9 15.4 19.2 17.3 17.3 19.2 15.4 17.9 13.8 18.6 13.4 20.9 10.6 20.9 10.2 18.6 8.6 17.9 6.7 19.2 4.8 17.3 6.1 15.4 5.4 13.8 3.1 13.4 3.1 10.6 5.4 10.2 6.1 8.6 4.8 6.7 6.7 4.8 8.6 6.1 10.2 5.4 10.6 3.1 13.4 3.1 13.8 5.4 15.4 6.1 17.3 4.8 19.2 6.7 17.9 8.6Z"/><circle cx="12" cy="12" r="3"/>',
+    "ticket": '<path d="M3.5 6.5h17v3.5a2 2 0 0 0 0 4v3.5h-17V14a2 2 0 0 0 0-4z"/><path d="M14.5 6.5v2M14.5 11v2M14.5 15.5v2"/>',
+    "ask": '<path d="M10.5 3.5l1.7 4.8 4.8 1.7-4.8 1.7-1.7 4.8-1.7-4.8L4 10l4.8-1.7z"/><path d="M17.5 14l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/>',
+    "linux": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15H17"/>',
+    "windows": '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M12 3.5v17M3.5 12h17"/>',
+    "users": '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M15.5 4.6a3.5 3.5 0 0 1 0 6.8M17.5 14a6.5 6.5 0 0 1 4 6"/>',
+    "server": '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/>',
+    "desktop": '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>',
+    "storage": '<ellipse cx="12" cy="6" rx="8" ry="2.8"/><path d="M4 6v12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8V6"/><path d="M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8"/>',
+    "network": '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/>',
+    "admin": '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+    "job": '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="M10 8.5v7l5.5-3.5z"/>',
+}
+
+# The pen is shared by the change chips and is outside the selectable card set.
+CARD_SPRITE = ('<svg class="card-sprite" width="0" height="0" aria-hidden="true"><defs>'
+               + ''.join('<symbol id="i-%s" viewBox="0 0 24 24">%s</symbol>' % item for item in CARD_ICONS.items())
+               + '<g id="i-changes"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></g></defs></svg>')
+
+CARD_VERBS = (
+    ("cancel", re.compile(r"\bcancel", re.I)),
+    ("restart", re.compile(r"\b(restart|reboot|shut down)", re.I)),
+    ("restore", re.compile(r"\brestore", re.I)),
+    ("cleanup", re.compile(r"\b(delete|clean ?up)", re.I)),
+    ("deploy", re.compile(r"\b(deploy|install|push)", re.I)),
+    ("patch", re.compile(r"\bpatch", re.I)),
+    ("expand", re.compile(r"\b(expand|grow|resize|space request)", re.I)),
+    ("connect", re.compile(r"\b(connection test|api test|availability)", re.I)),
+    ("health", re.compile(r"\bhealth", re.I)),
+    ("troubleshoot", re.compile(r"\b(troubleshoot|log analysis)", re.I)),
+    ("stig", re.compile(r"\b(stig|scan|recheck|drift|fapolicyd|security)", re.I)),
+    ("cert", re.compile(r"\b(certificate|trust store|pki|csr)", re.I)),
+    ("snapshot", re.compile(r"\bsnapshot", re.I)),
+    ("backup", re.compile(r"\bbackup", re.I)),
+    ("sync", re.compile(r"\b(refresh|sync|pick lists|update)", re.I)),
+    ("setup", re.compile(r"\b(set ?up|settings)", re.I)),
+    ("ticket", re.compile(r"\b(ticket|servicenow|incident)", re.I)),
+    ("ask", re.compile(r"\b(ask|ACT)\b")),
+    ("report", re.compile(r"\b(report|inventory|audit|document|insights)\b", re.I)),
+)
+CARD_GROUPS = {
+    "Linux": ("linux", "slate"),
+    "Windows": ("windows", "sky"),
+    "Active Directory": ("users", "sky"),
+    "VMware": ("server", "indigo"),
+    "Horizon": ("desktop", "sky"),
+    "NetApp": ("storage", "indigo"),
+    "Network": ("network", "indigo"),
+    "STIG": ("stig", "violet"),
+    "Certificates": ("cert", "violet"),
+    "Tickets & incidents": ("ticket", "plum"),
+    "ACT": ("ask", "plum"),
+    "Admin": ("admin", "slate"),
+    "Other": ("job", "slate"),
+}
+CHANGE_WORDS = re.compile(r"\b(restart|reboot|shut down|cancel|expand|space request|deploy|install|patch|apply|approved|allow|delete|clean ?up|change|load|push|restore)\b", re.I)
+READ_ONLY_WORDS = re.compile(r"\(dry run\)|- check\b|\bplan\b|\breport\b|\bfinder\b", re.I)
+
+
+def icon_label(labels, prefix):
+    if prefix:
+        for label in sorted(labels):
+            if label.startswith(prefix) and label[len(prefix):] in CARD_ICONS:
+                return label[len(prefix):]
+    return ""
+
+
+def card_icon(template, area, override=""):
+    if override in CARD_ICONS:
+        return override
+    for name, pattern in CARD_VERBS:
+        if pattern.search(template):
+            return name
+    return CARD_GROUPS.get(area, CARD_GROUPS["Other"])[0]
+
+
+def changes_servers(template):
+    return bool(CHANGE_WORDS.search(template) and not READ_ONLY_WORDS.search(template))
+
+
+def sprite_icon(name):
+    return '<svg class="card-glyph" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-%s"/></svg>' % name
+
+
 ICONS = {      # a status mark: drawn, never a colour alone (portal.js draws the same)
     "ok": '<path d="M3.2 8.4l3 3 6.6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
     "bad": '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -3656,10 +3769,10 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
             '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s%s</head>'
-            '<body data-page="%s">%s%s%s<main>%s</main>%s</body></html>'
+            '<body data-page="%s">%s%s%s%s<main>%s</main>%s</body></html>'
             % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
                site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
-               cfg.path, cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), fz(until and site_festive.snow(st)), banner, bar, body, banner))
+               cfg.path, cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -3829,8 +3942,9 @@ def home_page(cfg, portal, cn, query=None):
                 '<div class="meta"><span class="ty">%s</span>%s</div>%s%s%s<div class="acts2"><a class="btn" href="%sactions/%s/details" data-details>Details</a>%s</div></article></li>'
                 % (1 if c["wf"] else 0, 1 if c in bad else 0, esc(" ".join([c["title"], c["line"]] + c["labels"]).lower()), esc(c["name"]), esc(c["title"].lower()),
                    "" if c in vis else " hidden", " off" if off else "",
-                   icon("wf" if c["wf"] else "job"), esc(c["title"]), "Workflow" if c["wf"] else "Job template",
-                   ('<span class="badge">Approval</span>' if c["approval"] else "") + ('<span class="badge off">%s Off</span>' % icon("lock") if off else ""),
+                   sprite_icon(c["icon"]), esc(c["title"]), "Workflow" if c["wf"] else "Job template",
+                   ('<span class="changes-servers">%sChanges servers</span>' % sprite_icon("changes") if c["changes_servers"] else "")
+                   + ('<span class="badge">Approval</span>' if c["approval"] else "") + ('<span class="badge off">%s Off</span>' % icon("lock") if off else ""),
                    ('<p>%s</p>' % esc(c["line"])) if c["line"] else '<p class="none">No description</p>', last_run_html(cfg, c["last"]) if not off else
                    '<p class="offline" title="%s">%s<span>Off: %s</span></p>' % (esc(off), icon("lock"), esc(off)),
                    ('<div class="lab">%s</div>' % "".join('<span class="tg">%s</span>' % esc(l) for l in c["labels"])) if c["labels"] else "",
@@ -3841,8 +3955,9 @@ def home_page(cfg, portal, cn, query=None):
         groups.setdefault(c.get("area") or AREA_OTHER, []).append(c)
     order = sorted(groups, key=lambda g: (g == AREA_OTHER, AREA_FIRST.index(g) if g in AREA_FIRST else len(AREA_FIRST), g.lower()))
     grid = '<div id="agrid">%s</div>' % "".join(
-        '<section class="grp" data-area="%s"%s><h2>%s <span class="count">%d</span></h2><ul class="acts cols3">%s</ul></section>'
-        % (esc(g), "" if any(c in vis for c in groups[g]) else " hidden", esc(g), len([c for c in groups[g] if c in vis]), "".join(card(c) for c in groups[g])) for g in order)
+        '<section class="grp tint-%s" data-area="%s"%s><h2>%s <span class="count">%d</span></h2><ul class="acts cols3">%s</ul></section>'
+        % (CARD_GROUPS.get(g, CARD_GROUPS["Other"])[1], esc(g), "" if any(c in vis for c in groups[g]) else " hidden",
+           esc(g), len([c for c in groups[g] if c in vis]), "".join(card(c) for c in groups[g])) for g in order)
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
