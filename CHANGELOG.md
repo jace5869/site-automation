@@ -73,6 +73,11 @@ stopped: fix the cause, then run Site portal - deploy (every run lets the wall t
   checked on the server (the button hidden and the send refused for others; the list 403).
 - docs/SITE_PORTAL.md, "The ops-center wall": the sources, the collector, the set-up, "Thresholds to confirm with each
   team", "Wall feedback: how to open it and who sees it".
+- **NetApp expand refuses unmeasured or impossible values:** a LUN growth when the volume's free space
+  (space.available) was not read, and any plan or final check on a measurement that cannot be (used below 0 or over the
+  size, free below 0, size 0 or less); the survey's free space is the least measured (space.available, an NFS datastore's
+  free space) and every offered figure rounds down; the job report says "use unknown" instead of 0 %. plan(), room() and
+  recheck() otherwise unchanged.
 - **Known in this preview (stage 2)** - display only, under the Preview banner; the logins are never affected:
   - a host or SnapMirror relationship that was down and then disappears from the read stays "last known" on its own card,
     but VMware / Storage may still show OK beside it (r5 #10);

@@ -148,7 +148,8 @@ def ontap_expand_doc(r):
             (" and datastore %s %s" % (ds["datastore"], "expanded" if p.get("naa") else "refreshed") if any(
                 s["ok"] and ("datastore" in s["step"].lower()) for s in steps) and ds.get("datastore") else "")
     summary = [{"label": "Volume now" if check or p.get("status") != "grow" else "Volume before", "value": X.human(p.get("size")),
-                "status": "warning" if p.get("used_pct", 0) >= 85 else "ok", "note": "%.1f %% used (%s)" % (p.get("used_pct", 0), X.human(p.get("used")))}]
+                "status": ("warning" if p.get("used_known") is False else "warning" if p.get("used_pct", 0) >= 85 else "ok"),
+                "note": "use unknown" if p.get("used_known") is False else "%.1f %% used (%s)" % (p.get("used_pct", 0), X.human(p.get("used")))}]
     if p.get("status") in ("grow", "refused") and g:
         refused_limit = p.get("status") == "refused" and " would put " in (p.get("why") or "")
         summary.append({"label": ("LUN growth" if lun else "Growth") if p.get("by") == "size" or not refused_limit else "Default growth", "value": "+" + X.human(g),
@@ -223,7 +224,7 @@ def ontap_expand_doc(r):
             how.append("Default: %s = %s." % (p.get("default_text"), X.human(g)))
         else:
             how.append("The Size box: %s (ontap_expand_max_gb does not limit a size typed there; the aggregate does)." % r.get("size"))
-        how.append("%s stays at or under %g %% (ontap_expand_aggr_max_pct) up to +%s." % (p.get("aggr"), p.get("max_pct", 97), X.human(p.get("room"))))
+        how.append("%s stays at or under %g %% (ontap_expand_aggr_max_pct) up to +%s." % (p.get("aggr"), p.get("max_pct", 97), X.human(p.get("room"), floor=True)))
         sections.append({"title": "How the size was chosen", "lines": how})
     if check and p.get("status") == "grow":
         sections.append({"title": "Run it for real", "lines": ["This was a Check run: nothing was changed. Launch it again without Check "
