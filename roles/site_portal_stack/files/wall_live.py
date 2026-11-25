@@ -1158,10 +1158,10 @@ class Collector(object):
                         self.tools_seen[keep.key] = self.tools_seen.pop(drop.key)
                     for k in [k for k in self.hist if k[0] == drop.key]:
                         self.hist[(keep.key,) + k[1:]] = self.hist.pop(k)
-                short, full = getattr(drop, "host", ""), getattr(keep, "host", "")
-                if short and full and not _fqdn(short) and _fqdn(full) and full.split(".", 1)[0].casefold() == short.casefold():
+                bare, full = getattr(drop, "host", ""), getattr(keep, "host", "")
+                if bare and full and not _fqdn(bare) and _fqdn(full) and full.split(".", 1)[0].casefold() == bare.casefold():
                     self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter",
-                              "why": "vCenter %s is %s: read once (same instanceUuid)" % (short, full)})
+                              "why": "vCenter %s is %s: read once (same instanceUuid)" % (bare, full)})
                 else:
                     self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter", "why": "same instanceUuid as " + keep.name})
                 if hasattr(drop, "forget"):
