@@ -859,7 +859,7 @@ the card uses its group's icon. *Other* and custom groups use `job`. The group a
 The pen beside **Changes servers** follows the template name independently of the icon. It appears for
 `restart`, `reboot`, `shut down`, `cancel`, `expand`, `space request`, `deploy`, `install`, `patch`, `apply`, `approved`,
 `allow`, `delete`, `clean up`, `cleanup`, `change`, `load`, `push` or `restore`. A name containing `(dry run)`,
-`- check`, or the word `plan`, `report` or `finder` suppresses the chip.
+`- check`, or the word `plan`, `report` or `finder`, or the words `nothing is sent`, suppresses the chip.
 
 ## Quick ways around
 

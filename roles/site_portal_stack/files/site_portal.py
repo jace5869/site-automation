@@ -3686,7 +3686,7 @@ CARD_GROUPS = {
     "Other": ("job", "slate"),
 }
 CHANGE_WORDS = re.compile(r"\b(restart|reboot|shut down|cancel|expand|space request|deploy|install|patch|apply|approved|allow|delete|clean ?up|change|load|push|restore)\b", re.I)
-READ_ONLY_WORDS = re.compile(r"\(dry run\)|- check\b|\bplan\b|\breport\b|\bfinder\b", re.I)
+READ_ONLY_WORDS = re.compile(r"\(dry run\)|- check\b|\bplan\b|\breport\b|\bfinder\b|nothing is sent", re.I)
 
 
 def icon_label(labels, prefix):

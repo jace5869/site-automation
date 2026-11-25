@@ -4973,7 +4973,7 @@ class CardIcons(unittest.TestCase):
         for word in ("restart", "reboot", "shut down", "cancel", "expand", "space request", "deploy", "install", "patch",
                      "apply", "approved", "allow", "delete", "clean up", "cleanup", "change", "load", "push", "restore"):
             self.assertTrue(sp.changes_servers("Example - " + word.upper()), word)
-            for exclusion in ("(dry run)", "- check", "plan", "report", "finder"):
+            for exclusion in ("(dry run)", "- check", "plan", "report", "finder", "nothing is sent"):
                 self.assertFalse(sp.changes_servers(word + " " + exclusion), (word, exclusion))
         for name in ("grow", "resize", "reload", "changed", "check availability"):
             self.assertFalse(sp.changes_servers(name), name)
