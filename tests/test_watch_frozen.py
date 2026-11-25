@@ -23,7 +23,7 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
     "tests/fixtures/vcenters_read_1184.yml": "db6a64f3b95abd15dd769a951d6a5b3f814d818e6ed71ebb1fe148511617069c",
     "tests/fixtures/watch_email_1184.yml": "59c67935b401b3c85285e364a7f5293b9366b27c0be1f2d4d5f0d1296baec242",
 }
-# 1.131.2 changes only the usage-alarm read, conditions and timeline rows.
+# 1.131.1 changes only the usage-alarm read, conditions and timeline rows.
 FROZEN_11312 = {
     "roles/vmware_vm/library/site_vmware_watch.py": "59628630e9108b1e8ebccea75dadb6d8153fd280ed49a9d2d82bc5dc05b5756f",
     "plugins/filter/vmware_watch_filters.py": "0a2e2b081ceb785d35587ff612eab8e17e4db20f4a4b2b03194202042b6889a1",
@@ -40,11 +40,11 @@ FROZEN_1188 = {
 # what it did. Any other difference fails.
 ALLOWED = {
     "VMware | what is down or hung (the suspects checked {{ vm_watch_confirm_checks }} time(s), {{ vm_watch_confirm_seconds }} s apart)":
-        "1.131.2 also reads the configured usage alarms",
+        "1.131.1 also reads the configured usage alarms",
     "VMware | vCenter's events of the window": "scheduled read keeps the original arguments and outer rescue; the review reads separately",
     "VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)":
         "review: omit unless a review; no_log: false unless a review",
-    "VMware | the time line": "scheduled read and options match the fixture, plus review=false and the 1.131.2 usage policy",
+    "VMware | the time line": "scheduled read and options match the fixture, plus review=false and the 1.131.1 usage policy",
     "VMware | the time line was not made (the watch goes on without it)": "the message is 1.118.4's unless a review",
     "VMware | the AAR draft's facts (vm_outage_review.aar)": "inside the review-only AAR block",
     "VMware | a temporary folder for the AAR draft": "renamed inside the review-only AAR block",
@@ -57,7 +57,7 @@ ALLOWED = {
         "no_log only on a requested review; 1.118.8: as sent only when site_mail sent it, and only a mapping (2.16 renders null as '')",
     "VMware | nothing down or hung (vm_watch_fail_on)": "only a requested review masks the failure message",
     "VMware | what was found, and what phase 2 would restart (nothing is restarted)":
-        "1.131.2 filters usage alarms before report, email and job decisions",
+        "1.131.1 filters usage alarms before report, email and job decisions",
     "VMware | single sign-on and OCSP - what is down now": "no_log only on a requested review",
     "VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)":
         "raw machine artifacts; no_log only on a requested review",

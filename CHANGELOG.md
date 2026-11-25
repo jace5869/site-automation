@@ -1,14 +1,19 @@
 # Changelog
 
-## 1.131.1 — 2026-11-25
+## 1.131.1 — 2026-11-26
 
-**To set up:** Site portal - deploy; optional `portal_wall_exclude`, `portal_wall_ds_ignore`, SnapMirror lag thresholds.
+**To set up:** run **Site portal - deploy**; optional `portal_wall_exclude`, `portal_wall_ds_ignore`, SnapMirror lag
+thresholds, and the outage watch's `vm_watch_usage_*` settings.
 
 The wall learns which VMs have running Tools, merges duplicate vCenters and filters infrastructure objects before capacity
 alerts and rankings. Host hardware and SnapMirror lag now light the wall. Grey tiles and gauges identify the source,
 and the Now strip groups repeated conditions into a single detail link.
 
-- Rotate rotates: only clicks, keys, scrolling or touch pause it (not moving the mouse); it resumes after 20 s; kiosk ignores the mouse
+- **Rotate rotates:** only clicks, keys, scrolling or touch pause it (not moving the mouse); it resumes after 20 s; kiosk
+  ignores the mouse.
+- **VM outage watch: CPU and memory spikes.** Yellow CPU and memory usage alarms are hidden by default. Red alarms count after
+  15 continuous minutes in the window, with affected names grouped by alarm kind. Hidden spikes cannot trigger a report,
+  email or job failure.
 
 ## 1.131.0 — 2026-11-25
 
@@ -35,13 +40,6 @@ cannot remove them).
   vCenter address, an empty or unusable cluster list, an entry left out), the portal log says so once (`"collector": "no
   sources"`) with each reason, and the wall's tile says it instead of "no vCenter login" / "no live ONTAP cluster".
 - **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
-
-## 1.131.2 — 2026-11-25
-
-**To set up:** nothing; optional `vm_watch_usage_*` settings.
-
-The VM outage watch hides yellow CPU and memory usage alarms by default. Red alarms count after 15 continuous
-minutes in the window, with affected names grouped by alarm kind. Hidden spikes cannot trigger a report, email or job failure.
 
 ## 1.130.2 — 2026-11-25
 
