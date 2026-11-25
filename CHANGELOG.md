@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.131.0 (part: AD page matrix and map) — 2026-11-25
+
+To set up: run Site portal - deploy.
+
+The Active Directory page shows the domain report’s source-by-destination replication matrix and replication map
+from the report database. Open a cell for partition details and a copyable verification command, or switch to
+**Links, worst first**. Select a DC to read the job’s saved problems. Each block shows the run’s age.
+
 ## 1.129.1 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,

@@ -51,6 +51,7 @@ APP = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP)
 import site_portal_filters as rules  # noqa: E402  the actions' loader and rules (the deploy checks with the same)
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
+import ad_replication  # noqa: E402
 import netmap_history  # noqa: E402
 import netapp_live  # noqa: E402  the NetApp page's reader (the refresh volume list job's runs in the report database)
 import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
@@ -5120,7 +5121,7 @@ def netmap_page(cfg, cn, static_dir, statics):
 
 
 # ---- 1.101.2: the live AD page --------------------------------------------------------------------------------------------
-AD_STATIC = ("ad-page.js", "ad-page.css")
+AD_STATIC = ("ad-page.js", "ad-page.css", "admap.js", "admap.css")
 AD_POLL = 60                    # the page asks this server every this many seconds (an ETag: a 304 when nothing changed)
 AD_SCHEDULE_EVERY = 600         # the AD template's next scheduled run, asked of AAP at most this often
 
@@ -5213,9 +5214,8 @@ class AdDb(object):
             runs = [r for r in runs if (self._dt(r[1]) or now) > day0] or runs[:1]      # the last 24 h by read_at, whatever the schedule
             ids = [int(r[0]) for r in runs]
             marks = ",".join(["%s"] * len(ids))
-            dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst, dc, LOWER(site), dns_host, dsa_guid, node_id, stale_dsa FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
-            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain, src, dst, link_key FROM ad_link WHERE run_id = %s "
-                                 "AND status NOT IN ('ok', '')", [ids[0]])
+            dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst, dc, LOWER(site), dns_host, dsa_guid, node_id, stale_dsa, repl_read FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
+            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain, src, dst, link_key, nc_dn FROM ad_link WHERE run_id = %s", [ids[0]])
             hist = self._q(cur, "SELECT r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, "
                                 "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END), r.status, r.why "
                                 "FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND r.read_at >= %s "
@@ -5227,13 +5227,13 @@ class AdDb(object):
             order = dict((rid, k) for k, rid in enumerate(reversed(ids)))       # oldest first
             at = dict((int(r[0]), self._dt(r[1])) for r in runs)
             by = {}
-            for rid, dc, dom, site, is_read, st, probs, worst, dcid, siteid, dns_host, dsa_guid, node_id, stale_dsa in dcrows:
-                by.setdefault(str(dcid), {})[int(rid)] = (str(st or ""), str(worst or ""), str(site or ""), bool(is_read), int(probs or 0), str(dom or ""), str(dc), str(siteid or ""), dns_host, dsa_guid, node_id, bool(stale_dsa))
+            for rid, dc, dom, site, is_read, st, probs, worst, dcid, siteid, dns_host, dsa_guid, node_id, stale_dsa, repl_read in dcrows:
+                by.setdefault(str(dcid), {})[int(rid)] = (str(st or ""), str(worst or ""), str(site or ""), bool(is_read), int(probs or 0), str(dom or ""), str(dc), str(siteid or ""), dns_host, dsa_guid, node_id, bool(stale_dsa), bool(repl_read))
             dcs = []
             for dcid, seen in by.items():
                 if ids[0] not in seen:
                     continue                                   # not in the newest run: gone from AD (said by its runs only)
-                st, worst, site, is_read, probs, dom, dc, siteid, dns_host, dsa_guid, node_id, stale_dsa = seen[ids[0]]
+                st, worst, site, is_read, probs, dom, dc, siteid, dns_host, dsa_guid, node_id, stale_dsa, repl_read = seen[ids[0]]
                 trend = [""] * len(ids)
                 for rid, v in seen.items():
                     trend[order[rid]] = v[0] or "ok"
@@ -5255,19 +5255,18 @@ class AdDb(object):
                                        (" AND read_at > %s" if before is not None else ""), [tid, at[ids[0]]] + ([before] if before is not None else []))
                     if nxt and nxt[0] and nxt[0][0] is not None:
                         since, n = self._dt(nxt[0][0]) or since, max(n, int(nxt[0][1] or 0))   # its whole length: no "+"
-                dcs.append({"dns_host": dns_host, "dsa_guid": dsa_guid, "node_id": node_id, "stale_dsa": stale_dsa, "dc_id": dcid, "site_id": siteid, "dc": dc, "domain": dom, "site": site, "read": is_read, "now": st or "ok", "problems": probs, "worst": worst,
+                dcs.append({"repl_read": repl_read, "dns_host": dns_host, "dsa_guid": dsa_guid, "node_id": node_id, "stale_dsa": stale_dsa, "dc_id": dcid, "site_id": siteid, "dc": dc, "domain": dom, "site": site, "read": is_read, "now": st or "ok", "problems": probs, "worst": worst,
                             "since": since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else "", "runs_since": n, "longer": longer, "trend": trend})
             rank = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
             dcs.sort(key=lambda d: (rank.get(d["now"], 5), d["dc"].lower()))
-            out_links = [{"src_id": srcid, "dst_id": dstid, "link_key": lkey, "frm": "unknown DSA" if str(f).startswith("dsa:") else f, "to": t, "nc": nc, "domain": dm or "", "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
-                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st, dm, srcid, dstid, lkey in links]
+            out_links = [{"src_id": srcid, "dst_id": dstid, "link_key": lkey, "nc_dn": nc_dn, "frm": "unknown DSA" if str(f).startswith("dsa:") else f, "to": t, "nc": nc, "domain": dm or "", "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
+                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st, dm, srcid, dstid, lkey, nc_dn in links]
             out_links.sort(key=lambda x: (rank.get(x["now"], 5), x["frm"].lower(), x["to"].lower()))
             try:
                 live = json.loads(top[9] or "{}")
             except ValueError:
                 live = {}
-            evidence = self._q(cur, "SELECT DISTINCT domain, nc_dn FROM ad_link WHERE run_id = %s", [ids[0]])
-            refused = site_ad_swis.ident.unsupported({"dcs": dcs, "links": [{"domain": d, "nc_dn": nc} for d, nc in evidence]})
+            refused = site_ad_swis.ident.unsupported({"dcs": dcs, "links": [{"domain": x["domain"], "nc_dn": x["nc_dn"]} for x in out_links]})
             why, status = str(top[10] or ""), top[4] or ""
             if refused or why == site_ad_swis.ident.REFUSAL:
                 why, status = site_ad_swis.ident.REFUSAL, "unknown"
@@ -5275,7 +5274,9 @@ class AdDb(object):
             else:
                 saved = {d["dc"]: d for d in live.get("dcs") or []}
                 live["dcs"] = [dict(saved.get(d["dc"], {}), **d) for d in dcs]
+                problems = ad_swis_filters._ad_problems(live)
                 for d in dcs:
+                    d["problem_texts"] = [text for _, text in problems.get(d["dc_id"], []) if text]
                     d["match_why"] = saved.get(d["dc"], {}).get("match_why", "not matched")
             return {"run": {"run_id": int(top[0]), "read_at": self._iso(top[1]), "job": int(top[2] or 0), "template_id": tid,
                             "status": status, "critical": int(top[5] or 0), "warning": int(top[6] or 0), "dcs": int(top[7] or 0),
@@ -5283,7 +5284,8 @@ class AdDb(object):
                             "coverage": live.get("coverage") or site_ad_swis.ident.COVERAGE_UNKNOWN,
                             # replication coverage: every DC the replication read knows (also unpolled ones), how many read in full
                             "repl_dcs": int(top[11] or 0), "repl_read": int(top[12] or 0)},
-                    "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": out_links, "live": live,
+                    "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": [x for x in out_links if x["now"] not in ("ok", "")],
+                    "partitions": out_links, "live": live,
                     "hist": [{"at": self._iso(h[1]), "job": int(h[2] or 0), "dcs": int(h[3] or 0), "read": int(h[4] or 0),
                               "c": int(h[5] or 0), "w": int(h[6] or 0), "status": str(h[7] or ""), "why": str(h[8] or "")} for h in hist],
                     "worst7": {"dc_id": str(top7[0][3]), "dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
@@ -5348,6 +5350,7 @@ class AdLive(ReportIndex):
         self.cfg, self.log, self.aap = cfg, log, aap
         self.lock = threading.Lock()
         self.wake = threading.Event()
+        self.first_db_read = threading.Event()
         self.seen, self.thread, self.client = 0.0, None, None
         self.sw, self.sw_stale, self.sw_fails, self.sw_next = None, "", 0, 0.0
         self.sched = {}                                      # template id -> (when asked, {next}): each template its own
@@ -5379,8 +5382,12 @@ class AdLive(ReportIndex):
     def read_db(self):
         """One read of the database (the model of the page's own template when the page names one)."""
         m = self.db.read(template_id=self.cfg.ad_template or None)
+        if m.get("run"):
+            m["replication"] = ad_replication.shape(m["dcs"], m.pop("partitions"), AdDb._dt(m["run"]["read_at"]),
+                                                    self.cfg.netmap_opts, self.cfg.tz or datetime.timezone.utc)
         with self.lock:
             was, self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_missing = self.db_stale, m, time.time(), "", 0, False
+        self.first_db_read.set()
         if was:
             self.log.add({"event": "ad", "database": "ok"})
 
@@ -5394,6 +5401,7 @@ class AdLive(ReportIndex):
             missing = missing_table(e) and self.dbm is None
             first = not (self.db_missing if missing else self.db_stale)
             self.db_missing, self.db_stale, self.db_fails = missing, "" if missing else why, 0 if missing else self.db_fails + 1
+        self.first_db_read.set()
         if first:
             self.log.add({"event": "ad", "database": "no AD tables yet" if missing else "not read", "why": why})
         self.db_due = time.time() + (AD_POLL if missing else backoff(self.db_fails, AD_POLL * 4))
@@ -5515,7 +5523,7 @@ class AdLive(ReportIndex):
             out["db"]["age"] = int(now - db_at)
             # read before a quiet spell (nobody on the page): not the current answer - said, read again now, the page asks soon
             out["db"]["refreshing"] = not db_stale and now - db_at > 2 * AD_POLL
-            out["db"]["model"] = self._shown(dbm, now, sched)
+            out["db"]["model"] = self._shown(dbm, now, sched, db_stale)
         out["sw"] = {"on": not self.cfg.ad_swis_why, "why": self.cfg.ad_swis_why, "stale": stale, "every": self.cfg.ad_seconds,
                      "next": max(0, int(nxt - now)) if nxt else None}
         if sw is not None and src is not None and sw["key"] == src[0]:
@@ -5535,7 +5543,7 @@ class AdLive(ReportIndex):
             return 304, "", etag
         return 200, body, etag
 
-    def _shown(self, m, now, sched):
+    def _shown(self, m, now, sched, db_stale=""):
         """The database's model with its times as the report pages show them (report_time_zone), its run's age and whether it is
         old; the live part (the DCs for SolarWinds) left out."""
         r = dict(m.get("run") or {}) if m.get("run") else None
@@ -5545,22 +5553,44 @@ class AdLive(ReportIndex):
             r["old"] = r["age_min"] is not None and r["age_min"] > self.cfg.ad_old_minutes
             r["as_of"] = shown(self.cfg, r.get("read_at"))
             r["next"] = shown(self.cfg, sched.get("next")) if sched.get("next") else ""
-        return {"run": r, "times": [shown(self.cfg, t) for t in m.get("times") or []],
+        replication = m.get("replication")
+        return {"run": r, "matrix_html": ad_replication.matrix_html(replication, r["old"] or db_stale) if replication else "",
+                "map": replication["map"] if replication else None, "times": [shown(self.cfg, t) for t in m.get("times") or []],
                 "dcs": [dict(d, since_shown=shown(self.cfg, d.get("since")) if d.get("since") else "") for d in m.get("dcs") or []],
                 "links": [dict(x, last_success_shown=shown(self.cfg, x.get("last_success")) if x.get("last_success") else "") for x in m.get("links") or []],
                 "hist": [dict(h, at_shown=shown(self.cfg, h.get("at"))) for h in m.get("hist") or []], "worst7": m.get("worst7")}
 
+    def initial_matrix(self):
+        """Share the background reader with script-free page loads, including the first after startup."""
+        if self.db is None:
+            return '<p class="note">The report database is off here.</p>'
+        self.first_db_read.wait(2)
+        with self.lock:
+            m, error = self.dbm, self.db_stale
+        if not m or not m.get("run"):
+            message = error or ("No AD run in the report database yet." if m or self.db_missing else "Reading the report database…")
+            return '<p class="note">%s <a href="">Refresh</a></p>' % esc(message)
+        run = m["run"]
+        age = int((time.time() - ad_when(run["read_at"])) // 60)
+        stale = bool(error) or age > self.cfg.ad_old_minutes
+        return ('<section class="sec" id="ad-replication"><h2>Replication matrix'
+                '<span class="adp-fresh" data-at="%s">%sAD job, %d min ago</span></h2><p class="muted">%s</p>%s</section>' %
+                (esc(run["read_at"]), "? " if stale else "", age, esc(error or run["why"] or run["coverage"]),
+                 ad_replication.matrix_html(m["replication"], stale)))
 
-def ad_page(cfg, cn, statics):
-    """/portal/ad: the page's frame - its parts are drawn by static/ad-page.js from /api/ad (no inline script or style)."""
-    v = lambda n: statics.get(n, "")
+
+def ad_page(cfg, cn, statics, initial=""):
+    """The report matrix is HTML on first load. The page script adds the map, history and polling."""
     body = ('<div class="hero"><p class="eyebrow">Active Directory</p><h1>Active Directory health</h1>'
-            '<p class="lede">Now and the last 7 days, from the AD job\'s runs in the report database; SolarWinds read by this server.</p></div>'
-            '<div id="ad" data-src="%sapi/ad"><p class="note" id="ad-wait">Reading the report database…</p></div>'
-            '<noscript><p class="note warn">This page draws its parts with a script: turn scripts on for this site.</p></noscript>'
-            '<div class="toasts adp-toasts" id="ad-toasts" aria-live="polite"></div>'
-            '<script src="%sstatic/ad-page.js?v=%s"></script>' % (cfg.path, cfg.path, v("ad-page.js")))
-    return shell(cfg, "Active Directory", body, cn, page="ad", head='<link rel="stylesheet" href="%sstatic/ad-page.css?v=%s">' % (cfg.path, v("ad-page.css")))
+            '<p class="lede">Now and the last 7 days, from the AD job’s runs in the report database. SolarWinds read by this server.</p></div>'
+            '<div id="ad" data-src="%sapi/ad">%s</div>'
+            '<div class="toasts adp-toasts" id="ad-toasts" aria-live="polite"></div>' % (cfg.path, initial))
+    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, statics.get(n, ""))
+                    for n in ("world-land.js", "maplabel.js", "admap.js", "ad-page.js"))
+    head = "".join('<link rel="stylesheet" href="%sstatic/%s?v=%s">' % (cfg.path, n, statics.get(n, ""))
+                   for n in ("admap.css", "ad-page.css"))
+    return shell(cfg, "Active Directory", body, cn, page="ad", head=head)
+
 
 class NetmapHistoryLive(ReportIndex):
     """A viewer starts at most one refresh per minute. An idle page schedules no reads."""
@@ -5960,7 +5990,7 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Active Directory off", "The Active Directory page is off here (portal_ad: false).", cn),
                                       "text/html; charset=utf-8")
                 adl.viewed()
-                return self._send(200, ad_page(cfg, cn, statics), "text/html; charset=utf-8")
+                return self._send(200, ad_page(cfg, cn, statics, adl.initial_matrix()), "text/html; charset=utf-8")
             # the NetApp page - the refresh volume list job's runs from the report database; Expand... needs AAP's actions
             if path in ("/netapp", "/api/netapp"):
                 if not nal:
