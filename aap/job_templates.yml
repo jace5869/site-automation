@@ -239,8 +239,8 @@ job_templates:
         software audits.
       targets: 'Linux hosts of the Limit, over SSH with sudo (Machine credential): rpm -qa and dnf repoquery from the local
         cache only'
-      produces: Shield text files per host, CSV/JSON, report database rows, SQL Server rows when set; a report email with
-        the files and a workbook
+      produces: Shield text files per host, CSV and JSON (a share when set); report database / SQL Server rows when set; an
+        email with the files
       supports: Run constraint=Read-only on target hosts; writes the report database, SQL Server, a file share, report email/website
         when set
   - name: Linux - tmp cleanup

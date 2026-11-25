@@ -67,6 +67,7 @@
     job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
     template_id: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
     outputs: "{{ (sw_inventory_outputs | replace(',', ' ')).split() if sw_inventory_outputs is string else sw_inventory_outputs }}"
+    auto_db: "{{ sw_inventory_db_auto | bool }}"
     dir: "{{ sw_inventory_dir | default('', true) }}"
     shield_subdir: "{{ sw_inventory_shield_subdir }}"
     share: "{{ sw_inventory_share | default('', true) }}"

@@ -2,29 +2,24 @@
 
 ## 1.133.0 — 2026-11-25
 
-**To set up:**
-1. Run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]` (Check first). It makes
-   the template: Linux Machine credential, Limit prompted, Concurrent jobs off.
-2. Attach the credentials of the outputs you use: **Report database** (writer) for `report_db`; **Windows file share**
-   (`user@YOURDOMAIN.MIL`, Modify on the folder) for `sw_inventory_share`; **SQL Server (certificate inventory)** for
-   `mssql`. All three already exist as credential types.
-3. In the template's Variables: `sw_inventory_outputs` (default `[shield, report_db, csv]`), and `sw_inventory_share:
-   '\\fileserver.yourdomain.mil\share\folder'` (the folder must be there) with `sw_inventory_share_subdir` if you like.
-4. The email: `report_email_to` as for the other reports - it carries the CSV and a zip of the shield files; a zip
-   bigger than `sw_inventory_email_max_mb` (10) is left off and the email says they are on the share (`sw_inventory_email`).
-5. Run it with Check, then for real; schedule it nightly at 02:00 with your Limit.
+**To set up:** run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`; for the share,
+attach the **Windows file share** credential and set `sw_inventory_share`; for the email, `report_email_to`. Schedule it
+nightly at 02:00 with your Limit (Check first). Exports: `sw_inventory_outputs` (default `[shield, csv, json]`).
 
 - **New: Linux - software inventory** (`playbooks/linux_sw_inventory.yml`, `roles/sw_inventory`,
   [docs/LINUX_SW_INVENTORY.md](docs/LINUX_SW_INVENTORY.md)): every installed RPM package of the RHEL hosts - name, epoch,
   version, release, arch, vendor, install time, source RPM, and the repository from dnf's own records (`-C
   --disablerepo='*'`: no repository contacted). Read-only; one script per host, parsed on the controller; the hosts'
   reads stay out of AAP's job events.
-- **Outputs, each on its own** (`sw_inventory_outputs`): `shield` - a text file per host (`<short name>.txt`,
-  `#shield-host v1`, TAB rows sorted by name then version, every kernel kept); `report_db` - the report database's
-  `sw_inventory_run`, `_host`, `_pkg` and `_change` (made on the first run, kept `sw_inventory_keep_days`: 90);
-  `csv` / `json` - one file per run and a latest one; `mssql` - a SQL Server table (`sw_inventory_mssql`: inserts of
-  1,000 in one transaction, names checked, `column_map`, `create_table`; never DROP). All files also go to a Windows
-  file share over SMB (`sw_inventory_share`, Kerberos as the report website's share).
+- **Exports, each on its own** (`sw_inventory_outputs`, default `[shield, csv, json]`): `shield` - a text file per host
+  (`<short name>.txt`, `#shield-host v1`, TAB rows sorted by name then version, every kernel kept); `csv` / `json` - one
+  file per run and a latest one. Optional: `report_db` - added by itself when the template has the Report database
+  credential (`sw_inventory_run`, `_host`, `_pkg`, `_change`, kept `sw_inventory_keep_days`: 90); `mssql` - a SQL
+  Server table (`sw_inventory_mssql`: inserts of 1,000 in one transaction, names checked, `column_map`,
+  `create_table`; never DROP). The shield files, CSV and JSON also go to a Windows file share over SMB
+  (`sw_inventory_share`, Kerberos as the report website's share).
+- **The email** attaches the CSV, the JSON and a zip of the shield files; one bigger than `sw_inventory_email_max_mb`
+  (10) is left off and the email says where it is.
 - **What changed since the last run**: added, removed, updated per host (several kernels at once included), compared
   with the report database's last run of each host, else `sw-inventory-state.json`. The report: hosts not read (with
   why), outputs not written, *Software changes (last night)*, top changed packages; a workbook with **Packages** and

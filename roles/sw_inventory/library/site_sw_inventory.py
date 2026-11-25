@@ -30,7 +30,8 @@ options:
   read_at: {description: When this run started (UTC)., type: str, required: true}
   job: {description: This job's ID., type: int, default: 0}
   template_id: {description: This job's template's ID., type: int, default: 0}
-  outputs: {description: "Any of shield, report_db, csv, json, mssql.", type: list, elements: str, default: [shield, report_db, csv]}
+  outputs: {description: "Any of shield, csv, json, report_db, mssql.", type: list, elements: str, default: [shield, csv, json]}
+  auto_db: {description: "Add report_db when the template has the Report database credential (REPORT_DB_HOST).", type: bool, default: true}
   dir: {description: "The folder the files are written in ('' = a folder in work_dir, gone after the job).", type: str, default: ''}
   shield_subdir: {description: The shield files' folder under dir and under the share's folder., type: str, default: shield}
   share: {description: "A Windows file share's folder (\\\\server\\share\\folder) or a mounted folder the files are copied to ('' = none).", type: str, default: ''}
@@ -429,14 +430,14 @@ def mssql_connect(plan):
 
 
 def email_attachments(files, max_mb):
-    """[{path, filename, desc}] for the email, and notes. The CSV always; the shield zip only when it is not bigger than
-    max_mb (else left off, and the email says where the shield files are)."""
+    """[{path, filename, desc}] for the email, and notes: each file (the CSV, the JSON, the shield zip) attached when it
+    is not bigger than max_mb; one that is, left off - the email says where it is."""
     att, notes, cap = [], [], float(max_mb) * 1024 * 1024
     for f in files:
         size = os.path.getsize(f["path"]) if os.path.isfile(f["path"]) else -1
         if size < 0:
             continue
-        if f.get("limit") and size > cap:
+        if size > cap:
             notes.append("%s (%.1f MB) is not attached: bigger than sw_inventory_email_max_mb (%s) - %s"
                          % (f["filename"], size / 1048576.0, max_mb, f.get("elsewhere") or "it is on the share"))
             continue
@@ -463,6 +464,8 @@ def write_files(target, files, keep_days, now, prune_dated=True):
 def run(p, check=False, warn=lambda m: None):
     now = sw.stamp(p["read_at"]) or datetime.datetime.utcnow().replace(microsecond=0)
     outputs = [o for o in (p["outputs"] or []) if o]
+    if p.get("auto_db", True) and "report_db" not in outputs and os.environ.get("REPORT_DB_HOST", "").strip():
+        outputs.append("report_db")              # the template has the Report database credential: kept there too
     unknown = [o for o in outputs if o not in sw.OUTPUTS]
     res = {"outputs": [], "lines": [], "read_at": p["read_at"], "attachments": [], "sheets_file": "", "report": {}}
 
@@ -676,18 +679,20 @@ def run(p, check=False, warn=lambda m: None):
     with open(res["sheets_file"], "w") as f:
         json.dump(sheets, f)
     mail = []
-    if files["csv"]:
-        mp = os.path.join(p["work_dir"], "sw-inventory-%s.csv" % stamp)
-        with open(mp, "wb") as f:
-            f.write(files["csv"][0]["body"])
-        mail.append({"path": mp, "filename": os.path.basename(mp), "desc": "CSV - every package of every host read",
-                     "elsewhere": "it is on the share" if p["share"] else "it is in sw_inventory_dir"})
+    where = "it is on the share" if p["share"] else "it is in sw_inventory_dir"
+    for kind, desc in (("csv", "CSV - every package of every host read"),
+                       ("json", "JSON - every host's packages, the hosts not read, what changed")):
+        if files[kind]:
+            mp = os.path.join(p["work_dir"], files[kind][0]["rel"])
+            with open(mp, "wb") as f:
+                f.write(files[kind][0]["body"])
+            mail.append({"path": mp, "filename": os.path.basename(mp), "desc": desc, "elsewhere": where})
     if files["shield"]:
         zp = os.path.join(p["work_dir"], "sw-inventory-shield-%s.zip" % stamp[:8])
         with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
             for f in files["shield"]:
                 z.writestr(f["rel"].rsplit("/", 1)[-1], f["body"])
-        mail.append({"path": zp, "filename": os.path.basename(zp), "desc": "Zip - the shield text file of each host read", "limit": True,
+        mail.append({"path": zp, "filename": os.path.basename(zp), "desc": "Zip - the shield text file of each host read",
                      "elsewhere": "the shield files are on the share" if p["share"] else "the shield files are in sw_inventory_dir"})
     res["attachments"], notes = email_attachments(mail, p["email_max_mb"])
     if notes:
@@ -718,7 +723,8 @@ def main():
         argument_spec=dict(work_dir=dict(type="str", required=True), hosts=dict(type="list", elements="dict", required=True),
                            read_at=dict(type="str", required=True), job=dict(type="int", default=0),
                            template_id=dict(type="int", default=0),
-                           outputs=dict(type="list", elements="str", default=["shield", "report_db", "csv"]),
+                           outputs=dict(type="list", elements="str", default=["shield", "csv", "json"]),
+                           auto_db=dict(type="bool", default=True),
                            dir=dict(type="str", default=""), shield_subdir=dict(type="str", default="shield"),
                            share=dict(type="str", default=""), share_subdir=dict(type="str", default=""),
                            share_auth=dict(type="str", default="negotiate"), share_encrypt=dict(type="bool", default=False),

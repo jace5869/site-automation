@@ -502,8 +502,9 @@ class Module(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(out, "sw-inventory-20261125-0200.csv")))
         self.assertTrue(os.path.isfile(os.path.join(out, "sw-inventory-latest.json")))
         self.assertEqual([x["host"] for x in res["not_read"]], ["gone01.corp.example.mil"])
-        self.assertEqual([a["filename"] for a in res["attachments"]], ["sw-inventory-20261125-0200.csv", "sw-inventory-shield-20261125.zip"])
-        with zipfile.ZipFile(res["attachments"][1]["path"]) as z:
+        self.assertEqual([a["filename"] for a in res["attachments"]],
+                         ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json", "sw-inventory-shield-20261125.zip"])
+        with zipfile.ZipFile(res["attachments"][2]["path"]) as z:
             self.assertEqual(sorted(z.namelist()), ["rhel-app01.txt", "rhel-db01.txt"])
         titles = [s["title"] for s in res["report"]["sections"]]
         self.assertEqual(titles, ["Hosts not read", "Notes"])            # nothing changed yet: no change sections
@@ -521,23 +522,41 @@ class Module(unittest.TestCase):
 
     def test_email_size_limit(self):
         mb = 1048576.0
-        res = mod.run(self.params())
-        csv_size = os.path.getsize(os.path.join(self.work, "sw-inventory-20261125-0200.csv"))
-        zip_size = os.path.getsize(os.path.join(self.work, "sw-inventory-shield-20261125.zip"))
-        self.assertGreater(csv_size, zip_size)
-        # the zip just fits: both attached - the CSV whatever its size (bigger than the limit here)
-        res = mod.run(self.params(email_max_mb=zip_size / mb))
-        self.assertEqual([a["filename"] for a in res["attachments"]], ["sw-inventory-20261125-0200.csv", "sw-inventory-shield-20261125.zip"])
-        # the zip one byte over: the CSV only, and the email says where the shield files are
-        res = mod.run(self.params(email_max_mb=(zip_size - 1) / mb))
-        self.assertEqual([a["filename"] for a in res["attachments"]], ["sw-inventory-20261125-0200.csv"])
+        out = ["shield", "csv", "json"]
+        mod.run(self.params(outputs=out))
+        size = dict((k, os.path.getsize(os.path.join(self.work, n))) for k, n in (
+            ("csv", "sw-inventory-20261125-0200.csv"), ("json", "sw-inventory-20261125-0200.json"), ("zip", "sw-inventory-shield-20261125.zip")))
+        self.assertTrue(size["zip"] < size["csv"] < size["json"], size)
+        names = lambda r: [a["filename"] for a in r["attachments"]]     # noqa: E731
+        # all fit
+        res = mod.run(self.params(outputs=out, email_max_mb=size["json"] / mb))
+        self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-20261125-0200.json", "sw-inventory-shield-20261125.zip"])
+        # the JSON over: the CSV and the zip kept, the JSON said
+        res = mod.run(self.params(outputs=out, email_max_mb=(size["json"] - 1) / mb))
+        self.assertEqual(names(res), ["sw-inventory-20261125-0200.csv", "sw-inventory-shield-20261125.zip"])
         notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
-        self.assertTrue(notes[0].startswith("sw-inventory-shield-20261125.zip ("), notes[0])
+        self.assertTrue(notes[0].startswith("sw-inventory-20261125-0200.json ("), notes[0])
         self.assertIn("bigger than sw_inventory_email_max_mb", notes[0])
-        self.assertTrue(notes[0].endswith("- the shield files are in sw_inventory_dir"), notes[0])
-        res = mod.run(self.params(email_max_mb=(zip_size - 1) / mb, share="/nonexistent-share-folder"), check=True)
+        self.assertTrue(notes[0].endswith("- it is in sw_inventory_dir"), notes[0])
+        # only the zip fits
+        res = mod.run(self.params(outputs=out, email_max_mb=size["zip"] / mb))
+        self.assertEqual(names(res), ["sw-inventory-shield-20261125.zip"])
+        # the zip over too: none, and the email says the shield files are on the share
+        res = mod.run(self.params(outputs=out, email_max_mb=(size["zip"] - 1) / mb, share="/nonexistent-share-folder"), check=True)
         notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
-        self.assertTrue(notes[0].endswith("- the shield files are on the share"), notes[0])
+        self.assertEqual(names(res), [])
+        self.assertTrue(notes[2].endswith("- the shield files are on the share"), notes)
+
+    def test_report_db_added_with_the_credential(self):
+        with unittest.mock.patch.dict(os.environ, {"REPORT_DB_HOST": "db.example.mil"}), \
+                unittest.mock.patch.object(mod.db, "HAS_PYMYSQL", True), \
+                unittest.mock.patch.object(mod.db, "connect", side_effect=ConnectionRefusedError(111, "Connection refused")):
+            res = mod.run(self.params(outputs=["csv"]))
+            self.assertEqual(self.state(res, "report_db")["code"], "SA-SWI-13")
+            res = mod.run(self.params(outputs=["csv"], auto_db=False))
+            self.assertEqual([x["name"] for x in res["outputs"]], ["csv"])
+        res = mod.run(self.params(outputs=["csv"]))
+        self.assertEqual([x["name"] for x in res["outputs"]], ["csv"])            # no credential: nothing said
 
     def test_share_copy_paths(self):
         fake = FakeSmb()

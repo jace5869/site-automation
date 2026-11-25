@@ -2,10 +2,9 @@
 
 Every installed RPM package of your RHEL hosts, every night, and what changed since the night before.
 
-The job *Linux - software inventory* (`playbooks/linux_sw_inventory.yml`, role `roles/sw_inventory`, 1.133.0) reads
-each host of its Limit and writes what it found to the places you pick: a text file per host, the report database,
-CSV and JSON files, a SQL Server table and a Windows file share. The report email carries the files and a short
-"what changed" summary.
+The job *Linux - software inventory* (`playbooks/linux_sw_inventory.yml`, 1.133.0) reads each host of its Limit and
+writes three exports: a **text file per host** (shield), a **CSV** and a **JSON**. They go to a folder, to a Windows
+file share, and with the report email. Optional: the report database and a SQL Server table.
 
 ## What it reads
 
@@ -29,45 +28,43 @@ On each host, one read-only script (`roles/sw_inventory/files/sw_read.sh`):
 
 1. Run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`. It makes the
    template with the Linux Machine credential, the Limit prompted, **Concurrent jobs** off.
-2. Attach the credentials of the outputs you use (all optional):
-   - **Report database** (the writer, `report_writer`) for `report_db`;
-   - **Windows file share** for `sw_inventory_share` (the account needs **Modify** on the folder);
-   - **SQL Server (certificate inventory)** for `mssql`.
-
-   The setup job attaches them itself when `aap_templates_credentials` maps `report_db`, `windows_share` and
-   `sqlserver` to your credentials' names.
-3. Set the outputs in the template's Variables (`aap/extra_vars/linux_sw_inventory.yml` has every setting):
+2. For the share: attach the **Windows file share** credential (**Modify** on the folder) and set the folder:
 
    ```yaml
-   sw_inventory_outputs: [shield, report_db, csv]
    sw_inventory_share: '\\fileserver.corp.example.mil\it\inventory'
    sw_inventory_share_subdir: linux
    ```
 
-4. Launch it once with **Check**: it reads the hosts, logs in to the share and the databases, and writes nothing.
-5. Launch it for real. Then schedule it **nightly at 02:00** (*Schedules* on the template), with your Limit.
+3. For the email: `report_email_to`, as for the other reports.
+4. Launch it once with **Check** (reads the hosts, logs in to the share, writes nothing), then for real. Schedule it
+   **nightly at 02:00** with your Limit.
 
 Success looks like this at the end of the job output:
 
 ```text
 shield: 3 files in /var/lib/site-automation/sw-inventory
 csv: 2 files in /var/lib/site-automation/sw-inventory
-share: 8 files in \\fileserver.corp.example.mil\it\inventory\linux
-report_db: run 12 in site_reports (5610 rows; 0 old runs deleted)
+json: 2 files in /var/lib/site-automation/sw-inventory
+share: 9 files in \\fileserver.corp.example.mil\it\inventory\linux
 ```
 
 ## The outputs
 
-`sw_inventory_outputs` is a list. Each output is written on its own: one that fails says which, why (an
-`SA-SWI` code) and the fix, and the others are still written.
+`sw_inventory_outputs` (default `[shield, csv, json]`). Each output is written on its own: one that fails says which,
+why (an `SA-SWI` code) and the fix, and the others are still written.
 
 | Output | What is written | Where |
 |---|---|---|
-| `shield` (default) | a text file per host, `<short host name>.txt` (*The shield file*) | `sw_inventory_dir/shield/`, and on the share |
-| `report_db` (default) | the run, its hosts, packages and changes (*The report database*) | the report database's `sw_inventory_*` tables |
-| `csv` (default) | `sw-inventory-YYYYMMDD-HHMM.csv` and `sw-inventory-latest.csv`, a row per host and package | `sw_inventory_dir`, and on the share |
-| `json` | `sw-inventory-YYYYMMDD-HHMM.json` and `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, and on the share |
-| `mssql` | a row per host and package each run (*SQL Server*) | your SQL Server table |
+| `shield` | a text file per host, `<short host name>.txt` (*The shield file*) | `sw_inventory_dir/shield/`, the share |
+| `csv` | `sw-inventory-YYYYMMDD-HHMM.csv` and `sw-inventory-latest.csv`, a row per host and package | `sw_inventory_dir`, the share, the email |
+| `json` | `sw-inventory-YYYYMMDD-HHMM.json` and `sw-inventory-latest.json`: hosts, packages, hosts not read, changes | `sw_inventory_dir`, the share, the email |
+
+**Optional:**
+
+| Output | When | What |
+|---|---|---|
+| `report_db` | added by itself when the template has the **Report database** credential (`sw_inventory_db_auto`) | the run, its hosts, packages and changes (*The report database*) |
+| `mssql` | only when listed, with `sw_inventory_mssql` | a row per host and package each run (*SQL Server*) |
 
 `sw-inventory-state.json` is written beside the files and on the share: each host's last list. Without the report
 database, the next run compares with it.
@@ -124,18 +121,17 @@ over SMB with smbprotocol, the way the report website writes its share
 
 With `report_email_to` set, the report goes out like the other reports, with these attached:
 
-- the run's CSV;
+- the run's CSV and JSON;
 - `sw-inventory-shield-YYYYMMDD.zip`: every host's shield file;
 - the workbook (`.xlsx`): sheets **Packages** and **Changed since last run**.
 
-A zip bigger than `sw_inventory_email_max_mb` (10) is left off: the email then has the CSV only, and says the shield
-files are on the share. The CSV and the workbook are always attached (the workbook's Packages sheet stops at
-`sw_inventory_xlsx_max_rows`). `sw_inventory_email: false` sends no email; the report website page stays. The website
-hosts the CSV and the workbook beside the page, not the zip.
+A file bigger than `sw_inventory_email_max_mb` (10) is left off; the email says where it is (the share). The website
+hosts the CSV, the JSON and the workbook beside the page, not the zip. `sw_inventory_email: false` sends no email.
 
 ### The report database
 
-`report_db` writes four tables in `site_reports` with the **Report database** credential:
+`report_db` (optional; added by itself when the template has the **Report database** credential) writes four tables
+in `site_reports`:
 `sw_inventory_run`, `sw_inventory_host`, `sw_inventory_pkg` and `sw_inventory_change`. The first run makes them. The
 statements, the sizes and the by-hand setup are in [REPORT_DATABASE.md](REPORT_DATABASE.md), *The software
 inventory*. `release` and `change` are MySQL reserved words: write them in backticks.
@@ -156,7 +152,7 @@ The login: the **SQL Server (certificate inventory)** credential, the same type 
 (`aap/credential_types/cert_inventory_sql.yml`). The driver: pymssql, in the all-in-one EE.
 
 ```yaml
-sw_inventory_outputs: [shield, report_db, csv, mssql]
+sw_inventory_outputs: [shield, csv, json, mssql]
 sw_inventory_mssql:
   server: sql01.corp.example.mil
   port: 1433
@@ -223,7 +219,8 @@ never shows as "everything removed".
 
 | Setting | Default | What it does |
 |---|---|---|
-| `sw_inventory_outputs` | `[shield, report_db, csv]` | Any of `shield`, `report_db`, `csv`, `json`, `mssql` |
+| `sw_inventory_outputs` | `[shield, csv, json]` | Any of `shield`, `csv`, `json`; optional `report_db`, `mssql` |
+| `sw_inventory_db_auto` | `true` | Add `report_db` when the template has the Report database credential |
 | `sw_inventory_dir` | `''` | The files' folder on the execution node (a path AAP exposes to jobs). `''`: the job's own folder, gone after the job |
 | `sw_inventory_shield_subdir` | `shield` | The shield files' folder, under `sw_inventory_dir` and on the share |
 | `sw_inventory_share` | `''` | `\\server\share\folder` (or a mounted folder) the files are copied to |
@@ -235,7 +232,7 @@ never shows as "everything removed".
 | `sw_inventory_db_timeout` | `10` | Seconds to connect to the report database |
 | `sw_inventory_mssql` | (see *SQL Server*) | The SQL Server table |
 | `sw_inventory_email` | `true` | Email the report with the files (`report_email_to`) |
-| `sw_inventory_email_max_mb` | `10` | The shield zip at most: a bigger one is left off the email (the CSV always goes) |
+| `sw_inventory_email_max_mb` | `10` | Each attachment at most: a bigger one is left off the email |
 | `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most (the CSV and the databases have all) |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
 | `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |

@@ -1300,8 +1300,8 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4,
 
 ## The software inventory (1.133.0)
 
-*Linux - software inventory* ([LINUX_SW_INVENTORY.md](LINUX_SW_INVENTORY.md)) keeps each night's packages here when
-`report_db` is in `sw_inventory_outputs` (the default) and the template has the **Report database** credential.
+*Linux - software inventory* ([LINUX_SW_INVENTORY.md](LINUX_SW_INVENTORY.md)) keeps each night's packages here when the
+template has the **Report database** credential (`sw_inventory_db_auto`, optional).
 
 1. Add the **Report database** credential (the writer's) to *Linux - software inventory*. The template setup job
    attaches it when `aap_templates_credentials` maps `report_db`.
@@ -1318,7 +1318,7 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4,
 | What a run deletes | its own template's runs older than `sw_inventory_keep_days` (90), with their rows |
 | When the database is down | the output `report_db` fails with its SA-SWI code and the fix; the other outputs are still written; the job fails at its end (`sw_inventory_fail_on_output_error`) |
 | A dry run (Check) | logs in and looks at the tables, writes nothing |
-| Turning it off | take `report_db` out of `sw_inventory_outputs`. Without the credential the job says it once and goes on |
+| Turning it off | take the credential off the template, or `sw_inventory_db_auto: false` |
 | Removing it | `DROP TABLE sw_inventory_change, sw_inventory_pkg, sw_inventory_host, sw_inventory_run;` and `DELETE FROM schema_version WHERE component = 'sw_inventory';` |
 
 **By hand.** If the writer may not create tables, set `sw_inventory_db_create: false` and make them once as root, in
@@ -1398,7 +1398,7 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('sw_inventor
 
 | Setting | Default | What it does |
 |---|---|---|
-| `sw_inventory_outputs` | `[shield, report_db, csv]` | `report_db` in it: keep each run here |
+| `sw_inventory_db_auto` | `true` | Keep each run here when the template has the credential (or list `report_db` in `sw_inventory_outputs`) |
 | `sw_inventory_db_create` | `true` | Make the tables on the first run |
 | `sw_inventory_keep_days` | `90` | Delete this template's older runs. `0`: never |
 
