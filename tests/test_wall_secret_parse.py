@@ -85,5 +85,18 @@ class DeployWritesJson(unittest.TestCase):
             self.assertIn("' ' ~ (item.item.value if item.item.value is string else (item.item.value | to_json))", line, line)
 
 
+class TokenContainerKeepsLabels(unittest.TestCase):
+    def test_the_token_run_relabels_nothing(self):
+        """1.130.2: the one-off token container must not relabel (:Z) the folders the running portal uses"""
+        with open(os.path.join(REPO, "roles", "site_portal_stack", "tasks", "main.yml"), encoding="utf-8") as fh:
+            text = fh.read()
+        i = text.index("- name: Wall | a new reset token in the portal's data volume")
+        task = text[i:text.index("\n- name:", i + 10)]
+        task = "\n".join(ln for ln in task.splitlines() if not ln.strip().startswith("#"))     # the command, not its comment
+        self.assertIn("label=disable", task)
+        self.assertNotIn(",Z", task)
+        self.assertNotIn(":Z", task)
+
+
 if __name__ == "__main__":
     unittest.main()
