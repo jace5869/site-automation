@@ -77,8 +77,10 @@ class Rules(unittest.TestCase):
         self.assertEqual(out[0]["start"], NOW)
         out = t.update([dict(c)], NOW + 300)
         self.assertEqual(out[0]["start"], NOW)                 # still open: the first start
-        out = t.update([], NOW + 600)
-        self.assertEqual(out[0]["end"], NOW + 600)             # cleared: on the timeline
+        out = t.update([], NOW + 450)
+        self.assertEqual((out[0].get("end"), out[0]["last_known"]), (None, True))      # gone from the read, not seen OK: last known
+        out = t.update([], NOW + 600, ok={"host:a"})
+        self.assertEqual(out[0]["end"], NOW + 600)             # seen OK: cleared, on the timeline
         self.assertEqual(t.update([], NOW + 600 + 4 * 3600 + 1), [])   # after 4 hours: gone
 
 
@@ -148,20 +150,28 @@ class Model(unittest.TestCase):
         self.assertIn("vc:" + demo.VC1, self.ids(m, "vc"))
 
     def test_netapp_from_the_report_database(self):
+        """Codex verify 4: the report database is never a light - with no live ONTAP, Storage is not on the wall; the run's rows
+        only fill the storage path card, as information"""
         db = demo.netapp_db(11)
         import netapp_live as nl
         nm = nl.Database(lambda: db, mark="?").read()
         at = sp.ad_when(nm["run"]["read_at"])
-        m = model(nm=nm, asof=at)
-        self.assertEqual(m["feeds"]["ontap"]["fresh"], "stale")                                         # 11 min old
-        self.assertTrue(any(c["kind"] == "aggrwarn" for c in m["conds"]))
+        m = model(demo.view(NOW, ontap=False), nm=nm, asof=at)
+        st = [a for a in m["areas"] if a["id"] == "storage"][0]
+        self.assertEqual((st["on"], st["feeds"], st["why"]), (False, [], M.STORAGE_OFF))
+        self.assertFalse([c for c in m["conds"] if c["area"] == "storage"])
+        self.assertEqual((m["storage"]["aggr"], m["storage"]["ran"]), ([], {"sm": False, "nodes": False}))
         self.assertIn("DS-SITEA-07", m["storage"]["paths"])
-        self.assertTrue(m["storage"]["paths"]["DS-SITEA-07"]["rows"][0]["aggr"])
-        self.assertEqual([a["id"] for a in m["areas"] if a["on"]], ["storage", "vmware"])
+        self.assertTrue(all(r["info"] and r["feed"] == "netapp-run" for p in m["storage"]["paths"].values() for r in p["rows"]))
+        m = model(nm=nm, asof=at)                                                       # with the live clusters (the demo's two)
+        st = [a for a in m["areas"] if a["id"] == "storage"][0]
+        self.assertTrue(st["on"])
+        self.assertNotIn("netapp-run", st["feeds"])
+        self.assertEqual(set(a["feed"] for a in m["storage"]["aggr"]), {"ontap:" + demo.NA1, "ontap:" + demo.NA2})
         self.assertEqual(m["storage"]["aggr"][0]["v"], max(a["v"] for a in m["storage"]["aggr"]))
 
     def test_live_ontap_takes_the_place_of_the_run(self):
-        v = demo.view(NOW)
+        v = demo.view(NOW, ontap=False)
         TB = 1024 ** 4
         v["sources"]["ontap:cluster9.example.mil"] = {"kind": "ontap", "name": "cluster9.example.mil", "state": "ok", "why": "", "at": NOW - 20,
                                                       "snap": {"cluster": "cluster9", "nodes": [{"name": "n1", "state": "up"}, {"name": "n2", "state": "down", "takeover": False}],
@@ -193,18 +203,19 @@ class Review(unittest.TestCase):
         return M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
 
     def test_one_source_per_cluster(self):
-        """cluster1 is read live: the run's rows of cluster1.example.mil are not used at all; cluster2 only from the run"""
+        """Codex verify 4: Storage from the live reads only - the run adds no feed, no aggregate, no condition; an empty node
+        state is unknown (never up, never a condition: the area is not whole)"""
         m = self.live_and_db()
         st = [a for a in m["areas"] if a["id"] == "storage"][0]
         self.assertIn("ontap:cluster1.example.mil", st["feeds"])
-        self.assertIn("ontap", st["feeds"])                             # the run is still the source of cluster2: its age counts
-        self.assertEqual(sorted(set(a["c"] for a in m["storage"]["aggr"])), ["cluster2"])       # no aggregate of cluster1 from the run
-        self.assertTrue(all(c.get("cluster") != "cluster1" or c.get("feed") != "ontap" for c in m["conds"]))
-        self.assertTrue(any(c["id"] == "node:cluster1:n2" for c in m["conds"]))   # an empty state is not "up"
+        self.assertFalse([k for k in st["feeds"] if not k.startswith(("ontap:", "vc:"))])
+        self.assertTrue(all(a["feed"].startswith("ontap:") for a in m["storage"]["aggr"]))
+        self.assertTrue(all(c.get("feed", "").startswith(("ontap:", "vc:")) or c.get("feed") == "" for c in m["conds"]))
+        self.assertFalse(any(c["id"].startswith("node:cluster1.example.mil:") for c in m["conds"]))
+        self.assertIn("node n2: state '' not known", m["storage"]["incomplete"])
         lun = sorted(c["id"] for c in m["conds"] if c["kind"] == "voloff")
-        self.assertEqual(lun, ["voloff:cluster1:s1:/vol/v/l", "voloff:cluster1:s2:/vol/v/l"])   # the SVM in the id
+        self.assertEqual(lun, ["voloff:cluster1.example.mil:s1:/vol/v/l", "voloff:cluster1.example.mil:s2:/vol/v/l"])   # the SVM in the id
         self.assertTrue(all("age" not in f for f in m["feeds"].values()))   # no per-second age in the answer (the ETag)
-
 
 class CodexModel(unittest.TestCase):
     """Codex 1.129.0 pre-release review: the model's part"""
@@ -220,16 +231,17 @@ class CodexModel(unittest.TestCase):
         self.assertEqual(cl["up"], cl["of"] - 1 - len(cl["down"]))
 
     def test_a_live_ontap_read_clears_the_runs_conditions_of_its_cluster(self):
+        """the run says a node is down, the live read says up: only the live read counts (the run is never a condition)"""
         import netapp_live as nl
         db = demo.netapp_db(25)
         nm = nl.Database(lambda: db, mark="?").read()
         nm["parts"].setdefault("nodes", {"rows": []})["rows"] = [{"cluster": "cluster1", "node": "cluster1-01", "state": "down"}]
-        v = demo.view(NOW)
+        v = demo.view(NOW, ontap=False)
         v["sources"]["ontap:cluster1.example.mil"] = {"kind": "ontap", "name": "cluster1.example.mil", "state": "ok", "why": "", "at": NOW - 20,
                                                       "snap": {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [],
                                                                "volumes": [], "luns": [], "snapmirror": []}}
         m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
-        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], [])     # the run said down, the live read says up
+        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], [])
         self.assertEqual(m["storage"]["nodes"], [1, 1])
 
     def test_nothing_read_nothing_on(self):
@@ -239,29 +251,29 @@ class CodexModel(unittest.TestCase):
 
 class CodexVerifyModel(unittest.TestCase):
     def test_a_name_never_clears_another_addresss_alert(self):
+        """Codex verify 4: the run's "cluster not read" is never an alert on the wall (live only); a live cluster's own alert
+        carries its own address"""
         import netapp_live as nl
         db = demo.netapp_db(25)
         nm = nl.Database(lambda: db, mark="?").read()
-        nm["parts"]["clusters"] = {"rows": [{"name": "cluster1.example.mil", "why": "not read: timed out"}]}   # the run: by its address
+        nm["parts"]["clusters"] = {"rows": [{"name": "cluster1.example.mil", "why": "not read: timed out"}]}
         m0 = M.build(demo.view(NOW), nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
-        self.assertIn("node:cluster1.example.mil", [c["id"] for c in m0["conds"]])
+        self.assertFalse([c for c in m0["conds"] if c["kind"] == "node"])
         v = demo.view(NOW)
-        v["sources"]["ontap:192.0.2.10"] = {"kind": "ontap", "name": "192.0.2.10", "state": "ok", "why": "", "at": NOW - 20,
-                                           "snap": {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [],
-                                                    "volumes": [], "luns": [], "snapmirror": []}}
+        v["sources"]["ontap:192.0.2.10"] = {"kind": "ontap", "name": "192.0.2.10", "state": "error", "why": "timed out", "at": None, "snap": None}
         m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
-        # Codex verify 3: no name matching between the sources - 192.0.2.10 is another address: the run's alert stays
-        self.assertIn("node:cluster1.example.mil", [c["id"] for c in m["conds"] if c["kind"] == "node"])
+        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], ["node:192.0.2.10"])
 
     def test_checks_not_run(self):
+        """the run's health parts never run a wall check; a live cluster's SnapMirror / nodes not read: not run"""
         import netapp_live as nl
         db = demo.netapp_db(5)
         nm = nl.Database(lambda: db, mark="?").read()
+        self.assertEqual(model(demo.view(NOW, ontap=False), nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": False, "nodes": False})
         self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": True, "nodes": True})
-        for k in ("snapmirror", "nodes"):
-            nm["parts"].pop(k, None)                                                           # ontap_live_health false
-        self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"], {"sm": False, "nodes": False})
-
+        v = demo.view(NOW)
+        v["sources"]["ontap:" + demo.NA1]["snap"].update(snapmirror=None, nodes=None)
+        self.assertEqual(model(v)["storage"]["ran"], {"sm": False, "nodes": False})
 
 class CodexVerify2Model(unittest.TestCase):
     def live(self, name, cl, state="up"):
@@ -269,16 +281,12 @@ class CodexVerify2Model(unittest.TestCase):
                 "snap": {"cluster": cl, "nodes": [{"name": cl + "-01", "state": state}], "aggrs": [], "volumes": [], "luns": [], "snapmirror": []}}
 
     def test_two_clusters_of_one_short_name_never_collide(self):
-        import netapp_live as nl
-        db = demo.netapp_db(25)
-        nm = nl.Database(lambda: db, mark="?").read()
-        nm["parts"]["clusters"] = {"rows": [{"name": "array", "addr": "array.west.example.mil", "why": "not read: timed out"},
-                                            {"name": "array", "addr": "array.east.example.mil", "why": "not read: timed out"}]}
-        v = demo.view(NOW)
+        v = demo.view(NOW, ontap=False)
+        v["sources"]["ontap:array.west.example.mil"] = self.live("array.west.example.mil", "array", state="down")
         v["sources"]["ontap:array.east.example.mil"] = self.live("array.east.example.mil", "array")
-        m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
+        m = M.build(v, None, None, demo.OPTS, M.Tracker(), NOW)
         ids = [c["id"] for c in m["conds"] if c["kind"] == "node"]
-        self.assertEqual(ids, ["node:array.west.example.mil"])                  # the west alert stays (east is read live: its own read)
+        self.assertEqual(ids, ["node:array.west.example.mil:array-01"])        # each alert by its own address
 
     def test_unknown_numbers(self):
         v = demo.view(NOW)
@@ -295,11 +303,11 @@ class CodexVerify2Model(unittest.TestCase):
         self.assertTrue(any("DS-SITEA-07" in x for x in st["vmware"]["incomplete"]))
 
     def test_a_failed_health_collection_is_not_run(self):
-        import netapp_live as nl
-        db = demo.netapp_db(5)
-        nm = nl.Database(lambda: db, mark="?").read()
-        nm["parts"]["snapmirror"]["errors"] = ["cluster1.example.mil: not reached"]
-        self.assertEqual(model(nm=nm, asof=NOW - 60)["storage"]["ran"]["sm"], False)
+        v = demo.view(NOW)
+        v["sources"]["ontap:" + demo.NA2]["snap"].update(snapmirror=None, failed={"snapmirror": "an error in the answer"})
+        m = model(v)
+        self.assertEqual(m["storage"]["ran"]["sm"], False)
+        self.assertTrue(any("snapmirror not read whole" in x for x in m["storage"]["incomplete"]))
 
     def test_unread_lun_usage_is_never_zero_upstream(self):
         import site_ontap_expand as X
@@ -338,25 +346,16 @@ class CodexVerify3Model(unittest.TestCase):
         return v
 
     def test_an_old_live_read_never_hides_or_greens(self):
-        """cluster1 read live 15 min ago, healthy; the run (newer) says cluster1's aggregate is 99 % full: the run's rows of a live
-        cluster are not used - and the live read is stale (never OK)"""
+        """cluster1 read live 15 min ago, healthy; the run (newer) says its aggregate is 99 % full: the run is never used - and the
+        live read is stale (never OK)"""
         nm = self.nm()
         for a in nm["aggrs"]:
-            if a["c"] == "cluster1":
-                a["pct"] = 99.0
-        v = self.live(demo.view(NOW), "cluster1.example.mil", at=NOW - 900)
+            a["pct"] = 99.0
+        v = self.live(demo.view(NOW, ontap=False), "cluster1.example.mil", at=NOW - 900)
         m = M.build(v, nm, NOW - 1, demo.OPTS, M.Tracker(), NOW)
         self.assertEqual(m["feeds"]["ontap:cluster1.example.mil"]["fresh"], "stale")
-        self.assertFalse([a for a in m["storage"]["aggr"] if a.get("addr") == "cluster1.example.mil" and a["feed"] == "ontap"])
-
-    def test_a_live_read_replaces_an_incomplete_run_row(self):
-        nm = self.nm()
-        for a in nm["aggrs"]:
-            if a["c"] == "cluster1":
-                a["pct"] = None                                   # the run lacks cluster1's aggregate use ...
-        v = self.live(demo.view(NOW), "cluster1.example.mil", aggrs=[{"name": "aggr1_c1n1", "node": "n", "size": 10 * self.TB, "used": 5 * self.TB}])
-        m = M.build(v, nm, NOW - 60, demo.OPTS, M.Tracker(), NOW)
-        self.assertFalse([x for x in m["storage"]["incomplete"] if "aggr1_c1n1" in x])     # ... but cluster1 is read live: not used
+        self.assertEqual(m["storage"]["aggr"], [])
+        self.assertFalse([c for c in m["conds"] if c["kind"].startswith("aggr")])
 
     def test_failed_or_unknown_live_checks(self):
         v = self.live(demo.view(NOW), "cluster1.example.mil", nodes=None, snapmirror=[{"src": "a:b", "dst": "c:d", "state": None, "healthy": None}],
@@ -373,13 +372,16 @@ class CodexVerify3Model(unittest.TestCase):
     def test_storage_completeness_covers_its_sources(self):
         v = demo.view(NOW)
         v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"][0]["capacity"] = None   # a datastore of Storage not read
-        nm = self.nm()
-        nm["run"]["not_read"] = ["cluster2.example.mil: timed out"]
-        m = M.build(v, nm, NOW - 60, demo.OPTS, M.Tracker(), NOW)
-        inc = " ".join(dict((a["id"], a) for a in m["areas"])["storage"]["incomplete"] + m["storage"]["incomplete"])
+        v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"][1]["accessible"] = None  # one whose accessibility was not read
+        v["sources"]["ontap:" + demo.NA1]["snap"]["aggrs"] = None                          # a live collection not read
+        m = M.build(v, self.nm(), NOW - 60, demo.OPTS, M.Tracker(), NOW)
+        st = dict((a["id"], a) for a in m["areas"])["storage"]
+        inc = " ".join(m["storage"]["incomplete"])
         self.assertIn("datastore DS-SITEA-07", inc)
-        self.assertIn("did not read cluster2.example.mil", inc)
-        self.assertIn("ontap", dict((a["id"], a) for a in m["areas"])["storage"]["feeds"])          # the run supplies rows: its age counts
+        self.assertIn("accessibility not read", inc)
+        self.assertIn("aggregates not read", inc)
+        self.assertFalse(st["complete"])
+        self.assertEqual(sorted(k.split(":")[0] for k in st["feeds"]), ["ontap", "ontap", "vc", "vc"])   # never the run
 
     def test_vmware_unknowns(self):
         v = demo.view(NOW)
@@ -388,7 +390,8 @@ class CodexVerify3Model(unittest.TestCase):
         snap["hosts"][0].pop("maint")
         m = model(v)
         inc = " ".join(m["vmware"]["incomplete"])
-        self.assertIn("CPU, memory or heartbeat not read", inc)
+        self.assertIn("CPU or memory not read", inc)
+        self.assertIn("heartbeat not read", inc)
         self.assertIn("maintenance mode not read", inc)
         import wall_live as W
         sh = W.shape([("Datastore", "ds-1", {"name": "DS-1", "summary.capacity": "100", "summary.accessible": "true"}),
@@ -778,6 +781,8 @@ class Browser(unittest.TestCase):
             for d in s1["snap"]["datastores"]:
                 d["free"] = d["capacity"] // 2
             v["sources"]["vcenter:" + demo.VC2]["at"] = time.time() - 900
+            for k in [k for k in v["sources"] if k.startswith("ontap:")]:
+                v["sources"][k]["at"] = time.time() - 900                         # the live ONTAP reads old too
             v["history"] = {}
             return v
         url, stop = demo.portal(collector=demo.FakeCollector(stale_view), netapp_minutes_old=30)
@@ -845,12 +850,13 @@ class Browser(unittest.TestCase):
         self.assertIn('data-fb="host:%s|sita01-esx02.corp.example.mil" data-fb-area="vmware"' % demo.VC1, out)
 
     def test_no_netapp_storage_counters_are_grey(self):
-        url, stop = demo.portal(netapp=False, collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")))
+        """no live ONTAP cluster (and the report database's run there): Storage is not on the wall - nothing of it green"""
+        url, stop = demo.portal(collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok", ontap=False)))
         self.addCleanup(stop)
-        out = self.run_page(url, "style=cockpit&freeze=1")
-        self.assertRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken: no NetApp read')
-        self.assertRegex(out, r'<div class="ctr off"[^>]*title="Storage nodes down: no NetApp read')
-        self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes)"')
+        for area in ("overview", "storage"):
+            out = self.run_page(url, "style=cockpit&freeze=1&area=" + area)
+            self.assertNotRegex(out, r'<div class="ctr ok"[^>]*data-d="ctr:(sm|nodes|aggr|ds)"')
+            self.assertNotRegex(out, r'class="gauge s-ok"[^>]*data-d="aggr:')
 
     def test_nothing_read_is_never_green(self):
         url, stop = demo.portal(netapp=False, collector=demo.FakeCollector(lambda: {"sources": {}, "history": {}}))
@@ -903,7 +909,7 @@ class Browser(unittest.TestCase):
     def test_never_green_walk(self):
         """every status element, every style, the areas and the detail cards, with the sources old / missing: none green"""
         def old_vc():
-            v = demo.view(vc2_state="ok")
+            v = demo.view(vc2_state="ok", ontap=False)
             for k in ("vcenter:" + demo.VC1, "vcenter:" + demo.VC2):
                 v["sources"][k]["at"] = time.time() - 900
             return v
@@ -931,7 +937,12 @@ class Browser(unittest.TestCase):
         db = None
         out = self.run_page(url, "style=cockpit&freeze=1")
         self.assertNotRegex(out, r'<div class="ctr off"[^>]*title="SnapMirror broken')              # the run has the health parts
-        url2, stop2 = demo.portal(collector=demo.FakeCollector(lambda: demo.view(vc2_state="ok")), netapp_minutes_old=1, health=False)
+        def unread():                                          # the live reads: SnapMirror and nodes not read (their checks did not run)
+            v = demo.view(vc2_state="ok")
+            for k in [k for k in v["sources"] if k.startswith("ontap:")]:
+                v["sources"][k]["snap"].update(snapmirror=None, nodes=None, failed={"snapmirror": "busy", "nodes": "busy"})
+            return v
+        url2, stop2 = demo.portal(collector=demo.FakeCollector(unread), netapp_minutes_old=1, health=False)
         self.addCleanup(stop2)
         for st, area in (("cockpit", "overview"), ("cockpit", "storage"), ("lights", "storage")):
             out = self.run_page(url2, "style=%s&area=%s&freeze=1" % (st, area))
@@ -956,10 +967,14 @@ class Browser(unittest.TestCase):
             v = demo.view(vc2_state="ok")
             d7 = [d for d in v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"] if d["name"] == "DS-SITEA-07"][0]
             v["sources"]["vcenter:" + demo.VC2]["snap"]["datastores"] = [dict(d7, free=d7["capacity"] // 2)]
+            snap = demo.ontap_snap("cluster2.example.mil")
+            snap["aggrs"] = [{"name": "aggr2_c2n2", "node": "cluster2-02", "size": 10 * demo.TB, "used": 5 * demo.TB}]
+            v["sources"]["ontap:cluster2.example.mil"] = {"kind": "ontap", "name": "cluster2.example.mil", "state": "ok", "why": "",
+                                                         "at": time.time() - 20, "snap": snap}
             return v
         url, stop = demo.portal(collector=demo.FakeCollector(view))
         self.addCleanup(stop)
-        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("aggr:cluster2|aggr2_c2n2"))
+        out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("aggr:ontap:cluster2.example.mil|aggr2_c2n2"))
         self.assertIn('data-d="ds:%s|DS-SITEA-07"' % demo.VC1, out)
         self.assertIn('data-d="ds:%s|DS-SITEA-07"' % demo.VC2, out)
 
@@ -970,8 +985,8 @@ class Browser(unittest.TestCase):
         card = out.split('id="dsCard"', 1)[1]
         for row in ("<b>LUN</b>", "<b>Volume</b>"):                                            # VMFS: the run has the datastore's fill only
             part = card.split(row, 1)[1].split('class="lr', 1)[0]
-            self.assertIn("the LUN's own fill is not in this read" if row == "<b>LUN</b>" else "size ", part)
-            self.assertNotIn('class="wd ok"', part, row)
+            self.assertIn("the LUN's own fill is not in the refresh" if row == "<b>LUN</b>" else "size ", part)
+            self.assertNotIn('class="wd ', part, row)                                          # information: no status word at all
 
     def test_path_card_an_old_live_aggregate_is_not_ok(self):
         def view():
@@ -985,8 +1000,11 @@ class Browser(unittest.TestCase):
         url, stop = demo.portal(collector=demo.FakeCollector(view), netapp_minutes_old=1)     # the run (the path) current, the live read old
         self.addCleanup(stop)
         out = self.run_page(url, "style=cockpit&freeze=1&open=" + urllib.request.quote("ds:%s|DS-SITEA-07" % demo.VC1))
-        part = out.split('id="dsCard"', 1)[1].split("<b>Aggregate</b>", 1)[1].split('class="lr', 1)[0]
-        self.assertNotIn('class="wd ok"', part)
+        part = out.split('id="dsCard"', 1)[1].split("NetApp · ", 1)[1]
+        # Codex verify 4: the path card's NetApp rows are the report database's - information, labelled with their age, never a status
+        self.assertIn("from the NetApp refresh", part.split("</div>", 1)[0])
+        self.assertNotIn('class="wd ', part.split('class="df"', 1)[0])
+        self.assertNotRegex(part.split('class="df"', 1)[0], r'class="fl f-(ok|warn|crit)')
 
     def test_lights_down_hosts_first_never_hidden(self):
         def view():
@@ -1032,6 +1050,8 @@ class Browser(unittest.TestCase):
                 for k in ("vcenter:" + demo.VC1, "vcenter:" + demo.VC2):
                     for h in v["sources"][k]["snap"]["hosts"]:
                         h.update(state="connected", cpu_pct=30.0, mem_pct=40.0)
+                    for x in v["sources"][k]["snap"]["vms"]:
+                        x["heartbeat"] = "green"
                     for d in v["sources"][k]["snap"]["datastores"]:
                         d["free"] = d["capacity"] // 2
             snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
@@ -1059,30 +1079,46 @@ class Browser(unittest.TestCase):
             else:
                 d = rng.choice(snap["datastores"])
                 d[{"ds_cap": "capacity", "ds_free": "free"}[cut]] = None
+            # Storage: live ONTAP only (Codex verify 4) - the report database is information on the path card, never a cut that matters
             nm, at = json.loads(json.dumps(base_nm)), now - 60
+            ons = [x for k, x in v["sources"].items() if k.startswith("ontap:")]
             if quiet:
-                for a in nm["aggrs"]:
-                    a["pct"] = 40.0
-                for k in ("snapmirror", "nodes"):
-                    for r in (nm["parts"].get(k) or {}).get("rows") or []:
-                        r.update(st="ok", state="up") if k == "nodes" else r.update(st="ok", word="Healthy")
-            scut = rng.choice(["none", "stale", "late", "aggr_null", "aggr_size0", "health_failed", "not_read"])
+                for x in ons:
+                    for ag in x["snap"]["aggrs"]:
+                        ag["used"] = int(ag["size"] * 0.4)
+                    for r in x["snap"]["snapmirror"]:
+                        r.update(state="snapmirrored", healthy=True)
+            scut = rng.choice(["none", "stale", "late", "never", "error_recent", "auth_recent", "aggr_null", "aggr_size0", "node_state",
+                               "sm_health", "sm_state", "vol_state", "lun_state", "failed_sm", "failed_nodes", "failed_aggrs"])
+            on = rng.choice(ons)
+            osnap = on["snap"]
             if scut == "none":
-                nm, at = None, None
+                for k in [k for k in v["sources"] if k.startswith("ontap:")]:
+                    del v["sources"][k]
             elif scut == "stale":
-                at = now - 1800
+                on["at"] = now - 900
             elif scut == "late":
-                at = now - 300
+                on["at"] = now - 300
+            elif scut == "never":
+                on.update(at=None, snap=None, state="never")
+            elif scut in ("error_recent", "auth_recent"):
+                on.update(at=now - 20, state="error" if scut == "error_recent" else "auth", why="timed out", fail_since=now - 5)
             elif scut == "aggr_null":
-                rng.choice(nm["aggrs"])["pct"] = None
+                rng.choice(osnap["aggrs"])["used"] = None
             elif scut == "aggr_size0":
-                rng.choice(nm["aggrs"])["size"] = 0
-            elif scut == "not_read":
-                nm["run"]["not_read"] = ["cluster1.example.mil: timed out"]
+                rng.choice(osnap["aggrs"])["size"] = 0
+            elif scut == "node_state":
+                rng.choice(osnap["nodes"])["state"] = rng.choice([None, "booting", "unknown", ""])
+            elif scut == "sm_health":
+                osnap["snapmirror"][0].update(state="snapmirrored", healthy=rng.choice([None, "true", {}]))
+            elif scut == "sm_state":
+                osnap["snapmirror"][0].update(healthy=True, state=rng.choice([None, "paused", "gray", ""]))
+            elif scut in ("vol_state", "lun_state"):
+                rng.choice(osnap["volumes" if scut == "vol_state" else "luns"])["state"] = rng.choice([None, "gray", "never", ""])
             else:
-                for k in ("snapmirror", "nodes"):
-                    nm["parts"].setdefault(k, {}).setdefault("errors", []).append("cluster1.example.mil: not reached")
-                rng.choice(nm["aggrs"])["pct"] = None             # and one aggregate unknown: nothing of Storage may be green
+                coll = {"failed_sm": "snapmirror", "failed_nodes": "nodes", "failed_aggrs": "aggrs"}[scut]
+                osnap[coll] = None
+                osnap["failed"] = {coll: "an error in the answer"}
             a = M.build(v, nm, at, demo.OPTS, M.Tracker(), now, enclave="SITEA", title="Ops center")
             a.update(zone="Europe/Berlin", poll=30, full={"storage": "/portal/netapp"}, auth_retry=900,
                      me={"feedback": True, "reader": False, "areas": [["general", "The wall"]], "max": 1000})
@@ -1112,8 +1148,15 @@ class Browser(unittest.TestCase):
         snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
         for h in snap["hosts"]:
             h.update(state="connected", cpu_pct=30.0, mem_pct=40.0)
+        for x in snap["vms"]:
+            x["heartbeat"] = "green"
         for d in snap["datastores"]:
             d["free"] = d["capacity"] // 2
+        for k in [k for k in v["sources"] if k.startswith("ontap:")]:
+            for ag in v["sources"][k]["snap"]["aggrs"]:
+                ag["used"] = int(ag["size"] * 0.4)
+            for r in v["sources"][k]["snap"]["snapmirror"]:
+                r.update(state="snapmirrored", healthy=True)
         a = M.build(v, None, None, demo.OPTS, M.Tracker(), now, enclave="SITEA", title="Ops center")
         a.update(zone="Europe/Berlin", poll=30, full={}, auth_retry=900, me={"feedback": False, "reader": False, "areas": [], "max": 1000})
         return json.loads(json.dumps(a, default=str))

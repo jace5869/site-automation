@@ -68,7 +68,25 @@ def series(now, minutes, level, before=55.0):
     return [(now - 60 * m, level if m < minutes else before) for m in range(60, -1, -1)]
 
 
-def view(now=None, vc2_state="auth"):
+NA1, NA2 = "sita01-nas.corp.example.mil", "sitb02-nas.corp.example.mil"
+
+
+def ontap_snap(name, aggr_used=(0.62, 0.91), broken=False):
+    """one live ONTAP cluster's read (wall_live.OntapSource.poll's shape): two aggregates, two nodes up, volumes and LUNs online"""
+    cl = name.split(".")[0]
+    return {"cluster": cl, "version": "NetApp Release 9.14.1", "failed": {},
+            "nodes": [{"name": cl + "-01", "state": "up", "takeover": True}, {"name": cl + "-02", "state": "up", "takeover": True}],
+            "aggrs": [{"name": "%s_aggr%d" % (cl.replace("-", "_"), i + 1), "node": cl + "-0%d" % (i + 1), "size": int(40 * TB), "used": int(u * 40 * TB)}
+                      for i, u in enumerate(aggr_used)],
+            "volumes": [{"name": "vol_ds%02d" % i, "svm": "svm_vmware", "state": "online", "size": int(2 * TB), "used": int(1.2 * TB), "aggr": "",
+                         "autosize": False, "snap_reserve": 0, "snap_used": 0} for i in range(1, 4)],
+            "luns": [{"path": "/vol/vol_ds%02d/lun0" % i, "name": "lun0", "svm": "svm_vmware", "volume": "vol_ds%02d" % i, "size": int(2 * TB),
+                      "used": int(1.1 * TB), "state": "online"} for i in range(1, 4)],
+            "snapmirror": [{"src": "%s:vol_ds01" % cl, "dst": "dr:vol_ds01_dr", "state": "broken_off" if broken else "snapmirrored",
+                            "healthy": not broken, "lag_s": 600, "why": "Transfer failed." if broken else ""}]}
+
+
+def view(now=None, vc2_state="auth", ontap=True):
     now = now or time.time()
     snap = vcenter_snap()
     key1, key2 = "vcenter:" + VC1, "vcenter:" + VC2
@@ -86,6 +104,10 @@ def view(now=None, vc2_state="auth"):
                    "at": None if vc2_state == "auth" else now - 30, "tried": now - 300, "next_try": now + 600, "skipped": 0,
                    "snap": None if vc2_state == "auth" else {"hosts": [], "clusters": [], "datastores": [], "vms": []},
                    "fail_since": now - 300 if vc2_state == "auth" else None}}
+    if ontap:                                        # the wall's Storage is read live only (Codex verify 4): two clusters
+        for name, used, broken in ((NA1, (0.62, 0.91), True), (NA2, (0.40, 0.55), False)):
+            srcs["ontap:" + name] = {"kind": "ontap", "name": name, "state": "ok", "why": "", "at": now - 20, "tried": now - 20, "next_try": None,
+                                     "snap": ontap_snap(name, used, broken), "fail_since": None}
     return {"sources": srcs, "history": hist}
 
 

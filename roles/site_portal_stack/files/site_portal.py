@@ -5569,7 +5569,7 @@ class WallLive(object):
         if m.get("empty"):
             return None, None, m["empty"]
         at = ad_when((m.get("run") or {}).get("read_at"))
-        return m, at, ""
+        return m, at, stale or ""               # a failed refresh is said on the path card (the DB is never a light on the wall)
 
     def model(self, now=None):
         now = time.time() if now is None else now

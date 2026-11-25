@@ -1023,9 +1023,14 @@ deploy again to take the banner away.
 | Area | Source | How often | Freshness on the wall |
 |---|---|---|---|
 | VMware: hosts, clusters, datastores, VMs, CPU and memory | each vCenter, read by the portal itself | every `portal_wall_seconds` (60) | live |
-| Storage: aggregates, nodes, SnapMirror, volumes and LUNs offline | each ONTAP cluster, read by the portal (when the "NetApp ONTAP" credential is on the deploy) | every `portal_wall_seconds` | live |
-| Storage, without that credential | *NetApp - refresh volume list*'s newest run in the report database (the NetApp page's) | as that job runs (15-30 min) | as old as the run: shown LATE / STALE |
-| The storage path behind a datastore | the same run (its datastore match) | as that job runs | as old as the run |
+| Storage: aggregates, nodes, SnapMirror, volumes and LUNs offline | each ONTAP cluster of `portal_wall_ontap_clusters`, read by the portal (the "NetApp ONTAP" credential on the deploy) | every `portal_wall_seconds` | live |
+| Storage, without live ONTAP | **not on the wall** ("not on the wall yet") - the report database is never a light | - | - |
+| The storage path behind a datastore | *NetApp - refresh volume list*'s newest run in the report database: **information only** | as that job runs (15-30 min) | said in words ("from the NetApp refresh, 20 min ago"); neutral bars, never a status |
+
+**Storage on the wall is live ONTAP only.** The lamps, counters, SnapMirror and node checks, the aggregates and the Map's
+storage dots come only from the portal's own reads of `portal_wall_ontap_clusters`. The NetApp refresh in the report
+database is 15-30 minutes old by design, so it never lights, greys or clears anything on the wall; it only fills the
+datastore -> volume / LUN path card, as information.
 
 **The collector, read-only by construction.** It runs inside the portal service and reads whether or not anyone looks
 (the "sustained for 15 min" rule needs its own history; the history is in memory, so after a restart a CPU or memory
@@ -1039,10 +1044,12 @@ condition needs the full window again).
 - ONTAP: HTTPS **GET only**, each with `fields=` limited to what the wall shows (any other verb is refused before it is
   sent).
 - **Lockout guard:** the accounts are the site's existing ones, shared with the AAP jobs - a locked account would stop
-  those jobs too. On the **first refused login** that source stops at once, shows STALE with "login failed - check the
-  credential", and is tried again no sooner than `portal_wall_auth_retry_minutes` (15). One log line per episode, not
-  one a minute. Other faults (timeout, refused connection) are tried again the next cycle, one log line when they start
-  and one when they end.
+  those jobs too. **One collector thread reads every source in turn** (never two at once). Any outcome of a login other
+  than "it worked" - a refusal, a timeout or an answer lost after the request left - stops every source of that account
+  at once (STALE, "login failed - check the credential") for `portal_wall_auth_retry_minutes` (15), counted from that
+  outcome. ONTAP's basic authentication sends the password with every GET: each GET counts as a login, and an HTTP 401 on
+  any of them is a refusal. A vCenter whose session expired logs in again through the same gate. A source that could not
+  even be reached (no connection: nothing was sent) is tried again the next cycle. One log line per episode.
 - **One account, one back-off:** every source that uses the same account shares it - all the vCenters of
   `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
   (`CORP\svc-wall`, `svc-wall@corp.example.mil` and `SVC-Wall` are one). The deadline counts from the refusal itself, and
@@ -1050,14 +1057,15 @@ condition needs the full window again).
   any login (a vCenter Login, every ONTAP read) the attempt is written to disk first - if it cannot be written, no login is
   sent ("login paused - the back-off file cannot be written"). A refusal's deadline is written the same way. At the start,
   an attempt with no outcome holds its account one window, and a file that cannot be read, is not JSON or holds any entry
-  that is not valid holds every account one window. So a restart never brings a second login inside the window. The first refusal stops **all** of them; after the start and after each
-  back-off **one** source tries the login first and the others wait for its answer (a source that does not answer at all
-  passes the turn to the next). So a wrong or expired password costs exactly one failed login per back-off window,
+  that is not valid (`{}`, a null or non-finite deadline, not UTF-8) holds every account one window; a file that cannot be
+  read while the portal runs stops every login and is never written over. So a restart never brings a second login
+  inside the window. The sources are read one after the other, so the first refusal stops **all** of them before the
+  next one is tried: a wrong or expired password costs exactly one failed login per back-off window,
   however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or any HTTP 401 / 403 (a proxy
   in front of it, whatever the body), counts as a refusal too; the session is logged out, never left open.
 - An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
   the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
-- **No overlap:** a source still being read when the next cycle comes is skipped for that cycle.
+- **No overlap:** one thread, one source at a time; a cycle starts only after the last one ended.
 - **The page keeps itself honest:** it redraws the moment any source goes LATE or STALE (it never waits for the next
   answer), and when the portal itself does not answer two reads in a row it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
@@ -1068,21 +1076,23 @@ condition needs the full window again).
   current; while one vCenter has not returned its inventory, or one host or datastore lacks a value, nothing of VMware is
   green (its criticals and warnings still show) - the same for Storage. A seeded fuzz test takes inputs away at random
   and draws every style and card: nothing may be green.
-  A check that did not run (SnapMirror and the nodes with `ontap_live_health: false` on NetApp - refresh volume list) is
-  grey "Not on the wall", never "None broken". On Lights the hosts are listed critical first, then warnings, then the rest;
+  A check that did not run (a cluster's SnapMirror or node collection not read whole) is grey "Not on the wall", never
+  "None broken". **Green only from an allow-list:** a host is OK only when vCenter says exactly "connected" and its
+  maintenance mode is known; a VM's heartbeat only when "green" (gray, yellow or missing: unknown); a datastore only when
+  "accessible" is true; a SnapMirror relationship only when healthy is true and its state is snapmirrored or in_sync; a
+  volume or LUN only when "online". Anything else is unknown: grey, the area not whole. On Lights the hosts are listed critical first, then warnings, then the rest;
   none that is not OK is ever left out.
-- Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), the
-  NetApp counters are grey "Not on the wall" when the portal has no NetApp read at all, and a wall with nothing read yet
-  shows "No current data".
-- **One storage source per cluster:** a cluster in `portal_wall_ontap_clusters` (by its configured address) is shown only
-  from the live reads - the NetApp run's rows of that address are not used at all; every other cluster only from the run,
-  by its management address. Nothing is matched by name. A live read is all or nothing: a collection with errors, without
-  records or with pages left over counts as failed (its check not run, grey), and a state ONTAP did not give is unknown.
+- Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), Storage
+  is not on the wall without live ONTAP, and a wall with nothing read yet shows "No current data".
+- A live ONTAP read is all or nothing: a collection with an error, without records or with a next page left over counts
+  as failed (its check not run, grey), and a state ONTAP did not give is unknown. Each cluster's alerts carry its own
+  address (two clusters of one name never mix).
 - A source whose latest read failed (error, refused, paused) is not current whatever its last good read; a LATE source
-  is never shown beside a green light. A condition that disappears because its source or check could not see it stays
-  "last known", it is never shown "cleared".
-- With live ONTAP, the NetApp run in the report database is used only for the storage path card; its age is shown there
-  and never makes the live storage look stale.
+  is never shown beside a green light.
+- **An alert clears only when the same object is seen OK** in a fresh read (its source current, the object there and
+  passing the allow-list). An object that is no longer in the read, or whose value became unknown, keeps its alert open
+  as **last known**: grey, "last seen 14:20", never current and never "cleared". (A deleted object stays so until the
+  portal restarts.)
 
 **Set it up:** attach the site's existing **VMware vCenter** credential (the one the VMware jobs use) and, for live
 storage, the **NetApp ONTAP** credential to *Site portal - deploy* (both optional on that template), keep the

@@ -196,8 +196,9 @@ portal_netapp_old_minutes: 60                       # a run older than this is s
 # ---- 1.129.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall") -------------------------------------------
 # /portal/wall: one page for a wall screen - Lights, Cockpit (the default) or Map, saved per viewer - with only the wall
 # conditions below lit (routine alarms never). VMware is read live by the portal itself (one kept vCenter session, one property
-# read a cycle, read-only calls only); Storage from NetApp - refresh volume list's run in the report database, or live from
-# ONTAP (GET only) when the "NetApp ONTAP" credential is on this deploy. Freshness: LATE after 3 min, STALE after 10 min.
+# read a cycle, read-only calls only); Storage live from ONTAP only (GET only, portal_wall_ontap_clusters, the "NetApp ONTAP"
+# credential) - without it Storage is not on the wall; the report database's NetApp refresh only fills the storage path
+# card, as information. Freshness: LATE after 3 min, STALE after 10 min.
 portal_wall: true
 portal_wall_title: "{{ outage_ops_center | default('Ops center', true) }}"   # the tab's and the page's name: what your site calls its operations center
 portal_wall_preview: true                           # a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
