@@ -16,16 +16,19 @@ import yaml
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "plugins", "filter"), os.path.join(ROOT, "tests")]
 FROZEN = {   # sha256 of 1.118.4 (084e5931)
-    "roles/vmware_vm/library/site_vmware_watch.py": "d2e47963d3e749b5813869970aab4edb2f7dc4c620b5d8de2810577570dba001",
-    "plugins/filter/vmware_watch_filters.py": "53e81f37e68ce543ef43a07fdb677252f8797bb82b89e63de705e9d207daa979",
-    # 1.118.4's plugins/filter/outage_timeline_filters.py, word for word: a scheduled run's time line is made by it
-    "plugins/module_utils/outage_timeline_1184.py": "245830afda1069456ca5301ae551de68bbbf13b3ce9ad95aa792d8e7e6c3cdb1",
     # 1.118.4's roles/vmware_vm/tasks/watch.yml, the reference the task comparison below reads
     "tests/fixtures/watch_1184.yml": "66889c040b95d9749d8fcb768c9e82e1941698ee30b6cfc10668b799d11c25bd",
     # 1.116.4: the task files watch.yml includes on every run, as 1.118.4 had them
     "tests/fixtures/sso_read_1184.yml": "93fb2c6f1e3dfc46827d134872d13ea75600b2986d02b6790a4bd81dbea4de0a",
     "tests/fixtures/vcenters_read_1184.yml": "db6a64f3b95abd15dd769a951d6a5b3f814d818e6ed71ebb1fe148511617069c",
     "tests/fixtures/watch_email_1184.yml": "59c67935b401b3c85285e364a7f5293b9366b27c0be1f2d4d5f0d1296baec242",
+}
+# 1.131.2 changes only the usage-alarm read, conditions and timeline rows.
+FROZEN_11312 = {
+    "roles/vmware_vm/library/site_vmware_watch.py": "59628630e9108b1e8ebccea75dadb6d8153fd280ed49a9d2d82bc5dc05b5756f",
+    "plugins/filter/vmware_watch_filters.py": "0a2e2b081ceb785d35587ff612eab8e17e4db20f4a4b2b03194202042b6889a1",
+    "plugins/module_utils/outage_timeline_1184.py": "4a5a8571cce598c526c6c40b11bb4d6272b70e1a6bc23a3cb1df582bb0a9f569",
+    "plugins/module_utils/vm_watch_usage.py": "5706bee517db86e0e3fe15a142554e979a3c6e49dd1fbde44d343eaba1b64fc8",
 }
 # 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
 # its own, with tests/test_vm_watch_email.py.
@@ -37,11 +40,11 @@ FROZEN_1188 = {
 # what it did. Any other difference fails.
 ALLOWED = {
     "VMware | what is down or hung (the suspects checked {{ vm_watch_confirm_checks }} time(s), {{ vm_watch_confirm_seconds }} s apart)":
-        "no_log: vm_watch_review - false on a scheduled run",
+        "1.131.2 also reads the configured usage alarms",
     "VMware | vCenter's events of the window": "scheduled read keeps the original arguments and outer rescue; the review reads separately",
     "VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)":
         "review: omit unless a review; no_log: false unless a review",
-    "VMware | the time line": "scheduled read and options match the fixture, plus review=false to select the frozen filter",
+    "VMware | the time line": "scheduled read and options match the fixture, plus review=false and the 1.131.2 usage policy",
     "VMware | the time line was not made (the watch goes on without it)": "the message is 1.118.4's unless a review",
     "VMware | the AAR draft's facts (vm_outage_review.aar)": "inside the review-only AAR block",
     "VMware | a temporary folder for the AAR draft": "renamed inside the review-only AAR block",
@@ -54,7 +57,7 @@ ALLOWED = {
         "no_log only on a requested review; 1.118.8: as sent only when site_mail sent it, and only a mapping (2.16 renders null as '')",
     "VMware | nothing down or hung (vm_watch_fail_on)": "only a requested review masks the failure message",
     "VMware | what was found, and what phase 2 would restart (nothing is restarted)":
-        "no_log only on a requested review",
+        "1.131.2 filters usage alarms before report, email and job decisions",
     "VMware | single sign-on and OCSP - what is down now": "no_log only on a requested review",
     "VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)":
         "raw machine artifacts; no_log only on a requested review",
@@ -97,7 +100,9 @@ def _render_context(review):
     core = FilterModule().filters()
     env.filters.update(combine=core["combine"], bool=core["bool"], name_list=name_list,
                        outage_timeline=lambda events, tickets, opts: (events, tickets, opts))
-    context = dict(vm_watch_review=review, _vm_w_review=review, _vm_w_win=dict(begin=100, end=2400),
+    usage = dict(usage_alarms=["CPU usage"], usage_show_yellow=True, usage_min_minutes=20.0)
+    context = dict(vm_watch_usage_alarms=usage["usage_alarms"], vm_watch_usage_show_yellow=True, vm_watch_usage_min_minutes=20,
+                   _vm_w_usage_settings=usage, _vm_w=dict(read_at=2400, alarms=[]), vm_watch_review=review, _vm_w_review=review, _vm_w_win=dict(begin=100, end=2400),
                    vm_watch_review_from="", vm_watch_review_low_seconds=120, vm_watch_review_min_seconds=60,
                    vm_watch_review_skip_blips=True, vm_watch_report_on=["critical"], awx_job_id=42,
                    _vm_w_ev=dict(events=[{"key": 1}], capped=["vc.example.mil"]), _vm_w_tk=dict(tickets=[{"number": "INC0001"}]),
@@ -117,6 +122,11 @@ class Frozen(unittest.TestCase):
         for path, want in FROZEN.items():
             with open(os.path.join(ROOT, path), "rb") as fh:
                 self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, "%s changed: the watch is frozen at 1.118.4" % path)
+
+    def test_1_usage_files_are_1_131_2(self):
+        for path, want in FROZEN_11312.items():
+            with open(os.path.join(ROOT, path), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, path)
 
     def test_1_email_files_are_1_118_8(self):
         for path, want in FROZEN_1188.items():
@@ -257,7 +267,7 @@ class Frozen(unittest.TestCase):
         env, context = _render_context(False)  # _vm_w_review_opts and review attachment facts are undefined.
         name = "VMware | the time line"
         events, tickets, opts = _render_fact(old[name], "_vm_w_tl", env, context)
-        self.assertEqual(_render_fact(new[name], "_vm_w_tl", env, context), (events, tickets, dict(opts, review=False)))
+        self.assertEqual(_render_fact(new[name], "_vm_w_tl", env, context), (events, tickets, dict(opts, review=False, alarms=[], read_at=2400, **context["_vm_w_usage_settings"])))
         name = "VMware | the report"
         self.assertEqual(_render_fact(new[name], "_vm_w_aar_info", env, context),
                          _render_fact(old[name], "_vm_w_aar_info", env, context))

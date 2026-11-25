@@ -1346,6 +1346,14 @@ in every check of the run. A clean run is one line, with no email. Watch only: i
 hung VMs a later phase would restart, so the false alarms can be counted first. Everything - what it
 reads, the settings, the workflow, the phase 2 plan - is in [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md).
 
+The watch groups CPU and memory usage alarms by kind and lists the affected names. It hides yellow by default.
+Set `vm_watch_usage_show_yellow: true` to see yellow as a warning. Red counts as critical after
+`vm_watch_usage_min_minutes` (15) continuous minutes inside the window, measured from a triggered alarm
+or paired color changes. Set the watch window at least as long as the threshold for red to qualify.
+An unknown red duration stays hidden. Hidden changes leave the email-on-change
+decision alone. Adjust the case-insensitive name fragments in `vm_watch_usage_alarms`
+(default `[CPU usage, memory usage]`) to tune which alarms follow this rule.
+
 **The outage review** (1.66.0): launched with `vm_watch_review: true`, the same job draws one time line of what
 vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from
 it to the ticket, and how long a host was down. Read-only, no new job template:

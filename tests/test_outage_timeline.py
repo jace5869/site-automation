@@ -84,7 +84,8 @@ def tickets():
 
 
 # The scheduled watch still uses the detailed time line. A requested review passes review=True.
-OPTS = {"review": False, "begin": "2026-11-11T20:45:00Z", "end": DAY + "02:45:00Z", "time_zone": "Europe/Berlin", "low_seconds": 120,
+# Exercise the original review-noise and timeline rendering on alarms outside the watch's usage list.
+OPTS = {"usage_alarms": [], "review": False, "begin": "2026-11-11T20:45:00Z", "end": DAY + "02:45:00Z", "time_zone": "Europe/Berlin", "low_seconds": 120,
         "tickets_asked": True, "report_on": ["critical"], "min_severity": "warning"}
 
 
@@ -344,7 +345,7 @@ def director_outage():
     live["datastores"][0]["vms"] = [dict(name=vm, moid="vm-%d" % i) for i, vm in enumerate(OFF, 1)]
     recorded = watch_run(iso(at("22:20:00")), [dict(name=h, moid=host_ids[h]) for h in DOWN_HOSTS],
                          [dict(name=ds, moid=store_ids[ds]) for ds in DSS], VC)
-    opts = dict(begin=iso(BEGIN), end=iso(END), time_zone="Europe/Berlin", read_at=iso(NOW), watch_runs=[recorded],
+    opts = dict(usage_alarms=[], begin=iso(BEGIN), end=iso(END), time_zone="Europe/Berlin", read_at=iso(NOW), watch_runs=[recorded],
                 hosts=live["hosts"], datastores=live["datastores"], triggers=vm_watch_conditions(live), low_seconds=120, job="5120", tickets_asked=True)
     return events, tickets(), opts
 
@@ -1235,7 +1236,7 @@ class SmartReview(unittest.TestCase):
     def test_sparse_outside_noise_only_during_outage(self):
         host = dict(type="HostConnectionLostEvent", host="example-host", time=1000, vcenter="vc")
         alarm = dict(type="AlarmStatusChangedEvent", entity="example-vm", entity_type="vm", alarm="CPU usage", to="red", time=1500)
-        r = ot.outage_timeline([host, alarm, dict(host, type="HostConnectedEvent", time=4600)], [], dict(begin=100, end=8000, watch_runs=[watch_run(1500, [dict(name="example-host", moid="host-1")])]))
+        r = ot.outage_timeline([host, alarm, dict(host, type="HostConnectedEvent", time=4600)], [], dict(usage_alarms=[], begin=100, end=8000, watch_runs=[watch_run(1500, [dict(name="example-host", moid="host-1")])]))
         row, = r["draft"]["noise"]
         self.assertEqual(row[2], 1)
         self.assertIn("1 during the outage, 0 outside", row[-1])
@@ -1300,7 +1301,7 @@ class SmartReview(unittest.TestCase):
         other = dict(alarm, host="esx99", vm="outside", entity="outside")
         events = [loss, alarm, other, dict(alarm, time=730, to="green"), dict(loss, time=1200, type="HostConnectedEvent"),
                   dict(alarm, time=1300, alarm="memory usage")]
-        opts = dict(begin=100, end=1500, hosts=[host], watch_runs=[watch_run(650, [host])])
+        opts = dict(usage_alarms=[], begin=100, end=1500, hosts=[host], watch_runs=[watch_run(650, [host])])
         for summarize in (True, False):
             review = ot.outage_timeline(events, [], dict(opts, noise=summarize))
             draft = review["draft"]
@@ -1327,7 +1328,7 @@ class SmartReview(unittest.TestCase):
         for count, verdict in ((9, "not part of the outage"), (10, "same time, not a cause")):
             usage = [dict(type="AlarmStatusChangedEvent", vm="other", entity="other", entity_type="vm", alarm="CPU usage",
                           time=1050 + i, to="yellow") for i in range(count)]
-            d = ot.outage_timeline([origin, clear] + usage, [], dict(begin=500, end=2500, watch_runs=[watch_run(1100, [dict(name="esx01", moid="host-1")])]))["draft"]
+            d = ot.outage_timeline([origin, clear] + usage, [], dict(usage_alarms=[], begin=500, end=2500, watch_runs=[watch_run(1100, [dict(name="esx01", moid="host-1")])]))["draft"]
             self.assertEqual(d["noise"][0][2], count)
             self.assertIn(verdict, d["noise"][0][-1])
 

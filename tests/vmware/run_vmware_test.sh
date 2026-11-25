@@ -2922,6 +2922,7 @@ run "outage review, nothing down now: vCenter supplies the loss and the job is g
 run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 \
     -- "Host outage -" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
+# Exercise the legacy blip grouping with the watch usage filter disabled.
 # 1.79.12: a usage alarm that had already cleared. The windows start at a whole minute (vm_watch_review_from), after the events above,
 # 1.116.0: the review folds the usage alarm, including a raise read back from before the window.
 sleep $((61 - 10#$(date -u +%S)))
@@ -2930,10 +2931,10 @@ VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
 sleep 2
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
 run "outage review, a usage alarm raised and cleared: one folded line" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -e '{"vm_watch_usage_alarms": []}' -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
     -- "a short usage blip, Low" "Triggered by: " "Virtual machine CPU usage:" "all back to normal"
 run "  ... vm_watch_review_skip_blips: a blip sends no report, said" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0, \"vm_watch_review_skip_blips\": true}" -e report_time_zone=UTC \
+    -e '{"vm_watch_usage_alarms": []}' -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0, \"vm_watch_review_skip_blips\": true}" -e report_time_zone=UTC \
     -- "not sent (vm_watch_review_skip_blips)" '!"aar": {'      # 1.112.0 (Neon P1): a skipped blip keeps no AAR draft
 sleep $((61 - 10#$(date -u +%S)))
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
@@ -2941,10 +2942,10 @@ sleep $((61 - 10#$(date -u +%S)))
 min_b=$(date -u '+%Y-%m-%d %H:%M')
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
 run "outage review: the raise is before the window, the clear in it - read back, shown, the window starts at the raise" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -e '{"vm_watch_usage_alarms": []}' -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
     -- "Virtual machine CPU usage:" "all back to normal" "Triggered by: "
 run "  ... vm_watch_review_lookback_hours: 0 - no raise read back: only the clear, nothing marked as related, said" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_lookback_hours\": 0, \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -e '{"vm_watch_usage_alarms": []}' -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_lookback_hours\": 0, \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
     -- "Virtual machine CPU usage:" "no outage rate comparison available"
 run "outage review of a named window with nothing in it (vm_watch_review_from, vm_watch_review_to)" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_from": "2026-11-12 01:00", "vm_watch_review_to": "2026-11-12 03:00"}' \

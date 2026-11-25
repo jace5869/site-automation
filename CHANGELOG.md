@@ -36,6 +36,13 @@ cannot remove them).
   sources"`) with each reason, and the wall's tile says it instead of "no vCenter login" / "no live ONTAP cluster".
 - **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
 
+## 1.131.2 — 2026-11-25
+
+**To set up:** nothing; optional `vm_watch_usage_*` settings.
+
+The VM outage watch hides yellow CPU and memory usage alarms by default. Red alarms count after 15 continuous
+minutes in the window, with affected names grouped by alarm kind. Hidden spikes cannot trigger a report, email or job failure.
+
 ## 1.130.1 — 2026-11-25
 
 **To set up:** if your all.yml has `portal_ad_card_match: "{edipi}*@mil"`, change it to your exact form (for example `"{edipi}.ctr@mil"`). Then run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)

@@ -19,6 +19,7 @@
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     window_minutes: "{{ vm_watch_window_minutes | float }}"
+    usage_alarms: "{{ vm_watch_usage_alarms | name_list }}"
     min_up_minutes: "{{ vm_watch_min_up_minutes | float }}"
     skip_vms: "{{ (vm_watch_skip_vms | name_list) + (site_exclude_hosts | default([], true) | site_exclude_patterns) }}"
     skip_folders: "{{ vm_watch_skip_folders | name_list }}"
@@ -41,10 +42,15 @@
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | what was found, and what phase 2 would restart (nothing is restarted)
   no_log: "{{ vm_watch_review | bool }}"
+  vars:
+    _vm_w_usage_opts: >-
+      {{ {'usage_alarms': vm_watch_usage_alarms | name_list, 'usage_show_yellow': vm_watch_usage_show_yellow | bool,
+          'usage_min_minutes': vm_watch_usage_min_minutes | float} }}
   ansible.builtin.set_fact:
+    _vm_w_usage_settings: "{{ _vm_w_usage_opts }}"
     _vm_w_cond: >-
       {{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity,
-           'protected_ids': _vm_prot.ids, 'protected_names': _vm_prot.names + (vm_watch_protect | name_list)}) }}
+           'protected_ids': _vm_prot.ids, 'protected_names': _vm_prot.names + (vm_watch_protect | name_list)} | combine(_vm_w_usage_opts)) }}
     _vm_w_opts: >-
       {{ {'protected_ids': _vm_prot.ids,
           'protected_names': _vm_prot.names + (vm_watch_protect | name_list),
@@ -133,7 +139,8 @@
                   'noise_alarms': vm_watch_review_noise_alarms | name_list, 'appendix_max': outage_aar_appendix_max | int,
                   'correlation_prefix': servicenow_correlation_prefix | default('site-health', true),
                   'outage_escalate_storage': outage_escalate_storage, 'outage_escalate_network': outage_escalate_network,
-                  'outage_escalate_vmware': outage_escalate_vmware, 'outage_escalate_backup': outage_escalate_backup} }}
+                  'outage_escalate_vmware': outage_escalate_vmware, 'outage_escalate_backup': outage_escalate_backup}
+                 | combine(_vm_w_usage_settings) }}
           no_log: true
 
     - name: VMware | vCenter's events of the window
@@ -249,8 +256,9 @@
                 'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
                 'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_read.capped, 'instance': _vm_w_tk.instance | default(''),
                 'table': servicenow_table | default('incident', true) | string,
-                'report_on': vm_watch_report_on | name_list,
+                'report_on': vm_watch_report_on | name_list, 'alarms': _vm_w.alarms | default([]), 'read_at': _vm_w.read_at,
                 'min_severity': servicenow_min_severity | default('warning', true)}
+               | combine(_vm_w_usage_settings)
                | combine((_vm_w_review_opts | combine({'job': awx_job_id | default('') | string, 'outage_ops_center': outage_ops_center,
                    'event_vcenters': _vm_w_read.vcenters, 'events_not_read': _vm_w_read.events_not_read | default(false)}))
                          if _vm_w_review | bool else {})) -%}
