@@ -602,5 +602,22 @@ class Review1122(unittest.TestCase):
         self.assertIn("'win_dc' if (groups.get('win_dc') or []) | length > 0 else 'domain_controllers'", t)   # an empty win_dc: the other
 
 
+
+class CardMatchDefault(unittest.TestCase):
+    """1.130.0: the deploy's default portal_ad_card_match is {edipi}*@mil - contractor suffixes match, still anchored"""
+
+    def test_suffixes_and_anchors(self):
+        import os
+        import re as _re
+        d = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "roles", "site_portal_stack", "defaults", "main.yml"),
+                 encoding="utf-8").read()
+        m = _re.search(r'^portal_ad_card_match: "([^"]+)"', d, _re.M)
+        self.assertEqual(m.group(1), "{edipi}*@mil")
+        pat = G.card_pattern("DOE.JANE.Q.1234567890", m.group(1))
+        for ok in ("1234567890@mil", "1234567890.ctr@mil", "1234567890.CTR@mil".lower()):
+            self.assertTrue(pat.fullmatch(ok), ok)
+        for bad in ("9876543210@mil", "9876543210.ctr@mil", "1234567890.ctr@mil.example", "x1234567890@mil", "1234567890@mil\n"):
+            self.assertFalse(pat.fullmatch(bad), bad)
+
 if __name__ == "__main__":
     unittest.main()

@@ -570,7 +570,7 @@ class Config(object):
                           "starttls": flag(g("PORTAL_LDAP_STARTTLS", "0")), "validate": flag(g("PORTAL_LDAP_VERIFY", "1")),
                           "ca_file": e.get("SSL_CERT_FILE", ""), "timeout": max(2, min(60, int(g("PORTAL_LDAP_TIMEOUT", "5")))),
                           "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
-        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
+        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}*@mil")).strip() or "{edipi}*@mil"     # 1.130.0: .CTR and other suffixes
         self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
         # 1.130.0: the wall's Feedback - on/off, who sees and may use the button ([] = everyone who may open the wall), who may read
         # the list ([] = the approvers); the same LDAP read as the approvers' groups

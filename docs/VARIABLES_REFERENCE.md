@@ -2192,7 +2192,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_approver_groups` | `[]` | Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_gr… (all of it: the role file) |
 | `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
 | `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
-| `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything |
+| `portal_ad_card_match` | `"{edipi}*@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at @mil) |
 | `portal_ad_groups_seconds` | `300` | how often the members are read (60 to 3600); 60 s after a failed read |
 | `portal_ldap_server` | (empty) | a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS |
 | `portal_ldap_domain` | `"{{ ad_reader_domain \| default('') }}"` | the domain's DNS name (its DCs from DNS; the base DN from it) |

@@ -123,7 +123,8 @@ class Readers(unittest.TestCase):
                 m = re.search(r"\(userPrincipalName=([^)]+)\)\)$", flt)
                 if m:
                     self.searches.append((base, flt))
-                    hits = [u for u, a in TA.USERS.items() if a["upn"] == m.group(1)]
+                    import fnmatch
+                    hits = [u for u, a in TA.USERS.items() if fnmatch.fnmatchcase(a["upn"], m.group(1))]   # the LDAP filter's * as AD reads it
                     return self._set([{"dn": u, "attributes": {"userPrincipalName": TA.USERS[u]["upn"]}} for u in hits])
                 return FakeConn.search(self, base, flt, scope, attributes, **kw)
         self.configure(PORTAL_READERS=["reader"], PORTAL_READER_GROUPS=["Platform-Leads", "No-Such-Group"], PORTAL_ACCESS_CONTACT="<Desk>")
@@ -262,6 +263,27 @@ class Readers(unittest.TestCase):
             self.request("/jobs")
         self.assertEqual([call.args[0]["user"] for call in self.portal.log.add.call_args_list], [OUTSIDER, "OTHER.1111111111", OUTSIDER])
 
+
+
+class LdapAssert(unittest.TestCase):
+    """1.130.0 (field finding): AD groups with no domain controller to ask fail the deploy (Check and Run)"""
+
+    def test_the_condition(self):
+        import yaml
+        import jinja2
+        tasks = yaml.safe_load(open(Path(sp.__file__).parent.parent / "tasks" / "main.yml", encoding="utf-8"))
+        t = [x for x in tasks if x.get("name") == "Settings | AD groups need a domain controller to ask"][0]
+        self.assertNotIn("when", t)                                   # Check and Run alike
+        self.assertIn("no domain controller to ask", t["ansible.builtin.assert"]["fail_msg"])
+        cond = jinja2.Environment().compile_expression(t["ansible.builtin.assert"]["that"].strip())
+        base = {"portal_reader_groups": [], "portal_approver_groups": [], "portal_requester_groups": [], "_portal_ldap_servers": [], "portal_ldap_domain": ""}
+        cases = [({}, True), ({"portal_requester_groups": ["Ops"]}, False), ({"portal_reader_groups": ["R"]}, False),
+                 ({"portal_approver_groups": ["A"], "portal_ldap_domain": "corp.example.mil"}, True),
+                 ({"portal_approver_groups": ["A"], "_portal_ldap_servers": [{"name": "dc01.corp.example.mil"}]}, True),
+                 ({"portal_approver_groups": ["A"], "portal_ldap_domain": "  "}, False)]
+        for change, ok in cases:
+            with self.subTest(change=change):
+                self.assertEqual(bool(cond(**dict(base, **change))), ok)
 
 if __name__ == "__main__":
     unittest.main()

@@ -239,6 +239,18 @@
       {{ out if out else (query('ansible.builtin.inventory_hostnames', 'win_dc' if (groups.get('win_dc') or []) | length > 0 else 'domain_controllers')
                           | map('extract', hostvars) | map('ad_reader_inventory_dc') | list) }}
 
+# 1.130.0 (field finding): AD groups with no domain controller to ask lock everyone out - refused here, Check and Run
+- name: Settings | AD groups need a domain controller to ask
+  ansible.builtin.assert:
+    that: >-
+      not ((portal_reader_groups | default([], true) | length > 0) or (portal_approver_groups | default([], true) | length > 0)
+           or (portal_requester_groups | default([], true) | length > 0))
+      or (_portal_ldap_servers | length > 0) or (portal_ldap_domain | default('', true) | string | trim | length > 0)
+    fail_msg: >-
+      AD groups are set but the portal has no domain controller to ask: set portal_ldap_server: "dc01.<domain>,dc02.<domain>" or
+      portal_ldap_domain: "<domain>" in all.yml (the groups would lock everyone out)
+    quiet: true
+
 # 1.85.0: the live Network map - on with a SolarWinds credential (auto), or as portal_netmap says
 - name: Settings | the live Network map (portal_netmap)
   ansible.builtin.set_fact:

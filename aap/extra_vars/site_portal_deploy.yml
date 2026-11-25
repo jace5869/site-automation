@@ -132,8 +132,9 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_ad_card_attribute: userPrincipalName
 
 ## its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match
-## anything
-# portal_ad_card_match: "{edipi}@mil"
+## anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at
+## @mil)
+# portal_ad_card_match: "{edipi}*@mil"
 
 ## how often the members are read (60 to 3600); 60 s after a failed read
 # portal_ad_groups_seconds: 300
