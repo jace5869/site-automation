@@ -4048,7 +4048,7 @@ class Look(unittest.TestCase):
 
             def token(self, cn):
                 return "tok"
-        Aap.ready, Aap.resolve, Aap.last_info = "", lambda self, a: {}, lambda self, t: {}
+        Aap.ready, Aap.resolve, Aap.last_info = "", lambda self, a: {}, lambda self, tids, builtins: {}
         cfg = sp.Config({"PORTAL_THEME": "ops"})
         t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
         self.assertEqual(len(re.findall(r'<article class="card tcard', t)), 11)                          # exactly the file's actions
@@ -4340,7 +4340,7 @@ class Home1782(unittest.TestCase):
 
     @staticmethod
     def card(name, title, area, wf=False, status="successful", labels=()):
-        return {"name": name, "title": title, "area": area, "line": "", "wf": wf, "labels": list(labels), "approval": False, "off": "", "dialog": True,
+        return {"name": name, "title": title, "area": area, "icon": "job", "changes_servers": False, "line": "", "wf": wf, "labels": list(labels), "approval": False, "off": "", "dialog": True,
                 "last": {"status": status, "finished": "2026-11-19T06:01:00Z"} if status else {}}
 
     def portal(self, cards, found=None, **env):
@@ -4360,7 +4360,7 @@ class Home1782(unittest.TestCase):
                 c("s1", "STIG - recheck", "STIG"), c("d", "Disk cleanup", "Linux"), c("a", "Alpha tool", "alpha")]
 
     def heads(self, h):
-        return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
+        return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp tint-\w+" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
 
     # 1: by area
     def test_1_the_cards_are_grouped_by_area_in_the_platform_order(self):
@@ -4951,6 +4951,91 @@ class Areas1784(unittest.TestCase):
         shutil.rmtree(d, ignore_errors=True)
 
 
+class CardIcons(unittest.TestCase):
+    def test_verbs_in_priority_order(self):
+        rules = [("cancel", "cancel"), ("reboot", "restart"), ("restore", "restore"), ("clean up", "cleanup"),
+                 ("install", "deploy"), ("patch", "patch"), ("space request", "expand"), ("API test", "connect"),
+                 ("health", "health"), ("log analysis", "troubleshoot"), ("security", "stig"), ("CSR", "cert"),
+                 ("snapshot", "snapshot"), ("backup", "backup"), ("pick lists", "sync"), ("settings", "setup"),
+                 ("incident", "ticket"), ("ACT", "ask"), ("inventory", "report")]
+        for i, (_, icon) in enumerate(rules):
+            # Put the highest-priority match last in the title.
+            name = " / ".join(word for word, _ in reversed(rules[i:]))
+            self.assertEqual(sp.card_icon(name, "Windows"), icon, name)
+        for word in ("Act", "task", "auditd", "reporting"):
+            self.assertEqual(sp.card_icon(word, "Linux"), "linux", word)
+
+    def test_override_and_group_fallback(self):
+        self.assertEqual(sp.Config({}).label_icon, "portal-icon:")
+        self.assertEqual(sp.icon_label(["portal-icon:bogus", "portal-icon:users"], "portal-icon:"), "users")
+        self.assertEqual(sp.card_icon("Restore", "Network", "users"), "users")
+        self.assertEqual(sp.card_icon("Restore", "Network", "changes"), "restore")
+        for area, icon in (("Linux", "linux"), ("Windows", "windows"), ("Active Directory", "users"), ("VMware", "server"),
+                           ("Horizon", "desktop"), ("NetApp", "storage"), ("Network", "network"), ("STIG", "stig"),
+                           ("Certificates", "cert"), ("Tickets & incidents", "ticket"), ("ACT", "ask"), ("Admin", "admin"),
+                           ("Other", "job"), ("Custom group", "job")):
+            self.assertEqual(sp.card_icon("Example", area, "unknown"), icon, area)
+
+    def test_changes_servers_word_lists(self):
+        for word in ("restart", "reboot", "shut down", "cancel", "expand", "space request", "deploy", "install", "patch",
+                     "apply", "approved", "allow", "delete", "clean up", "cleanup", "change", "load", "push", "restore"):
+            self.assertTrue(sp.changes_servers("Example - " + word.upper()), word)
+            for exclusion in ("(dry run)", "- check", "plan", "report", "finder", "nothing is sent"):
+                self.assertFalse(sp.changes_servers(word + " " + exclusion), (word, exclusion))
+        for name in ("grow", "resize", "reload", "changed", "check availability"):
+            self.assertFalse(sp.changes_servers(name), name)
+        self.assertTrue(sp.changes_servers("Change the planters"))
+
+    def test_render_from_aap_template_names_and_labels(self):
+        def row(tid, name, *labels):
+            return {"id": tid, "name": name, "summary_fields": {
+                "labels": {"count": len(labels), "results": [{"name": label} for label in labels]}}}
+
+        rows = [row(1, "Deploy settings finder", "portal", "glyph:unknown", "portal-title:Restart", "portal-area:VMware"),
+                row(2, "Restart", "portal", "glyph:users", "portal-title:Report", "public"),
+                row(3, "Certificate restore", "glyph:snapshot")]
+
+        def route(method, path, body):
+            if path.startswith("job_templates/?role_level"):
+                return page(rows)
+            if path.startswith("job_templates/?id__in"):
+                ids = urllib.parse.parse_qs(path.split("?", 1)[1])["id__in"][0].split(",")
+                return page([r for r in rows if str(r["id"]) in ids])
+            if path.startswith("job_templates/?name="):
+                return page([rows[2]])
+            if path.endswith("/launch/"):
+                return 200, {"ask_variables_on_launch": True}
+            return page([])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            actions = os.path.join(tmp, "actions.json")
+            with open(actions, "w") as fh:
+                json.dump({"actions": {"example": {"title": "Example", "who": ["Example user"],
+                                                   "aap": {"type": "job", "name": "Certificate restore"}}}}, fh)
+            cfg = sp.Config({"PORTAL_ACTIONS": actions, "PORTAL_DATA": tmp, "PORTAL_LABEL_ICON": "glyph:",
+                             "PORTAL_AAP_URL": "https://controller.example.test", "PORTAL_AAP_TOKEN": "placeholder"})
+            portal = sp.Portal(cfg, aap=sp.Aap(cfg, api=StubApi(route)))
+            portal.refresh()
+            self.assertNotIn('data-name="example"', sp.home_page(cfg, portal, "Other user"))
+            h = sp.home_page(cfg, portal, "Example user")
+
+        self.assertEqual(h.count('class="card-sprite"'), 1)
+        symbols = re.findall(r'<symbol id="i-([^"]+)"', h)
+        self.assertEqual(len(symbols), 28)
+        self.assertEqual(set(symbols), set(sp.CARD_ICONS))
+        cards = dict(re.findall(r'<li [^>]*data-name="([^"]+)"[^>]*>(.*?)</li>', h, re.S))
+        for key, icon, title, changes in (("jt_1", "deploy", "Restart", False), ("jt_2", "users", "Report", True),
+                                          ("example", "snapshot", "Example", True)):
+            self.assertIn('href="#i-%s"' % icon, cards[key])
+            self.assertIn("<h3>%s</h3>" % title, cards[key])
+            self.assertEqual("Changes servers" in cards[key], changes)
+            self.assertEqual('href="#i-changes"' in cards[key], changes)
+        self.assertIn('class="grp tint-indigo" data-area="VMware"', h)
+        self.assertIn('<span class="tg">public</span>', h)
+        self.assertNotIn("glyph:", h)
+        self.assertNotRegex(h, r"<style|\sstyle=|<script(?![^>]*\ssrc=)")
+
+
 class OffState1784(unittest.TestCase):
     """1.78.4: what can be started and what cannot look different in every look; the text passes WCAG AA, light and dark."""
 
@@ -4987,7 +5072,7 @@ class OffState1784(unittest.TestCase):
                          "PORTAL_AAP_TOKEN": "x", "PORTAL_LABEL": ""})
         p = sp.Portal(cfg)
         p.aap.ready = ""
-        mk = lambda n, off: {"name": n, "title": "Title " + n, "area": "STIG", "line": "A line", "wf": False, "labels": [], "approval": False, "off": off, "dialog": True, "last": {}}   # noqa: E731
+        mk = lambda n, off: dict(Home1782.card(n, "Title " + n, "STIG", status=""), line="A line", off=off)  # noqa: E731
         p.catalog = lambda cn: [mk("on", ""), mk("off", "the template is not in AAP (Disk - clean up one mount)")]
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
         on = re.search(r'<li [^>]*data-name="on".*?</li>', h, re.S).group(0)

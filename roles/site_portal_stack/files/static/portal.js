@@ -605,7 +605,12 @@ function homeActions() {
   pinGroup.append(ph, pul);
   grid.prepend(pinGroup);
   groups.unshift(pinGroup);
-  for (const li of cards) li._home = li.parentNode;
+  for (const li of cards) {
+    li._home = li.parentNode;
+    // Pinned cards from different areas share a group. Carry their tile tint with them.
+    const tint = Array.from(li.closest(".grp").classList).find(c => c.startsWith("tint-"));
+    if (tint) li.classList.add(tint);
+  }
   const home = (li) => {                                                     // back to its area, in its place (by title)
     const ul = li._home;
     const next = Array.from(ul.children).find((x) => (x.dataset.title || "") > (li.dataset.title || ""));
