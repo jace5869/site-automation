@@ -3842,6 +3842,28 @@ def message_page(cfg, title, text, user="", kind="info"):
     return shell(cfg, title, body, user, page="message")
 
 
+def ad_diag(cfg, cn):
+    """1.130.0: what the portal knows of AD for this refused person - read yes / no (and the short reason), each configured
+    group found and how many members, the card matched to an AD account yes / no. Never member names, accounts or DCs."""
+    g = cfg.ad_groups
+    if g is None:
+        return {"read": False, "why": "no AD groups set" if not cfg.ad_groups_why else "AD groups not available here", "groups": [], "card": None}
+    try:
+        return g.diag(cn)
+    except Exception:  # pylint: disable=broad-except
+        return {"read": False, "why": "AD could not be read", "groups": [], "card": None}
+
+
+def ad_diag_html(d):
+    yn = lambda v: "not known" if v is None else ("yes" if v else "no")    # noqa: E731
+    rows = "".join("<li>%s group <b>%s</b>: found %s%s</li>" % (esc(x["role"]), esc(x["name"]), esc(yn(x["found"])),
+                                                              (", %d members" % x["members"]) if x.get("members") is not None and x.get("found") else "")
+                   for x in d.get("groups") or [])
+    return ('<div class="note"><p><b>What the portal knows of AD</b></p><ul>'
+            '<li>AD read: <b>%s</b>%s</li>%s<li>Your card matched an AD account: <b>%s</b></li></ul></div>'
+            % ("yes" if d.get("read") else "no", (" (%s)" % esc(d.get("why"))) if not d.get("read") and d.get("why") else "", rows, esc(yn(d.get("card")))))
+
+
 def reader_refusal_page(cfg, cn):
     """Only the stylesheets used here need to be reachable before reader authorization."""
     banner = style = note = ""
@@ -3855,8 +3877,8 @@ def reader_refusal_page(cfg, cn):
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
 <link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
 <div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
-<p>Card CN: <b>%s</b></p>%s</div></main>%s</body></html>""" %
-            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, banner))
+<p>Card CN: <b>%s</b></p>%s</div>%s</main>%s</body></html>""" %
+            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
 
 
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
@@ -6306,7 +6328,11 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 return None
             if not portal.may_use(user):
                 portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
-                self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
+                if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
+                    self._send(403, {"error": "You are not on the portal's readers list. Ask %s to add you." % cfg.access_contact,
+                                     "ad": ad_diag(cfg, user)})
+                else:
+                    self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
                 return None
             return user
 

@@ -19,6 +19,9 @@ set (any verified card may view); to limit it, `portal_reader_groups: ["<readers
   their groups: anyone not in them could not even view): with both reader lists empty, any verified card may VIEW the
   portal; running and approving still need their lists. Optional `portal_reader_groups` / `portal_readers` (card CNs)
   limit who may view; admins and approvers are readers; `portal_access_contact` is the contact shown on a refusal.
+- **A refused person sees what the portal knows of AD:** AD read yes / no (and why not, in a few words), each configured
+  group found and how many members, and whether their card matched an AD account - never names, accounts or DCs; the
+  `/api` refusal carries the same as JSON.
 - **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
   amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
   before acting."

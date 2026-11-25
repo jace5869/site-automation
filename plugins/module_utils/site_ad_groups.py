@@ -329,6 +329,70 @@ class Groups(object):
                     return True
         return False
 
+    def card_found(self, cn, now=None):
+        """1.130.0: does the card's person have an AD account (portal_ad_card_attribute / card_match)? -> True / False / None
+        (not known). From the last read's member keys first; else one LDAP lookup, at most once per person per 5 minutes."""
+        now = time.time() if now is None else now
+        pat = card_pattern(cn, self.match)
+        if pat is None:
+            return False
+        with self.lock:
+            r = self.last
+            cache = self.__dict__.setdefault("_cards", {})
+            hit = cache.get(cn)
+        if r and r.get("ok"):
+            for gs in (r.get("groups") or {}).values():
+                for g in gs:
+                    if any(any(pat.fullmatch(v) for v in vals) for vals in g.get("keys") or []):
+                        return True
+        if not (r and r.get("ok")):
+            return None                                   # AD not read: not known - and no lookup while it is down
+        if hit and now - hit[0] < CARD_CHECK_S:
+            return hit[1]
+        found = None
+        try:
+            c, _server, _err = self.reader.open()
+            if c is not None:
+                try:
+                    base = self.reader.base(c)
+                    key = card_key(cn, self.match)
+                    val = "*".join(escape_filter_chars(p) for p in key.split("*"))
+                    attr = str(self.reader.o.get("attribute") or "userPrincipalName")
+                    rows = self.reader.search(c, base, "(&(objectCategory=person)(objectClass=user)(%s=%s))" % (attr, val), [attr]) if base else []
+                    found = False
+                    for e in rows:
+                        v = (e.get("attributes") or {}).get(attr)
+                        if any(pat.fullmatch(str(x).lower()) for x in (v if isinstance(v, list) else [v]) if x not in (None, "")):
+                            found = True
+                finally:
+                    try:
+                        c.unbind()
+                    except Exception:                     # noqa: BLE001
+                        pass
+        except Exception:                                 # noqa: BLE001 - not known
+            found = None
+        with self.lock:
+            cache[cn] = (now, found)                      # "not known" too: at most one lookup per person per 5 minutes
+            if len(cache) > 1000:
+                for k in sorted(cache, key=lambda k: cache[k][0])[:500]:
+                    cache.pop(k, None)
+        return found
+
+    def diag(self, cn):
+        """1.130.0: for a refused person - is AD read (and the short reason when not), each configured group (found, how many
+        members), and whether their card matched an AD account. Never names of members, never the bind account or a DC."""
+        with self.lock:
+            r = self.last
+        ok = self.fresh(r)
+        groups = []
+        for role in ROLES:
+            for name in self.want.get(role) or []:
+                g = next((x for x in ((r or {}).get("groups") or {}).get(role) or [] if x.get("name") == short_name(name)), None) if ok else None
+                groups.append({"role": role, "name": short_name(name), "found": None if g is None else bool(g.get("found")),
+                               "members": None if g is None else int(g.get("count") or 0)})
+        return {"read": ok, "why": "" if ok else short_reason((r or {}).get("error") or ("not read yet" if not r else "the last read is too old")),
+                "groups": groups, "card": self.card_found(cn)}
+
     def status(self, role):
         """{configured, ok, read (a read was made), at, next, error, groups: [{name, count, found}]} for the role."""
         with self.lock:
@@ -342,6 +406,31 @@ class Groups(object):
                 "next": nxt, "error": (r or {}).get("error") or ("" if not r else "" if ok else "the last read is too old") or ("" if r else "not read yet"),
                 "groups": [{"name": g["name"], "count": g["count"], "found": g["found"], "why": g.get("why") or ""} for g in ((r or {}).get("groups") or {}).get(role) or []]
                 if ok else [{"name": short_name(n), "count": None, "found": None, "why": ""} for n in self.want.get(role) or []]}
+
+
+def short_reason(error):
+    """an AD read's error -> a short reason a refused person may see (never a DC name, an account or a DN)"""
+    e = str(error or "").lower()
+    if not e:
+        return ""
+    if "invalidcredentials" in e or "bind" in e and ("refus" in e or "fail" in e):
+        return "bind refused"
+    if "certificate" in e or "ssl" in e or "tls" in e:
+        return "LDAPS certificate"
+    if "no ldap login" in e:
+        return "no LDAP login on the portal"
+    if "ldap3" in e and "library" in e:
+        return "LDAP library missing"
+    if "not read yet" in e:
+        return "not read yet"
+    if "too old" in e:
+        return "the last read is too old"
+    if "did not answer" in e or "no answer" in e or "timed out" in e or "timeout" in e or "unreachable" in e or "connect" in e:
+        return "no DC answered"
+    return "AD could not be read"
+
+
+CARD_CHECK_S = 300                      # a card's account looked up at most once per person per 5 minutes (cached)
 
 
 class People(list):

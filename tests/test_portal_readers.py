@@ -113,6 +113,57 @@ class Readers(unittest.TestCase):
         code, page = self.request("/actions/example", cn="action-only")   # the action's own runner still sees Run
         self.assertIn('id="go"', page)
 
+    def test_ad_diagnostic_on_the_refusal(self):
+        """1.130.0: the refused person sees what the portal knows of AD - read yes / no (why), each group found and how many,
+        the card matched yes / no - never member names, accounts or DCs; the /api answer carries the same as JSON"""
+        import test_ad_groups as TA
+
+        class Directory(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                m = re.search(r"\(userPrincipalName=([^)]+)\)\)$", flt)
+                if m:
+                    self.searches.append((base, flt))
+                    hits = [u for u, a in TA.USERS.items() if a["upn"] == m.group(1)]
+                    return self._set([{"dn": u, "attributes": {"userPrincipalName": TA.USERS[u]["upn"]}} for u in hits])
+                return FakeConn.search(self, base, flt, scope, attributes, **kw)
+        self.configure(PORTAL_READERS=["reader"], PORTAL_READER_GROUPS=["Platform-Leads", "No-Such-Group"], PORTAL_ACCESS_CONTACT="<Desk>")
+        groups = self.cfg.ad_groups
+        # AD down
+        groups.reader.opener = opener(down=True)
+        groups.refresh()
+        code, page = self.request(cn="OPERATOR.SAM.2345678901")
+        self.assertEqual(code, 403)
+        self.assertIn("AD read: <b>no</b> (no DC answered)", page)
+        self.assertNotIn("dc01", page)
+        # AD read: a group found with its count, one not found; a card with an account but in no reader group: matched yes
+        conn = Directory(disabled_filter=False)
+        groups.reader.opener = opener(conn)
+        groups.refresh()
+        code, page = self.request(cn="OPERATOR.SAM.2345678901")
+        self.assertEqual(code, 403)
+        self.assertIn("AD read: <b>yes</b>", page)
+        self.assertRegex(page, r"readers group <b>Platform-Leads</b>: found yes, \d+ members")
+        self.assertIn("readers group <b>No-Such-Group</b>: found no", page)
+        self.assertIn("Your card matched an AD account: <b>yes</b>", page)
+        for u in TA.USERS:                                       # never a member's name or account
+            self.assertNotIn(u.split(",")[0][3:], page)
+            self.assertNotIn(TA.USERS[u]["upn"], page)
+        n = len(conn.searches)
+        self.request(cn="OPERATOR.SAM.2345678901")              # cached: no second lookup within 5 minutes
+        self.assertEqual(len(conn.searches), n)
+        # a card with no AD account
+        code, page = self.request(cn="NOBODY.1111111111")
+        self.assertIn("Your card matched an AD account: <b>no</b>", page)
+        # the /api answer: the same, as JSON, escaped by JSON
+        code, body = self.request("/api/me", cn="NOBODY.1111111111")
+        self.assertEqual(code, 403)
+        d = json.loads(body)
+        self.assertEqual((d["ad"]["read"], d["ad"]["card"]), (True, False))
+        self.assertEqual(sorted((g["name"], g["found"]) for g in d["ad"]["groups"]), [("No-Such-Group", False), ("Platform-Leads", True)])
+        # escaped: a hostile CN never lands raw
+        code, page = self.request(cn='X<script>.1111111111')
+        self.assertNotIn("<script>", page)
+
     def test_named_access_and_implied_roles(self):
         self.configure(PORTAL_READERS=["reader"], PORTAL_REQUESTERS=["admin"], PORTAL_APPROVERS=["approver"])
         for cn, setting in [("reader", "portal_readers"), ("admin", "portal_requesters"), ("approver", "portal_approvers")]:

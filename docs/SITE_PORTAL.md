@@ -62,6 +62,11 @@ read, or after the result expires, only explicitly named card CNs grant entry to
 A refused reader receives HTTP 403 with their card CN and the contact in `portal_access_contact` (default
 “your portal administrator”). The refusal page explains when AD groups are unavailable. The portal logs one
 reader refusal per person per hour.
+The refusal also says what the portal knows of AD for that person (1.130.0): whether AD was read (and, if not, a short
+reason: bind refused, no DC answered, LDAPS certificate ...), each configured group found yes / no with its member count,
+and whether their card matched an AD account (portal_ad_card_attribute / portal_ad_card_match) - yes / no only. Never
+member names, the bind account or the domain controllers. The `/api` refusal carries the same as JSON (`ad`). It comes
+from the kept AD read; a card not in any group is looked up at most once per person per 5 minutes (none while AD is down).
 
 ## How it works
 
