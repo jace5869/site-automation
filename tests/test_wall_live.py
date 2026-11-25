@@ -536,8 +536,8 @@ class Faults(unittest.TestCase):
         s = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=port)
         with self.assertRaises(W.AuthError):
             s.poll()
-        self.assertEqual(vim.methods[-1], "Logout")              # the session ended, not left open
-        self.assertEqual((s.cookie, vim.session), ("", ""))
+        self.assertNotIn("Logout", vim.methods)                  # 1.130.0 (Codex r6 #2): after a refusal nothing more is sent, not even Logout
+        self.assertEqual(s.cookie, "")                            # forgotten here; vCenter ends the idle session itself
         c = W.Collector([s], seconds=60, auth_retry=900, clock=Clock())
         for _ in range(5):
             c.cycle()

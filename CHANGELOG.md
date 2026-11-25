@@ -11,8 +11,8 @@ preview banner is on by default (`portal_wall_preview: true`) - set it false onc
 by default (`portal_wall: true`); its tab is named by `portal_wall_title`. Thresholds (defaults fine for a first showing):
 `portal_wall_datastore_warn` / `_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90)
 and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
-`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15). After a refused login the wall's logins stay stopped:
-fix the credential and run Site portal - deploy (or set `portal_wall_logins_reset` to a new value if it was right).
+`portal_wall_seconds` (60). The wall's logins run on ONE portal host per site. After any unclear or refused login they stay
+stopped: fix the cause, then run Site portal - deploy (every run lets the wall try once).
 
 - **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
   amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
@@ -24,13 +24,13 @@ fix the credential and run Site portal - deploy (or set `portal_wall_logins_rese
   mode known, a heartbeat only "green", a datastore only "accessible", SnapMirror only healthy and snapmirrored /
   in_sync, a volume or LUN only "online" - anything else is unknown (grey). An alert whose object is gone from the read
   or became unknown stays open as "last known" (grey, last seen HH:MM), never "cleared".
-- **Stop on refusal (the wall's logins):** one refused login from any source (a refused vCenter login, any 401 / 403 -
-  every ONTAP GET carries the password - NoPermission, a new session refused at once) stops every wall login to every
-  source, and it stays stopped across restarts until the credential changes (fix it, run Site portal - deploy) or
-  `portal_wall_logins_reset` gets a new value. An unclear answer after the password left pauses that source 15 min. One
-  collector per data volume (a lock, else no logins); the attempt is written before every send; any doubt about the
-  journal stops every login. The page says "Logins stopped at HH:MM: <source> refused <user>. Fix the credential, then
-  run Site portal - deploy."
+- **Stop on any doubt (the wall's logins):** after the password left, anything but a clear success - a refusal, 401 /
+  403 / 407, NoPermission, a timeout, a lost or odd answer, a 5xx - stops every wall login to every source at once (no
+  Logout, no further source) and it stays stopped across restarts. To resume: fix the cause, then run Site portal -
+  deploy (every run writes a new reset token; the wall tries once). One collector per data volume, one wall host per
+  site (the deploy refuses more); the attempt is written before every poll; a poll marked at the start, or any doubt
+  about the journal, is a stop. The page says "Logins stopped at HH:MM: <source> <reason>. Fix the cause (password,
+  account), then run Site portal - deploy."
 - **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
   default), Map - kept per viewer; `?style=`, `?area=`, `?kiosk=1`, Rotate (styles or areas, 30 / 60 / 120 s, pauses on
   input, starts again after 60 s idle). VMware and Storage are on the wall; VDI, Active Directory, Outages & problems

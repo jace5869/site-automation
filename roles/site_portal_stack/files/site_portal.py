@@ -549,23 +549,26 @@ class Config(object):
         self.wall = flag(g("PORTAL_WALL", "1"))
         self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
         self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))
-        self.wall_logins_reset = str(g("PORTAL_WALL_LOGINS_RESET", "")).strip()[:200]     # a new value: stopped logins start again     # the preview banner on every style (portal_wall_preview)
         self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
+        self.wall_why = ""                     # 1.130.0 (Codex r6 #15): settings that cannot be read turn the wall off - never a crash
+        self.wall_opts = wall_model.opts_of({})
+        self.wall_auth_retry = 900
+        self.wall_logins = {}
         try:
             wo = g("PORTAL_WALL_OPTS", "{}")
             wo = json.loads(wo) if isinstance(wo, str) else wo
-        except ValueError:
-            wo = {}
-        self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
-        self.wall_auth_retry = max(300, min(86400, int(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900"))))
-        self.wall_logins = {}
-        for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
-            try:
-                lv = json.loads(g(env, "{}") or "{}")
-            except ValueError:
-                lv = {}
-            if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
-                self.wall_logins[k] = lv
+            self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
+            self.wall_auth_retry = max(300, min(86400, int(str(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900")).strip() or "900")))
+            for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
+                try:
+                    lv = json.loads(g(env, "{}") or "{}")
+                except ValueError:
+                    lv = {}
+                if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
+                    self.wall_logins[k] = lv
+        except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
+            self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
+            self.wall, self.wall_logins = False, {}
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -5849,6 +5852,14 @@ def netapp_page(cfg, cn, statics, token=""):
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js")
 
 
+def _safe_add(log, rec):
+    """a log line from the wall's paths: a full or read-only volume never stops the portal or the collector (Codex r6 #13)"""
+    try:
+        log.add(rec)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 def wall_sources(cfg):
     """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
     if wall_live is None:
@@ -5876,11 +5887,11 @@ class WallLive(object):
                 keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
                 try:
                     self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
-                                                         log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep,
-                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), reset=cfg.wall_logins_reset)
+                                                         log=lambda d: _safe_add(log, dict({"event": "wall"}, **d)), keep_seconds=keep,
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"))
                     self.collector.start()
                 except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
-                    log.add({"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
+                    _safe_add(log, {"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
                     self.collector = None
                 # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
                 threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()
@@ -5897,7 +5908,7 @@ class WallLive(object):
                 self.viewed()
                 self.model()
             except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said in the log
-                self.log.add({"event": "wall", "model": "not made", "why": clean(str(e), 200)})
+                _safe_add(self.log, {"event": "wall", "model": "not made", "why": clean(str(e), 200)})
 
     def netapp(self):
         """-> (the NetApp run's model or None, its read time (epoch) or None, why there is none)"""
@@ -6605,8 +6616,37 @@ def pick_check(portal):
     return res
 
 
+def write_wall_token(data_dir, text):
+    """--wall-token: Site portal - deploy's reset token (32 lowercase hex, on stdin) into the data volume, durably - a new one
+    starts stopped wall logins again, once (wall_live.Collector)"""
+    tok = str(text or "").strip()
+    if not re.match(r"^[0-9a-f]{32}$", tok):
+        raise ValueError("not a token (32 lowercase hex)")
+    fd, tmp = tempfile.mkstemp(prefix="wall-reset-token.", suffix=".tmp", dir=data_dir)
+    try:
+        os.write(fd, (tok + "\n").encode("ascii"))
+        os.fsync(fd)
+        os.close(fd)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, os.path.join(data_dir, "wall-reset-token"))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    dfd = os.open(data_dir, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--aap-check"]:
+    if sys.argv[1:] == ["--wall-token"]:
+        write_wall_token(os.environ.get("PORTAL_DATA", "/data"), sys.stdin.read(200))
+        sys.stdout.write("token written\n")
+    elif sys.argv[1:] == ["--aap-check"]:
         sys.stdout = sys.stderr                          # the journal's lines, if any, not in the answer
         res = aap_check(Config())
         sys.__stdout__.write(json.dumps(res) + "\n")

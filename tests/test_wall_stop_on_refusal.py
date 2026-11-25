@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""1.130.0 STOP ON REFUSAL - the wall's login protection, on a fake clock (wall + monotonic) and a fake transport that
-records every credentialed send (a vCenter Login, every ONTAP GET). Every case of Neon's round-4 list, the round-4 repro
-journal cases, Codex round 5 #1-#9 and #24-#26, and Neon round 5 #1-#10, rewritten to the rules:
-  a definite refusal (refused login, any 401 / 403, NoPermission, a new session refused at once) stops EVERY login to
-  every source until the credentials change or the deploy's reset; an ambiguous outcome after the credential left pauses
-  that source one window (a restart meanwhile waits one window); one collector per data volume (a lock, or no logins);
-  any doubt about the journal stops every login.
+"""1.130.0 STOP ON ANY DOUBT - the wall's login protection, on a fake clock and a fake transport that records every
+credentialed send (a vCenter Login, every ONTAP GET). Neon's round-4 cases, the round-4 repro journal cases, Codex round 5
+#1-#9 / #24-#26, Neon round 5 #1-#10 and Codex round 6 #1-#7 / #13-#15, to the rules:
+  ANY outcome after the credential was sent that is not a confirmed success (a refusal, 401 / 403, NoPermission, a
+  timeout, a lost or odd answer, a 5xx) stops EVERY login to every source; the cycle ends at once (no Logout, no further
+  source); a poll still marked at the start is a stop; any doubt about the journal is a stop; only a NEW reset token from
+  Site portal - deploy starts the logins again, once; one collector per data volume (a lock, or no logins).
 
 Run: python3 tests/test_wall_stop_on_refusal.py"""
 import http.client
@@ -178,6 +178,7 @@ class Base(unittest.TestCase):
         self.path = os.path.join(self.d, "wall-backoff.json")
         self.c = Clocks()
         self.wire = Net(self.c)
+        self.deploy()                                          # Site portal - deploy: its token (an empty volume waits for one)
         p = mock.patch.object(http.client, "HTTPSConnection", self.wire.conn())
         p.start()
         self.addCleanup(p.stop)
@@ -205,8 +206,22 @@ class Base(unittest.TestCase):
             self.wire.add_on(host)
         return W.OntapSource(host, user, pw, verify=False)
 
-    def coll(self, *srcs, reset=""):
-        return W.Collector(list(srcs), seconds=60, auth_retry=WINDOW, clock=self.c.wall, mono=self.c.mono, state_file=self.path, reset=reset)
+    def coll(self, *srcs, log=None):
+        return W.Collector(list(srcs), seconds=60, auth_retry=WINDOW, clock=self.c.wall, mono=self.c.mono, state_file=self.path, log=log)
+
+    def deploy(self, token=None):
+        """Site portal - deploy: a new reset token in the data volume"""
+        import secrets
+        tok = token if token is not None else secrets.token_hex(16)
+        with open(os.path.join(self.d, "wall-reset-token"), "wb") as fh:
+            fh.write(tok.encode("utf-8") if isinstance(tok, str) else tok)
+        return tok
+
+    def restart(self, col, *srcs):
+        col.stop()
+        if col.lock_fd is not None:
+            col.lock_fd is not None and os.close(col.lock_fd)
+        return self.coll(*srcs)
 
     def journal(self):
         try:
@@ -249,16 +264,17 @@ class Base(unittest.TestCase):
         return bool(j and j["stopped"])
 
 
-def refuse(net, host, what):
-    """a hook: the given host's Login / first GET refused"""
-    def h(hh, w):
-        if hh == host and w in ("Login", "/api/cluster"):
-            return (500, [], fault("InvalidLogin", "Cannot complete login due to an incorrect user name or password.")) if w == "Login" else (401, [], b"{}")
-    return h
+
+    def assertAllStopped(self, col, hours=3):
+        n = self.wire.logins()
+        self.run_for(col, hours * 3600)
+        self.assertEqual(self.wire.logins(), n, "a credentialed send while stopped")
+        self.assertTrue(col.stopped)
+        self.assertEqual(self.states(col), {"auth"})
 
 
 class Lifecycle(Base):
-    """Neon r4 1-7; Codex r5 #4 / Neon r5 #3 (no lock = no logins)"""
+    """Neon r4 1-7; Codex r5 #3, #4, #6; Neon r5 #1-#4, #9 (one collector per volume)"""
 
     def test_n01_clean_vcenter_login(self):
         col = self.coll(self.vc())
@@ -267,38 +283,33 @@ class Lifecycle(Base):
         col.cycle()
         self.assertEqual(self.wire.logins(), 1)
         j = self.journal()
-        self.assertEqual((j["v"], j["stopped"], j["inflight"]), (3, False, []))
+        self.assertEqual((j["v"], j["stopped"], j["inflight"]), (4, False, []))
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         raw = open(self.path, "rb").read()
         self.assertNotIn(b"pass", raw)
-        self.assertNotIn(b'"A"', raw)
 
-    def test_n02_write_ahead_before_the_send(self):
+    def test_n02_written_before_every_poll(self):
         for make in (self.vc, self.ontap):
             with self.subTest(make.__name__):
                 self.setUp()
                 seen = []
-                self.wire.hook = lambda host, what: seen.append(self.journal()["inflight"]) if what in ("Login", "/api/cluster") else None
+                self.wire.hook = lambda host, what: seen.append(self.journal()["inflight"]) or None
                 src = make()
                 col = self.coll(src)
                 col.cycle()
-                self.assertEqual(seen[0], [self.h(src)])
+                self.assertTrue(seen and all(x == [self.h(src)] for x in seen))
                 self.assertEqual(self.journal()["inflight"], [])
 
     def test_n03_ontap_paged_poll(self):
         self.wire.add_on("on1")
         self.wire.on["on1"]["pages"]["/api/storage/aggregates"] = 2
-        seen = []
-        self.wire.hook = lambda host, what: seen.append(list(self.journal()["inflight"])) or None
-        src = self.ontap()
-        col = self.coll(src)
+        col = self.coll(self.ontap())
         col.cycle()
         self.assertEqual(self.wire.logins(), 7)
-        self.assertTrue(all(x == [self.h(src)] for x in seen))
         self.assertEqual(self.journal()["inflight"], [])
 
     def test_n04_no_lock_no_logins(self):
-        """a folder that cannot be written (the lock cannot be made) - and a lock file that cannot be opened: login off"""
+        """Neon r5 #3 / Codex r5 #4: the lock cannot be made or opened - no logins"""
         os.chmod(self.d, 0o500)
         col = self.coll(self.vc(), self.ontap())
         self.run_for(col, 600)
@@ -307,53 +318,41 @@ class Lifecycle(Base):
         self.setUp()
         lock = os.path.join(self.d, "wall-collector.lock")
         open(lock, "w").close()
-        os.chmod(lock, 0)                                      # Neon r5 #3 / Codex r5 #4: the lock itself not openable
+        os.chmod(lock, 0)
         col = self.coll(self.vc())
         self.run_for(col, 600)
         self.assertEqual(self.wire.logins(), 0)
 
-    def test_n05_fsync_of_the_temp_file_fails(self):
-        col = self.coll(self.vc())
-        real = os.fsync
+    def test_n05_n06_the_mark_cannot_be_written(self):
+        for where in ("file", "folder"):
+            with self.subTest(where):
+                self.setUp()
+                col = self.coll(self.vc())
+                real = os.fsync
 
-        def fs(fd):
-            if os.path.isdir("/proc/self/fd/%d" % fd):
-                return real(fd)
-            raise OSError("fsync failed")
-        with mock.patch.object(os, "fsync", fs):
-            col.cycle()
-        self.assertEqual(self.wire.logins(), 0)
-        self.assertEqual([x for x in os.listdir(self.d) if x.endswith(".tmp")], [])
+                def fs(fd, w=where):
+                    isdir = os.path.isdir("/proc/self/fd/%d" % fd)
+                    if (w == "folder") == isdir:
+                        raise OSError("fsync failed")
+                    return real(fd)
+                with mock.patch.object(os, "fsync", fs):
+                    col.cycle()
+                self.assertEqual(self.wire.logins(), 0)
+                self.assertEqual([x for x in os.listdir(self.d) if x.endswith(".tmp")], [])
 
-    def test_n06_fsync_of_the_folder_fails(self):
-        col = self.coll(self.vc())
-        real = os.fsync
-
-        def fs(fd):
-            if os.path.isdir("/proc/self/fd/%d" % fd):
-                raise OSError("fsync of the folder failed")
-            return real(fd)
-        with mock.patch.object(os, "fsync", fs):
-            col.cycle()
-        self.assertEqual(self.wire.logins(), 0)
-
-    def test_n07_outcome_not_written_then_restart_waits(self):
+    def test_n07_a_mark_left_at_the_start_is_a_stop(self):
+        """Codex r6 #3 (d): a poll still marked at the start - its outcome is not known - stops every login"""
         src = self.vc()
         col = self.coll(src)
         real = col._change
-        col._change = lambda m: False if col.journal["inflight"] else real(m)   # the clear after the login cannot be written
+        col._change = lambda m: False if col.journal["inflight"] else real(m)   # the clear after the poll cannot be written
         col.cycle()
         self.assertEqual(self.journal()["inflight"], [self.h(src)])
-        col.stop()
-        col.lock_fd and os.close(col.lock_fd)
-        col2 = self.coll(self.vc())                            # the restart: one window from now
-        self.run_for(col2, WINDOW - 60)
+        col2 = self.restart(col, self.vc())
+        self.assertAllStopped(col2)
         self.assertEqual(self.wire.logins(), 1)
-        self.run_for(col2, 120)
-        self.assertEqual(self.wire.logins(), 2)
 
     def test_two_collectors_one_volume(self):
-        """Codex r5 #3, #4, #6; Neon r5 #1, #2, #4, #9: a second collector on the volume never logs in"""
         c1 = self.coll(self.vc("vc1"))
         c2 = self.coll(self.vc("vc1"), self.ontap())
         self.run_for(c2, 600)
@@ -363,55 +362,80 @@ class Lifecycle(Base):
         self.assertEqual(self.wire.logins(), 1)
 
 
-class Refusals(Base):
-    """a definite refusal stops EVERY login to every source - and it stays stopped (Neon r4 8, 9, 14, 15, 17, 18, 21-25)"""
+class AnyDoubtStopsEverything(Base):
+    """ANY outcome after the credential left that is not a confirmed success stops every login (Codex r6 #1, #2; Neon r4
+    8-18; Codex r5 #1, #2, #8, #9; Neon r5 #5-#7)"""
 
-    def assertAllStopped(self, col, hours=3):
-        n = self.wire.logins()
-        self.run_for(col, hours * 3600)
-        self.assertEqual(self.wire.logins(), n)
-        self.assertTrue(self.stopped())
-        self.assertEqual(self.states(col), {"auth"})
-
-    def test_n08_refused_login_stops_everything(self):
-        self.wire.add_vc("vc1", password="right")
-        col = self.coll(self.vc("vc1", "A", "wrong"), self.vc("vc2", "B"), self.ontap("on1", "C"))
+    def test_r6_1_a_proxy_502_never_repeats_the_password(self):
+        self.wire.hook = lambda h, w: (502, [], b"") if w == "/api/cluster" else None
+        col = self.coll(self.ontap("on1"), self.ontap("on2"))
         col.cycle()
-        self.assertEqual(self.wire.logins(), 1)                 # vc2 and on1 (other accounts) not tried either
-        self.assertAllStopped(col)
-        why = list(col.view()["sources"].values())[0]["why"]
-        self.assertIn("Logins stopped at", why)
-        self.assertIn("vc1 refused A", why)
-        self.assertIn("run Site portal - deploy", why)
+        self.assertEqual(self.wire.logins(), 1)                 # the second cluster is not tried
+        self.assertAllStopped(col, 1)
 
-    def test_n09_vcenter_401_403_on_login(self):
-        for status, body in ((401, b"Unauthorized"), (403, b""), (401, b"<soap"), (401, fault("", "Unauthorized"))):
-            with self.subTest(status=status, body=body[:20]):
+    def test_r6_2_no_logout_and_no_further_source_after_a_stop(self):
+        for status, body in ((403, b""), (502, b"")):
+            with self.subTest(status=status):
                 self.setUp()
-                self.wire.hook = lambda h, w, s=status, b=body: (s, [], b) if w == "Login" else None
-                col = self.coll(self.vc(), self.vc("vc2"))
-                col.cycle()
-                self.assertAllStopped(col, 1)
-                self.assertEqual(self.wire.logins(), 1)
-
-    def test_n14_no_permission_after_login(self):
-        for where in ("CreateContainerView", "RetrievePropertiesEx"):
-            with self.subTest(where):
-                self.setUp()
-                self.wire.hook = lambda h, w, x=where: (500, [], fault("NoPermission", "denied")) if w == x else None
+                self.wire.hook = lambda h, w, s=status, b=body: (s, [], b) if w == "CreateContainerView" else None
                 col = self.coll(self.vc(), self.ontap())
                 col.cycle()
+                self.assertNotIn(("vc1", "Logout"), self.wire.calls)
+                self.assertEqual(self.wire.logins("on1"), 0)
                 self.assertAllStopped(col, 1)
-                self.assertIn(("vc1", "Logout"), self.wire.calls)
+                col.stop()                                     # not even on shutdown
+                self.assertNotIn(("vc1", "Logout"), self.wire.calls)
+        self.setUp()                                           # NoPermission on RetrieveServiceContent
+        self.wire.hook = lambda h, w: (500, [], fault("NoPermission", "denied")) if w == "RetrieveServiceContent" else None
+        col = self.coll(self.vc(), self.ontap())
+        col.cycle()
+        self.assertEqual(self.wire.logins(), 0)
+        self.assertAllStopped(col, 1)
 
-    def test_n15_new_session_refused_at_once(self):
-        """Neon r5 #5, #6; Codex r5 #2: NotAuthenticated right after a new login (view, first read, after a re-login)"""
-        for where in ("CreateContainerView", "RetrievePropertiesEx"):
-            with self.subTest(where):
+    def test_refusals_and_unclear_answers_on_login(self):
+        cases = [(500, fault("InvalidLogin", "bad password")), (401, b"Unauthorized"), (403, b""), (401, fault("", "Unauthorized")),
+                 (500, fault("SystemError", "internal")), (500, fault("TooManyLogins", "too many")), (500, fault("RuntimeFault", "Anmeldung")),
+                 (500, b"oops"), (502, b""), (503, b""), (504, b""), (429, b""), (302, b""), (200, b"<soapenv:Env"), (200, env("")),
+                 (200, env('<OtherResponse xmlns="urn:vim25"><returnval><key>k</key></returnval></OtherResponse>'))]
+        for status, body in cases:
+            with self.subTest(status=status, body=body[:30]):
                 self.setUp()
-                self.wire.hook = lambda h, w, x=where: (500, [], fault("NotAuthenticated", "not authenticated")) if w == x else None
+                self.wire.hook = lambda h, w, s=status, b=body: (s, [], b) if h == "vc1" and w == "Login" else None
+                col = self.coll(self.vc("vc1"), self.vc("vc2", "B"), self.ontap("on1", "C"))
+                col.cycle()
+                self.assertEqual(self.wire.logins(), 1)          # vc2 and on1 (other accounts) never tried
+                self.assertTrue(self.stopped())
+                self.assertAllStopped(col, 1)
+
+    def test_errors_after_the_login_left(self):
+        for err in (socket.timeout("timed out"), ConnectionResetError("reset"), http.client.IncompleteRead(b"x"), ssl.SSLError("bad record")):
+            with self.subTest(err=type(err).__name__):
+                self.setUp()
+                self.wire.hook = lambda h, w, e=err: (_ for _ in ()).throw(e) if w == "Login" else None
+                col = self.coll(self.vc(), self.ontap())
+                col.cycle()
+                self.assertEqual(self.wire.logins("on1"), 0)
+                self.assertAllStopped(col, 1)
+
+    def test_login_without_cookie_or_key(self):
+        for case in ("cookie", "key"):
+            with self.subTest(case):
+                self.setUp()
+                self.wire.add_vc("vc1", cookie=case != "cookie", key=case != "key")
                 col = self.coll(self.vc())
                 col.cycle()
+                self.assertAllStopped(col, 1)
+
+    def test_no_permission_or_new_session_refused(self):
+        """Neon r5 #5, #6; Codex r5 #2"""
+        for where, kind in (("CreateContainerView", "NoPermission"), ("RetrievePropertiesEx", "NoPermission"),
+                            ("CreateContainerView", "NotAuthenticated"), ("RetrievePropertiesEx", "NotAuthenticated")):
+            with self.subTest(where=where, kind=kind):
+                self.setUp()
+                self.wire.hook = lambda h, w, x=where, k=kind: (500, [], fault(k, "no")) if w == x else None
+                col = self.coll(self.vc(), self.ontap())
+                col.cycle()
+                self.assertEqual(self.wire.logins("on1"), 0)
                 self.assertAllStopped(col, 1)
         self.setUp()                                           # the kept session expires; the re-login's first read refused
         col = self.coll(self.vc())
@@ -430,163 +454,10 @@ class Refusals(Base):
         self.assertEqual(self.wire.logins(), 2)
         self.assertAllStopped(col, 1)
 
-    def test_n17_ontap_401_403_on_any_get(self):
-        for path in ("/api/cluster", "/api/cluster/nodes", "/api/storage/luns"):
-            for status in (401, 403):
-                with self.subTest(path=path, status=status):
-                    self.setUp()
-                    self.wire.hook = lambda h, w, p=path, s=status: (s, [], b"{}") if w == p else None
-                    col = self.coll(self.ontap(), self.vc())
-                    col.cycle()
-                    self.assertEqual(self.wire.logins("vc1"), 0)            # the vCenter after it: not tried
-                    self.assertAllStopped(col, 1)
-
-    def test_n21_any_account_spelling_any_source(self):
-        """Codex r5 #9: one directory account under two names - a refusal on one stops the other too (global)"""
-        self.wire.add_vc("vc1", password="right")
-        col = self.coll(self.vc("vc1", "CORP\\svc01", "wrong"), self.ontap("on1", "ops-monitor@corp.example.mil"))
-        col.cycle()
-        self.assertEqual(self.wire.logins(), 1)
-        self.assertAllStopped(col, 1)
-
-    def test_n22_success_then_refusal_in_one_cycle(self):
-        col = self.coll(self.vc(), self.ontap(pw="wrong"))
-        col.cycle()
-        self.assertEqual(self.wire.logins(), 2)
-        self.assertAllStopped(col, 1)
-
-    def test_n23_a_kept_session_is_not_read_while_stopped(self):
-        col = self.coll(self.vc(), self.ontap())
-        col.cycle()
-        self.wire.on["on1"]["password"] = "changed"
-        self.c.step(60)
-        col.cycle()
-        calls = len(self.wire.calls)
-        self.run_for(col, 3600)
-        self.assertEqual(len(self.wire.calls), calls)
-
-    def test_403_on_a_cookie_read_stops_and_survives_a_restart(self):
-        """Codex r5 #8: 403 on a kept session's read - no login was in flight - stopped, persisted, a restart stays stopped"""
-        col = self.coll(self.vc())
-        col.cycle()
-        self.wire.hook = lambda h, w: (403, [], b"") if w == "RetrievePropertiesEx" else None
-        self.c.step(60)
-        col.cycle()
-        self.assertTrue(self.stopped())
-        col.stop()
-        os.close(col.lock_fd)
-        self.wire.hook = None
-        col2 = self.coll(self.vc())
-        self.run_for(col2, 7200)
-        self.assertEqual(self.wire.logins(), 1)
-
-    def test_r4_refused_then_restart_stays_stopped(self):
-        """r4 repro p1_2 / Neon r4 20, 28-29, 33-37 (clock steps, reboots): a stop has no deadline - only a new credential ends it"""
-        self.wire.add_vc("vc1", password="right")
-        col = self.coll(self.vc(pw="wrong"))
-        col.cycle()
-        col.stop()
-        os.close(col.lock_fd)
-        for wall, mono in ((1001, 101), (5000, 5), (500, 99999)):          # restart a second later, a clock step, a reboot
-            self.c.w, self.c.m = wall, mono
-            c = self.coll(self.vc(pw="wrong"))
-            self.run_for(c, 4 * 3600)
-            self.assertEqual(self.wire.logins(), 1)
-            c.stop()
-            os.close(c.lock_fd)
-        c = self.coll(self.vc(pw="right"))                     # Site portal - deploy with the fixed credential: logins start
-        c.cycle()
-        self.assertEqual(self.wire.logins(), 2)
-        self.assertFalse(self.stopped())
-
-    def test_the_deploy_reset_starts_the_logins(self):
-        self.wire.add_vc("vc1", password="right")
-        col = self.coll(self.vc(pw="wrong"))
-        col.cycle()                                            # refused: stopped
-        col.stop()
-        os.close(col.lock_fd)
-        c = self.coll(self.vc(pw="wrong"), reset="2026-11-25")   # the deploy's reset: logins start (refused again: stopped again)
-        c.cycle()
-        self.assertEqual(self.wire.logins(), 2)
-        c.stop()
-        os.close(c.lock_fd)
-        c = self.coll(self.vc(pw="wrong"), reset="2026-11-25")   # the same reset value again: still stopped
-        self.run_for(c, 3600)
-        self.assertEqual(self.wire.logins(), 2)
-        c.stop()
-        os.close(c.lock_fd)
-        self.wire.vc["vc1"]["password"] = "wrong"
-        c = self.coll(self.vc(pw="wrong"), reset="2026-11-26")   # a new value: starts; the credential works now
-        c.cycle()
-        self.assertEqual((self.wire.logins(), self.stopped()), (3, False))
-
-
-class Ambiguous(Base):
-    """an unclear outcome after the credential left: that source waits one window (Neon r4 10-13, 16-20)"""
-
-    def assertPaused(self, col, host, sent_at, logins=1):
-        self.until_mono(col, sent_at + WINDOW)
-        self.assertEqual(self.wire.logins(host), logins)
-        self.c.w += sent_at + WINDOW - self.c.m
-        self.c.m = sent_at + WINDOW
-        self.wire.hook = None
-        col.cycle()
-        self.assertGreater(self.wire.logins(host), logins)      # after the window: tried again
-        self.assertFalse(self.stopped())
-
-    def test_n10_n12_n13_odd_answers_to_login(self):
-        cases = [(500, fault("SystemError", "internal")), (500, fault("TooManyLogins", "too many")), (500, fault("RuntimeFault", "Anmeldung")),
-                 (500, b"oops"), (502, b""), (503, b""), (504, b""), (429, b""), (302, b""), (200, b"<soapenv:Env"), (200, env("")),
-                 (200, env('<OtherResponse xmlns="urn:vim25"><returnval><key>k</key></returnval></OtherResponse>'))]
-        for status, body in cases:
-            with self.subTest(status=status, body=body[:30]):
-                self.setUp()
-                self.wire.hook = lambda h, w, s=status, b=body: (s, [], b) if h == "vc1" and w == "Login" else None
-                col = self.coll(self.vc("vc1"), self.vc("vc2"))
-                col.cycle()
-                self.assertEqual(self.wire.logins("vc2"), 1)            # another source: not paused
-                self.assertPaused(col, "vc1", 100)
-        for case in ("cookie", "key"):
-            with self.subTest(case):
-                self.setUp()
-                self.wire.add_vc("vc1", cookie=case != "cookie", key=case != "key")
-                col = self.coll(self.vc())
-                col.cycle()
-                self.wire.vc["vc1"].update(cookie=True, key=True)
-                self.assertPaused(col, "vc1", 100)
-
-    def test_n11_errors_after_the_login_left(self):
-        for err in (socket.timeout("timed out"), ConnectionResetError("reset"), http.client.IncompleteRead(b"x"), ssl.SSLError("bad record")):
-            with self.subTest(err=type(err).__name__):
-                self.setUp()
-
-                def hook(h, w, e=err):
-                    if w == "Login":
-                        self.c.step(30)
-                        raise e
-                self.wire.hook = hook
-                col = self.coll(self.vc())
-                col.cycle()
-                self.assertPaused(col, "vc1", 130)                  # one window from the outcome
-
-    def test_n16_no_connection_sends_nothing(self):
-        for err in (ConnectionRefusedError("refused"), socket.gaierror("no name"), ssl.SSLCertVerificationError("bad cert")):
-            with self.subTest(err=type(err).__name__):
-                self.setUp()
-                v1, v2 = self.vc("vc1"), self.vc("vc2")
-                self.wire.connect_error["vc1"] = err
-                col = self.coll(v1, v2)
-                col.cycle()
-                self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
-                self.assertEqual(self.journal()["inflight"], [])
-                del self.wire.connect_error["vc1"]
-                self.c.step(60)
-                col.cycle()                                    # no pause: tried again the next cycle
-                self.assertEqual(self.wire.logins("vc1"), 1)
-
-    def test_n17_n18_ontap_failures_that_are_not_refusals(self):
-        cases = [(500, b"{}"), (503, b"{}"), (429, b"{}"), (302, b""), (200, b"{not json"), (200, b"null"), (200, b'{"error": {"message": "x"}}'),
-                 socket.timeout("t"), ConnectionResetError("r")]
+    def test_ontap_any_failed_get(self):
+        """every ONTAP GET carries the password: any failure stops (Neon r5 #7: an error in a 200, null)"""
+        cases = [(401, b"{}"), (403, b"{}"), (500, b"{}"), (503, b"{}"), (429, b"{}"), (302, b""), (400, b"<html>proxy</html>"), (200, b"{not json"),
+                 (200, b"null"), (200, b'{"error": {"message": "x"}}'), socket.timeout("t"), ConnectionResetError("r")]
         for path in ("/api/cluster", "/api/storage/aggregates"):
             for case in cases:
                 with self.subTest(path=path, case=str(case)[:30]):
@@ -598,140 +469,299 @@ class Ambiguous(Base):
                                 raise x
                             return x[0], [], x[1]
                     self.wire.hook = hook
-                    col = self.coll(self.ontap())
+                    col = self.coll(self.ontap("on1"), self.vc())
                     col.cycle()
-                    n = self.wire.logins("on1")
-                    self.assertNotIn(("on1", "/api/storage/volumes"), self.wire.calls)   # the poll stopped at the failed GET
-                    self.assertPaused(col, "on1", 100, logins=n)
+                    self.assertNotIn(("on1", "/api/storage/volumes"), self.wire.calls)
+                    self.assertEqual(self.wire.logins("vc1"), 0)
+                    self.assertAllStopped(col, 1)
 
-    def test_n19_ontap_old_version_one_nodes_get(self):
+    def test_no_connection_sends_nothing(self):
+        for err in (ConnectionRefusedError("refused"), socket.gaierror("no name"), ssl.SSLCertVerificationError("bad cert")):
+            with self.subTest(err=type(err).__name__):
+                self.setUp()
+                self.wire.connect_error["vc1"] = err
+                col = self.coll(self.vc("vc1"), self.vc("vc2"))
+                col.cycle()
+                self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
+                self.assertEqual(self.journal()["inflight"], [])
+                self.assertFalse(col.stopped)
+                del self.wire.connect_error["vc1"]
+                self.c.step(60)
+                col.cycle()
+                self.assertEqual(self.wire.logins("vc1"), 1)
+
+    def test_old_ontap_one_nodes_get(self):
         self.wire.add_on("on1", version={"full": "NetApp Release 9.7P1", "generation": 9, "major": 7})
         col = self.coll(self.ontap())
         col.cycle()
         self.assertEqual(len([p for h, p in self.wire.calls if p == "/api/cluster/nodes"]), 1)
-        self.assertEqual(self.journal()["inflight"], [])
+        self.assertFalse(col.stopped)
 
-    def test_a_restart_during_a_pause_waits_one_window_from_then(self):
-        self.wire.hook = lambda h, w: (_ for _ in ()).throw(socket.timeout("t")) if w == "Login" else None
-        col = self.coll(self.vc())
+    def test_any_spelling_any_source(self):
+        """Codex r5 #9: one directory account under two names - stopped globally"""
+        self.wire.add_vc("vc1", password="right")
+        col = self.coll(self.vc("vc1", "CORP\\svc01", "wrong"), self.ontap("on1", "ops-monitor@corp.example.mil"))
         col.cycle()
-        self.wire.hook = None
-        self.c.step(600)
-        col.stop()
-        os.close(col.lock_fd)
-        c2 = self.coll(self.vc())
-        self.run_for(c2, WINDOW - 60)
         self.assertEqual(self.wire.logins(), 1)
-        c2.stop()
-        os.close(c2.lock_fd)
-        c3 = self.coll(self.vc())                              # a second restart inside that window: from then again (never early)
-        self.run_for(c3, WINDOW - 60)
+        self.assertAllStopped(col, 1)
+
+    def test_a_kept_session_is_not_read_while_stopped(self):
+        col = self.coll(self.vc(), self.ontap())
+        col.cycle()
+        self.wire.on["on1"]["password"] = "changed"
+        self.c.step(60)
+        col.cycle()
+        calls = len(self.wire.calls)
+        self.run_for(col, 3600)
+        self.assertEqual(len(self.wire.calls), calls)
+
+    def test_r6_3_a_stop_that_cannot_be_written_survives_a_restart(self):
+        """Codex r6 #3 and r5 #8: refused (on a login, and on a kept session's read), the stop not written - the mark stops the restart"""
+        for case in ("login", "kept"):
+            with self.subTest(case):
+                self.setUp()
+                col = self.coll(self.vc())
+                if case == "kept":
+                    col.cycle()
+                    self.wire.hook = lambda h, w: (403, [], b"") if w == "RetrievePropertiesEx" else None
+                else:
+                    self.wire.add_vc("vc1", password="other")
+                real = col._change
+
+                def no_stop(m):
+                    probe = {"v": 4, "stopped": False, "at": None, "why": "", "inflight": [self.h(col.sources[0])]}
+                    m(probe)
+                    return False if probe["stopped"] else real(m)
+                col._change = no_stop
+                self.c.step(60)
+                col.cycle()
+                self.assertTrue(col.stopped)
+                n = self.wire.logins()
+                self.wire.hook = None
+                col2 = self.restart(col, self.vc())
+                self.assertAllStopped(col2, 2)
+                self.assertEqual(self.wire.logins(), n)
+
+
+class NeonR6(Base):
+    """Neon r6 #8, #9"""
+
+    def test_n8_a_lock_held_by_an_old_portal_is_tried_again(self):
+        old = self.coll(self.vc("vc1"))
+        new = self.coll(self.vc("vc1"))                        # the redeploy's portal while the old one still stops
+        new.cycle()
+        self.assertEqual(self.wire.logins(), 0)
+        old.stop()                                             # the old one ends: its lock released
+        self.c.step(60)
+        new.cycle()
         self.assertEqual(self.wire.logins(), 1)
-        self.run_for(c3, 120)
+
+    def test_n9_407_namespaced_faults_and_errors_before_counts(self):
+        for status in (407,):
+            with self.subTest(status=status):
+                self.setUp()
+                self.wire.hook = lambda h, w, st=status: (st, [], b"") if w in ("Login", "/api/cluster") else None
+                col = self.coll(self.vc(), self.ontap())
+                col.cycle()
+                self.assertEqual(self.wire.logins(), 1)
+                self.assertTrue(col.stopped)
+        self.setUp()
+        nsfault = env('<soapenv:Fault><faultcode>ServerFaultCode</faultcode><faultstring>denied</faultstring><soapenv:detail>'
+                      '<SecurityErrorFault xmlns="urn:vim25" xsi:type="SecurityError"/></soapenv:detail></soapenv:Fault>')
+        self.wire.hook = lambda h, w: (500, [], nsfault) if w == "RetrieveServiceContent" else None
+        col = self.coll(self.vc(), self.ontap())
+        col.cycle()
+        self.assertEqual(self.wire.logins(), 0)
+        self.assertTrue(col.stopped)
+        s = self.ontap()
+        s._get = lambda path: {"records": [], "num_records": 3, "errors": [{"message": "x"}]}
+        with self.assertRaises(RuntimeError):                  # the error wins over the count: the poll stops
+            s.records("/api/cluster/nodes", "state")
+
+
+class Resume(Base):
+    """only a NEW token from Site portal - deploy starts stopped logins - once (Codex r6 #4, #5, #6; r5 #5)"""
+
+    def stop(self):
+        self.wire.add_vc("vc1", password="right")
+        col = self.coll(self.vc(pw="wrong"))
+        col.cycle()
+        self.assertTrue(col.stopped)
+        return col
+
+    def test_a_new_token_starts_once_without_a_restart(self):
+        col = self.stop()
+        self.run_for(col, 600)
+        self.assertEqual(self.wire.logins(), 1)
+        self.deploy()
+        self.c.step(60)
+        col.cycle()                                            # the next cycle sees it: tried once - refused again: stopped
         self.assertEqual(self.wire.logins(), 2)
+        self.assertAllStopped(col, 2)                          # the same token never starts them twice
 
-    def test_clock_steps_never_shorten_a_pause(self):
-        """Neon r4 33, 34: the pause is on the monotonic clock"""
-        self.wire.hook = lambda h, w: (_ for _ in ()).throw(socket.timeout("t")) if w == "Login" and h == "vc1" else None
-        col = self.coll(self.vc("vc1"), self.vc("vc2", "B"))
+    def test_restarts_never_replay_a_token(self):
+        self.deploy()
+        col = self.stop()
+        for _ in range(3):
+            col = self.restart(col, self.vc(pw="wrong"))
+            self.run_for(col, 3600)
+        self.assertEqual(self.wire.logins(), 1)
+        self.wire.vc["vc1"]["password"] = "wrong"              # the fixed credential, and a deploy
+        self.deploy()
+        col = self.restart(col, self.vc(pw="wrong"))
         col.cycle()
-        self.wire.hook = None
-        for jump in (+5000, -3000):
-            self.c.w += jump
-            self.c.m += 60
-            col.cycle()
-        self.assertEqual(self.wire.logins("vc1"), 1)
+        self.assertEqual((self.wire.logins(), col.stopped), (2, None))
+
+    def test_r6_4_a_new_source_or_a_swapped_password_is_not_a_reset(self):
+        col = self.stop()
+        col = self.restart(col, self.vc(pw="wrong"), self.ontap("on2"))   # a cluster added (once a "new fingerprint")
+        self.run_for(col, 3600)
+        self.assertEqual(self.wire.logins(), 1)
+
+    def test_r6_5_only_a_strict_32_hex_token(self):
+        for tok in ("界" * 150, "A" * 32, "0" * 31, "0" * 33, "g" * 32, "", "0" * 32 + " extra", "x" * 300):
+            with self.subTest(tok=tok[:12]):
+                self.setUp()
+                col = self.stop()
+                self.deploy(tok)
+                self.run_for(col, 600)
+                self.assertEqual(self.wire.logins(), 1)
+
+    def test_r6_5_the_spent_token_cannot_be_written(self):
+        col = self.stop()
+        self.deploy()
+        with mock.patch.object(W.Collector, "_use", lambda me, t: False):
+            self.run_for(col, 600)
+        self.assertEqual(self.wire.logins(), 1)
+
+    def test_r6_6_a_damaged_stop_record_stays_stopped(self):
+        col = self.stop()
+        col.stop()
+        col.lock_fd is not None and os.close(col.lock_fd)
+        j = self.journal()
+        for damage in ({"why": ""}, {"at": None}, {"fp": ""}, {"stopped": "yes"}, {"inflight": None}):
+            with self.subTest(damage=damage):
+                self.raw(json.dumps(dict(j, **damage)).encode())
+                c = self.coll(self.vc(pw="wrong"))
+                self.run_for(c, 1800)
+                self.assertEqual(self.wire.logins(), 1)
+                c.stop()
+                c.lock_fd is not None and os.close(c.lock_fd)
+
+    def test_r6_7_one_wall_host_per_site(self):
+        t = open(os.path.join(os.path.dirname(HERE), "roles", "site_portal_stack", "tasks", "main.yml"), encoding="utf-8").read()
+        self.assertIn("the wall's collector runs on one portal host only", t)
+        self.assertIn("(_wall_hosts | int) <= 1", t)
+        self.assertIn("--wall-token", t)
 
 
 class Journal(Base):
-    """any doubt about the journal stops every login (r4 repro p2_1, Neon r4 38-43, Codex r5 #7, #24)"""
+    """any doubt about the journal is a stop (r4 repro p2_1, Neon r4 38-43, Codex r5 #7, #24, Codex r6 #14)"""
 
     def make_lock(self):
         open(os.path.join(self.d, "wall-collector.lock"), "w").close()
+        os.unlink(os.path.join(self.d, "wall-reset-token"))   # no new token from a deploy: the doubt stays a stop
 
     def payloads(self):
-        good = json.loads(json.dumps({"v": 3, "salt": "0" * 32, "stopped": False, "fp": "", "at": None, "why": "", "inflight": [], "reset": ""}))
+        good = {"v": 4, "stopped": False, "at": None, "why": "", "inflight": []}
         j = lambda **kw: json.dumps(dict(good, **kw)).encode()   # noqa: E731
-        return [b"", b"\xff\xfe\x00\x80", b"{not json", b"[]", b"null", b"123", b'"s"', json.dumps(dict(good, v=2)).encode(),
-                json.dumps(dict(good, v=True)).encode(), b'{"v": 3}', json.dumps(dict(good, extra=1)).encode(),
-                j(stopped=None), j(stopped="no"), j(at=float("nan")).replace(b"NaN", b"NaN"), b'{"v": 3, "at": 1e400}',
-                j(at=-5), j(at="1900"), j(inflight={}), j(inflight=[1]), j(salt=""), j(fp=None),
-                ('{"v": 3, "salt": "%s", "stopped": false, "fp": "", "at": %s, "why": "", "inflight": [], "reset": ""}' % ("0" * 32, "9" * 401)).encode(),
-                b"[" * 100000 + b"]" * 100000, b'{"v": 3, "v": 3}', b" " * (70 * 1024) + b"{}"]
+        return [b"", b"\xff\xfe\x00\x80", b"{not json", b"[]", b"null", b"123", b'"s"', j(v=3), j(v=True), b'{"v": 4}', j(extra=1),
+                j(stopped=None), j(stopped="no"), b'{"v": 4, "stopped": false, "at": NaN, "why": "", "inflight": []}', b'{"v": 4, "at": 1e400}',
+                j(at=-5), j(at="1900"), j(inflight={}), j(inflight=[1]),
+                ('{"v": 4, "stopped": false, "at": %s, "why": "", "inflight": []}' % ("9" * 401)).encode(),
+                b"[" * 100000 + b"]" * 100000, b'{"v": 4, "v": 4}', b" " * (70 * 1024) + b"{}"]
 
     def test_every_doubtful_journal_stops_every_login(self):
-        for raw in self.payloads() + ["missing", "unreadable", "directory"]:
+        for raw in self.payloads() + ["missing", "unreadable", "directory", "fifo", "symlink"]:
             with self.subTest(raw=raw if isinstance(raw, str) else raw[:50]):
                 self.setUp()
-                self.make_lock()                               # the collector ran here before
+                self.make_lock()
                 if raw == "unreadable":
                     self.raw(b"{}")
                     os.chmod(self.path, 0)
                 elif raw == "directory":
                     os.mkdir(self.path)
+                elif raw == "fifo":                            # Codex r6 #14: never a hang
+                    os.mkfifo(self.path)
+                elif raw == "symlink":
+                    good = os.path.join(self.d, "elsewhere.json")
+                    open(good, "w").write(json.dumps({"v": 4, "stopped": False, "at": None, "why": "", "inflight": []}))
+                    os.symlink(good, self.path)
                 elif raw != "missing":
                     self.raw(raw)
                 before = open(self.path, "rb").read() if isinstance(raw, bytes) else None
-                col = self.coll(self.vc(), self.ontap())       # never an exception (the portal starts)
+                col = self.coll(self.vc(), self.ontap())
                 self.run_for(col, 2 * 3600)
                 self.assertEqual(self.wire.logins(), 0)
                 self.assertIn("Site portal - deploy", list(col.view()["sources"].values())[0]["why"])
                 if before is not None:
                     self.assertEqual(open(self.path, "rb").read(), before)
 
-    def test_the_reset_ends_a_doubtful_journal(self):
+    def test_a_new_token_ends_a_doubtful_journal(self):
         self.make_lock()
         self.raw(b"{not json")
-        col = self.coll(self.vc(), reset="r1")
+        col = self.coll(self.vc())
+        self.deploy()
+        self.c.step(60)
         col.cycle()
         self.assertEqual(self.wire.logins(), 1)
-        self.assertEqual(self.journal()["reset"], "r1")
+        self.assertFalse(self.journal()["stopped"])
 
-    def test_first_use_only_without_a_lock_file(self):
-        col = self.coll(self.vc())                             # no journal, no lock: first use
+    def test_an_empty_volume_waits_for_the_deploys_token(self):
+        """Neon r6 #2 / Codex r5 #7: no journal (a new, emptied or restored volume) is never "first use" - it waits for a token"""
+        os.unlink(os.path.join(self.d, "wall-reset-token"))
+        col = self.coll(self.vc())
+        self.run_for(col, 3600)
+        self.assertEqual(self.wire.logins(), 0)
+        self.deploy()
+        self.c.step(60)
         col.cycle()
         self.assertEqual(self.wire.logins(), 1)
         col.stop()
-        os.close(col.lock_fd)
-        os.unlink(self.path)                                   # Codex r5 #7: the journal gone, the lock still there
-        c2 = self.coll(self.vc())
-        self.run_for(c2, 3600)
+        os.unlink(self.path)                                   # the journal gone later: stopped again (the token is spent)
+        col = self.coll(self.vc())
+        self.run_for(col, 3600)
         self.assertEqual(self.wire.logins(), 1)
 
-    def test_a_failed_read_while_running_changes_nothing(self):
-        """r4 repro p2_1 failed read: the collector keeps its journal in memory; a write it cannot make sends nothing"""
+    def test_r6_14_a_fifo_as_the_token_or_the_lock(self):
+        self.deploy()
         col = self.coll(self.vc())
-        with mock.patch.object(W.Collector, "_save", lambda me, d: False):
-            col.cycle()
+        col.cycle()
+        col.stop()
+        col.lock_fd is not None and os.close(col.lock_fd)
+        os.unlink(os.path.join(self.d, "wall-reset-token"))
+        os.mkfifo(os.path.join(self.d, "wall-reset-token"))
+        self.assertIsNone(self.coll(self.vc())._token("wall-reset-token"))   # returns at once
+        self.setUp()
+        os.mkfifo(os.path.join(self.d, "wall-collector.lock"))
+        col = self.coll(self.vc())
+        self.run_for(col, 600)
         self.assertEqual(self.wire.logins(), 0)
 
 
 class Crashes(Base):
-    """Codex r5 #24-#26: nothing about the wall stops the portal or the collector"""
+    """nothing about the wall stops the portal or the collector (Codex r5 #24-#26, r6 #13, #15)"""
 
-    def test_24_huge_numbers_and_deep_nesting(self):
-        for raw in (('{"v": 3, "salt": "%s", "stopped": false, "fp": "", "at": %s, "why": "", "inflight": [], "reset": ""}' % ("0" * 32, "9" * 401)).encode(),
-                    b"[" * 200000 + b"]" * 200000):
+    def test_r5_24_huge_numbers_and_deep_nesting(self):
+        for raw in (('{"v": 4, "stopped": false, "at": %s, "why": "", "inflight": []}' % ("9" * 401)).encode(), b"[" * 200000 + b"]" * 200000):
             self.setUp()
             open(os.path.join(self.d, "wall-collector.lock"), "w").close()
             self.raw(raw)
             col = self.coll(self.vc())
             self.assertTrue(col.stopped)
 
-    def test_25_a_repeated_page_token_ends_the_read(self):
+    def test_r5_25_a_repeated_page_token_ends_the_read(self):
         page = env('<RetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T</token><objects><obj type="HostSystem">h1</obj>'
                    '</objects></returnval></RetrievePropertiesExResponse>')
-        cont = env('<ContinueRetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T</token><objects><obj type="HostSystem">h2</obj>'
-                   '</objects></returnval></ContinueRetrievePropertiesExResponse>')
-        self.wire.hook = lambda h, w: (200, [], page) if w == "RetrievePropertiesEx" else (200, [], cont) if w == "ContinueRetrievePropertiesEx" else None
+        cont = env('<ContinueRetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T</token></returnval></ContinueRetrievePropertiesExResponse>')
         col = self.coll(self.vc(), self.ontap())
-        col.cycle()                                            # returns: the vCenter read failed, the next source still read
-        self.assertEqual(len([c for c in self.wire.calls if c[1] == "ContinueRetrievePropertiesEx"]), 1)
-        self.assertEqual(col.view()["sources"]["ontap:on1"]["state"], "ok")
+        col.cycle()                                            # a good first cycle: the session kept
+        self.wire.hook = lambda h, w: (200, [], page) if w == "RetrievePropertiesEx" else (200, [], cont) if w == "ContinueRetrievePropertiesEx" else None
+        self.c.step(60)
+        col.cycle()
         st = col.view()["sources"]["vcenter:vc1"]
         self.assertIn("repeated a page token", st["why"])
-        cont2 = lambda n: env('<ContinueRetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T%d</token></returnval>'   # noqa: E731
-                              '</ContinueRetrievePropertiesExResponse>' % n)
+        self.assertEqual(col.view()["sources"]["ontap:on1"]["state"], "ok")
         k = {"n": 0}
 
         def many(h, w):
@@ -739,16 +769,17 @@ class Crashes(Base):
                 return 200, [], page
             if w == "ContinueRetrievePropertiesEx":
                 k["n"] += 1
-                return 200, [], cont2(k["n"])
+                return 200, [], env('<ContinueRetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T%d</token></returnval>'
+                                    '</ContinueRetrievePropertiesExResponse>' % k["n"])
         self.wire.hook = many
         self.c.step(60)
         col.cycle()
         self.assertLessEqual(k["n"], W.PAGES_MAX)
 
-    def test_25b_a_continuation_without_an_answer_fails_the_read(self):
+    def test_r5_25b_a_continuation_without_an_answer_fails_the_read(self):
         page = env('<RetrievePropertiesExResponse xmlns="urn:vim25"><returnval><token>T</token></returnval></RetrievePropertiesExResponse>')
         col = self.coll(self.vc())
-        col.cycle()                                            # a good first read (the session kept)
+        col.cycle()
         self.wire.hook = lambda h, w: (200, [], page) if w == "RetrievePropertiesEx" else (200, [], env('<Other xmlns="urn:vim25"/>')) if w == "ContinueRetrievePropertiesEx" else None
         self.c.step(60)
         col.cycle()
@@ -756,7 +787,7 @@ class Crashes(Base):
         self.assertEqual(st["state"], "error")
         self.assertIn("not whole", st["why"])
 
-    def test_26_a_tls_bundle_that_cannot_be_read(self):
+    def test_r5_26_a_tls_bundle_that_cannot_be_read(self):
         srcs = W.sources_from_config({"vcenter": {"user": "A", "password": "p", "hosts": ["vc01.corp.example.mil"]},
                                       "ontap": {"user": "A", "password": "p", "clusters": ["192.0.2.10"]}}, cafile="/nonexistent/bundle.pem")
         self.assertEqual([type(s).__name__ for s in srcs], ["BrokenSource", "BrokenSource"])
@@ -764,6 +795,41 @@ class Crashes(Base):
         col.cycle()
         self.assertEqual(self.wire.logins(), 0)
         self.assertIn("not configured correctly", col.view()["sources"]["vcenter:vc01.corp.example.mil"]["why"])
+
+    def test_r6_13_a_failing_log_never_stops_the_collector(self):
+        def bad_log(d):
+            raise OSError(28, "No space left on device")
+        self.wire.add_vc("vc1", password="right")
+        col = self.coll(self.vc(pw="wrong"), log=bad_log)
+        col.cycle()                                            # a stop - logged - no exception
+        self.assertTrue(col.stopped)
+        os.chmod(self.d, 0o500)
+        self.setUp()
+        os.chmod(self.d, 0o500)
+        col = self.coll(self.vc(), log=bad_log)                # login off - logged - no exception
+        col.cycle()
+        import test_netapp_live  # noqa: F401  (its paths: the portal's modules)
+        import site_portal as sp
+        portal_log = mock.Mock()
+        portal_log.add.side_effect = OSError(28, "No space left on device")
+        cfg = mock.Mock(wall_opts={"high_minutes": 15, "seconds": 60}, wall_auth_retry=900, data=self.d, wall_logins={})
+        with mock.patch.object(sp, "wall_sources", lambda c: [self.vc()]):
+            w = sp.WallLive(cfg, portal_log, None)             # never raises
+        w.collector and w.collector.stop()
+
+    def test_r6_15_bad_wall_settings_never_crash_the_portal(self):
+        import test_netapp_live as T
+        for env_ in ({"PORTAL_WALL": "0", "PORTAL_WALL_AUTH_RETRY_SECONDS": "15m"}, {"PORTAL_WALL_AUTH_RETRY_SECONDS": "15m"},
+                     {"PORTAL_WALL_OPTS": '{"seconds": 1e400}'}, {"PORTAL_WALL_OPTS": "{not json"}, {"PORTAL_WALL_AUTH_RETRY_SECONDS": "9" * 400}):
+            with self.subTest(env=env_):
+                cfg = T.cfg_for(tempfile.mkdtemp(dir=os.environ.get("TMPDIR")), **env_)
+                self.assertTrue(hasattr(cfg, "wall_opts"))
+                self.assertTrue(cfg.ad_seconds)                    # the rest of the settings still read
+                if "15m" in str(env_.values()) or "not json" in str(env_.values()):
+                    self.assertFalse(cfg.wall)                     # not readable: the wall off, said why
+                    self.assertIn("could not be read", cfg.wall_why)
+                else:
+                    self.assertEqual((cfg.wall_opts["seconds"], cfg.wall_auth_retry <= 86400), (60, True))   # out of range: the default / the cap
 
     def test_ontap_num_records_mismatch_is_a_failed_collection(self):
         s = self.ontap()
@@ -773,7 +839,7 @@ class Crashes(Base):
 
 
 class Shutdown(Base):
-    """Neon r5 #10: no credentialed send after stop()"""
+    """Neon r5 #10: no credentialed send after stop(); cycles one at a time"""
 
     def test_stop_during_an_ontap_poll(self):
         col = self.coll(self.ontap())
@@ -787,7 +853,7 @@ class Shutdown(Base):
         col.cycle()
         self.assertEqual(self.wire.logins(), 0)
 
-    def test_n27_a_second_cycle_waits_for_the_first(self):
+    def test_a_second_cycle_waits_for_the_first(self):
         self.wire.add_vc("vc1", password="right")
         go, inside = threading.Event(), threading.Event()
 
@@ -807,7 +873,7 @@ class Shutdown(Base):
         t2.join(5)
         self.assertEqual(self.wire.logins(), 1)
 
-    def test_n26_one_ontap_source_per_address(self):
+    def test_one_ontap_source_per_address(self):
         srcs = W.sources_from_config({"ontap": {"user": "A", "password": "pw", "clusters": ["192.0.2.10", "https://192.0.2.10:443"]}})
         self.assertEqual(len(srcs), 1)
 

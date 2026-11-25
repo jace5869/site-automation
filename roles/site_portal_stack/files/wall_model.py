@@ -66,7 +66,7 @@ def opts_of(o):
                 out[k] = dict(v) if isinstance(v, dict) else {}
             else:
                 out[k] = str(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
     if not 0 < out["ds_warn"] < out["ds_crit"] <= 100:
         out["ds_warn"], out["ds_crit"] = DEFAULTS["ds_warn"], DEFAULTS["ds_crit"]

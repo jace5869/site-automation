@@ -258,6 +258,22 @@
          or (portal_wall_ontap | string | lower == 'auto' and portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0
              and portal_wall_ontap_clusters | default([], true) | length > 0)) }}
 
+# 1.130.0 (Codex r6 #7): one wall collector per site - two hosts with the same shared account would each log in on their own
+- name: Settings | the wall's collector runs on one portal host only
+  ansible.builtin.assert:
+    that: (_wall_hosts | int) <= 1
+    fail_msg: >-
+      The wall's live logins (portal_wall with the "VMware vCenter" or "NetApp ONTAP" credential) are on for {{ _wall_hosts }} portal
+      hosts in this run. The wall's collector runs on one portal host only: set portal_wall: false on all but one (its host_vars).
+    quiet: true
+  vars:
+    _wall_hosts: >-
+      {%- set n = namespace(c=0) -%}
+      {%- for h in ansible_play_hosts -%}
+      {%- if hostvars[h]._portal_wall_vc | default(false) | bool or hostvars[h]._portal_wall_ontap | default(false) | bool -%}{%- set n.c = n.c + 1 -%}{%- endif -%}
+      {%- endfor -%}{{ n.c }}
+  run_once: true
+
 - name: Settings | the ops-center wall's settings are usable
   ansible.builtin.assert:
     that:
@@ -992,7 +1008,6 @@
       PORTAL_WALL_PREVIEW: "{{ '1' if portal_wall_preview | bool else '0' }}"
       PORTAL_WALL_ENCLAVE: "{{ portal_wall_enclave | default('', true) | string | trim }}"
       PORTAL_WALL_AUTH_RETRY_SECONDS: "{{ (portal_wall_auth_retry_minutes | int * 60) | string }}"
-      PORTAL_WALL_LOGINS_RESET: "{{ portal_wall_logins_reset | default('', true) | string | trim }}"
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
       PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
       PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
@@ -1301,6 +1316,16 @@
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
+
+# 1.130.0: a new reset token on every run - wall logins stopped by a refusal (or any doubt) start again once, on this new token;
+# a restart of the portal alone never starts them (the collector keeps the token it last used)
+- name: Wall | a new reset token in the portal's data volume
+  ansible.builtin.command:
+    argv: [podman, exec, -i, site-portal-app, /bin/sh, /app/start.sh, --wall-token]
+    stdin: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['0123456789abcdef']) }}"
+  changed_when: false
+  no_log: true
+  when: (_portal_wall_vc | bool or _portal_wall_ontap | bool) and not ansible_check_mode
 
 - name: Verify | what AAP said
   ansible.builtin.set_fact:
