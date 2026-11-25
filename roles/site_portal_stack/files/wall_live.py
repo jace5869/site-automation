@@ -649,6 +649,7 @@ class Collector(object):
         self.state_file = state_file
         self.flock = threading.Lock()
         self.quarantine = None                                 # (the unusable file's fingerprint, monotonic end of its window)
+        self.seen = {}                                         # account key -> its entry as this process last read or wrote it
         self._said = set()
         for c, b in self.buckets.items():
             b["gate"].ahead = (lambda cred=c: self._ahead(cred)) if state_file else None
@@ -760,6 +761,7 @@ class Collector(object):
         if why is not None:
             self._quarantine(why)
             return
+        self.seen = dict(d)
         cut = []
         for c, b in self.buckets.items():
             e = d.get(self._hkey(c))
@@ -785,11 +787,14 @@ class Collector(object):
             with self.flock, self._Locked(self.state_file):
                 d, why = self._read()
                 if why is not None:
-                    q = self.quarantine
-                    if q is not None and self.mono() >= q[1] and q[0] == self._fingerprint():
+                    q, fp = self.quarantine, self._fingerprint()
+                    if q is not None and self.mono() >= q[1] and q[0] == fp:
                         d = {}                                 # its window is over and nobody changed it: written over
                     else:
-                        self._quarantine(why)
+                        if q is None or q[0] != fp:            # this file first seen unusable now: its window starts
+                            self.quarantine = (fp, self.mono() + self.auth_retry)
+                        self._say("not read", "the back-off file %s - no login until it can be read (written over %d s after, if unchanged)"
+                                  % (why, self.auth_retry))
                         return False
                 if mutate(d) is False:
                     return False
@@ -813,6 +818,7 @@ class Collector(object):
                 finally:
                     os.close(dfd)
                 self.quarantine = None
+                self.seen = dict(d)
                 self._said.discard("not written")
                 return True
         except OSError as e:
@@ -826,7 +832,8 @@ class Collector(object):
 
         def m(d):
             e = d.get(h)
-            if e and ("attempt" in e or e.get("until", 0) > now):  # another process, or an outcome never written: never a login
+            if e is not None and (e != self.seen.get(h) or "attempt" in e):
+                # changed by another process, or an attempt never resolved: never a login now - held one window
                 self._hold(b, self.mono() + self.auth_retry, "the back-off file holds this account - held one window")
                 return False
             d[h] = {"attempt": now}
@@ -839,10 +846,19 @@ class Collector(object):
         h = self._hkey(cred)
 
         def m(d):
+            e = d.get(h)
+            if e is not None and e != self.seen.get(h):        # another process wrote this account meanwhile: its entry stays
+                if "until" in e:
+                    with self.lock:
+                        self._hold(self.buckets[cred], self.mono() + min(self.auth_retry, max(0.0, e["until"] - self.clock())),
+                                   "the back-off file holds this account (another writer)")
+                if mono_until is None:
+                    return None
             if mono_until is None:
                 d.pop(h, None)
             else:
-                d[h] = {"until": self.clock() + max(0.0, mono_until - self.mono()), "mono": mono_until, "boot": self.boot or "-"}
+                until = self.clock() + max(0.0, mono_until - self.mono())
+                d[h] = {"until": max(until, (e or {}).get("until") or 0), "mono": mono_until, "boot": self.boot or "-"}
         return self._write(m)
 
     def start(self):
@@ -1013,7 +1029,7 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     cfg = cfg if isinstance(cfg, dict) else {}
     out = []
     vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
-    if vc.get("user") and vc.get("password"):
+    if str(vc.get("user") or "").strip() and vc.get("password"):
         seen = set()
         for h in _hosts(vc.get("hosts")):
             try:
@@ -1027,10 +1043,15 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
                 seen.add(src.key.lower())
                 out.append(src)
     on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
-    if on.get("user") and on.get("password"):
+    if str(on.get("user") or "").strip() and on.get("password"):
+        seen = set()
         for c in _hosts(on.get("clusters")):
             try:
                 host, port = _endpoint(c)
+                k = ("%s:%d" % (host, port)).lower()
+                if k in seen:
+                    continue                                   # https://192.0.2.10:443 and 192.0.2.10: one cluster, one source
+                seen.add(k)
                 out.append(OntapSource(host if port == 443 else "%s:%d" % (host, port), on["user"], on["password"],
                                        verify=on.get("verify", True) is not False, cafile=cafile, timeout=timeout))
             except (ValueError, TypeError) as e:
