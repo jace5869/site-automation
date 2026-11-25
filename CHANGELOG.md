@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.130.2 — 2026-11-25
+
+**To set up:** apply, then run **Site portal - deploy**. If the portal is unstyled now: `systemctl restart site-portal-app` on the portal host (fixes it at once).
+
+- **After a deploy with the wall's logins the portal lost its own files** (unstyled pages, "Reading the wall...", `PermissionError` in its log): the deploy's one-off container that writes the wall's reset token relabelled the portal's folders for itself (SELinux `:Z`), and the RUNNING portal could no longer read its CSS / JS or write its log until restarted. That container now changes no label (`--security-opt label=disable`, no `:Z`).
+
 ## 1.130.1 — 2026-11-25
 
 **To set up:** if your all.yml has `portal_ad_card_match: "{edipi}*@mil"`, change it to your exact form (for example `"{edipi}.ctr@mil"`). Then run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)

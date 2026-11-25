@@ -1256,7 +1256,10 @@
 
 - name: Wall | a new reset token in the portal's data volume
   ansible.builtin.command:
-    argv: [podman, run, --rm, -i, --pull=never, --network, none, -v, "site-portal-data:/data:U,Z", -v, "{{ portal_config_dir }}/app:/app:ro,Z",
+    # 1.130.2: no relabel (no :Z) and SELinux labels off for this one-off container only - a :Z here gave the RUNNING portal's
+    # files a label of this container's, and the portal could no longer read its CSS / JS or write its log until restarted
+    argv: [podman, run, --rm, -i, --pull=never, --network, none, --security-opt, label=disable, -v, "site-portal-data:/data:U",
+           -v, "{{ portal_config_dir }}/app:/app:ro",
            -e, PORTAL_DATA=/data, "{{ portal_image }}", /bin/sh, /app/start.sh, --wall-token]
     stdin: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['0123456789abcdef']) }}"
   changed_when: false
