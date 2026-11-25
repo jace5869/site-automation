@@ -72,14 +72,14 @@ class Net(object):
         return len([x for x in self.sent if host is None or x[0] == host])
 
     def conn(self):
-        net = self
+        wire = self
 
         class Conn(object):
             def __init__(self, host, port=443, timeout=None, context=None):
                 self.host, self.req = host, None
 
             def connect(self):
-                e = net.connect_error.get(self.host)
+                e = wire.connect_error.get(self.host)
                 if e:
                     raise e if isinstance(e, BaseException) else e("no connection")
 
@@ -88,9 +88,9 @@ class Net(object):
 
             def getresponse(self):
                 method, path, body, headers = self.req
-                if self.host in net.vc:
-                    return net.vim(self.host, body, headers)
-                return net.ontap(self.host, path, headers)
+                if self.host in wire.vc:
+                    return wire.vim(self.host, body, headers)
+                return wire.ontap(self.host, path, headers)
 
             def close(self):
                 pass
@@ -173,8 +173,8 @@ class Base(unittest.TestCase):
         self.addCleanup(self._clean, self.d)
         self.path = os.path.join(self.d, "wall-backoff.json")
         self.c = Clocks()
-        self.net = Net(self.c)
-        p = mock.patch.object(http.client, "HTTPSConnection", self.net.conn())
+        self.wire = Net(self.c)
+        p = mock.patch.object(http.client, "HTTPSConnection", self.wire.conn())
         p.start()
         self.addCleanup(p.stop)
 
@@ -192,13 +192,13 @@ class Base(unittest.TestCase):
         shutil.rmtree(d, True)
 
     def vc(self, host="vc1", user="A", pw="pass"):
-        if host not in self.net.vc:
-            self.net.add_vc(host)
+        if host not in self.wire.vc:
+            self.wire.add_vc(host)
         return W.VcenterSource(host, user, pw, verify=False)
 
     def ontap(self, host="on1", user="A", pw="pw"):
-        if host not in self.net.on:
-            self.net.add_on(host)
+        if host not in self.wire.on:
+            self.wire.add_on(host)
         return W.OntapSource(host, user, pw, verify=False)
 
     def coll(self, *srcs, boot="b1"):
@@ -240,7 +240,7 @@ class WriteAheadLifecycle(Base):
         col.cycle()
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(self.journal(), {})
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         self.assertNotIn(b'"A"', open(self.path, "rb").read())
@@ -249,22 +249,22 @@ class WriteAheadLifecycle(Base):
         for make in (self.vc, self.ontap):
             with self.subTest(make.__name__):
                 seen = []
-                self.net.hook = lambda host, what: seen.append(self.journal()) if what in ("Login", "/api/cluster") else None
+                self.wire.hook = lambda host, what: seen.append(self.journal()) if what in ("Login", "/api/cluster") else None
                 col = self.coll(make())
                 col.cycle()
                 self.assertEqual(list(seen[0].values()), [{"attempt": 1000.0}])
                 self.assertEqual(self.journal(), {})
-                self.net.hook = None
+                self.wire.hook = None
                 os.unlink(self.path)
 
     def test_03_ontap_paged_poll(self):
-        self.net.add_on("on1")
-        self.net.on["on1"]["pages"]["/api/storage/aggregates"] = 2
+        self.wire.add_on("on1")
+        self.wire.on["on1"]["pages"]["/api/storage/aggregates"] = 2
         seen = []
-        self.net.hook = lambda host, what: seen.append(self.journal()) or None
+        self.wire.hook = lambda host, what: seen.append(self.journal()) or None
         col = self.coll(self.ontap())
         col.cycle()
-        self.assertEqual(self.net.logins(), 7)                 # cluster, nodes, aggregates x2, volumes, luns, snapmirror
+        self.assertEqual(self.wire.logins(), 7)                 # cluster, nodes, aggregates x2, volumes, luns, snapmirror
         self.assertTrue(all(list(j.values()) == [{"attempt": 1000.0}] for j in seen))
         self.assertEqual(self.journal(), {})
 
@@ -276,7 +276,7 @@ class WriteAheadLifecycle(Base):
                 for _ in range(3):
                     col.cycle()
                     self.c.step(60)
-                self.assertEqual(self.net.logins(), 0)
+                self.assertEqual(self.wire.logins(), 0)
                 self.assertFalse(os.path.exists(self.path))
                 self.assertEqual(list(col.view()["sources"].values())[0]["state"], "paused")
                 os.chmod(self.d, 0o700)
@@ -291,7 +291,7 @@ class WriteAheadLifecycle(Base):
             raise OSError("fsync failed")
         with mock.patch.object(os, "fsync", fs):
             col.cycle()
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.assertFalse(os.path.exists(self.path))
         self.assertEqual([x for x in os.listdir(self.d) if x.endswith(".tmp")], [])
 
@@ -305,7 +305,7 @@ class WriteAheadLifecycle(Base):
             return real(fd)
         with mock.patch.object(os, "fsync", fs):
             col.cycle()
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.assertEqual(list(self.journal().values()), [{"attempt": 1000.0}])
 
     def test_07_success_outcome_not_written_keeps_the_account_held(self):
@@ -315,19 +315,19 @@ class WriteAheadLifecycle(Base):
         col.cycle()
         self.c.step(60)
         col.cycle()
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (1, 0))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (1, 0))
         self.assertEqual(list(self.journal().values()), [{"attempt": 1000.0}])
 
 
 class FailureOutcomes(Base):
     def run_case(self, src, hook, expect_until, expect_mono, logins=1):
-        self.net.hook = hook
+        self.wire.hook = hook
         col = self.coll(src)
         col.cycle()
-        self.net.hook = None
+        self.wire.hook = None
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), logins)
+        self.assertEqual(self.wire.logins(), logins)
         self.assertHeld(list(self.journal().values())[0], expect_until, expect_mono)
         return col
 
@@ -335,19 +335,19 @@ class FailureOutcomes(Base):
         def slow(host, what):
             if what == "Login":
                 self.c.step(30)
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         col = self.coll(self.vc(pw="wrong"))
-        self.net.hook = slow
+        self.wire.hook = slow
         col.cycle()
-        self.net.hook = None
+        self.wire.hook = None
         self.assertHeld(list(self.journal().values())[0], 1930, 1030)
         self.until_mono(col, 1030)
-        self.assertEqual(self.net.logins(), 1)
-        self.net.vc["vc1"]["password"] = "wrong"
+        self.assertEqual(self.wire.logins(), 1)
+        self.wire.vc["vc1"]["password"] = "wrong"
         self.c.w += 1030 - self.c.m
         self.c.m = 1030
         col.cycle()
-        self.assertEqual(self.net.logins(), 2)
+        self.assertEqual(self.wire.logins(), 2)
 
     def test_09_vcenter_401_403(self):
         for status, body in ((401, b"Unauthorized"), (403, b""), (401, b"<soap"), (401, fault("", "Unauthorized"))):
@@ -383,7 +383,7 @@ class FailureOutcomes(Base):
         for case in ("cookie", "key", "tag"):
             with self.subTest(case):
                 self.setUp()
-                self.net.add_vc("vc1", cookie=case != "cookie", key=case != "key")
+                self.wire.add_vc("vc1", cookie=case != "cookie", key=case != "key")
                 hook = (lambda h, w: (200, [("Set-Cookie", 'vmware_soap_session="x"')], env('<OtherResponse xmlns="urn:vim25"><returnval>'
                                                                                            '<key>k</key></returnval></OtherResponse>'))
                         if w == "Login" else None) if case == "tag" else None
@@ -394,7 +394,7 @@ class FailureOutcomes(Base):
             with self.subTest(where):
                 self.setUp()
                 self.run_case(self.vc(), lambda h, w, x=where: (500, [], fault("NoPermission", "denied")) if w == x else None, 1900, 1000)
-                self.assertIn(("vc1", "Logout"), self.net.calls)
+                self.assertIn(("vc1", "Logout"), self.wire.calls)
         self.setUp()                                         # the view gone, made again: NoPermission
         col = self.coll(self.vc())
         col.cycle()
@@ -406,14 +406,14 @@ class FailureOutcomes(Base):
                 return 500, [], fault("ManagedObjectNotFound", "gone")
             if w == "CreateContainerView" and state["n"]:
                 return 500, [], fault("NoPermission", "denied")
-        self.net.hook = hook
+        self.wire.hook = hook
         self.c.step(60)
         col.cycle()
-        self.net.hook = None
+        self.wire.hook = None
         self.assertHeld(list(self.journal().values())[0], 1960, 1060)
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
 
     def test_15_fresh_session_dropped_at_once(self):
         def hook(h, w):
@@ -426,23 +426,23 @@ class FailureOutcomes(Base):
             with self.subTest(err=type(err).__name__):
                 self.setUp()
                 v1, v2 = self.vc("vc1"), self.vc("vc2")
-                self.net.connect_error["vc1"] = err
+                self.wire.connect_error["vc1"] = err
                 col = self.coll(v1, v2)
                 col.cycle()
-                self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (0, 1))
+                self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
                 self.assertEqual(self.journal(), {})
         self.setUp()                                         # RetrieveServiceContent times out: before any login
         v1, v2 = self.vc("vc1"), self.vc("vc2")
-        self.net.hook = lambda h, w: (_ for _ in ()).throw(socket.timeout("t")) if h == "vc1" and w == "RetrieveServiceContent" else None
+        self.wire.hook = lambda h, w: (_ for _ in ()).throw(socket.timeout("t")) if h == "vc1" and w == "RetrieveServiceContent" else None
         col = self.coll(v1, v2)
         col.cycle()
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (0, 1))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
         self.setUp()                                         # contrast: an error after the login left
         v1, v2 = self.vc("vc1"), self.vc("vc2")
-        self.net.hook = lambda h, w: (_ for _ in ()).throw(ConnectionResetError("r")) if h == "vc1" and w == "Login" else None
+        self.wire.hook = lambda h, w: (_ for _ in ()).throw(ConnectionResetError("r")) if h == "vc1" and w == "Login" else None
         col = self.coll(v1, v2)
         col.cycle()
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (1, 0))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (1, 0))
         self.assertHeld(list(self.journal().values())[0], 1900, 1000)
 
     def test_17_ontap_first_get_fails(self):
@@ -469,7 +469,7 @@ class FailureOutcomes(Base):
                 self.c.step(15)
                 return 401, [], b"{}"
         self.run_case(self.ontap(), h401, 1915, 1015, logins=2)
-        self.assertNotIn(("on1", "/api/storage/volumes"), self.net.calls)
+        self.assertNotIn(("on1", "/api/storage/volumes"), self.wire.calls)
         # 5xx / timeout after a 200 in the same poll: the coordinator's rule - the credentials were proved, so a plain source
         # error (no hold, the next cycle tries again) - but no further GET in that poll (Neon expected a hold here)
         for case in ((500, b"{}"), (503, b"{}"), socket.timeout("t"), ConnectionResetError("r")):
@@ -482,26 +482,26 @@ class FailureOutcomes(Base):
                             raise x
                         return x[0], [], x[1]
                 col = self.coll(self.ontap())
-                self.net.hook = hook
+                self.wire.hook = hook
                 col.cycle()
-                self.net.hook = None
-                self.assertEqual(self.net.logins(), 3)                     # cluster, nodes, aggregates - then stopped
-                self.assertNotIn(("on1", "/api/storage/volumes"), self.net.calls)
+                self.wire.hook = None
+                self.assertEqual(self.wire.logins(), 3)                     # cluster, nodes, aggregates - then stopped
+                self.assertNotIn(("on1", "/api/storage/volumes"), self.wire.calls)
                 self.assertEqual(self.journal(), {})
                 self.assertEqual(list(col.view()["sources"].values())[0]["state"], "error")
 
     def test_19_ontap_old_version_no_blind_retry(self):
-        self.net.add_on("on1", version={"full": "NetApp Release 9.7P1", "generation": 9, "major": 7})
+        self.wire.add_on("on1", version={"full": "NetApp Release 9.7P1", "generation": 9, "major": 7})
         col = self.coll(self.ontap())
         col.cycle()
-        nodes = [p for h, p in self.net.calls if p == "/api/cluster/nodes"]
+        nodes = [p for h, p in self.wire.calls if p == "/api/cluster/nodes"]
         self.assertEqual(len(nodes), 1)
         self.assertEqual(self.journal(), {})
         self.setUp()
         self.run_case(self.ontap(), lambda h, w: (400, [], b"<html>proxy</html>") if w == "/api/cluster" else None, 1900, 1000)
 
     def test_20_failure_outcome_not_written_then_restart(self):
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         col = self.coll(self.vc(pw="wrong"))
         real = col._write
 
@@ -513,33 +513,33 @@ class FailureOutcomes(Base):
         def slow(h, x):
             if x == "Login":
                 self.c.step(30)
-        self.net.hook = slow
+        self.wire.hook = slow
         col.cycle()
-        self.net.hook = None
+        self.wire.hook = None
         self.until_mono(col, 1030)
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(list(self.journal().values()), [{"attempt": 1000.0}])
         self.c.w, self.c.m = 1031, 131                           # the restart (a writable folder)
         col2 = self.coll(W.VcenterSource("vc1", "A", "wrong", verify=False))
         self.until_mono(col2, 1031)
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.c.w += 1031 - self.c.m
         self.c.m = 1031
         col2.cycle()
-        self.assertEqual(self.net.logins(), 2)
+        self.assertEqual(self.wire.logins(), 2)
 
 
 class SharedAccounts(Base):
     def test_21_one_account_many_spellings(self):
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         srcs = [self.vc("vc1", "CORP\\svc-wall", "wrong"), self.vc("vc2", "svc-wall@corp.example.mil"), self.vc("vc3", " SVC-WALL "),
-                self.vc("vc4", "CORP\\ svc-wall "), self.ontap("on1", "svc-wall @corp.mil")]
+                self.vc("vc4", "CORP\\ svc-wall "), self.ontap("on1", "svc-wall @corp.example.mil")]
         col = self.coll(*srcs)
         col.cycle()
         for _ in range(14):
             self.c.step(60)
             col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(set(x["state"] for x in col.view()["sources"].values()), {"auth"})
         self.assertEqual(list(self.journal()), [self.h("svc-wall")])
 
@@ -549,13 +549,13 @@ class SharedAccounts(Base):
         def hook(h, w):
             if h == "on1":
                 self.c.step(10)
-        self.net.hook = hook
+        self.wire.hook = hook
         col = self.coll(self.vc(), on)
         col.cycle()
-        self.net.hook = None
+        self.wire.hook = None
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 2)
+        self.assertEqual(self.wire.logins(), 2)
         self.assertHeld(list(self.journal().values())[0], 1910, 1010)
 
     def test_23_a_kept_vcenter_session_never_ends_a_back_off(self):
@@ -563,16 +563,16 @@ class SharedAccounts(Base):
         col = self.coll(vc, on)
         col.cycle()
         self.c.step(60)
-        self.net.on["on1"]["password"] = "changed"
+        self.wire.on["on1"]["password"] = "changed"
         col.cycle()
-        n = self.net.logins()
-        self.net.vc["vc1"]["drop"] = True
-        calls = len(self.net.calls)
+        n = self.wire.logins()
+        self.wire.vc["vc1"]["drop"] = True
+        calls = len(self.wire.calls)
         for _ in range(13):
             self.c.step(60)
             col.cycle()
-        self.assertEqual(self.net.logins(), n)
-        self.assertEqual(len(self.net.calls), calls)            # not even a read on the kept session while the account is held
+        self.assertEqual(self.wire.logins(), n)
+        self.assertEqual(len(self.wire.calls), calls)            # not even a read on the kept session while the account is held
         self.assertTrue(list(self.journal().values())[0]["until"])
 
     def test_24_vcenter_session_timeout(self):
@@ -580,55 +580,55 @@ class SharedAccounts(Base):
         col.cycle()
         self.c.step(60)
         col.cycle()
-        self.net.vc["vc1"]["drop"] = True
+        self.wire.vc["vc1"]["drop"] = True
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 2)
+        self.assertEqual(self.wire.logins(), 2)
         self.assertEqual(self.journal(), {})
-        self.net.vc["vc1"].update(drop=True, password="changed")
+        self.wire.vc["vc1"].update(drop=True, password="changed")
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 3)
+        self.assertEqual(self.wire.logins(), 3)
         self.assertTrue(list(self.journal().values())[0]["until"])
         self.until_mono(col, self.c.m + WINDOW)
-        self.assertEqual(self.net.logins(), 3)
+        self.assertEqual(self.wire.logins(), 3)
         self.setUp()
         col = self.coll(self.vc())
         col.cycle()
         os.chmod(self.d, 0o500)
-        self.net.vc["vc1"]["drop"] = True
+        self.wire.vc["vc1"]["drop"] = True
         self.c.step(60)
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
 
     def test_25_other_accounts_are_not_held(self):
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         col = self.coll(self.vc("vc1", "A", "wrong"), self.vc("vc2", "B"))
         col.cycle()
         self.c.step(60)
         col.cycle()
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (1, 1))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (1, 1))
         self.assertEqual(list(self.journal()), [self.h("A")])
 
     def test_26_one_ontap_source_per_address(self):
         srcs = W.sources_from_config({"ontap": {"user": "A", "password": "pw", "clusters": ["192.0.2.10", "https://192.0.2.10:443"]}})
         self.assertEqual(len(srcs), 1)
-        self.net.add_on("192.0.2.10")
-        self.net.hook = lambda h, w: (500, [], b"{}")
+        self.wire.add_on("192.0.2.10")
+        self.wire.hook = lambda h, w: (500, [], b"{}")
         col = self.coll(*srcs)
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertHeld(list(self.journal().values())[0], 1900, 1000)
 
     def test_27_a_second_cycle_waits_for_the_first(self):
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         go, inside = threading.Event(), threading.Event()
 
         def hook(h, w):
             if w == "Login" and h == "vc1":
                 inside.set()
                 go.wait(5)
-        self.net.hook = hook
+        self.wire.hook = hook
         col = self.coll(self.vc("vc1", pw="wrong"), self.vc("vc2"))
         t1 = threading.Thread(target=col.cycle)
         t1.start()
@@ -638,7 +638,7 @@ class SharedAccounts(Base):
         go.set()
         t1.join(5)
         t2.join(5)
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
 
 
 class Restarts(Base):
@@ -647,11 +647,11 @@ class Restarts(Base):
         self.c.w, self.c.m = 1300, 400
         col = self.coll(self.vc())
         self.until_mono(col, 1000)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.c.w += 1000 - self.c.m
         self.c.m = 1000
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(self.journal(), {})
 
     def test_29_restart_at_the_deadline(self):
@@ -659,7 +659,7 @@ class Restarts(Base):
         self.c.w, self.c.m = 1900, 1000
         col = self.coll(self.vc())
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(self.journal(), {})
 
     def test_30_attempt_without_outcome_holds_a_window_from_now(self):
@@ -667,18 +667,18 @@ class Restarts(Base):
         self.c.w, self.c.m = 5000, 500
         col = self.coll(self.vc())
         self.until_mono(col, 1400)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.c.w += 1400 - self.c.m
         self.c.m = 1400
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(self.journal(), {})
 
     def test_31_attempt_for_a_clean_for_b(self):
         self.seed({self.h("A"): {"attempt": 990.0}})
         col = self.coll(self.vc("vc1", "A"), self.vc("vc2", "B"))
         col.cycle()
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (0, 1))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
         self.assertEqual(list(self.journal()), [self.h("A")])
 
     def test_32_two_restarts(self):
@@ -687,15 +687,15 @@ class Restarts(Base):
         self.c.step(300)
         col = self.coll(self.vc())
         self.until_mono(col, 1000)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
 
 
 class ClockJumps(Base):
     def refuse(self, *extra):
-        self.net.add_vc("vc1", password="right")
+        self.wire.add_vc("vc1", password="right")
         col = self.coll(self.vc("vc1", "A", "wrong"), *extra)
         col.cycle()
-        self.net.vc["vc1"]["password"] = "wrong"
+        self.wire.vc["vc1"]["password"] = "wrong"
         return col
 
     def test_33_wall_forward_while_running(self):
@@ -708,32 +708,32 @@ class ClockJumps(Base):
         self.c.w += 999 - self.c.m
         self.c.m = 999
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.c.m, self.c.w = 1000, self.c.w + 1
         col.cycle()
-        self.assertEqual(self.net.logins(), 2)
+        self.assertEqual(self.wire.logins(), 2)
 
     def test_34_wall_back_while_running(self):
         self.c.w = 2000
         col = self.refuse(self.vc("vc2", "B"))
         self.c.m, self.c.w = 110, 1000
         self.until_mono(col, 1000)
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (1, 1))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (1, 1))
         self.c.w += 1000 - self.c.m
         self.c.m = 1000
         col.cycle()
-        self.assertEqual(self.net.logins("vc1"), 2)
+        self.assertEqual(self.wire.logins("vc1"), 2)
 
     def test_35_wall_forward_across_restart(self):
         self.seed({self.h(): self.bo(1900, 1000)})
         self.c.w, self.c.m = 5000, 110
         col = self.coll(self.vc())
         self.until_mono(col, 1000)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.c.w += 1000 - self.c.m
         self.c.m = 1000
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
 
     def test_36_wall_back_then_forward_across_restart(self):
         self.seed({self.h(): self.bo(2900, 1000)})
@@ -741,18 +741,18 @@ class ClockJumps(Base):
         col = self.coll(self.vc())
         self.c.w, self.c.m = 2500, 120
         self.until_mono(col, 1000)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
 
     def test_37_wall_back_across_a_reboot(self):
         self.seed({self.h(): self.bo(2900, 1000, "b1")})
         self.c.w, self.c.m = 1500, 10
         col = self.coll(self.vc(), boot="b2")
         self.until_mono(col, 910)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.c.w += 910 - self.c.m
         self.c.m = 910
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
 
 
 class Journal(Base):
@@ -783,24 +783,24 @@ class Journal(Base):
                 before = None if raw in ("unreadable", "directory") else open(self.path, "rb").read()
                 col = self.coll(self.vc())
                 self.until_mono(col, 1000)
-                self.assertEqual(self.net.logins(), 0)
+                self.assertEqual(self.wire.logins(), 0)
                 if before is not None:
                     self.assertEqual(open(self.path, "rb").read(), before)
         self.setUp()                                          # a far deadline: that account one window, the others free
         self.seed({self.h("A"): self.bo(1000 + 10 ** 7, 1000, "b2")})
         col = self.coll(self.vc("vc1", "A"), self.vc("vc2", "B"))
         self.until_mono(col, 1000)
-        self.assertEqual((self.net.logins("vc1"), self.net.logins("vc2")), (0, 1))
+        self.assertEqual((self.wire.logins("vc1"), self.wire.logins("vc2")), (0, 1))
 
     def test_39_the_quarantine_ends(self):
         self.seed(None, b"{not json")
         col = self.coll(self.vc())
         self.until_mono(col, 1000)
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
         self.c.w += 1000 - self.c.m
         self.c.m = 1000
         col.cycle()
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.assertEqual(self.journal(), {})
         self.setUp()                                          # changed meanwhile to another bad file: quarantined again
         self.seed(None, b"{not json")
@@ -810,7 +810,7 @@ class Journal(Base):
         self.c.w += 1000 - self.c.m
         self.c.m = 1000
         col.cycle()
-        self.assertEqual(self.net.logins(), 0)
+        self.assertEqual(self.wire.logins(), 0)
 
     def test_40_a_file_that_breaks_while_running(self):
         for breakage in ("chmod", b"\xff\xfe", b"{bad", "empty-entry"):
@@ -829,7 +829,7 @@ class Journal(Base):
                 before = os.stat(self.path).st_mtime_ns
                 raw = None if breakage == "chmod" else open(self.path, "rb").read()
                 col.cycle()
-                self.assertEqual(self.net.logins(), 0)
+                self.assertEqual(self.wire.logins(), 0)
                 self.assertEqual(os.stat(self.path).st_mtime_ns, before)
                 if raw is not None:
                     self.assertEqual(open(self.path, "rb").read(), raw)
@@ -841,12 +841,12 @@ class Journal(Base):
         self.c.step(100)
         self.seed(None, b"\xff\xfe")
         col.cycle()
-        self.assertEqual(self.net.logins("vc2"), 0)
+        self.assertEqual(self.wire.logins("vc2"), 0)
         self.assertEqual(open(self.path, "rb").read(), b"\xff\xfe")
         self.c.step(60)
         self.seed(None, good)
         col.cycle()
-        self.assertEqual(self.net.logins("vc2"), 1)
+        self.assertEqual(self.wire.logins("vc2"), 1)
         self.assertIn(self.h("A"), self.journal())
 
     def test_42_read_failure_at_the_outcome_keeps_both(self):
@@ -859,14 +859,14 @@ class Journal(Base):
         def hook(h, w):
             if h == "on1" and w == "/api/snapmirror/relationships":
                 state["broken"] = True
-        self.net.hook = hook
+        self.wire.hook = hook
         real = W.Collector._read
         with mock.patch.object(W.Collector, "_read", lambda me: ({}, "cannot be read") if state["broken"] else real(me)):
             col.cycle()
-            n = self.net.logins("on1")
+            n = self.wire.logins("on1")
             self.c.step(60)
             col.cycle()
-            self.assertEqual(self.net.logins("on1"), n)
+            self.assertEqual(self.wire.logins("on1"), n)
         j = self.journal()
         self.assertIn(self.h("A"), j)
         self.assertEqual(j[self.h("B")], {"attempt": 1100.0})
@@ -880,12 +880,12 @@ class Journal(Base):
             if w == "Login" and not inside.is_set():
                 inside.set()
                 go.wait(5)
-        self.net.hook = hook
+        self.wire.hook = hook
         t = threading.Thread(target=c1.cycle)
         t.start()
         inside.wait(5)
         c2.cycle()                                            # c1's attempt is on disk: c2 sends nothing
-        self.assertEqual(self.net.logins(), 1)
+        self.assertEqual(self.wire.logins(), 1)
         self.seed({self.h(): self.bo(2500, 1600)})            # meanwhile someone writes a deadline
         go.set()
         t.join(5)
