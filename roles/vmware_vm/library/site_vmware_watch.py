@@ -29,6 +29,7 @@ options:
   vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   window_minutes: {description: How far back to read HA and storage events, in minutes. 0 = no events., type: float, default: 15}
+  usage_alarms: {description: Alarm name fragments to read for the watch., type: list, elements: str, default: [CPU usage, memory usage]}
   min_up_minutes: {description: A VM powered on for less than this is not judged (it may still be starting)., type: float, default: 15}
   skip_vms: {description: VM names never judged (* and ? allowed, any case)., type: list, elements: str, default: []}
   skip_folders: {description: VM folder paths never judged (e.g. /DC1/vm/Lab*)., type: list, elements: str, default: []}
@@ -65,7 +66,11 @@ suspects:
   type: list
   returned: success
 events:
-  description: The HA and storage events of the window, newest first.
+  description: HA, storage and matching alarm changes in the window, newest first.
+  type: list
+  returned: success
+alarms:
+  description: Matching triggered alarm states with their current color and trigger time.
   type: list
   returned: success
 vms_lost:
@@ -395,6 +400,28 @@ def _traffic(content, vms, since):
     return out, ""
 
 
+def _triggered_usage(content, root, fragments, excluded):
+    from ansible.module_utils.vm_watch_usage import alarm_kind
+
+    states = [s for s in root.triggeredAlarmState or [] if s.entity._moId not in excluded
+              and str(s.overallStatus) in ("red", "yellow")]
+    alarms = {s.alarm._moId: s.alarm for s in states}
+    definitions = _objs_props(content, list(alarms.values()), vim.alarm.Alarm, ["info.name"])
+    names = {moid: fields["info.name"] for moid, fields in definitions.items() if alarm_kind(fields.get("info.name"), fragments)}
+    matched = [s for s in states if s.alarm._moId in names]
+    entities = {s.entity._moId: s.entity for s in matched}
+    labels = _objs_props(content, list(entities.values()), vim.ManagedEntity, ["name"])
+    return [dict(alarm=names[s.alarm._moId], entity=labels.get(s.entity._moId, {}).get("name", s.entity._moId),
+                 entity_moid=s.entity._moId, entity_type=_alarm_entity_type(s.entity),
+                 status=str(s.overallStatus), time=_iso(s.time)) for s in matched]
+
+
+def _alarm_entity_type(entity):
+    name = getattr(entity, "_wsdlName", "")
+    return {"VirtualMachine": "vm", "HostSystem": "host", "ClusterComputeResource": "cluster",
+            "Datastore": "datastore", "Datacenter": "datacenter"}.get(name, "other")
+
+
 def _events(content, root, begin, types, cap=2000):
     spec = vim.event.EventFilterSpec(time=vim.event.EventFilterSpec.ByTime(beginTime=begin), eventTypeId=list(types))
     if root is not None:
@@ -421,12 +448,19 @@ def _events(content, root, begin, types, cap=2000):
         args = {}
         for a in getattr(e, "arguments", None) or []:
             args[str(getattr(a, "key", ""))] = str(getattr(a, "value", ""))
-        out.append({"key": e.key, "time": _iso(e.createdTime), "type": getattr(e, "eventTypeId", "") or type(e).__name__.split(".")[-1],
-                    "message": " ".join(str(e.fullFormattedMessage or getattr(e, "message", "") or "").split()), "args": args,
-                    "host": e.host.name if e.host else "", "host_moid": getattr(getattr(e.host, "host", None), "_moId", ""),
-                    "vm": e.vm.name if e.vm else "",
-                    "cluster": e.computeResource.name if e.computeResource else "",
-                    "datacenter": e.datacenter.name if e.datacenter else ""})
+        row = {"key": e.key, "time": _iso(e.createdTime), "type": getattr(e, "eventTypeId", "") or type(e).__name__.split(".")[-1],
+               "message": " ".join(str(e.fullFormattedMessage or getattr(e, "message", "") or "").split()), "args": args,
+               "host": e.host.name if e.host else "", "host_moid": getattr(getattr(e.host, "host", None), "_moId", ""),
+               "vm": e.vm.name if e.vm else "",
+               "cluster": e.computeResource.name if e.computeResource else "",
+               "datacenter": e.datacenter.name if e.datacenter else ""}
+        if row["type"] == "AlarmStatusChangedEvent":
+            entity = getattr(e, "entity", None)
+            ref = getattr(entity, "entity", None)
+            row.update(alarm=getattr(getattr(e, "alarm", None), "name", ""), entity=getattr(entity, "name", ""),
+                       entity_moid=getattr(ref, "_moId", ""), entity_type=_alarm_entity_type(ref),
+                       to=str(getattr(e, "to", "")), **{"from": str(getattr(e, "from", ""))})
+        out.append(row)
     return out
 
 
@@ -485,8 +519,10 @@ def _read(content, p, now, vcenter):
     folders = {}
     vms = _props(content, root, vim.VirtualMachine, VM_PROPS)
     suspects = []
+    excluded = set()
     for m, (o, pr) in vms.items():
         if pr.get("config.template"):
+            excluded.add(m)
             continue
         host_moid = getattr(pr.get("runtime.host"), "_moId", "")
         h = host_of.get(host_moid, {})
@@ -516,12 +552,14 @@ def _read(content, p, now, vcenter):
         res["vms_read"] += 1
         # 1.118.4: vCenter left out the VM's power or connection state (a property fault): it is not judged, never taken as
         # powered off or connected - its vCenter is marked incomplete, so no open ticket of it is cleared this run
+        skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
+        if skip:
+            excluded.add(m)
         missing = [k for k in REQUIRED_READ if k not in pr]
         if missing:
             res["vms_unread"].append({"name": v["name"], "moid": m, "vcenter": vcenter, "why": ", ".join(missing) + " not read"})
             continue
         conn = str(pr.get("runtime.connectionState") or "connected")
-        skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
         if conn in LOST or conn == "disconnected":
             v.update({"connection": conn, "not_judged": skip})
             res["vms_lost" if conn in LOST else "vms_disconnected"].append(v)
@@ -545,14 +583,29 @@ def _read(content, p, now, vcenter):
                         "busy": busy_task(_tasks(content, tasks_of.get(o._moId, {}).get("recentTask") or []))}]
         res["suspects"].append(v)
 
+    res["alarms"] = []
+    ev_root = next((o for o, pr in dcs.values() if pr.get("name") == p["datacenter"]), None) if p["datacenter"] else None
     if p["window_minutes"] and p["window_minutes"] > 0:
         begin = datetime.datetime.fromtimestamp(now - p["window_minutes"] * 60, tz=datetime.timezone.utc)
-        ev_root = None
-        if p["datacenter"]:
-            ev_root = [o for m, (o, pr) in dcs.items() if pr.get("name") == p["datacenter"]][0]
         for e in _events(content, ev_root, begin, p["event_types"]):
             e["vcenter"] = vcenter
             res["events"].append(e)
+        if p.get("usage_alarms"):
+            from ansible.module_utils.vm_watch_usage import alarm_kind
+
+            # Keep the usage collector separate so a burst cannot displace HA or storage events at the cap.
+            try:
+                for e in _events(content, ev_root, begin, ["AlarmStatusChangedEvent"]):
+                    if e.get("entity_moid") not in excluded and alarm_kind(e.get("alarm"), p["usage_alarms"]):
+                        res["events"].append(dict(e, vcenter=vcenter))
+            except vmodl.MethodFault as exc:
+                res.setdefault("warnings", []).append("Usage alarm changes on %s could not be read: %s" % (vcenter, exc))
+    if p.get("usage_alarms"):
+        try:
+            res["alarms"] = [dict(row, vcenter=vcenter) for row in
+                             _triggered_usage(content, ev_root or root, p["usage_alarms"], excluded)]
+        except vmodl.MethodFault as exc:
+            res.setdefault("warnings", []).append("Triggered usage alarms on %s could not be read: %s" % (vcenter, exc))
     return res
 
 
@@ -604,6 +657,7 @@ def main():
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            vcenters=dict(type="list", elements="str", default=[]),
                            window_minutes=dict(type="float", default=15), min_up_minutes=dict(type="float", default=15),
+                           usage_alarms=dict(type="list", elements="str", default=["CPU usage", "memory usage"]),
                            skip_vms=dict(type="list", elements="str", default=[]),
                            skip_folders=dict(type="list", elements="str", default=[]),
                            probe=dict(type="bool", default=True), probe_port=dict(type="str", default="auto"),
@@ -625,11 +679,13 @@ def main():
                                   p["validate_certs"], "what is down or hung")
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_minutes": p["window_minutes"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
-           "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
+           "alarms": [], "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
            "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "vms_unread": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
            "confirm": {"checks": checks, "seconds": p["confirm_seconds"]}}
     for _, part in done:
-        for k in ("hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected", "vms_unread"):
+        for warning in part.get("warnings", []):
+            module.warn(warning)
+        for k in ("alarms", "hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected", "vms_unread"):
             res[k] += part[k]
         res["vms_read"] += part["vms_read"]
         res["vms_checked"] += part["vms_checked"]

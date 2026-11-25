@@ -2779,6 +2779,9 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_net_drops_warn_per_hour` | `100` | dropped packets an hour (received + sent) of one host or VM from this many -> warning |
 | `vm_net_errors_warn_per_hour` | `10` | network errors an hour (received + sent) of one host or VM from this many -> warning |
 | `vm_watch_window_minutes` | `15` | The HA and storage events of the last this many minutes (set it to the schedule's interval). |
+| `vm_watch_usage_alarms` | `[CPU usage, memory usage]` | Case-insensitive alarm name fragments subject to usage filtering. |
+| `vm_watch_usage_show_yellow` | `false` | Include matching yellow alarms as grouped warnings. |
+| `vm_watch_usage_min_minutes` | `15` | Continuous red minutes required inside the window. Unknown durations are hidden. |
 | `vm_watch_min_up_minutes` | `15` | A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet). |
 | `vm_watch_confirm_checks` | `3` | A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check, AND (vm_watch_traffic) vCenter saw it send no network packets: a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds apart. |
 | `vm_watch_confirm_seconds` | `120` | seconds between those checks |

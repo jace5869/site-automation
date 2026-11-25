@@ -166,26 +166,24 @@ class Csv(unittest.TestCase):
                                             "What happened", "In the story", "Noise", "vCenter", "Event type", "Event key", "Cluster",
                                             "From", "To", "Message"])
         rows = [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
-        self.assertEqual(len(rows), 520)
-        self.assertEqual(sum(row["Noise"] == "yes" for row in rows), 307)
+        self.assertEqual(len(rows), 520 - 307)
+        self.assertFalse(any("usage" in row["What happened"].lower() for row in rows))
         story = {n for row in r["draft"]["story"]["rows"] for n in row["source_rows"]}
         self.assertEqual({row["#"] for row in rows if row["In the story"] == "yes"}, story)
         apd = next(row for row in rows if row["Event type"] == "esx.problem.storage.apd.start")
         self.assertEqual({k: apd[k] for k in ("Time (Europe/Berlin, ISO)", "Level", "Kind", "Object", "Host", "Datastore")},
                          {"Time (Europe/Berlin, ISO)": "2026-11-23T07:08:41+01:00", "Level": "Critical", "Kind": "host",
                           "Object": "esx01", "Host": "esx01", "Datastore": DS})
-        usage = next(row for row in rows if row["Noise"] == "yes")
-        self.assertEqual((usage["Kind"], usage["Object"] == usage["VM"]), ("alarm", True))
         self.assertEqual(sorted({row["Kind"] for row in rows}), ["alarm", "datastore", "host", "note"])
         exported = list(csv.reader(io.StringIO(ot.outage_events_csv(sheet))))
         self.assertEqual(exported[0][-1], "Message")
-        self.assertEqual(len(exported), 521)
+        self.assertEqual(len(exported), len(rows) + 1)
         self.assertIn(sheet, r["sheets"])                    # the workbook's Timeline is the same sheet
         sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
         import site_xlsx
         xml = site_xlsx.sheet_xml(sheet["columns"], sheet["rows"], name="Timeline")
         self.assertIn('<pane ySplit="1"', xml)               # the first row frozen
-        self.assertIn('<autoFilter ref="A1:R521"/>', xml)    # filters over all 18 columns
+        self.assertIn('<autoFilter ref="A1:R214"/>', xml)    # filters over all 18 columns
         self.assertIn("<cols>", xml)                         # columns fitted to their text
 
 

@@ -187,6 +187,8 @@ def _vcenter_events(events):
             label = "Alarm %s: %s" % ({"red": "red", "yellow": "yellow", "green": "back to green", "gray": "gray"}.get(to, to or "changed"), alarm)
             where = _short(e.get("entity")) or where           # the Where label: short (1.90.2: the VM's identity keeps the raw entity)
             kind = "alarm:" + alarm
+        elif typ == "VmWatchUsage":
+            label, level, kind = message, e["severity"], "usage"
         elif not label:
             label = message[:120] or typ
         out.append({"t": t, "lane": lane, "level": level, "label": label, "where": where, "kind": kind, "role": role,

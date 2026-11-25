@@ -32,6 +32,11 @@ _spec = importlib.util.spec_from_file_location(
 _tm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tm)
 
+_spec = importlib.util.spec_from_file_location(
+    "vm_watch_usage", os.path.join(os.path.dirname(__file__), "..", "module_utils", "vm_watch_usage.py"))
+_usage = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_usage)
+
 RANK = {"critical": 0, "warning": 1, "info": 2, "ok": 3, "": 4}
 HA_CRITICAL = {"networkIsolated", "networkPartitionedFromMaster", "hostDown", "initializationError"}
 HA_WARNING = {"fdmUnreachable", "uninitializationError"}
@@ -152,6 +157,17 @@ def vm_watch_conditions(data, opts=None):
     one = o.get("one_signal_severity") or "warning"
     lost = d.get("vms_lost") or []
     out = []
+    end = _usage.timestamp(d.get("read_at"))
+    events = d.get("events") or []
+    if end is not None:
+        begin = end - 60 * float(d.get("window_minutes", 15))
+        events, usage = _usage.usage_window(events, d.get("alarms"), end, begin, end, o)
+        for group in usage:
+            obj = "%s %s" % (group["fragment"], group["color"])
+            condition = _cond(group["severity"], "usage", "alarm", obj, group, group["message"],
+                              "Review the performance charts for the listed objects in vCenter.")
+            condition["id"] = group["id"]
+            out.append(condition)
     for s in d.get("vcenters") or []:
         if s.get("error"):
             out.append(dict(_cond("critical", "vcenter", "vcenter", s.get("name", ""), {"vcenter": s.get("name", "")},
@@ -195,7 +211,7 @@ def vm_watch_conditions(data, opts=None):
                 c.update(id=_inventory_id("datastore", ds), moid=ds["moid"])
             out.append(c)
     # storage events: a problem with no clear event after it (same host, same device when both say) stays critical
-    evs = sorted(d.get("events") or [], key=lambda e: (e.get("time", ""), e.get("key") or 0))      # oldest first; one second: by key
+    evs = sorted(events, key=lambda e: (e.get("time", ""), e.get("key") or 0))      # oldest first; one second: by key
     seen = {}
     for i, e in enumerate(evs):
         if e.get("type") not in STORAGE:

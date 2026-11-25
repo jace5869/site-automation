@@ -58,6 +58,7 @@ _review_text = _load("outage_review_text", "../module_utils")
 _tm = _load("site_time", "../module_utils")
 _lk = _load("site_link", "../module_utils")
 _watch = _load("vmware_watch_filters", ".")
+_usage = _load("vm_watch_usage", "../module_utils")
 _correlation_id = _load("site_filters", ".").site_correlation_id
 
 UTC = datetime.timezone.utc
@@ -206,6 +207,8 @@ def _vcenter_events(events, datastores=None):
             label = "Alarm %s: %s" % ({"red": "red", "yellow": "yellow", "green": "back to green", "gray": "gray"}.get(to, to or "changed"), alarm)
             where = _short(e.get("entity")) or where           # the Where label: short (1.90.2: the VM's identity keeps the raw entity)
             kind = "alarm:" + alarm
+        elif typ == "VmWatchUsage":
+            label, level, kind = display_message, e["severity"], "usage"
         elif typ in ("DatastoreInaccessibleEvent", "DatastoreAccessibleEvent"):
             lost = typ == "DatastoreInaccessibleEvent"
             kind, role, level = "datastore-access", "problem" if lost else "clear", "critical" if lost else "ok"
@@ -777,7 +780,6 @@ def _fold(evs):
 
 
 # 1.116.0: a review counts the objects named by the outage and by the watch's current read.
-DISK_USAGE = re.compile(r"\bdisk (?:space )?(?:usage|utili[sz]ation)\b|\busage on disk\b", re.I)
 DATASTORE_LOSS = re.compile(r"\b(?:inaccessible|not accessible|all paths down|permanent device loss|apd|pdl)\b")
 CONNECTION_LOSS = re.compile(r"\b(?:disconnected|(?:lost|loss of) (?:datastore )?(?:access|connectivity|connection)|"
                              r"(?:access|connectivity|connection) (?:lost|loss))\b")
@@ -1215,10 +1217,7 @@ def _scope(e):
 
 
 def _usage_alarm(name, alarms):
-    name = name.lower()
-    # vCenter uses both "usage" and "utilization" in its stock alarm names.
-    normalized = re.sub(r"utili[sz]ation", "usage", name)
-    return any(a in normalized for a in alarms) or ("disk usage" in alarms and bool(DISK_USAGE.search(name)))
+    return bool(_usage.alarm_kind(name, alarms))
 
 
 def _change(e):
@@ -2392,6 +2391,9 @@ def _story(events, parts, incident, read, loc, card_matches):
     closed = {obj: {b for _, b in spans if b} for obj, spans in incident["history"].items()}
     changes, storage = [], defaultdict(list)
     for e in sorted(events, key=lambda e: e["t"]):
+        if e["kind"] == "usage":
+            rows.append(single(e, e["label"], e["level"]))
+            continue
         if e.get("ticket"):
             if e["role"] == "ticket":
                 text = e["label"]
@@ -2795,8 +2797,22 @@ def outage_timeline(events, tickets=None, opts=None):
     tickets_asked, tickets_error, notes_error, capped, report_on, min_severity, job."""
     o = dict(opts or {})
     review = o.get("review", True)
-    if not review:                           # 1.116.0: a scheduled run's time line is 1.118.4's, word for word
-        return _v1184.outage_timeline(events, tickets, opts)
+    events, usage = _usage.usage_window(events, o.get("alarms"), o.get("read_at"), o.get("begin"), o.get("end"), o)
+    events += usage
+    # The watch and the review can have different windows. A live usage trigger shown here
+    # must qualify in this window too, with only the members that qualify here.
+    window_groups = {(g["vcenter"], g["id"]): g for g in usage}
+    triggers = []
+    for c in o.get("triggers") or []:
+        if isinstance(c, dict) and c.get("kind") == "usage":
+            group = window_groups.get((c.get("vcenter"), c.get("id")))
+            if group:
+                triggers.append(dict(c, summary=group["message"]))
+        else:
+            triggers.append(c)
+    o["triggers"] = triggers
+    if not review:
+        return _v1184.outage_timeline(events, tickets, o)
     unread_centers = [s["name"] for s in o.get("vcenters") or [] if s.get("incomplete") or s.get("error")]
     o["triggers"] = _review_triggers(o)
     begin, end = _time(o.get("begin")), _time(o.get("end"))
@@ -2868,6 +2884,12 @@ def outage_timeline(events, tickets=None, opts=None):
         incident = _root_history(vc, o)
         history, chain = incident["history"], incident["chain"]
         facts, story_events = incident["facts"], incident["events"]
+        # Usage is a window finding. Never use it to infer host downtime or affected VMs.
+        usage_rows = [e for e in vc if e["kind"] == "usage"]
+        if usage_rows and not o.get("review_object"):
+            story_events = sorted(story_events + usage_rows, key=lambda e: e["t"])
+            if not incident["roots"]:
+                facts = sorted(facts + usage_rows, key=lambda e: e["t"])
         if not summarize_noise:
             # The noise summary counts affected objects throughout the window, including after recovery.
             # Use the source row because a short flap's noise records carry an added label.
@@ -2903,7 +2925,7 @@ def outage_timeline(events, tickets=None, opts=None):
             elif e["role"] in ("up", "clear") and key in pending:
                 appendix_ids.add(id(e))
                 pending.remove(key)
-        appendix = [e for e in vc if id(e) in appendix_ids]
+        appendix = [e for e in vc if id(e) in appendix_ids or e["kind"] == "usage"]
         vc = story_events
         if chain or incident["current"]:
             alarm_events = story_events
@@ -3139,6 +3161,8 @@ def outage_timeline(events, tickets=None, opts=None):
     if review:
         if general:
             title = general
+        elif usage and not o.get("review_object"):
+            title = "Outage review - " + _cut(min(usage, key=lambda g: _watch.RANK[g["severity"]])["message"], 90)
         elif (raw or o["triggers"] or o.get("review_object")) and not noise:
             title = "Outage review - no matching watch root"
         elif not first and noise:
@@ -3365,7 +3389,7 @@ def outage_timeline(events, tickets=None, opts=None):
             names = e.get("source_names", {})
             host, ds, vm = (names.get(k, e.get(k, "")) or "" for k in ("host", "datastore", "vm"))
             kind = (("ticket" if e["role"] in ("ticket", "resolved") else "note") if e.get("ticket") else
-                    "alarm" if e["kind"].startswith("alarm:") else "vm" if vm else
+                    "alarm" if e["kind"] == "usage" or e["kind"].startswith("alarm:") else "vm" if vm else
                     "datastore" if ds and e["type"].startswith(("esx.problem.vmfs", "esx.clear.vmfs", "Datastore")) or ds and not host else
                     "host" if host else "note")
             obj = e.get("ticket") or {"vm": vm, "datastore": ds, "host": host}.get(kind) or \
@@ -3725,6 +3749,7 @@ def outage_review_objects(events, opts=None):
     if begin is None or end is None or end <= begin:
         return []
     o["triggers"] = _review_triggers(o)
+    events, _ = _usage.usage_window(events, [], None, begin, end, o)
     all_vc = _vcenter_events(events, o.get("datastores"))
     read = _time(o.get("read_at")) or end
     roots = _review_roots(o, all_vc, begin, end, begin <= read <= end)[0]
