@@ -21,6 +21,9 @@ cannot remove them).
   any case); `portal_wall_site_places` is only needed for a site to go elsewhere (it wins). The site rule defaults to
   `netmap_site_pattern` when set. The deploy summary ends with `Wall: VMware on|off (why), Storage on|off (why), Map places
   from netmap_sites: N` - the why names what is missing (for example `VMWARE_HOST empty`, `ontap_clusters empty`).
+- **Wall: why a login gives nothing.** When the vCenter or ONTAP login is in the portal but gives the wall no source (no
+  vCenter address, an empty or unusable cluster list, an entry left out), the portal log says so once (`"collector": "no
+  sources"`) with each reason, and the wall's tile says it instead of "no vCenter login" / "no live ONTAP cluster".
 - **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
 
 ## 1.130.0 — 2026-11-25

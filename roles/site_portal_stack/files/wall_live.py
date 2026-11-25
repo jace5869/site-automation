@@ -1114,6 +1114,26 @@ def _endpoint(text, default_port=443):
     return ("[%s]" % host if ":" in host else host), port
 
 
+def no_source_why(cfg, sources, left_out=None):
+    """1.131.0 (field): {"vmware": why, "storage": why} for a login that is there but gave no source - the wall says that
+    instead of "no login". left_out: {"vcenter": [why ...], "ontap": [why ...]} from sources_from_config's log."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    left_out = left_out or {}
+    kinds = {getattr(s, "kind", "") for s in sources or []}
+    out = {}
+    vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
+    if str(vc.get("user") or "").strip() and vc.get("password") and "vcenter" not in kinds:
+        why = left_out.get("vcenter") or []
+        out["vmware"] = ("vCenter login present but its address was left out: %s - fix portal_wall_vcenters" % "; ".join(why[:3]) if why else
+                         "vCenter login present but no vCenter address: set portal_wall_vcenters")
+    on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
+    if str(on.get("user") or "").strip() and on.get("password") and "ontap" not in kinds:
+        why = left_out.get("ontap") or []
+        out["storage"] = "ONTAP login present but the cluster list is empty or not usable: %s" % (
+            "; ".join(why[:3]) if why else "no cluster (portal_wall_ontap_clusters / ontap_clusters)")
+    return out
+
+
 def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     """the secrets' JSON ({"vcenter": {user, password, hosts, verify}, "ontap": {user, password, clusters, verify}}) -> the
     sources. An entry that is no host (or no https address) is said in the log and left out - never a stop of the portal;

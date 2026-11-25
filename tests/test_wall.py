@@ -121,6 +121,47 @@ class NetmapPlaces131(unittest.TestCase):
         self.assertEqual(F.site_portal_wall_summary(dict(base, wall=False)), "Wall: off (portal_wall: false)")
 
 
+class NoSources131(unittest.TestCase):
+    """1.131.0 (field): logins in the container but no source from them - logged, and the wall says why, not: no login"""
+
+    def run_with(self, logins):
+        from unittest import mock
+        recs = []
+        log = mock.Mock()
+        log.add.side_effect = recs.append
+        cfg = mock.Mock(wall_opts=M.opts_of({}), wall_auth_retry=900, data=tempfile.mkdtemp(dir=os.environ.get("TMPDIR")), wall_logins=logins,
+                        wall_enclave="", wall_title="NOC")
+        self.addCleanup(shutil.rmtree, cfg.data, True)
+        w = sp.WallLive(cfg, log, None)
+        self.assertIsNone(w.collector)
+        return w, recs
+
+    def test_login_without_addresses(self):
+        w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": []},
+                                 "ontap": {"user": "svc", "password": "pw", "clusters": ["https://"]}})
+        no = [r for r in recs if r.get("collector") == "no sources"]
+        self.assertEqual(len(no), 1, recs)
+        self.assertIn("vmware", no[0]["why"])
+        self.assertTrue(any(r.get("state") == "left out" and r.get("source") == "ontap" for r in recs), recs)
+        areas = {a["id"]: a for a in w.model()["areas"]}
+        self.assertEqual(areas["vmware"]["why"], "vCenter login present but no vCenter address: set portal_wall_vcenters")
+        self.assertTrue(areas["storage"]["why"].startswith("ONTAP login present but the cluster list is empty or not usable: "),
+                        areas["storage"]["why"])
+        self.assertNotIn("pw", json.dumps(recs))
+
+    def test_logins_error_is_logged(self):
+        from unittest import mock
+        import wall_live
+        with mock.patch.object(wall_live, "sources_from_config", side_effect=RuntimeError("boom")):
+            w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": ["vc01.corp.example.mil"]}})
+        self.assertTrue(any(r.get("collector") == "no sources" and "boom" in json.dumps(r) for r in recs), recs)
+
+    def test_no_password_logged_once(self):
+        w, recs = self.run_with({"ontap": {"user": "svc", "password": "", "clusters": ["cl01.corp.example.mil"]}})
+        self.assertEqual(len([r for r in recs if r.get("collector") == "no sources"]), 1, recs)
+        self.assertEqual({a["id"]: a for a in w.model()["areas"]}["storage"]["why"], M.STORAGE_OFF)
+
+
 class Model(unittest.TestCase):
     def ids(self, m, kind):
         return [c["id"] for c in m["conds"] if c["kind"] == kind and c["end"] is None]

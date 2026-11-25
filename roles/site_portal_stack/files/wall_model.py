@@ -537,7 +537,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
-def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""):
+def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None):
     """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
     ks = kinds(o)
@@ -579,10 +579,11 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
         inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else [])
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
+        off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
-            x["why"] = STORAGE_OFF
+            x["why"] = off_why.get("storage") or STORAGE_OFF          # 1.131.0: a login there but no cluster: that, not "no login"
         elif a["id"] == "vmware" and not vm["configured"]:
-            x["why"] = "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
+            x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
     return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],

@@ -1138,6 +1138,9 @@ condition needs the full window again).
     collector; settings the portal cannot read turn the wall off (said in the log), never the portal.
 - An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
   the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
+- A login that is there but gives no source (no vCenter address, the cluster list empty or every entry left out) is said once
+  in the portal's log (`"event": "wall", "collector": "no sources"`, a reason per area), and the tile says it - for example
+  *vCenter login present but no vCenter address: set portal_wall_vcenters*.
 - **No overlap:** one thread, one source at a time; a cycle starts only after the last one ended.
 - **The page keeps itself honest:** it redraws the moment any source goes LATE or STALE (it never waits for the next
   answer), and when the portal itself does not answer a read it says **Portal not reachable** on top and

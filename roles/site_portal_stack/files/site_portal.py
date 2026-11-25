@@ -6478,14 +6478,36 @@ def _safe_add(log, rec):
         pass
 
 
-def wall_sources(cfg):
-    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
+def wall_sources(cfg, log=None, why=None):
+    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster.
+    1.131.0 (field): every entry left out and any error is in the portal log; a login that gives no source is logged once
+    ({"event": "wall", "collector": "no sources", "why": ...}) and its reason put in why (a dict) for the wall's area"""
     if wall_live is None:
         return []
+    left = {}
+
+    def note(d):
+        if isinstance(d, dict) and d.get("state") == "left out":
+            left.setdefault(d.get("source") or "", []).append(str(d.get("why") or ""))
+        _safe_add(log, d)
+
     try:
-        return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
-    except Exception:  # pylint: disable=broad-except  - the wall never stops the portal
-        return []
+        src = wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None, log=note)
+    except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal; said in the log
+        _safe_add(log, {"event": "wall", "collector": "no sources", "why": "the wall's logins could not be read: " + clean(str(e), 200)})
+        src = []
+    try:
+        reasons = wall_live.no_source_why(cfg.wall_logins, src, left)
+    except Exception:  # pylint: disable=broad-except
+        reasons = {}
+    if not src and cfg.wall_logins and not reasons:
+        reasons_log = {k: "no user or no password in this login" for k in ("vcenter", "ontap") if k in cfg.wall_logins}
+        _safe_add(log, {"event": "wall", "collector": "no sources", "why": reasons_log or "the wall's logins are not usable"})
+    if reasons:
+        _safe_add(log, {"event": "wall", "collector": "no sources" if not src else "part", "why": reasons})
+        if isinstance(why, dict):
+            why.update(reasons)
+    return src
 
 
 class WallLive(object):
@@ -6498,8 +6520,9 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
+        self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         if self.collector is None and wall_live is not None:
-            src = wall_sources(cfg)
+            src = wall_sources(cfg, log, self.no_source)
             if src:
                 # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
                 keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
@@ -6549,7 +6572,7 @@ class WallLive(object):
             now = time.time() if now is None else now      # enters the tracker after a newer one
             view = self.collector.view() if self.collector is not None else None
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
-                                    title=self.cfg.wall_title, nm_why=why)
+                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
 
     def answer(self, etag_in="", cn=""):
         m = self.model()
