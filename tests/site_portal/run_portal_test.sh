@@ -101,7 +101,7 @@ cat > "$work/vars.json" <<EOF
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
- "portal_approver_groups": ["AAP-Approvers"],
+ "portal_approver_groups": ["AAP-Approvers"], "portal_ldap_server": "dc01.corp.example.mil",
  "portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
    "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
    "limit_from": "target", "approval": false, "fixes": false}},
@@ -477,7 +477,8 @@ if podman secret inspect site-portal-reportdb >/dev/null 2>&1 && grep -q "Secret
     && [ -z "$leak" ]; then pass "the report database's login: the podman secret site-portal-reportdb, not in a file, a unit, the log or podman inspect"
 else fail "the report database's secret" "leak: $leak; $(grep -c site-portal-reportdb "$units/site-portal-app.container")"; fi
 # 1.120.0: the AD groups' LDAP login ("LDAP Bind Account", microsoft.ad's env pair) - a podman secret, never anywhere else; no DC
-# here to read the group from: only the named approvers may decide, said on the page and in the log - never open
+# here that answers (1.130.0: the deploy refuses groups with no DC named at all): only the named approvers may decide, said on
+# the page and in the log - never open
 leak="$( (grep -rl "Test-Only-ldappw-1120" "$work/etc" "$units" "$work/log.jsonl" "$work/out.txt"; podman inspect site-portal-app | grep -c "Test-Only-ldappw-1120" | grep -v '^0$') 2>/dev/null)"
 if podman secret inspect site-portal-ldap >/dev/null 2>&1 && grep -q "Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN" "$units/site-portal-app.container" \
     && "$py" -c 'import json, sys; assert json.load(open(sys.argv[1]))["PORTAL_APPROVER_GROUPS"] == ["AAP-Approvers"]' "$work/etc/settings.json" \
