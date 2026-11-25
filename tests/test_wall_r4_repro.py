@@ -195,6 +195,22 @@ class Storage(unittest.TestCase):
         self.assertEqual((second["id"], second["end"], second.get("last_known")), (first["id"], None, True))
 
 
+class Impossible(unittest.TestCase):
+    def test_r5_14_impossible_values_are_unknown_and_never_clear(self):
+        t = wall.Tracker()
+        snap = lambda used: ontap_snap(aggrs=[{"name": "aggr1", "node": "n", "size": 100, "used": used}])   # noqa: E731
+        first = model(source("ontap", ARRAY, snap(99)), tracker=t)
+        cid = [c["id"] for c in first["conds"] if c["kind"].startswith("aggr")][0]
+        for bad in (-1, 101):
+            m = model(source("ontap", ARRAY, snap(bad), NOW + 60), tracker=t, now=NOW + 60)
+            self.assertIsNone(m["storage"]["aggr"][0]["v"])
+            self.assertEqual([c.get("end") for c in m["conds"] if c["id"] == cid], [None])
+        ds = live.shape([("Datastore", "ds-1", {"name": "DS", "summary.capacity": "100", "summary.freeSpace": "150", "summary.accessible": "true"})])
+        d = model(source("vcenter", VC, ds))["vmware"]["datastores"][0]
+        self.assertIsNone(d["v"])
+        self.assertIsNone(live._pct(-5, 100))
+
+
 class Observations(unittest.TestCase):
     def test_p1_3_missing_host_stays_open_until_seen_connected(self):
         t = wall.Tracker()
@@ -477,6 +493,18 @@ class WallPage(unittest.TestCase):
 
     def feed_answer(self):
         return model(source("vcenter", VC, {"hosts": [host("connected")]}))
+
+    def test_r5_16_missing_conditions_list_is_never_green(self):
+        answer = self.feed_answer()
+        del answer["conds"]
+        self.assertIn(self.render(answer, 'return [areaState("vmware"), status("ok", W.vmware.hosts[0].feed)];'), (["stale", "stale"],))
+
+    def test_r5_19_20_wording_and_first_failed_refresh(self):
+        js = (FILES / "static" / "wall-page.js").read_text(encoding="utf-8")
+        self.assertNotIn("earlier, cleared", js)                  # open ones are never called cleared
+        self.assertIn("still open", js)
+        self.assertIn("watching since then", js)                  # a cold start never claims 4 quiet hours
+        self.assertIn("FAILS_MAX = 1,", js)                       # the first failed /api/wall refresh greys the wall
 
     def test_p2_9_missing_feed_dictionary(self):
         answer = self.feed_answer()

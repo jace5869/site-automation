@@ -1043,34 +1043,35 @@ condition needs the full window again).
   sent (a test checks it).
 - ONTAP: HTTPS **GET only**, each with `fields=` limited to what the wall shows (any other verb is refused before it is
   sent).
-- **Lockout guard:** the accounts are the site's existing ones, shared with the AAP jobs - a locked account would stop
-  those jobs too. **One collector thread reads every source in turn** (never two at once). Any outcome of a login other
-  than "it worked" - a refusal, a timeout or an answer lost after the request left - stops every source of that account
-  at once (STALE, "login failed - check the credential") for `portal_wall_auth_retry_minutes` (15), counted from that
-  outcome. ONTAP's basic authentication sends the password with every GET: each GET counts as a login, an HTTP 401 on
-  any of them is a refusal, and a poll stops at its first failed GET (before any 200 in that poll: held one window; after
-  one: a plain source error, tried again the next cycle). A vCenter login counts as working only on a whole answer (its
-  session key and cookie). The window runs on the monotonic clock - a clock step never shortens it - and the file keeps
-  the boot id, so a restart keeps the exact window (after a reboot: at most one window). A vCenter whose session expired logs in again through the same gate. A source that could not
-  even be reached (no connection: nothing was sent) is tried again the next cycle. One log line per episode.
-- **One account, one back-off:** every source that uses the same account shares it - all the vCenters of
-  `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
-  (`CORP\svc-wall`, `svc-wall@corp.example.mil` and `SVC-Wall` are one). The deadline counts from the refusal itself, and
-  the back-off file in the portal's data volume (`wall-backoff.json`, the account's name hashed) is **write-ahead**: before
-  any login (a vCenter Login, every ONTAP read) the attempt is written to disk first - if it cannot be written, no login is
-  sent ("login paused - the back-off file cannot be written"). A refusal's deadline is written the same way. At the start,
-  an attempt with no outcome holds its account one window, and a file that cannot be read, is not JSON or holds any entry
-  that is not valid (`{}`, a null or non-finite deadline, not UTF-8) holds every account one window; a file that cannot be
-  read while the portal runs stops every login and is never written over. So a restart never brings a second login
-  inside the window. The sources are read one after the other, so the first refusal stops **all** of them before the
-  next one is tried: a wrong or expired password costs exactly one failed login per back-off window,
-  however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or any HTTP 401 / 403 (a proxy
-  in front of it, whatever the body), counts as a refusal too; the session is logged out, never left open.
+- **Stop on refusal (the lockout guard).** The accounts are the site's existing ones, shared with the AAP jobs and
+  rotated by your password vault - a locked account would stop those jobs too, and a stale copy that kept retrying could
+  lock one. So the wall never retries a refused login:
+  - **One refusal stops every login.** A definite refusal from any source - a refused vCenter login, any HTTP 401 / 403
+    (ONTAP sends the password with every GET: each GET counts), *NoPermission*, or a new session refused at once - stops
+    every wall login to **every** vCenter and **every** ONTAP cluster. The wall shows "Logins stopped at HH:MM: <source>
+    refused <user>. Fix the credential, then run Site portal - deploy." It stays stopped across restarts.
+  - **How to resume:** fix the credential in AAP (or let the vault rotate it there) and run **Site portal - deploy**: the
+    new secret is a new credential, and the logins start again by themselves. If the credential was right all along
+    (the server refused for another reason), set `portal_wall_logins_reset` to a new value (e.g. today's date) and run the
+    deploy.
+  - **An unclear answer pauses that source one window.** A timeout, a lost or odd answer or an HTTP 5xx after the
+    password left: that source waits `portal_wall_auth_retry_minutes` (15) - the others go on. An ONTAP read stops at its
+    first failed GET. A source that could not even be reached (no connection: nothing was sent) is tried again the next
+    cycle.
+  - **Written ahead, one collector.** Before any credentialed send the attempt is written to the journal
+    (`wall-backoff.json` in the portal's data volume) - no write, no send. A send in flight when the portal stopped (or a
+    paused source) makes every source wait one window at the next start. One collector per data volume: it holds
+    `wall-collector.lock` for its life; a second one (or a lock it cannot take) never logs in ("login off").
+  - **Any doubt about the journal stops every login** (missing where the collector ran before, unreadable, not valid,
+    over 64 KB) until `portal_wall_logins_reset` is given a new value and the deploy runs. It is created on first use only.
+  - One thread reads every source in turn; a vCenter login counts as working only on a whole answer (its session key and
+    cookie); a vCenter whose session expired logs in again through the same gate; the session is logged out, never left
+    open; nothing is sent after the portal stops the collector.
 - An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
   the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
 - **No overlap:** one thread, one source at a time; a cycle starts only after the last one ended.
 - **The page keeps itself honest:** it redraws the moment any source goes LATE or STALE (it never waits for the next
-  answer), and when the portal itself does not answer two reads in a row it says **Portal not reachable** on top and
+  answer), and when the portal itself does not answer a read it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
 - **One rule for every status on the page:** green only when the check ran, its source is there and current, and the

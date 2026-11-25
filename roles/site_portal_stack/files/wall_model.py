@@ -172,9 +172,12 @@ class Tracker(object):
 
     def __init__(self, keep=KEEP_CLEARED_S):
         self.keep, self.open, self.cleared = keep, {}, collections.OrderedDict()
+        self.first = None                      # the first read it saw: "watching since" (memory only)
 
     def update(self, conds, now, ok=()):
         ok = set(ok or ())
+        if self.first is None:
+            self.first = now
         seen = set()
         for c in conds:
             cid = c["id"]
@@ -282,7 +285,8 @@ def vmware_part(view, o, now):
         dsrows = []
         for d in snap.get("datastores") or []:
             cap, free = int(d.get("capacity") or 0), d.get("free")
-            pct = round(100.0 * (cap - int(free)) / cap, 1) if cap and free is not None else None     # not read: unknown, never 100 %
+            # not read, or impossible (free below 0 or over the capacity): unknown - never 100 %, never OK (Codex r5 #14)
+            pct = round(100.0 * (cap - int(free)) / cap, 1) if cap and free is not None and 0 <= int(free) <= cap else None
             free = int(free or 0)
             if pct is None:
                 part["incomplete"].append("datastore %s: capacity or free space not read" % (d.get("name") or "?"))
@@ -408,7 +412,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             part["incomplete"].append("ONTAP %s: aggregates not read" % addr)
         for a in snap.get("aggrs") or []:
             size_b, used = a.get("size"), a.get("used")
-            pct = round(100.0 * used / size_b, 1) if size_b and used is not None else None     # not read: unknown, never 0 %
+            pct = round(100.0 * used / size_b, 1) if size_b and used is not None and 0 <= used <= size_b else None    # not read or impossible: unknown
             cid = "aggr:%s:%s" % (addr, a.get("name") or "")
             r = {"n": a.get("name") or "", "node": a.get("node") or "", "c": cl, "addr": addr, "ref": "%s|%s" % (fk, a.get("name") or ""), "v": pct,
                  "size": size_b or 0, "free": max(0, size_b - used) if pct is not None else None, "feed": fk, "site": site}
@@ -547,7 +551,7 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             x["why"] = "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
-    return {"now": now, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
+    return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
             "thresholds": {"ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},

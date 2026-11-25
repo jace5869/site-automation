@@ -11,7 +11,8 @@ preview banner is on by default (`portal_wall_preview: true`) - set it false onc
 by default (`portal_wall: true`); its tab is named by `portal_wall_title`. Thresholds (defaults fine for a first showing):
 `portal_wall_datastore_warn` / `_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90)
 and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
-`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15).
+`portal_wall_seconds` (60), `portal_wall_auth_retry_minutes` (15). After a refused login the wall's logins stay stopped:
+fix the credential and run Site portal - deploy (or set `portal_wall_logins_reset` to a new value if it was right).
 
 - **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
   amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
@@ -23,11 +24,13 @@ and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `p
   mode known, a heartbeat only "green", a datastore only "accessible", SnapMirror only healthy and snapmirrored /
   in_sync, a volume or LUN only "online" - anything else is unknown (grey). An alert whose object is gone from the read
   or became unknown stays open as "last known" (grey, last seen HH:MM), never "cleared".
-- **Login back-off, serialised and write-ahead:** one collector thread reads every source in turn; the attempt is on
-  disk before any login; any outcome but a login that worked (a refusal, a timeout, a lost or broken answer) holds the
-  account one full window from that outcome, on the monotonic clock (a clock step never shortens it, a restart keeps it);
-  each ONTAP GET counts as a login (its password goes with every GET) and the poll stops at its first failed GET; a vCenter
-  re-login after a session expired goes through the same gate; an unusable back-off file holds every account one window.
+- **Stop on refusal (the wall's logins):** one refused login from any source (a refused vCenter login, any 401 / 403 -
+  every ONTAP GET carries the password - NoPermission, a new session refused at once) stops every wall login to every
+  source, and it stays stopped across restarts until the credential changes (fix it, run Site portal - deploy) or
+  `portal_wall_logins_reset` gets a new value. An unclear answer after the password left pauses that source 15 min. One
+  collector per data volume (a lock, else no logins); the attempt is written before every send; any doubt about the
+  journal stops every login. The page says "Logins stopped at HH:MM: <source> refused <user>. Fix the credential, then
+  run Site portal - deploy."
 - **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
   default), Map - kept per viewer; `?style=`, `?area=`, `?kiosk=1`, Rotate (styles or areas, 30 / 60 / 120 s, pauses on
   input, starts again after 60 s idle). VMware and Storage are on the wall; VDI, Active Directory, Outages & problems
@@ -41,17 +44,8 @@ and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `p
   or longer (short spikes stay off), VMs with a red heartbeat, hosts up x / y, the busiest cluster's CPU and memory.
 - **The collector is read-only by construction:** one kept vCenter session (a new login only when the session is
   gone), one property read a cycle, only read calls in the code (any other is refused before it is sent); ONTAP GET
-  only with `fields=`. On the first refused login a source stops and is tried again no sooner than 15 minutes (the
-  accounts are shared with the AAP jobs: a lockout would stop them too); one log line per episode; no overlapping
-  reads. The logins are podman secrets on the portal server (`site-portal-vcenter`, `site-portal-ontap`), as the LDAP
-  bind account.
-- **A shared account never locks out:** all the vCenters (or ONTAP clusters) of one account share one back-off - the
-  first refusal stops them all, one source tries first after the start and after each window, the others wait: one
-  failed login per window however many share the account. NoPermission and a proxy's 401 / 403 count as refusals; the
-  session is logged out. A `vmware_vcenters` / `ontap_clusters` entry that is no host is left out and logged, never a stop.
-- **One account is one account:** a vCenter and an ONTAP credential naming one AD account (DOMAIN\user, user@domain)
-  share the back-off; its deadline counts from the refusal and survives a portal restart (`wall-backoff.json` in the
-  portal's data volume); any HTTP 401 / 403 is a refusal.
+  only with `fields=`. The logins are podman secrets on the portal server (`site-portal-vcenter`, `site-portal-ontap`),
+  as the LDAP bind account.
 - **The page never stays green on old data:** it redraws when a source goes LATE / STALE, says "Portal not reachable"
   (everything grey) after two failed reads, keeps a condition from a current source Critical while another source is
   stale, never shows a stale site as a green dot on the Map; an inaccessible datastore is Critical whatever its fill.
@@ -79,6 +73,18 @@ and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `p
   checked on the server (the button hidden and the send refused for others; the list 403).
 - docs/SITE_PORTAL.md, "The ops-center wall": the sources, the collector, the set-up, "Thresholds to confirm with each
   team", "Wall feedback: how to open it and who sees it".
+- **Known in this preview (stage 2)** - display only, under the Preview banner; the logins are never affected:
+  - a host or SnapMirror relationship that was down and then disappears from the read stays "last known" on its own card,
+    but VMware / Storage may still show OK beside it (r5 #10);
+  - two VMs of one name in different folders of one vCenter share their alert (r5 #11);
+  - an ONTAP poll that takes longer than the stale limit stamps its first collections with the poll's end (r5 #15);
+  - with Storage off (no live ONTAP), the "Datastore full" group and counter can show OK from the vCenter read (r5 #17);
+  - a site whose only object cleared and left the read can show a green Map dot from other sources (r5 #18);
+  - the NetApp page (report database) can keep green chips while its own header says Not current, and shows a
+    SnapMirror row without health as Healthy (r5 #21, #22);
+  - the fuzz scanner does not read pseudo-elements, gradients, the tooltip or right/bottom borders;
+  - a deleted object's alert stays "last seen" until the portal restarts; a paused or uninitialized but healthy
+    SnapMirror relationship is grey; one unreachable source delays the others by up to its timeout each cycle.
 
 ## 1.129.0 — 2026-11-25
 

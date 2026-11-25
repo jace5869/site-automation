@@ -134,7 +134,9 @@ def _pct(used, total):
         used, total = float(used), float(total)
     except (TypeError, ValueError):
         return None
-    return round(100.0 * used / total, 1) if total > 0 else None
+    if not (math.isfinite(used) and math.isfinite(total)) or total <= 0 or used < 0:
+        return None                                            # impossible: unknown (Codex r5 #14) - never a value that reads OK
+    return round(100.0 * used / total, 1)
 
 
 def _int(v, default=0):

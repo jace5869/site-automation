@@ -5915,10 +5915,10 @@ class WallLive(object):
         return m, at, stale or ""               # a failed refresh is said on the path card (the DB is never a light on the wall)
 
     def model(self, now=None):
-        now = time.time() if now is None else now
-        view = self.collector.view() if self.collector is not None else None
         nm, at, why = self.netapp()
-        with self.lock:
+        with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
+            now = time.time() if now is None else now      # enters the tracker after a newer one
+            view = self.collector.view() if self.collector is not None else None
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
                                     title=self.cfg.wall_title, nm_why=why)
 

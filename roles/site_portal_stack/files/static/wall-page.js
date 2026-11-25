@@ -16,7 +16,7 @@
   var MIN = 60000;
   var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false;
   // the portal itself not answering (a restart, the network): after FAILS_MAX failed reads every source counts as not current
-  var FAILS = 0, FAILS_MAX = 2, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
+  var FAILS = 0, FAILS_MAX = 1, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
   function NOW() { return FREEZE && W ? W.now * 1000 : Date.now() + SKEW; }
 
   // ---------------------------------------------------------------- DOM helpers (text only, never HTML)
@@ -122,6 +122,7 @@
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
     function arr(x) { return Array.isArray(x) ? x : []; }
+    a.noConds = !Array.isArray(a.conds);                  // Codex r5 #16: no condition list at all - nothing is known, nothing green
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
     a.areas = arr(a.areas).filter(function (x) { return x && typeof x === "object"; });
@@ -174,6 +175,7 @@
   // a stale feed is never green: crit / warn from the current conditions; nothing current and a feed stale -> stale
   function areaState(id) {
     if (!areaOn(id)) return "off";
+    if (W.noConds) return "stale";
     var n = areaCounts(id);
     if (n.crit) return "crit";
     if (n.warn) return "warn";
@@ -194,7 +196,7 @@
     if (UNREACH && st !== "off") return "stale";
     if (!fk) return st === "ok" ? "off" : st;
     if (feedFresh(fk) === "stale") return "stale";
-    if (st === "ok" && fk !== "-live-" && (feedFresh(fk) !== "ok" || !homeOk(fk))) return "stale";
+    if (st === "ok" && (W.noConds || (fk !== "-live-" && (feedFresh(fk) !== "ok" || !homeOk(fk))))) return "stale";
     return st;
   }
   // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
@@ -1255,7 +1257,8 @@
     tl.appendChild(place(h("div", "nowt", ["now"]), {top: top + "px"}));
     if (!list.length) {
       var a0 = scopeArea(), okNow = (a0 ? areaState(a0) : overallState()) === "ok";       // "nothing" said in green only on current data
-      tl.appendChild(h("div", "empty tlempty" + (okNow ? "" : " nocur"), [h("b", "", [okNow ? "✓ Nothing in the last 4 hours" : "? No current data"]),
+      var young = W.since != null && NOW() - W.since * 1000 < 4 * 60 * MIN;    // a cold start: it has not watched 4 hours yet
+      tl.appendChild(h("div", "empty tlempty" + (okNow ? "" : " nocur"), [h("b", "", [okNow ? (young ? "✓ Nothing since " + hm(W.since * 1000) + " (watching since then)" : "✓ Nothing in the last 4 hours") : "? No current data"]),
         okNow ? "No wall conditions for this filter." : "Nothing on the wall - but the sources are not current, so it is not known."]));
       return;
     }
@@ -1278,7 +1281,8 @@
       for (var i = cards.length - 1; i >= 0; i--) { var nx = i === cards.length - 1 ? lim : cards[i + 1].y - GAP; if (cards[i].y + CH > nx) cards[i].y = nx - CH; }
       return !cards.length || cards[0].y >= top + 2;
     }
-    while (!layout()) { var idx = -1; for (var i = cards.length - 1; i >= 0; i--) if (cards[i].x.c.end != null) { idx = i; break; } if (idx < 0) idx = cards.length - 1; cards.splice(idx, 1); dropped++; }
+    var droppedOpen = 0;
+    while (!layout()) { var idx = -1; for (var i = cards.length - 1; i >= 0; i--) if (cards[i].x.c.end != null) { idx = i; break; } if (idx < 0) idx = cards.length - 1; if (cards[idx].x.c.end == null) droppedOpen++; cards.splice(idx, 1); dropped++; }
     var lead = s("svg", {"class": "lead"});
     tl.appendChild(lead);
     cards.forEach(function (k) {
@@ -1290,7 +1294,8 @@
       tl.appendChild(place(h("div", "ev k-" + sev + (cl ? " cl" : ""), [h("div", "r1", [h("span", "w", [w]), c.site ? h("span", "s mono", [c.site]) : null, h("span", "c", [c.t])]), h("div", "r2", [tm, " · " + aShort(c.area)])],
         {"data-d": "c:" + c.id, tabindex: "0", role: "button"}), {left: cardLeft + "px", top: k.y + "px", height: CH + "px"}));
     });
-    if (dropped) tl.appendChild(h("div", "more", ["+" + dropped + " earlier, cleared · pick an area or a site to see them"]));
+    // Codex r5 #19: "cleared" only for the ones that cleared
+    if (dropped) tl.appendChild(h("div", "more", ["+" + dropped + " earlier (" + (dropped - droppedOpen ? (dropped - droppedOpen) + " cleared" : "") + (dropped - droppedOpen && droppedOpen ? ", " : "") + (droppedOpen ? droppedOpen + " still open" : "") + ") · pick an area or a site to see them"]));
   }
   function timelineCard() {
     var c = h("section", "card tlcard"), tl = h("div", "tl"), list = tlEntries();
