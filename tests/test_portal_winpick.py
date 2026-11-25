@@ -99,6 +99,33 @@ class Rules(unittest.TestCase):
         self.assertEqual(sp.action_os("", "Patch with checks"), "")
 
 
+class NoPyYaml(unittest.TestCase):
+    """1.129.1 e2e: the stand-in AAP runs in python:3.12-slim (no PyYAML). Its inventory script read imported yaml, the handler died and
+    the portal's picker said 'Remote end closed connection without response'. The script must answer without PyYAML."""
+
+    def test_script_read_without_pyyaml(self):
+        keep = list(fake_aap.STATE["inventories"])
+        fake_aap.STATE["inventories"].append(inventory())
+        aap = fake_aap.serve(0, stop=True)
+        log = fake_aap.LOG
+        fake_aap.LOG = ""                                                   # another class may have left it in a removed temp dir
+        try:
+            with patch.dict(sys.modules, {"yaml": None}):
+                req = urllib.request.Request("http://127.0.0.1:%d%sinventories/%d/script/?hostvars=1&towervars=0" % (aap.server_address[1], fake_aap.BASE, INV),
+                                             headers={"Authorization": "Bearer " + fake_aap.TOKEN})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    doc = json.loads(r.read())
+                self.assertEqual(fake_aap.variables_dict("---\nansible_connection: winrm\n"), {"ansible_connection": "winrm"})
+            self.assertEqual(doc["_meta"]["hostvars"]["srv-app01.corp.example.mil"], {"ansible_connection": "winrm"})
+            self.assertEqual(doc["sql"]["vars"], {"ansible_connection": "psrp"})
+            self.assertIn("srv-db02.corp.example.mil", doc["sql"]["hosts"])
+        finally:
+            aap.shutdown()
+            aap.server_close()
+            fake_aap.LOG = log
+            fake_aap.STATE["inventories"][:] = keep
+
+
 class Live(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

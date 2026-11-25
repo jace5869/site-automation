@@ -250,6 +250,28 @@ def events(j):
     return out[:max(3, int(frac * len(out)))]
 
 
+def variables_dict(text):
+    """A Variables text (JSON or YAML) as a dict. The e2e runs this file in python:3.12-slim, which has no PyYAML: an import there killed
+    the handler and the portal saw 'Remote end closed connection without response'. JSON first; YAML only when PyYAML is there; else plain
+    'key: value' lines."""
+    if not text:
+        return {}
+    try:
+        return json.loads(text) or {}
+    except ValueError:
+        pass
+    try:
+        import yaml
+    except ImportError:
+        out = {}
+        for line in str(text).splitlines():
+            k, sep, v = line.partition(":")
+            if sep and k.strip() and not line.startswith((" ", "#", "-")):
+                out[k.strip()] = v.strip().strip("'\"")
+        return out
+    return yaml.safe_load(text) or {}
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -387,8 +409,7 @@ class H(BaseHTTPRequestHandler):
             inv = next((i for i in STATE["inventories"] if i["id"] == int(ms.group(1))), None)
             if not inv or inv.get("script_fail"):
                 return self._send(503 if inv else 404, {"detail": "not now"})
-            import yaml as _y
-            vo = lambda t: (_y.safe_load(t) if t else {}) or {}            # noqa: E731
+            vo = variables_dict
             kids = inv.get("children") or {}
             inner = set(c for cs in kids.values() for c in cs)
             doc = {"all": {"hosts": [], "children": sorted(g for g in inv.get("groups", {}) if g not in inner), "vars": vo(inv.get("variables"))},

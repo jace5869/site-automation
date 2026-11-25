@@ -298,9 +298,17 @@ case "$r" in *'"code": 200'*"portal-token"*) pass "the confirm page (a report's 
 # ---- 1.75.3: pick a host, then a finding - no job id typed
 r="$(c "$k/jdoe" get /portal/actions/disk_cleanup)"
 case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job and a finding, opened without them: asks for the host";; *) fail "pick: the host step" "$r";; esac
-r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
+# 1.129.1: the listing is read in the background; while it is read the typeahead has no hosts and the picker's list says reading -
+# poll as the browser does (20 s at most)
+for _ in $(seq 40); do
+    r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
+    [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "[]" ] || break; sleep 0.5
+done
 [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
-r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+for _ in $(seq 40); do
+    r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+    [ "$(echo "$r" | jq_ 'd["json"].get("reading", False)')" = "True" ] || break; sleep 0.5
+done
 [ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web_servers', 'group', 2), ('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1)]" ] \
     && pass "the picker's list: groups, then hosts (1.129.0; a group with its host count), filtered by any case" || fail "the picker's list" "$r"
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web_servers')"
@@ -339,7 +347,7 @@ case "$r" in *'"code": 400'*"braces that start a template"*) pass "template brac
 r="$(c "$k/jdoe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:\uff5b\uff5bx"}')"
 case "$r" in *'"code": 400'*"braces"*) pass "full-width look-alike braces: refused";; *) fail "full-width braces refused" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "nothere.example.mil"}')"
-case "$r" in *'"code": 400'*"not a host"*"portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
+case "$r" in *'"code": 400'*"Not started"*"not an enabled host of this job"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "web01.example.mil", "ansible_become_user": "root"}')"
 case "$r" in *'"code": 400'*"not a var of this action"*) pass "a var the action does not list: refused";; *) fail "an unlisted var refused" "$r";; esac
 tok="$(c "$k/jdoe" token /portal/actions/stig_recheck | jq_ 'd["token"]')"
