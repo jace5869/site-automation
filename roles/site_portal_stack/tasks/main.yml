@@ -815,7 +815,7 @@
   loop: "{{ _portal_wall_state.results }}"
   loop_control: {label: "{{ item.item.name }}"}
   when: >-
-    item.rc == 0 and item.item.enabled | bool and (item.stdout | trim) != (item.item.value | hash('sha256'))
+    item.rc == 0 and item.item.enabled | bool and (item.stdout | trim) != ((' ' ~ (item.item.value if item.item.value is string else (item.item.value | to_json))) | hash('sha256'))
     and _portal_podman.stdout is version('4.7', '<')
   changed_when: true
   no_log: true
@@ -825,12 +825,12 @@
     argv: >-
       {{ ['podman', 'secret', 'create']
          + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and item.rc == 0 else [])
-         + ['--label', 'site.sha256=' ~ (item.item.value | hash('sha256')), item.item.name, '-'] }}
-    stdin: "{{ item.item.value }}"
+         + ['--label', 'site.sha256=' ~ ((' ' ~ (item.item.value if item.item.value is string else (item.item.value | to_json))) | hash('sha256')), item.item.name, '-'] }}
+    stdin: "{{ (' ' ~ (item.item.value if item.item.value is string else (item.item.value | to_json))) }}"
     stdin_add_newline: false
   loop: "{{ _portal_wall_state.results }}"
   loop_control: {label: "{{ item.item.name }}"}
-  when: item.item.enabled | bool and (item.rc != 0 or (item.stdout | trim) != (item.item.value | hash('sha256')))
+  when: item.item.enabled | bool and (item.rc != 0 or (item.stdout | trim) != ((' ' ~ (item.item.value if item.item.value is string else (item.item.value | to_json))) | hash('sha256')))
   changed_when: true
   failed_when: false                      # said by the next task, with podman's reason
   no_log: true

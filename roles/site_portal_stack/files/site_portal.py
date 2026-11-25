@@ -643,17 +643,17 @@ class Config(object):
         self.wall_opts = wall_model.opts_of({})
         self.wall_auth_retry = 900
         self.wall_logins = {}
+        self.wall_bad_logins = []               # 1.130.1: a login secret that is neither JSON nor a plain dict (said in the log)
         try:
             wo = g("PORTAL_WALL_OPTS", "{}")
             wo = json.loads(wo) if isinstance(wo, str) else wo
             self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
             self.wall_auth_retry = max(300, min(86400, int(str(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900")).strip() or "900")))
             for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
-                try:
-                    lv = json.loads(g(env, "{}") or "{}")
-                except ValueError:
-                    lv = {}
-                if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
+                lv = wall_login(g(env, "{}"))
+                if lv is None:
+                    self.wall_bad_logins.append(k)
+                elif lv.get("user") and lv.get("password"):
                     self.wall_logins[k] = lv
         except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
@@ -6049,14 +6049,41 @@ def _safe_add(log, rec):
         pass
 
 
-def wall_sources(cfg):
-    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
+def wall_login(text):
+    """1.130.1: a wall login secret -> dict, {} when empty, None when unreadable. JSON as the deploy writes it; also the dict
+    text an older deploy wrote (Python's form: single quotes) - read with ast.literal_eval (literals only, never code)."""
+    t = str(text or "").strip()
+    if not t:
+        return {}
+    try:
+        v = json.loads(t)
+    except ValueError:
+        try:
+            import ast
+            v = ast.literal_eval(t)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            return None
+    return v if isinstance(v, dict) else None
+
+
+def wall_sources(cfg, log=None):
+    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster.
+    1.130.1: what is left out, and why, goes to the log (it was dropped silently)"""
+    log = log or (lambda d: None)
     if wall_live is None:
+        if cfg.wall_logins:
+            log({"event": "wall", "collector": "not started", "why": "the wall's collector is not in the service's files - deploy again"})
         return []
     try:
-        return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
-    except Exception:  # pylint: disable=broad-except  - the wall never stops the portal
+        src = wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None, log=log)
+    except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
+        log({"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
         return []
+    if cfg.wall_logins and not src:
+        missing = [("%s: no %s" % (k, "vCenter address (portal_wall_vcenters)" if k == "vcenter" else "cluster (ontap_clusters)"))
+                   for k, v in cfg.wall_logins.items() if not (v.get("hosts") if k == "vcenter" else v.get("clusters"))]
+        log({"event": "wall", "collector": "no sources", "why": "; ".join(missing) or "every entry was left out (see the lines above)"})
+    return src
 
 
 class WallLive(object):
@@ -6069,8 +6096,11 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
+        for k in getattr(cfg, "wall_bad_logins", []):
+            _safe_add(log, {"event": "wall", "source": k, "state": "login not readable",
+                            "why": "the %s login secret is not JSON - run Site portal - deploy again" % k})
         if self.collector is None and wall_live is not None:
-            src = wall_sources(cfg)
+            src = wall_sources(cfg, log=lambda d: _safe_add(log, d))
             if src:
                 # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
                 keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])

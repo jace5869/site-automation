@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.130.1 — 2026-11-25
+
+**To set up:** run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)
+
+- **The wall's VMware and Storage stayed "Not on the wall yet" although both logins were attached.** On ansible-core 2.16
+  the deploy wrote the logins' secrets as Python's dict text (single quotes); the portal read them as JSON, failed, and said
+  "no vCenter login" with nothing in its log. The deploy now writes JSON (after one space, so 2.16 cannot turn it back into
+  a dict), and the portal also reads the older form.
+- **The wall says why a source is not read:** a login secret it cannot read, a vCenter without an address
+  (`portal_wall_vcenters`), a cluster list that is empty, or an entry left out (and why) - in the portal's log
+  (`podman logs site-portal-app | grep '"event": "wall"'`).
+
 ## 1.130.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. The wall's logins come from the credentials already on that template: the
