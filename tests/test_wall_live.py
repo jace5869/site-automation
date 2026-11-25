@@ -259,6 +259,7 @@ class Vcenter(unittest.TestCase):
 class Ontap(object):
     def __init__(self, password="pw"):
         self.password, self.verbs, self.paths = password, [], []
+        self.override = {}                        # path -> the answer to give instead (a collection that fails, rows without a state)
 
 
 def ontap_handler(o):
@@ -299,6 +300,8 @@ def ontap_handler(o):
                 return self.out(401, {"error": {"message": "not authorized"}})
             u = urllib.parse.urlsplit(self.path)
             q = urllib.parse.parse_qs(u.query)
+            if u.path in o.override:
+                return self.out(200, o.override[u.path])
             if u.path == "/api/cluster":
                 return self.out(200, {"name": "cluster-sita01", "version": {"full": "NetApp Release 9.14.1"}})
             if u.path not in recs:
@@ -874,6 +877,44 @@ class WriteAhead(unittest.TestCase):
             self.assertEqual(c.view()["sources"][s.key]["state"], "auth", text)
             self.assertLessEqual(c.view()["sources"][s.key]["next_try"], clock.t + 900, text)     # one window, never years
         self.assertEqual(self.vim.methods.count("Login"), 0)
+
+
+class AllOrNothing(unittest.TestCase):
+    """Codex verify 3: a live ONTAP collection is read whole or counts as failed (its check not run); a state not given is
+    unknown, never "online" or "None broken"."""
+
+    def snap(self, override, pages=None):
+        o = Ontap()
+        o.override = override
+        srv, port = serve(ontap_handler(o))
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        if pages:
+            old = W.ONTAP_MAX_PAGES
+            W.ONTAP_MAX_PAGES = pages
+            self.addCleanup(setattr, W, "ONTAP_MAX_PAGES", old)
+        return W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False).poll()
+
+    def test_errors_or_no_records_fail_the_collection(self):
+        s = self.snap({"/api/snapmirror/relationships": {"records": [], "errors": [{"message": "busy"}]},
+                       "/api/cluster/nodes": {"num_records": 0}})
+        self.assertIsNone(s["snapmirror"])
+        self.assertIsNone(s["nodes"])
+        self.assertEqual(sorted(s["failed"]), ["nodes", "snapmirror"])
+        self.assertTrue(s["aggrs"])                                            # the others still read
+
+    def test_a_next_link_after_the_last_page_fails_it(self):
+        s = self.snap({}, pages=1)                                             # the stub pages the aggregates by 2 (3 of them)
+        self.assertIsNone(s["aggrs"])
+        self.assertIn("more pages", s["failed"]["aggrs"])
+
+    def test_states_not_given_are_unknown(self):
+        s = self.snap({"/api/storage/volumes": {"records": [{"name": "v1", "svm": {"name": "s"}}], "num_records": 1},
+                       "/api/storage/luns": {"records": [{"name": "/vol/v1/l", "svm": {"name": "s"}}], "num_records": 1},
+                       "/api/snapmirror/relationships": {"records": [{"source": {"path": "a:b"}, "destination": {"path": "c:d"}}], "num_records": 1}})
+        self.assertIsNone(s["volumes"][0]["state"])
+        self.assertIsNone(s["luns"][0]["state"])
+        self.assertEqual((s["snapmirror"][0]["state"], s["snapmirror"][0]["healthy"]), (None, None))
 
 
 def closed_port():

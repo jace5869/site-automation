@@ -192,13 +192,14 @@ class Review(unittest.TestCase):
                                                                "snapmirror": [{"src": "a:b", "dst": "c:d", "state": "snapmirrored", "healthy": True}]}}
         return M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
 
-    def test_live_ontap_is_not_made_stale_by_the_run(self):
+    def test_one_source_per_cluster(self):
+        """cluster1 is read live: the run's rows of cluster1.example.mil are not used at all; cluster2 only from the run"""
         m = self.live_and_db()
         st = [a for a in m["areas"] if a["id"] == "storage"][0]
-        self.assertNotIn("netapp-run", st["feeds"])                      # the run's age stays on the storage path card only
-        self.assertNotIn("ontap", m["feeds"])
-        self.assertEqual(m["feeds"]["netapp-run"]["fresh"], "stale")
-        self.assertEqual(m["storage"]["smRel"], 1)                      # the live count replaces the run's (never added)
+        self.assertIn("ontap:cluster1.example.mil", st["feeds"])
+        self.assertIn("ontap", st["feeds"])                             # the run is still the source of cluster2: its age counts
+        self.assertEqual(sorted(set(a["c"] for a in m["storage"]["aggr"])), ["cluster2"])       # no aggregate of cluster1 from the run
+        self.assertTrue(all(c.get("cluster") != "cluster1" or c.get("feed") != "ontap" for c in m["conds"]))
         self.assertTrue(any(c["id"] == "node:cluster1:n2" for c in m["conds"]))   # an empty state is not "up"
         lun = sorted(c["id"] for c in m["conds"] if c["kind"] == "voloff")
         self.assertEqual(lun, ["voloff:cluster1:s1:/vol/v/l", "voloff:cluster1:s2:/vol/v/l"])   # the SVM in the id
@@ -237,7 +238,7 @@ class CodexModel(unittest.TestCase):
 
 
 class CodexVerifyModel(unittest.TestCase):
-    def test_a_live_read_clears_the_runs_alert_under_another_name(self):
+    def test_a_name_never_clears_another_addresss_alert(self):
         import netapp_live as nl
         db = demo.netapp_db(25)
         nm = nl.Database(lambda: db, mark="?").read()
@@ -249,8 +250,8 @@ class CodexVerifyModel(unittest.TestCase):
                                            "snap": {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [],
                                                     "volumes": [], "luns": [], "snapmirror": []}}
         m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
-        self.assertEqual([c["id"] for c in m["conds"] if c["kind"] == "node"], [])             # the live read: "cluster1"
-        self.assertEqual(M.cluster_ids("Cluster1.Example.mil"), {"cluster1.example.mil", "cluster1"})
+        # Codex verify 3: no name matching between the sources - 192.0.2.10 is another address: the run's alert stays
+        self.assertIn("node:cluster1.example.mil", [c["id"] for c in m["conds"] if c["kind"] == "node"])
 
     def test_checks_not_run(self):
         import netapp_live as nl
@@ -271,14 +272,13 @@ class CodexVerify2Model(unittest.TestCase):
         import netapp_live as nl
         db = demo.netapp_db(25)
         nm = nl.Database(lambda: db, mark="?").read()
-        nm["parts"]["clusters"] = {"rows": [{"name": "array.west.example.mil", "why": "not read: timed out"},
-                                            {"name": "array.east.example.mil", "why": "not read: timed out"}]}
+        nm["parts"]["clusters"] = {"rows": [{"name": "array", "addr": "array.west.example.mil", "why": "not read: timed out"},
+                                            {"name": "array", "addr": "array.east.example.mil", "why": "not read: timed out"}]}
         v = demo.view(NOW)
         v["sources"]["ontap:array.east.example.mil"] = self.live("array.east.example.mil", "array")
         m = M.build(v, nm, sp.ad_when(nm["run"]["read_at"]), demo.OPTS, M.Tracker(), NOW)
         ids = [c["id"] for c in m["conds"] if c["kind"] == "node"]
-        self.assertIn("node:array.west.example.mil", ids)                      # the west alert stays
-        self.assertNotIn("node:array.east.example.mil", ids)                   # the east one: its exact name was read live
+        self.assertEqual(ids, ["node:array.west.example.mil"])                  # the west alert stays (east is read live: its own read)
 
     def test_unknown_numbers(self):
         v = demo.view(NOW)
@@ -305,10 +305,138 @@ class CodexVerify2Model(unittest.TestCase):
         import site_ontap_expand as X
         import test_ontap_expand as TE
         V = TE.volume_module()                                  # the module with its module_utils as Ansible gives them
-        e = {"lun": "/vol/v/l", "lun_size": 100, "lun_used": None, "size": 110, "used": 99}
-        self.assertEqual(X.lun_fullness(e), (110, 99, "volume"))                                       # not "LUN 0 % written"
+        GB = 1024 ** 3
+        e = {"lun": "/vol/v/l", "lun_size": 100 * GB, "lun_used": None, "size": 1000 * GB, "used": 100 * GB, "svm": "s", "volume": "v",
+             "address": "cluster1.example.mil", "luns": 1, "cluster": "c1"}           # Codex verify 3: 100 GB LUN, use unknown, 1000 GB volume
+        self.assertEqual(X.lun_fullness(e), (100 * GB, None, "LUN"))                   # the LUN, its use unknown - never the volume's numbers
+        self.assertEqual(X.fullness_text(e), "LUN 100.0 GB, use unknown")
+        text = X.choice_text(e)
+        self.assertIn("LUN 100.0 GB, use unknown", text)                               # not "LUN 1000.0 GB, 90% free"
+        self.assertNotIn("free", X.choice_shown(text))
+        sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
+        import ontap_expand_filters as EF
+        full = dict(e, volume="v2", lun_used=95 * GB, lun_uuid="b")                   # a LUN 95 % written
+        got = EF.ontap_expand_choices([full, e], [{}, {}])["choices"]
+        self.assertIn("use unknown", X.choice_shown(got[0]))                           # use unknown: first, as the least free
         self.assertIsNone(V.opt_of({"space": {"size": 1}}, "space", "used"))
         self.assertEqual(V.opt_of({"space": {"used": 0}}, "space", "used"), 0)
+
+
+class CodexVerify3Model(unittest.TestCase):
+    TB = 1024 ** 4
+
+    def nm(self, minutes=1):
+        import netapp_live as nl
+        db = demo.netapp_db(minutes)
+        return nl.Database(lambda: db, mark="?").read()
+
+    def live(self, v, name, at=NOW - 20, **snap):
+        base = {"cluster": "cluster1", "nodes": [{"name": "cluster1-01", "state": "up"}], "aggrs": [], "volumes": [], "luns": [], "snapmirror": [],
+                "failed": {}}
+        base.update(snap)
+        v["sources"]["ontap:" + name] = {"kind": "ontap", "name": name, "state": "ok", "why": "", "at": at, "snap": base}
+        return v
+
+    def test_an_old_live_read_never_hides_or_greens(self):
+        """cluster1 read live 15 min ago, healthy; the run (newer) says cluster1's aggregate is 99 % full: the run's rows of a live
+        cluster are not used - and the live read is stale (never OK)"""
+        nm = self.nm()
+        for a in nm["aggrs"]:
+            if a["c"] == "cluster1":
+                a["pct"] = 99.0
+        v = self.live(demo.view(NOW), "cluster1.example.mil", at=NOW - 900)
+        m = M.build(v, nm, NOW - 1, demo.OPTS, M.Tracker(), NOW)
+        self.assertEqual(m["feeds"]["ontap:cluster1.example.mil"]["fresh"], "stale")
+        self.assertFalse([a for a in m["storage"]["aggr"] if a.get("addr") == "cluster1.example.mil" and a["feed"] == "ontap"])
+
+    def test_a_live_read_replaces_an_incomplete_run_row(self):
+        nm = self.nm()
+        for a in nm["aggrs"]:
+            if a["c"] == "cluster1":
+                a["pct"] = None                                   # the run lacks cluster1's aggregate use ...
+        v = self.live(demo.view(NOW), "cluster1.example.mil", aggrs=[{"name": "aggr1_c1n1", "node": "n", "size": 10 * self.TB, "used": 5 * self.TB}])
+        m = M.build(v, nm, NOW - 60, demo.OPTS, M.Tracker(), NOW)
+        self.assertFalse([x for x in m["storage"]["incomplete"] if "aggr1_c1n1" in x])     # ... but cluster1 is read live: not used
+
+    def test_failed_or_unknown_live_checks(self):
+        v = self.live(demo.view(NOW), "cluster1.example.mil", nodes=None, snapmirror=[{"src": "a:b", "dst": "c:d", "state": None, "healthy": None}],
+                      volumes=[{"name": "v1", "svm": "s", "state": None}], failed={"nodes": "errors in the answer"})
+        m = M.build(v, None, None, demo.OPTS, M.Tracker(), NOW)
+        self.assertEqual(m["storage"]["ran"], {"sm": False, "nodes": False})
+        inc = " ".join(m["storage"]["incomplete"])
+        for word in ("nodes not read whole", "SnapMirror c:d", "volume v1: state not read"):
+            self.assertIn(word, inc)
+        self.assertFalse([c for c in m["conds"] if c["kind"] == "voloff"])                # unknown is not "offline" - and not "online"
+        st = dict((a["id"], a) for a in m["areas"])["storage"]
+        self.assertFalse(st["complete"])
+
+    def test_storage_completeness_covers_its_sources(self):
+        v = demo.view(NOW)
+        v["sources"]["vcenter:" + demo.VC1]["snap"]["datastores"][0]["capacity"] = None   # a datastore of Storage not read
+        nm = self.nm()
+        nm["run"]["not_read"] = ["cluster2.example.mil: timed out"]
+        m = M.build(v, nm, NOW - 60, demo.OPTS, M.Tracker(), NOW)
+        inc = " ".join(dict((a["id"], a) for a in m["areas"])["storage"]["incomplete"] + m["storage"]["incomplete"])
+        self.assertIn("datastore DS-SITEA-07", inc)
+        self.assertIn("did not read cluster2.example.mil", inc)
+        self.assertIn("ontap", dict((a["id"], a) for a in m["areas"])["storage"]["feeds"])          # the run supplies rows: its age counts
+
+    def test_vmware_unknowns(self):
+        v = demo.view(NOW)
+        snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
+        snap["vms"][0].update(cpu_pct=None, heartbeat=None)
+        snap["hosts"][0].pop("maint")
+        m = model(v)
+        inc = " ".join(m["vmware"]["incomplete"])
+        self.assertIn("CPU, memory or heartbeat not read", inc)
+        self.assertIn("maintenance mode not read", inc)
+        import wall_live as W
+        sh = W.shape([("Datastore", "ds-1", {"name": "DS-1", "summary.capacity": "100", "summary.accessible": "true"}),
+                      ("HostSystem", "host-1", {"name": "esx1", "runtime.connectionState": "connected"})])
+        self.assertIsNone(sh["datastores"][0]["free"])                                     # not read: never 0 (a false 100 % full)
+        self.assertIsNone(sh["hosts"][0]["maint"])
+        d = [x for x in model({"sources": {"vcenter:x": {"kind": "vcenter", "name": "x", "state": "ok", "at": NOW, "snap": sh}}, "history": {}})["vmware"]["datastores"]][0]
+        self.assertIsNone(d["v"])
+
+    def test_loss_of_data_is_not_a_recovery(self):
+        t = M.Tracker()
+        v = demo.view(NOW, vc2_state="ok")
+        m1 = M.build(v, None, None, demo.OPTS, t, NOW)
+        down = [c["id"] for c in m1["conds"] if c["kind"] == "host"][0]
+        v2 = demo.view(NOW + 60, vc2_state="ok")
+        v2["sources"]["vcenter:" + demo.VC1].update(state="error", why="timed out")
+        for h in v2["sources"]["vcenter:" + demo.VC1]["snap"]["hosts"]:
+            h["state"] = ""                                                                # this read could not see the host
+        m2 = M.build(v2, None, None, demo.OPTS, t, NOW + 60)
+        c = [x for x in m2["conds"] if x["id"] == down][0]
+        self.assertIsNone(c["end"])                                                        # still open, as last known
+        self.assertTrue(c.get("last_known"))
+        v3 = demo.view(NOW + 120, vc2_state="ok")
+        for h in v3["sources"]["vcenter:" + demo.VC1]["snap"]["hosts"]:
+            h.update(state="connected", cpu_pct=10.0, mem_pct=10.0)
+        m3 = M.build(v3, None, None, demo.OPTS, t, NOW + 120)
+        self.assertEqual([x["end"] for x in m3["conds"] if x["id"] == down], [NOW + 120])  # an observed OK clears it
+
+
+class DbPathUnknown(unittest.TestCase):
+    """Codex verify 3: the NetApp run's path - an aggregate use not read is never 0 % (payload, writer, reader)"""
+
+    def test_aggregate_use_not_read(self):
+        import test_netapp_live as T
+        import ontap_live_filters as lf
+        p, _t = T.payload(0)
+        p["aggrs"][0]["used"] = None
+        db = T.Lite()
+        import datetime
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
+        T.ldb.write(db, now, 9100, 58, p, "NetApp - expand a volume", "ontap_expand_volume", T.fx.OPTS)
+        import netapp_live as nl
+        m = nl.Database(lambda: db, mark="?").read()
+        a = [x for x in m["aggrs"] if x["a"] == p["aggrs"][0]["name"] and x["addr"].lower() == p["aggrs"][0]["address"].lower()][0]
+        self.assertEqual((a["pct"], a["free"], a["st"]), (None, None, "unknown"))
+        lst = {"aggregates": [{"address": "c1", "cluster": "c", "name": "a1", "node": "n", "size": 100, "used": None}], "choices": [], "clusters": []}
+        out = lf.ontap_live_payload({"list": lst, "choices": [], "found": [], "collected": {}, "health": False, "perf": False, "opts": {}})
+        self.assertIsNone(out["aggrs"][0]["used"])
 
 
 # ---- the portal: the page, the answer, the Feedback ------------------------------------------------------------------------
@@ -954,8 +1082,26 @@ class Browser(unittest.TestCase):
         nothing may be in an OK colour. On a failure the seed and the cut are said."""
         seed = int(os.environ.get("WALL_FUZZ_SEED") or self.FUZZ_SEED)
         answers = self.fuzz_answers(seed, self.FUZZ_RUNS)
+        answers.append({"cut": "control", "control": True, "a": self.control_answer()})
         bad = self.fuzz_page(answers)
+        self.assertIn("control: green seen", bad)                       # the scan sees green where green is right (it is not blind)
+        bad.remove("control: green seen")
         self.assertEqual(bad, [], "green on missing / old inputs - seed %d (WALL_FUZZ_SEED=%d to replay)" % (seed, seed))
+
+    def control_answer(self):
+        """everything read, current and quiet: here the wall must show green"""
+        now = time.time()
+        v = demo.view(now, vc2_state="ok")
+        v["sources"]["vcenter:" + demo.VC2]["snap"] = {"hosts": [], "clusters": [], "datastores": [], "vms": []}
+        v["history"] = {}
+        snap = v["sources"]["vcenter:" + demo.VC1]["snap"]
+        for h in snap["hosts"]:
+            h.update(state="connected", cpu_pct=30.0, mem_pct=40.0)
+        for d in snap["datastores"]:
+            d["free"] = d["capacity"] // 2
+        a = M.build(v, None, None, demo.OPTS, M.Tracker(), now, enclave="SITEA", title="Ops center")
+        a.update(zone="Europe/Berlin", poll=30, full={}, auth_retry=900, me={"feedback": False, "reader": False, "areas": [], "max": 1000})
+        return json.loads(json.dumps(a, default=str))
 
     def fuzz_page(self, answers):
         d = tempfile.mkdtemp()
@@ -980,7 +1126,10 @@ class Browser(unittest.TestCase):
    if(r.scanned<40)bad.push(p+': only '+r.scanned+' elements drawn');
    if(map&&(!r.sdots||!r.ticks))bad.push(p+': the map or the timeline was not drawn');
    r.greens.forEach(function(g){bad.push(p+': '+g)})};
+var ctl=0;
 window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
+ if(x.control){T.set(JSON.parse(JSON.stringify(a)));['lights','cockpit','map'].forEach(function(st){T.view(st,'vmware');ctl+=T.greens().greens.length});
+   if(ctl)bad.push('control: green seen');return;}
  (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
  (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
  (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.c+'|'+g.n)});
@@ -1004,6 +1153,27 @@ document.getElementById('res').textContent=JSON.stringify(bad.slice(0,40));},120
         self.assertIsNotNone(m, "the fuzz page did not finish")
         self.assertLess(time.time() - t0, 120)
         return json.loads(sp.html.unescape(m.group(1)))
+
+    def test_red_beats_grey(self):
+        """one cluster's SnapMirror check failed, another's relationship is confirmed broken: the counter is red, not grey"""
+        v = demo.view(vc2_state="ok")
+        for name, sm in (("c1.example.mil", None), ("c2.example.mil", [{"src": "a:b", "dst": "c:d", "state": "broken_off", "healthy": False}])):
+            v["sources"]["ontap:" + name] = {"kind": "ontap", "name": name, "state": "ok", "why": "", "at": time.time() - 10,
+                                             "snap": {"cluster": name.split(".")[0], "nodes": [], "aggrs": [], "volumes": [], "luns": [],
+                                                      "snapmirror": sm, "failed": {} if sm else {"snapmirror": "busy"}}}
+        m = M.build(v, None, None, demo.OPTS, M.Tracker(), time.time())
+        self.assertFalse(m["storage"]["ran"]["sm"])                                        # one cluster's check did not run ...
+        url, stop = demo.portal(netapp=False, collector=demo.FakeCollector(lambda: v))
+        self.addCleanup(stop)
+        out = self.run_page(url, "style=cockpit&freeze=1&area=storage")
+        self.assertRegex(out, r'<div class="ctr warn"[^>]*data-d="ctr:sm"')              # ... the other's broken one still shows
+
+    def test_a_feed_missing_from_the_answer(self):
+        a = self.control_answer()
+        a["areas"][1]["feeds"].append("vc:vc09.corp.example.mil")                         # listed, but not in the answer's feeds
+        a["areas"][0].pop("complete", None)                                               # and "complete" missing
+        bad = self.fuzz_page([{"cut": "missing feed", "a": a}])
+        self.assertEqual(bad, [])                                                         # drawn whole (no throw), and nothing green
 
     def test_no_sideways_scroll(self):
         for st in ("cockpit", "lights", "map"):

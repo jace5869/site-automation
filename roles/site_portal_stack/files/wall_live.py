@@ -91,6 +91,10 @@ class Gate(object):
 PAUSED_WHY = "login paused - the back-off file cannot be written (no login is sent until it can)"
 
 
+class CollectionFailed(Exception):
+    """One ONTAP collection not read whole (errors, no records, more pages than taken): its check did not run."""
+
+
 class Paused(Exception):
     """No login was sent: the attempt could not be written to the back-off file first (write-ahead)."""
 
@@ -334,7 +338,7 @@ def shape(objs):
             state = v.get("runtime.connectionState") or ""
             ok = state == "connected"
             hosts.append({"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
-                          "state": state, "maint": str(v.get("runtime.inMaintenanceMode")).lower() == "true", "power": v.get("runtime.powerState") or "",
+                          "state": state, "maint": None if v.get("runtime.inMaintenanceMode") in (None, "") else str(v["runtime.inMaintenanceMode"]).lower() == "true", "power": v.get("runtime.powerState") or "",
                           "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
                           "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
                           "vms": sorted(nm(r) for r in v.get("vm") or [] if isinstance(r, tuple)),
@@ -342,15 +346,15 @@ def shape(objs):
         elif t == "ClusterComputeResource":
             clusters.append({"name": v.get("name", i), "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple))})
         elif t == "Datastore":
-            dss.append({"name": v.get("name", i), "type": v.get("summary.type") or "", "capacity": _int(v.get("summary.capacity")),
-                        "free": _int(v.get("summary.freeSpace")), "accessible": str(v.get("summary.accessible")).lower() == "true",
+            dss.append({"name": v.get("name", i), "type": v.get("summary.type") or "", "capacity": _int(v.get("summary.capacity"), None),
+                        "free": _int(v.get("summary.freeSpace"), None), "accessible": str(v.get("summary.accessible")).lower() == "true",
                         "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple)), "vms": len(v.get("vm") or [])})
         elif t == "VirtualMachine":
             on = v.get("runtime.powerState") == "poweredOn"
             vms.append({"name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
                         "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), v.get("summary.runtime.maxCpuUsage")) if on else None,
                         "mem_pct": _pct(v.get("summary.quickStats.guestMemoryUsage"), v.get("summary.config.memorySizeMB")) if on else None,
-                        "heartbeat": v.get("guestHeartbeatStatus") or ""})
+                        "heartbeat": v.get("guestHeartbeatStatus") or None})     # not read: unknown
     for lst in (hosts, clusters, dss, vms):
         lst.sort(key=lambda x: x["name"])
     return {"hosts": hosts, "clusters": clusters, "datastores": dss, "vms": vms}
@@ -367,6 +371,7 @@ ONTAP_GETS = (
     ("snapmirror", "/api/snapmirror/relationships", "source.path,destination.path,state,healthy,lag_time,unhealthy_reason", ""),
 )
 ONTAP_PAGE = 1000
+ONTAP_MAX_PAGES = 1000                  # pages one collection may take; a next link still there after them: the collection failed
 
 
 def iso_seconds(text):
@@ -435,27 +440,47 @@ class OntapSource(object):
         return json.loads(data.decode("utf-8"))
 
     def records(self, path, fields, extra=""):
-        """every record of a collection: fields= names what is read; max_records pages, _links.next followed"""
+        """every record of a collection: fields= names what is read; max_records pages, _links.next followed. All or nothing
+        (Codex verify 3): an answer with "errors", one without "records", or a next page still there at the page limit is a
+        collection that failed (CollectionFailed) - never part of it published as all of it"""
         q = "fields=%s&max_records=%d" % (fields, ONTAP_PAGE) + ("&" + extra if extra else "")
         nxt, out, seen = "%s?%s" % (path, q), [], 0
-        while nxt and seen < 1000:
+        while nxt and seen < ONTAP_MAX_PAGES:
             seen += 1
             d = self._get(nxt)
-            out.extend(d.get("records") or [])
+            if not isinstance(d, dict) or d.get("errors") or not isinstance(d.get("records"), list):
+                raise CollectionFailed("%s: %s" % (path, "errors in the answer" if isinstance(d, dict) and d.get("errors") else "no records in the answer"))
+            out.extend(d["records"])
             nxt = _g(d, "_links.next.href")
             if nxt and "fields=" not in nxt:                   # ONTAP keeps the query in next; never read every field
                 nxt += ("&" if "?" in nxt else "?") + "fields=" + fields
+        if nxt:
+            raise CollectionFailed("%s: more pages than the reader takes" % path)
         return out
 
     def _read(self):
+        """-> (the cluster, its nodes or None, {collection: rows or None}, {collection: why it failed})"""
         c = self._get("/api/cluster?fields=name,version")
-        try:
-            nodes = self.records("/api/cluster/nodes", NODE_FIELDS)
-        except HttpStatus as e:
-            if e.code != 400:
-                raise
-            nodes = self.records("/api/cluster/nodes", NODE_FIELDS_OLD)
-        return c, nodes, dict((k, self.records(p, f, x)) for k, p, f, x in ONTAP_GETS)
+        failed, got = {}, {}
+
+        def one(key, fn):
+            try:
+                return fn()
+            except (CollectionFailed, HttpStatus) as e:          # this collection only: its check did not run (a refusal still stops all)
+                failed[key] = short(e)
+                return None
+
+        def nodes_read():
+            try:
+                return self.records("/api/cluster/nodes", NODE_FIELDS)
+            except HttpStatus as e:
+                if e.code != 400:
+                    raise
+                return self.records("/api/cluster/nodes", NODE_FIELDS_OLD)
+        nodes = one("nodes", nodes_read)
+        for k, path, f, x in ONTAP_GETS:
+            got[k] = one(k, lambda path=path, f=f, x=x: self.records(path, f, x))
+        return c, nodes, got, failed
 
     def poll(self):
         # every ONTAP request carries the login: the polls of one account one at a time, none while it is bad
@@ -463,30 +488,40 @@ class OntapSource(object):
             self.gate.check()
             self.gate.before_login()                               # every ONTAP request carries the password: written down first
             try:
-                c, nodes, got = self._read()
+                c, nodes, got, failed = self._read()
             except AuthError:
                 self.gate.bad = True
                 raise
         tk = lambda n: _g(n, "ha.takeover_check.takeover_possible")     # noqa: E731
+        txt = lambda v: str(v) if v not in (None, "") else None          # noqa: E731  - a state not given: unknown, never "online"
+
+        def lun_state(x):
+            cs, st = txt(_g(x, "status.container_state")), txt(_g(x, "status.state"))
+            if cs is not None and cs != "online":
+                return cs
+            return st if cs is not None else None
+
+        rows = lambda k, fn: None if got.get(k) is None else [fn(r) for r in got[k]]    # noqa: E731
         return {
-            "cluster": c.get("name") or self.address, "version": _g(c, "version.full", "") or "",
-            "nodes": [{"name": n.get("name") or "", "state": n.get("state") or "", "takeover": tk(n) if isinstance(tk(n), bool) else None} for n in nodes],
-            "aggrs": [{"name": a.get("name") or "", "node": _g(a, "node.name", "") or "", "size": _int(_g(a, "space.block_storage.size"), None),
-                       "used": _int(_g(a, "space.block_storage.used"), None)} for a in got["aggrs"]],
-            "volumes": [{"name": v.get("name") or "", "svm": _g(v, "svm.name", "") or "", "state": v.get("state") or "",
-                         "size": _int(_g(v, "space.size"), None), "used": _int(_g(v, "space.used"), None),
-                         "aggr": ((v.get("aggregates") or [{}])[0] or {}).get("name", "") if v.get("aggregates") else "",
-                         "autosize": (_g(v, "autosize.mode", "off") or "off") != "off",
-                         "snap_reserve": _int(_g(v, "space.snapshot.reserve_size"), None), "snap_used": _int(_g(v, "space.snapshot.used"), None)}
-                        for v in got["volumes"]],
-            "luns": [{"path": x.get("name") or "", "name": (x.get("name") or "").rsplit("/", 1)[-1], "svm": _g(x, "svm.name", "") or "",
-                      "volume": _g(x, "location.volume.name", "") or "", "size": _int(_g(x, "space.size"), None), "used": _int(_g(x, "space.used"), None),
-                      "state": (_g(x, "status.state", "") or "") if (_g(x, "status.container_state", "online") or "online") == "online"
-                      else (_g(x, "status.container_state", "") or "")} for x in got["luns"]],
-            "snapmirror": [{"src": _g(s, "source.path", "") or "", "dst": _g(s, "destination.path", "") or "", "state": s.get("state") or "",
-                            "healthy": s.get("healthy") if isinstance(s.get("healthy"), bool) else None, "lag_s": iso_seconds(s.get("lag_time")),
-                            "why": "; ".join(str(u.get("message") or "") for u in (s.get("unhealthy_reason") or []) if isinstance(u, dict))[:300]}
-                           for s in got["snapmirror"]],
+            "cluster": c.get("name") or self.address, "version": _g(c, "version.full", "") or "", "failed": failed,
+            "nodes": None if nodes is None else [{"name": n.get("name") or "", "state": txt(n.get("state")),
+                                                  "takeover": tk(n) if isinstance(tk(n), bool) else None} for n in nodes],
+            "aggrs": rows("aggrs", lambda a: {"name": a.get("name") or "", "node": _g(a, "node.name", "") or "",
+                                              "size": _int(_g(a, "space.block_storage.size"), None), "used": _int(_g(a, "space.block_storage.used"), None)}),
+            "volumes": rows("volumes", lambda v: {"name": v.get("name") or "", "svm": _g(v, "svm.name", "") or "", "state": txt(v.get("state")),
+                                                  "size": _int(_g(v, "space.size"), None), "used": _int(_g(v, "space.used"), None),
+                                                  "aggr": ((v.get("aggregates") or [{}])[0] or {}).get("name", "") if v.get("aggregates") else "",
+                                                  "autosize": (_g(v, "autosize.mode", "off") or "off") != "off",
+                                                  "snap_reserve": _int(_g(v, "space.snapshot.reserve_size"), None),
+                                                  "snap_used": _int(_g(v, "space.snapshot.used"), None)}),
+            "luns": rows("luns", lambda x: {"path": x.get("name") or "", "name": (x.get("name") or "").rsplit("/", 1)[-1], "svm": _g(x, "svm.name", "") or "",
+                                            "volume": _g(x, "location.volume.name", "") or "", "size": _int(_g(x, "space.size"), None),
+                                            "used": _int(_g(x, "space.used"), None), "state": lun_state(x)}),
+            "snapmirror": rows("snapmirror", lambda m: {"src": _g(m, "source.path", "") or "", "dst": _g(m, "destination.path", "") or "",
+                                                       "state": txt(m.get("state")), "healthy": m.get("healthy") if isinstance(m.get("healthy"), bool) else None,
+                                                       "lag_s": iso_seconds(m.get("lag_time")),
+                                                       "why": "; ".join(str(u.get("message") or "") for u in (m.get("unhealthy_reason") or [])
+                                                                        if isinstance(u, dict))[:300]}),
         }
 
     def close(self):

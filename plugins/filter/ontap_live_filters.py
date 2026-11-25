@@ -110,7 +110,7 @@ def _snapmirror(up, o):
             ptxt = ""
             if transferring and prog not in (None, ""):
                 ptxt = "%s moved so far" % OF.human_bytes(prog) if str(prog).isdigit() else str(prog)
-            rows.append({"st": st, "word": word, "src": src or "", "dst": dst or "", "dc": c["_name"], "state": str(state), "why": str(why)[:300] or ptxt,
+            rows.append({"st": st, "word": word, "src": src or "", "dst": dst or "", "dc": c["_name"], "addr": c.get("address") or "", "state": str(state), "why": str(why)[:300] or ptxt,
                          "lag": lag, "sched": sched, "per": per, "last": _iso(OF.parse_time(last))})
     rank = {"critical": 0, "warning": 1}
     rows.sort(key=lambda x: (rank.get(x["st"], 2), 0 if x["word"] == "Transferring" else 1, -(x["lag"] or 0)))
@@ -133,7 +133,7 @@ def _nodes(up, o):
                 poss = False
             partner = f.get("partner_name") or OF.g(n, "ha.partners.name", "") or ""
             st = "critical" if stt != "up" else ("warning" if poss is False else "ok")
-            rows.append({"st": st, "node": n.get("name") or "", "cluster": c["_name"], "state": stt, "partner": partner,
+            rows.append({"st": st, "node": n.get("name") or "", "cluster": c["_name"], "addr": c.get("address") or "", "state": stt, "partner": partner,
                          "takeover": "Yes" if poss else ("No" + (" - " + f["state_description"] if f.get("state_description") else "") if poss is False else "?"),
                          "up_s": int(n["uptime"]) if str(n.get("uptime") or "").isdigit() else None, "model": n.get("model") or ""})
     rows.sort(key=lambda x: ({"critical": 0, "warning": 1}.get(x["st"], 2), x["cluster"], x["node"]))
@@ -215,7 +215,7 @@ def _clusters(cs, nodes, disks):
     out = []
     for c in cs:
         if not c.get("reachable", True) or c.get("error"):
-            out.append({"name": c.get("_name") or c.get("address"), "st": "critical", "why": "not read: %s" % str(c.get("error") or "")[:200]})
+            out.append({"name": c.get("_name") or c.get("address"), "addr": c.get("address") or "", "st": "critical", "why": "not read: %s" % str(c.get("error") or "")[:200]})
             continue
         why, st = [], "ok"
         ns = [n for n in nodes["rows"] if n["cluster"] == c["_name"]]
@@ -237,7 +237,7 @@ def _clusters(cs, nodes, disks):
                 st = OF.worst([st, "warning"])
                 why.append("subsystem %s: %s" % (s.get("subsystem"), s.get("health")))
         info = (_recs(c, "cluster") or [{}])[0]
-        out.append({"name": c["_name"], "st": st, "why": "; ".join(why)[:300], "ontap": OF.short_version(OF.g(info, "version.full"))
+        out.append({"name": c["_name"], "addr": c.get("address") or "", "st": st, "why": "; ".join(why)[:300], "ontap": OF.short_version(OF.g(info, "version.full"))
                     if OF.g(info, "version.full") else "", "nodes": len(ns), "up": len(ns) - len(down)})
     return out
 
@@ -309,7 +309,8 @@ def ontap_live_payload(r):
         vols.append({"address": e.get("address") or "", "cluster": e.get("cluster") or "", "svm": e.get("svm") or "", "volume": e.get("volume") or "",
                      "lun": e.get("lun") or "", "luns": int(e.get("luns") or 0), "size": int(e.get("size") or 0), "used": int(e.get("used") or 0),
                      "aggr": e.get("aggr") or "", "aggr_free": int(e.get("aggr_free") or 0), "datastore": ds, "ds_kind": f.get("kind") or "",
-                     "full_size": int(fsize), "full_used": int(fused), "full_src": src, "thick": bool(e.get("lun_thick")),
+                     "full_size": int(fsize), "full_used": None if fused is None else int(fused), "full_src": src if fused is not None else "unknown",
+                     "thick": bool(e.get("lun_thick")),
                      "uid": e.get("lun_uuid") or e.get("uuid") or "",
                      "offered": bool(t), "why": "" if t else "not in the survey's list (ontap_expand_max_choices)", "choice": t, "root": False})
     for x in lst.get("excluded") or []:
@@ -320,7 +321,8 @@ def ontap_live_payload(r):
                      "uid": x.get("uuid") or "",
                      "why": x.get("why") or "", "choice": "", "root": bool(x.get("root"))})
     aggrs = [{"address": a.get("address") or "", "cluster": a.get("cluster") or "", "name": a.get("name") or "", "node": a.get("node") or "",
-              "size": int(a.get("size") or 0), "used": int(a.get("used") or 0)} for a in lst.get("aggregates") or []]
+              "size": int(a.get("size") or 0), "used": None if a.get("used") is None else int(a["used"])}       # 1.129.0: not read = unknown, never 0
+             for a in lst.get("aggregates") or []]
     clusters = [{"address": c.get("address"), "name": c.get("name"), "error": c.get("error") or ""} for c in lst.get("clusters") or []]
     not_read = ["%s: %s" % (c["address"], c["error"]) for c in clusters if c["error"]]
     parts = {}

@@ -122,26 +122,30 @@ def model(run, vrows, arows, prow):
             roots += 1
             continue
         # 1.127.1: every volume and LUN the list read is on the page, however small (ontap_volume_min_gb is the health report's)
+        unknown = fsrc == "unknown"            # 1.129.0: a LUN whose use was not read - unknown, never the volume's numbers
         fsize, fused = int(fsize or size or 0), int(fused if fused is not None else used or 0)
         lname = (lun or "").rsplit("/", 1)[-1]
         pct = round(100.0 * fused / fsize, 1) if fsize else 0.0
         vols.append({"k": "%s|%s|%s|%s" % (str(addr).lower(), svm, vol, lun or ""), "addr": addr, "c": cl, "svm": svm, "v": vol, "lun": lname,
                      "name": vol + (("/" + lname) if lun and int(luns or 0) > 1 else ""), "luns": int(luns or 0), "aggr": aggr,
                      "aggr_free": int(afree or 0), "ds": ds or "", "kind": kind or "", "thick": bool(int(thick or 0)),
-                     "vol_size": int(size or 0), "size": fsize, "used": fused, "pct": pct, "free": max(0, fsize - fused),
-                     "src": SRC_WORD.get(fsrc or "volume", "volume used"),
-                     "full_text": "%s %d%% %s" % ((fsrc or "volume"), int(round(pct)), "written" if fsrc == "LUN" else "used"),
-                     "g": _f(g), "days": _f(days), "rate_why": rwhy or "", "st": st or "ok", "offered": bool(int(offered or 0)) and bool(choice),
+                     "vol_size": int(size or 0), "size": fsize, "used": None if unknown else fused, "pct": None if unknown else pct,
+                     "free": None if unknown else max(0, fsize - fused),
+                     "src": "LUN use unknown" if unknown else SRC_WORD.get(fsrc or "volume", "volume used"),
+                     "full_text": "LUN use unknown" if unknown else "%s %d%% %s" % ((fsrc or "volume"), int(round(pct)), "written" if fsrc == "LUN" else "used"),
+                     "g": _f(g), "days": _f(days), "rate_why": rwhy or "", "st": "unknown" if unknown else (st or "ok"), "offered": bool(int(offered or 0)) and bool(choice),
                      "why": why or "", "choice": choice or ""})
     # (user 1.127.0) the ones on a VMware datastore first, then the rest; each least free first (the fullness of the list:
     # datastore, else LUN written, else volume); ties by name
-    vols.sort(key=lambda v: (0 if v["ds"] else 1, -(float(v["used"]) / v["size"] if v["size"] else 0.0), v["name"]))
+    vols.sort(key=lambda v: (0 if v["ds"] else 1, -(2.0 if v["used"] is None else float(v["used"]) / v["size"] if v["size"] else 0.0), v["name"]))
     aggrs = []
     for (addr, name, cl, node, size, used, g, dlim, dfull, rwhy, st) in arows:
         size, used = int(size or 0), int(used or 0)
-        aggrs.append({"addr": addr, "a": name, "c": cl, "node": node, "size": size, "used": used, "pct": round(100.0 * used / size, 1) if size else 0.0,
-                      "free": size - used, "g": _f(g), "d97": _f(dlim), "full": _f(dfull), "rate_why": rwhy or "", "st": st or "ok"})
-    aggrs.sort(key=lambda a: (RANK.get(a["st"], 4), a["d97"] if a["d97"] is not None else 1e12, -a["pct"], a["a"]))
+        known = size > 0                       # 1.129.0: size 0 = its use was not read (the writer's mark): unknown, never 0 %
+        aggrs.append({"addr": addr, "a": name, "c": cl, "node": node, "size": size, "used": used if known else None,
+                      "pct": round(100.0 * used / size, 1) if known else None, "free": size - used if known else None, "g": _f(g), "d97": _f(dlim),
+                      "full": _f(dfull), "rate_why": rwhy or "", "st": (st or "ok") if known else "unknown"})
+    aggrs.sort(key=lambda a: (RANK.get(a["st"], 4), a["d97"] if a["d97"] is not None else 1e12, -(a["pct"] if a["pct"] is not None else 101), a["a"]))
     parts = {}
     for name, body in prow:
         if name in PARTS:

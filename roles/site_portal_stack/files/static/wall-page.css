@@ -792,3 +792,6 @@ body.kiosk .dsc .kxh{display:none}
 .sM .empty.nocur b{color:var(--muted)}
 .sK .now.nocur{background:var(--card-strong);border-bottom-color:var(--edge)}
 .sK .now.nocur .lab{color:var(--muted)}
+.sK .now.warnonly{background:var(--warning-bg);border-bottom-color:var(--warning-bd)}
+.sK .now.warnonly .lab{color:var(--warning)}
+.sM .tlempty.nocur b{color:var(--muted)}

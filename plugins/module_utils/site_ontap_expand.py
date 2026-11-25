@@ -137,9 +137,9 @@ def choice_text(e, show_cluster=False):
     # (user) a LUN volume is judged by its LUN: the size and the free space shown are the LUN's (or its datastore's, lun_fullness)
     # - display only: the key (sizes the expand job plans with) is unchanged
     fsize, fused, _src = lun_fullness(e)
-    return "%s (%s) - %s%s, %d%% free%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
+    return "%s (%s) - %s%s, %s%s [vol|%s|%s|%s|%s|%d|%s|%s|%s]" % (
         name, e["svm"] + ((", " + e["cluster"]) if show_cluster else ""), "LUN " if e.get("lun") else "", human(fsize),
-        max(0, 100 - int(round(pct(fused, fsize)))),
+        "use unknown" if fused is None else "%d%% free" % max(0, 100 - int(round(pct(fused, fsize)))),
         (" [%s]" % what) if what else "", e["address"], e["svm"], e["volume"], e.get("lun") or "", int(e["size"]),
         int(e.get("lun_size") or 0) if e.get("lun") else "", e.get("uuid") or "", e.get("lun_uuid") or "")
 
@@ -257,14 +257,17 @@ def lun_fullness(e):
         if cap and free is not None and int(cap) > 0:
             return int(cap), max(0, int(cap) - int(free)), "datastore"
         size = int(e.get("lun_size") or 0)
-        if size and e.get("lun_used") is not None:            # 1.129.0 review: a LUN's blocks not read are never "0 % written"
-            return size, int(e.get("lun_used")), "LUN"
+        if size:
+            # Codex verify 3: a LUN is judged by its LUN - its blocks not read: the LUN's size, its use unknown (None), never the volume's
+            return size, (None if e.get("lun_used") is None else int(e["lun_used"])), "LUN"
     return int(e.get("size") or 0), int(e.get("used") or 0), "volume"
 
 
 def fullness_text(e):
     """'datastore 82% used' / 'LUN 82% written' / 'volume 82% used'"""
     size, used, src = lun_fullness(e)
+    if used is None:
+        return "%s %s, use unknown" % (src, human(size))
     return "%s %d%% %s" % (src, int(round(pct(used, size))), "written" if src == "LUN" else "used")
 
 

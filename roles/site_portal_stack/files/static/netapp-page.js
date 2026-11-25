@@ -81,7 +81,7 @@
     const vols = m.volumes || [];
     const warn = vols.filter((v) => v.pct >= (o.volume_warn_pct || 85));
     const crit = vols.filter((v) => v.pct >= (o.volume_crit_pct || 90));
-    const least = vols.slice().sort((a, b) => (b.pct - a.pct) || (a.name < b.name ? -1 : 1))[0];
+    const least = vols.filter((v) => v.pct != null).sort((a, b) => (b.pct - a.pct) || (a.name < b.name ? -1 : 1))[0];   // 1.129.0: use unknown is never "least free"
     const t = [];
     const cl = (P.clusters || {}).rows;
     if (cl) {
@@ -217,7 +217,7 @@
         td("nap-wide nap-dscol", v.ds ? [ds(v.ds), sub(v.kind + (v.lun ? (v.thick ? ", thick LUN" : ", thin LUN") : ""))]
           : [el("span", "muted", vcWhy || "no datastore on it"), v.lun ? sub(v.thick ? "thick LUN" : "thin LUN") : null]),
         td("nap-wide mono", v.aggr),
-        (() => { const c = td("num", [fmt(Math.min(100, v.pct), 1), sub(v.src)]); if (v.pct > 100) c.title = fmt(v.pct, 1) + " % (more written than its size: ONTAP counts its metadata)"; return c; })(), td("num", gb(v.free)),
+        (() => { const c = td("num", [v.pct == null ? "?" : fmt(Math.min(100, v.pct), 1), sub(v.src)]); if (v.pct > 100) c.title = fmt(v.pct, 1) + " % (more written than its size: ONTAP counts its metadata)"; return c; })(), td("num", gb(v.free)),
         (() => { const c = td("num", v.g == null ? el("span", "muted", "-") : (v.g > 0 ? "+" : "") + fmt(v.g, 1)); if (v.g == null && v.rate_why) c.title = v.rate_why; return c; })(),
         expandCell(v)]);
     };

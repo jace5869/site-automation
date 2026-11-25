@@ -163,7 +163,10 @@ class Tracker(object):
     def __init__(self, keep=KEEP_CLEARED_S):
         self.keep, self.open, self.cleared = keep, {}, collections.OrderedDict()
 
-    def update(self, conds, now):
+    def update(self, conds, now, observed=None):
+        """observed(c) -> whether this read could have seen c (its source current, its check run, its area read whole): a
+        condition gone from a read that could not see it is NOT cleared - it stays open as last known (Codex verify 3: loss of
+        data is never a recovery)"""
         seen = set()
         for c in conds:
             cid = c["id"]
@@ -175,13 +178,17 @@ class Tracker(object):
             c["start"] = start
             self.open[cid] = dict(c)
             self.cleared.pop(cid, None)
+        kept = []
         for cid in [k for k in self.open if k not in seen]:
+            if observed is not None and not observed(self.open[cid]):
+                kept.append(dict(self.open[cid], last_known=True))   # not seen, not cleared: open, as last known
+                continue
             c = self.open.pop(cid)
             c["end"] = now
             self.cleared[cid] = c
         for cid in [k for k, c in self.cleared.items() if now - c["end"] > self.keep]:
             self.cleared.pop(cid)
-        return conds + [dict(c) for c in self.cleared.values()]
+        return conds + kept + [dict(c) for c in self.cleared.values()]
 
 
 # ---- the model -----------------------------------------------------------------------------------------------------------------
@@ -246,6 +253,8 @@ def vmware_part(view, o, now):
                 conds.append({"id": "maint:%s:%s" % (name, hn), "kind": "maint", "t": "%s in maintenance mode" % hn,
                               "obj": "cluster %s · not listed in portal_wall_maintenance_expected" % (row["cluster"] or "-"), "feed": fk, "vc": name,
                               "host": hn, "cluster": row["cluster"], "site": row["site"]})
+            if h.get("maint") is None and st == "connected":
+                part["incomplete"].append("host %s: maintenance mode not read" % hn)
             if st not in DOWN_STATES + ("connected",):
                 part["incomplete"].append("host %s: state not read" % hn)
             elif st == "connected" and (row["cpu"] is None or row["mem"] is None):
@@ -273,6 +282,9 @@ def vmware_part(view, o, now):
         part["datastores"].extend(dsrows)
         vms = snap.get("vms") or []
         part["vms"] += len(vms)
+        for v in vms:                       # a powered-on VM whose CPU, memory or heartbeat was not read: VMware not whole
+            if v.get("power") == "poweredOn" and (v.get("cpu_pct") is None or v.get("mem_pct") is None or not v.get("heartbeat")):
+                part["incomplete"].append("VM %s: CPU, memory or heartbeat not read" % v.get("name"))
         if o["vm_heartbeat"]:
             for v in vms:
                 if v.get("power") == "poweredOn" and v.get("heartbeat") == "red":
@@ -315,21 +327,84 @@ def gb(b):
     return ("%.1f TB" % (b / 1024 ** 4)) if b >= 1024 ** 4 else ("%.0f GB" % (b / 1024 ** 3))
 
 
+def _addr(x):
+    """a cluster's management address, compared as one: lower case, no brackets, no :443, no trailing dot"""
+    a = str(x or "").strip().lower()
+    if a.endswith(":443"):
+        a = a[:-4]
+    return a.strip("[]").rstrip(".")
+
+
+def _ds_rows(nm, vm, o, feeds, part, conds):
+    """the datastores: the vCenters' (live) - else the NetApp run's datastore rows (then the run is a source of Storage)"""
+    if vm.get("datastores"):
+        part["ds"] = [dict(d) for d in vm["datastores"]]
+        for d in part["ds"]:
+            if d.get("v") is None:
+                part["incomplete"].append("datastore %s: capacity or free space not read" % d["n"])
+        return False
+    if not nm:
+        return False
+    seen = {}
+    for v in nm.get("volumes") or []:
+        if v.get("ds") and v["ds"] not in seen and v.get("src") == "datastore used":
+            seen[v["ds"]] = {"n": v["ds"], "v": v.get("pct"), "free": v.get("free"), "size": v.get("size"), "feed": "ontap", "type": v.get("kind") or "",
+                             "site": v.get("site") or ""}
+    part["ds"] = sorted(seen.values(), key=lambda d: -(d["v"] or 0))
+    for d in part["ds"]:
+        if d["v"] is None:
+            part["incomplete"].append("datastore %s: its fill not in the NetApp run" % d["n"])
+        elif d["v"] >= o["ds_warn"]:
+            conds.append({"id": "ds::%s" % d["n"], "kind": "dsfull" if d["v"] >= o["ds_crit"] else "dswarn", "t": "%s %s %% full" % (d["n"], _n(round(d["v"]))),
+                          "obj": "%s free · warning %s, critical %s" % (gb(d["free"]), _n(o["ds_warn"]), _n(o["ds_crit"])), "feed": "ontap", "ds": d["n"],
+                          "v": d["v"], "site": d["site"]})
+    return bool(part["ds"])
+
+
 def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
-    """the NetApp page's newest run (netapp_live's model) + the vCenters' datastores -> (part, conds, feeds)"""
+    """Storage, ONE SOURCE PER CLUSTER (Codex verify 3): a cluster the portal reads live (portal_wall_ontap_clusters, by its
+    configured address) is shown only from those reads - the NetApp run's rows of that address are not used at all; every other
+    cluster only from the run, matched by its management address. Nothing is matched by name. -> (part, conds, feeds)"""
     conds, feeds = [], {}
-    part = {"configured": bool(nm), "why": why, "incomplete": [], "ran": {"sm": False, "nodes": False}, "clusters": [], "nodes": [0, 0], "volumes": 0, "volOffline": None, "smRel": 0,
-            "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "paths": {}, "source": "report database"}
+    part = {"configured": bool(nm), "why": why, "incomplete": [], "ran": {"sm": False, "nodes": False}, "clusters": [], "nodes": [0, 0], "volumes": 0,
+            "volOffline": None, "smRel": 0, "aggr": [], "ds": [], "dsTotal": 0, "smBroken": [], "paths": {}, "source": "report database"}
     rx = site_rule(o["site_pattern"])
+    srcs = sorted([dict(x, key=k) for k, x in ((view or {}).get("sources") or {}).items() if x.get("kind") == "ontap"], key=lambda x: str(x.get("name")))
+    live_addrs = set(_addr(x.get("name")) for x in srcs)
+    ran = {"sm": [], "nodes": []}                       # each source's own answer: the check ran (True) or not (False)
+    db_used = False
     if nm:
         run = nm.get("run") or {}
         feeds["ontap"] = {"name": "NetApp - refresh volume list (report database)", "asof": nm_asof, "state": "ok" if nm_asof else "never",
                           "why": "", "src": "the refresh job's newest run in the report database (job %s)" % (run.get("job") or "-")}
-        part["clusters"] = sorted(set(str(x.get("c") or "") for x in nm.get("aggrs") or [] if x.get("c")))
+        # a health row names its cluster by its ONTAP name (older runs): its address from the run's own cluster list, only when unique
+        by_name = collections.defaultdict(set)
+        for c in run.get("clusters") or []:
+            if isinstance(c, dict) and c.get("name"):
+                by_name[str(c["name"]).lower()].add(_addr(c.get("address")))
+        no_addr = []
+
+        def addr_of(row, name_key):
+            a = _addr(row.get("addr") or row.get("address"))
+            if a:
+                return a
+            m = by_name.get(str(row.get(name_key) or "").lower()) or set()
+            return next(iter(m)) if len(m) == 1 else None
+
+        def use(a, what):
+            """a run row: used unless its cluster is read live; a row with no address while some cluster is read live: used, said"""
+            if a is None:
+                if live_addrs:
+                    no_addr.append(what)
+                return True
+            return a not in live_addrs
         for a in nm.get("aggrs") or []:
+            if not use(_addr(a.get("addr")) or None, a.get("a")):
+                continue
+            db_used = True
             pct = float(a["pct"]) if a.get("size") and a.get("pct") is not None else None      # not read: unknown
-            r = {"n": a.get("a") or "", "node": a.get("node") or "", "c": a.get("c") or "", "v": pct, "size": int(a.get("size") or 0),
-                 "free": int(a.get("free") or 0), "feed": "ontap", "site": a.get("site") or site_of(rx, a.get("c"))}
+            r = {"n": a.get("a") or "", "node": a.get("node") or "", "c": a.get("c") or "", "addr": _addr(a.get("addr")), "v": pct,
+                 "size": int(a.get("size") or 0), "free": a.get("free"), "feed": "ontap", "site": a.get("site") or site_of(rx, a.get("c"))}
             if pct is None:
                 part["incomplete"].append("aggregate %s: size or use not read" % r["n"])
             elif pct >= o["aggr_warn"]:
@@ -340,142 +415,88 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                               % (gb(r["free"]), r["c"], _n(o["aggr_warn"]), _n(o["aggr_crit"])), "feed": "ontap", "aggr": r["n"], "cluster": r["c"],
                               "v": pct, "site": r["site"]})
             part["aggr"].append(r)
-        part["aggr"].sort(key=lambda a: -(a["v"] if a["v"] is not None else 101))
+            if r["c"] and r["c"] not in part["clusters"]:
+                part["clusters"].append(r["c"])
+        for x in run.get("not_read") or []:                 # "address: why" - a cluster the run could not read
+            ad = _addr(str(x).split(": ", 1)[0])
+            if ad not in live_addrs:
+                db_used = True
+                part["incomplete"].append("the NetApp run did not read %s" % x)
         parts = nm.get("parts") or {}
-        # the health checks run only with ontap_live_health on NetApp - refresh volume list: without them, no "None broken" in green
-        part["ran"] = dict((k, p in parts and isinstance(parts[p], dict) and not (parts[p].get("errors") or []))
-                           for k, p in (("sm", "snapmirror"), ("nodes", "nodes")))
-        sm = parts.get("snapmirror") or {}
-        part["smRel"] = int((sm.get("counts") or {}).get("all") or 0)
-        for r in sm.get("rows") or []:
-            if r.get("st") == "critical":
-                cid = "sm:" + str(r.get("dst"))
-                part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or r.get("word") or "",
-                                         "word": r.get("word") or "", "cond": cid, "c": r.get("dc") or ""})
-                conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), (r.get("word") or "broken").lower()),
-                              "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": "ontap", "cluster": r.get("dc") or "",
-                              "site": r.get("site") or ""})
-        nodes = (parts.get("nodes") or {}).get("rows") or []
-        part["nodes"] = [sum(1 for n in nodes if n.get("state") == "up"), len(nodes)]
-        for n in nodes:
-            if n.get("state") != "up":
-                conds.append({"id": "node:%s:%s" % (n.get("cluster"), n.get("node")), "kind": "node", "t": "Storage node %s %s" % (n.get("node"), n.get("state") or "down"),
-                              "obj": "cluster %s · takeover %s" % (n.get("cluster"), n.get("takeover") or "?"), "feed": "ontap", "cluster": n.get("cluster") or "",
-                              "site": n.get("site") or ""})
+        kept_health = False
+        for key, pname, name_key in (("sm", "snapmirror", "dc"), ("nodes", "nodes", "cluster")):
+            body = parts.get(pname)
+            rows = [r for r in ((body or {}).get("rows") or []) if isinstance(r, dict) and use(addr_of(r, name_key), "%s %s" % (pname, r.get(name_key)))]
+            errs = [e for e in ((body or {}).get("errors") or []) if _addr(str(e).split(": ", 1)[0]) not in live_addrs]
+            run_clusters = [c for c in run.get("clusters") or [] if isinstance(c, dict) and _addr(c.get("address")) not in live_addrs]
+            if not run_clusters and not rows:
+                continue                                   # every cluster of the run is read live: the run says nothing here
+            kept_health = True
+            ran[key].append(isinstance(body, dict) and not errs)
+            if key == "sm":
+                part["smRel"] += len(rows) if isinstance(body, dict) else 0
+                for r in rows:
+                    if r.get("st") == "critical":
+                        cid = "sm:" + str(r.get("dst"))
+                        part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or r.get("word") or "",
+                                                 "word": r.get("word") or "", "cond": cid, "c": r.get("dc") or ""})
+                        conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), (r.get("word") or "broken").lower()),
+                                      "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": "ontap",
+                                      "cluster": r.get("dc") or "", "site": r.get("site") or ""})
+            else:
+                part["nodes"] = [part["nodes"][0] + sum(1 for n in rows if n.get("state") == "up"), part["nodes"][1] + len(rows)]
+                for n in rows:
+                    if n.get("state") != "up":
+                        conds.append({"id": "node:%s:%s" % (n.get("cluster"), n.get("node")), "kind": "node",
+                                      "t": "Storage node %s %s" % (n.get("node"), n.get("state") or "state not read"),
+                                      "obj": "cluster %s · takeover %s" % (n.get("cluster"), n.get("takeover") or "?"), "feed": "ontap",
+                                      "cluster": n.get("cluster") or "", "site": n.get("site") or ""})
         for c in (parts.get("clusters") or {}).get("rows") or []:
-            if str(c.get("why") or "").startswith("not read"):
-                conds.append({"id": "node:%s" % c.get("name"), "kind": "node", "t": "Storage cluster %s not answering" % c.get("name"),
+            if isinstance(c, dict) and str(c.get("why") or "").startswith("not read") and use(addr_of(c, "name"), "cluster %s" % c.get("name")):
+                kept_health = True
+                conds.append({"id": "node:%s" % (addr_of(c, "name") or c.get("name")), "kind": "node", "t": "Storage cluster %s not answering" % c.get("name"),
                               "obj": c.get("why") or "", "feed": "ontap", "cluster": c.get("name") or "", "site": c.get("site") or ""})
+        db_used = db_used or kept_health
+        if no_addr:
+            part["incomplete"].append("%d row(s) of the NetApp run name no cluster address (%s) - run NetApp - refresh volume list once"
+                                      % (len(no_addr), ", ".join(str(x) for x in no_addr[:3])))
         part["volumes"] = len(nm.get("volumes") or [])
         for v in nm.get("volumes") or []:
             if not v.get("ds"):
                 continue
             p = part["paths"].setdefault(v["ds"], {"rows": []})
-            p["rows"].append({"cluster": v.get("c") or "", "svm": v.get("svm") or "", "vol": v.get("v") or "", "lun": v.get("lun") or "",
+            ad = _addr(v.get("addr"))
+            # a cluster read live: the run gives only WHICH volume / LUN is behind the datastore - the numbers come from the live read
+            p["rows"].append({"cluster": v.get("c") or "", "addr": ad, "svm": v.get("svm") or "", "vol": v.get("v") or "", "lun": v.get("lun") or "",
                               "kind": v.get("kind") or "", "size": v.get("size"), "used": v.get("used"), "pct": v.get("pct"), "src": v.get("src") or "",
                               "vol_size": v.get("vol_size"), "aggr": v.get("aggr") or "", "aggr_free": v.get("aggr_free"), "thick": bool(v.get("thick")),
-                              "st": v.get("st") or "ok"})
-    live = ontap_live(view, o, rx, part, conds, feeds)
-    if live and not nm:
-        part["configured"] = True
-    # the datastores: the vCenters' (live) - else the NetApp run's datastore rows
-    if vm.get("datastores"):
-        part["ds"] = [dict(d) for d in vm["datastores"]]
-    elif nm:
-        dbk = "netapp-run" if "netapp-run" in feeds else "ontap"
-        seen = {}
-        for v in nm.get("volumes") or []:
-            if v.get("ds") and v["ds"] not in seen and v.get("src") == "datastore used":
-                seen[v["ds"]] = {"n": v["ds"], "v": v.get("pct"), "free": v.get("free"), "size": v.get("size"), "feed": dbk, "type": v.get("kind") or "",
-                                 "site": v.get("site") or ""}
-        part["ds"] = sorted(seen.values(), key=lambda d: -(d["v"] or 0))
-        for d in part["ds"]:
-            if d["v"] is not None and d["v"] >= o["ds_warn"]:
-                conds.append({"id": "ds::%s" % d["n"], "kind": "dsfull" if d["v"] >= o["ds_crit"] else "dswarn", "t": "%s %s %% full" % (d["n"], _n(round(d["v"]))),
-                              "obj": "%s free · warning %s, critical %s" % (gb(d["free"]), _n(o["ds_warn"]), _n(o["ds_crit"])), "feed": dbk, "ds": d["n"],
-                              "v": d["v"], "site": d["site"]})
-    part["dsTotal"] = len(part["ds"])
-    return part, conds, feeds
-
-
-IP = re.compile(r"^[0-9.]+$|:")
-
-
-def cluster_ids(*names):
-    """Codex verify 1.129.0: one cluster under its names - the management FQDN or address, the short name, the cluster name -
-    as a set of normalized keys (lower case; a host name also as its first label)"""
-    out = set()
-    for n in names:
-        n = str(n or "").strip().lower().strip("[]")
-        if not n:
-            continue
-        out.add(n)
-        if not IP.search(n):
-            out.add(n.split(".", 1)[0])
-    return out
-
-
-def same_cluster(name, live, unique_short):
-    """Codex verify 2: a run's name for a cluster is the live one's only by the exact name or address (normalized), or by the
-    short name when no other known cluster has that short name (array.east and array.west never collide)"""
-    n = str(name or "").strip().lower().strip("[]")
-    if not n:
-        return False
-    if n in live:
-        return True
-    short = n if IP.search(n) else n.split(".", 1)[0]
-    return short in unique_short and any((x if IP.search(x) else x.split(".", 1)[0]) == short for x in live)
-
-
-def ontap_live(view, o, rx, part, conds, feeds):
-    """the live ONTAP reads (wall_live.OntapSource, when the portal has the "NetApp ONTAP" login): they take the place of the
-    NetApp run's aggregates, nodes and SnapMirror for their clusters, and add volumes / LUNs offline. -> True when there is one"""
-    srcs = [dict(s, key=k) for k, s in ((view or {}).get("sources") or {}).items() if s.get("kind") == "ontap"]
-    if not srcs:
-        return False
-    live_cl = set()
-    # every name a cluster is known by (the run's and the live reads'): a short name that two of them share matches neither
-    known = set(str(x or "").strip().lower() for x in part["clusters"] + [c.get("cluster") for c in conds] + [b.get("c") for b in part["smBroken"]]
-                + [x.get("name") for x in srcs] + [(x.get("snap") or {}).get("cluster") for x in srcs] if x)
-    fqdns = collections.defaultdict(set)
-    for k in known:
-        if "." in k and not IP.search(k):
-            fqdns[k.split(".", 1)[0]].add(k)
-    unique_short = set((k if IP.search(k) else k.split(".", 1)[0]) for k in known) - set(sh for sh, fs in fqdns.items() if len(fs) > 1)
-    if any(x.get("snap") for x in srcs):
-        part["nodes"] = [0, 0]                  # the live reads count the nodes and the relationships (the run's count would double them)
-        part["smRel"] = 0
-    if "ontap" in feeds:
-        # the NetApp run stays for the storage path card only: its age never makes the live storage look stale
-        feeds["netapp-run"] = dict(feeds.pop("ontap"), name="NetApp - refresh volume list (report database, the storage paths)")
-        for c in conds:
-            if c.get("feed") == "ontap":
-                c["feed"] = "netapp-run"
-        for a in part["aggr"]:
-            if a.get("feed") == "ontap":
-                a["feed"] = "netapp-run"
-    for src in sorted(srcs, key=lambda x: str(x.get("name"))):
+                              "st": v.get("st") or "ok", "feed": "ontap", "live": ad in live_addrs})
+    live_cl = []
+    for src in srcs:
         fk, snap, state = src["key"], src.get("snap") or {}, src.get("state") or "never"
         cl = str(snap.get("cluster") or src.get("name") or "")
-        feeds[fk] = {"name": "ONTAP " + cl, "asof": src.get("at"), "state": state, "why": src.get("why") or "",
+        feeds[fk] = {"name": "ONTAP " + str(src.get("name") or cl), "asof": src.get("at"), "state": state, "why": src.get("why") or "",
                      "src": "live, read every %d s" % o["seconds"], "fail_since": src.get("fail_since"), "next_try": src.get("next_try")}
-        if state in ("auth", "error"):
-            conds.append({"id": "node:%s" % cl, "kind": "node", "t": "Storage cluster %s %s" % (cl, "login failed" if state == "auth" else "not answering"),
+        if state in ("auth", "error", "paused"):
+            conds.append({"id": "node:%s" % _addr(src.get("name")), "kind": "node",
+                          "t": "Storage cluster %s %s" % (src.get("name"), "login failed" if state == "auth" else "login paused" if state == "paused" else "not answering"),
                           "obj": "login failed - check the credential" if state == "auth" else (src.get("why") or ""), "feed": "", "cluster": cl,
                           "start": src.get("fail_since"), "site": site_of(rx, cl)})
         if not snap:
+            part["incomplete"].append("ONTAP %s: not read yet" % src.get("name"))
+            ran["sm"].append(False)
+            ran["nodes"].append(False)
             continue
-        live_cl.add(cl)
-        live = set(str(x or "").strip().lower().strip("[]") for x in (cl, src.get("name")) if x)
-        same = lambda n: same_cluster(n, live, unique_short)          # noqa: E731
-        part["aggr"] = [a for a in part["aggr"] if not same(a["c"])]
-        # the run's conditions of a cluster read live now are superseded (whatever the run's feed is called by now)
-        conds[:] = [c for c in conds if not (c.get("feed") in ("ontap", "netapp-run") and same(c.get("cluster")))]
-        part["smBroken"] = [b for b in part["smBroken"] if not same(b.get("c"))]
+        live_cl.append(cl)
+        failed = snap.get("failed") or {}
+        for k, why_ in failed.items():
+            part["incomplete"].append("ONTAP %s: %s not read whole (%s)" % (src.get("name"), k, why_))
+        if snap.get("aggrs") is None:
+            part["incomplete"].append("ONTAP %s: aggregates not read" % src.get("name"))
         for a in snap.get("aggrs") or []:
             size_b, used = a.get("size"), a.get("used")
             pct = round(100.0 * used / size_b, 1) if size_b and used is not None else None     # not read: unknown, never 0 %
-            r = {"n": a.get("name") or "", "node": a.get("node") or "", "c": cl, "v": pct, "size": size_b or 0,
+            r = {"n": a.get("name") or "", "node": a.get("node") or "", "c": cl, "addr": _addr(src.get("name")), "v": pct, "size": size_b or 0,
                  "free": max(0, size_b - used) if pct is not None else None, "feed": fk, "site": site_of(rx, cl)}
             if pct is None:
                 part["incomplete"].append("aggregate %s: size or use not read" % r["n"])
@@ -486,40 +507,78 @@ def ontap_live(view, o, rx, part, conds, feeds):
                               "obj": "%s free · cluster %s · warning %s, critical %s" % (gb(r["free"]), cl, _n(o["aggr_warn"]), _n(o["aggr_crit"])),
                               "feed": fk, "aggr": r["n"], "cluster": cl, "v": pct, "site": r["site"]})
             part["aggr"].append(r)
-        nodes = snap.get("nodes") or []
-        for n in nodes:
-            if str(n.get("state") or "") != "up":
+        nodes = snap.get("nodes")
+        ran["nodes"].append(nodes is not None and all(n.get("state") is not None for n in nodes))
+        for n in nodes or []:
+            if n.get("state") is None:
+                part["incomplete"].append("node %s: state not read" % n.get("name"))
+            elif n.get("state") != "up":
                 conds.append({"id": "node:%s:%s" % (cl, n.get("name")), "kind": "node", "t": "Storage node %s %s" % (n.get("name"), n.get("state")),
                               "obj": "cluster %s · takeover %s" % (cl, {True: "possible", False: "not possible"}.get(n.get("takeover"), "?")), "feed": fk,
                               "cluster": cl, "site": site_of(rx, cl)})
-        part["nodes"] = [part["nodes"][0] + sum(1 for n in nodes if n.get("state") == "up"), part["nodes"][1] + len(nodes)]
+        part["nodes"] = [part["nodes"][0] + sum(1 for n in nodes or [] if n.get("state") == "up"), part["nodes"][1] + len(nodes or [])]
         off = 0
-        for v in snap.get("volumes") or []:
-            if str(v.get("state") or "online") != "online":
-                off += 1
-                conds.append({"id": "voloff:%s:%s:%s" % (cl, v.get("svm"), v.get("name")), "kind": "voloff", "t": "Volume %s %s" % (v.get("name"), v.get("state")),
-                              "obj": "SVM %s · cluster %s" % (v.get("svm"), cl), "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
-        for x in snap.get("luns") or []:
-            if str(x.get("state") or "online") != "online":
-                off += 1
-                conds.append({"id": "voloff:%s:%s:%s" % (cl, x.get("svm"), x.get("path")), "kind": "voloff", "t": "LUN %s %s" % (x.get("path"), x.get("state")),
-                              "obj": "SVM %s · volume %s" % (x.get("svm"), x.get("volume")), "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
+        for coll, label in (("volumes", "Volume"), ("luns", "LUN")):
+            if snap.get(coll) is None:
+                part["incomplete"].append("ONTAP %s: %s not read" % (src.get("name"), coll))
+            for v in snap.get(coll) or []:
+                nm_ = v.get("name") if coll == "volumes" else v.get("path")
+                if v.get("state") is None:
+                    part["incomplete"].append("%s %s: state not read" % (label.lower(), nm_))
+                elif v.get("state") != "online":
+                    off += 1
+                    conds.append({"id": "voloff:%s:%s:%s" % (cl, v.get("svm"), nm_), "kind": "voloff", "t": "%s %s %s" % (label, nm_, v.get("state")),
+                                  "obj": "SVM %s · %s" % (v.get("svm"), "cluster " + cl if coll == "volumes" else "volume %s" % v.get("volume")), "feed": fk,
+                                  "cluster": cl, "site": site_of(rx, cl)})
         part["volOffline"] = (part["volOffline"] or 0) + off
-        sm = snap.get("snapmirror") or []
-        part["smRel"] += len(sm)
-        for r in sm:
-            if r.get("healthy") is False or str(r.get("state") or "").replace("-", "_") == "broken_off":
+        sm = snap.get("snapmirror")
+        unknown_sm = [r for r in sm or [] if r.get("healthy") is None and r.get("state") is None]
+        ran["sm"].append(sm is not None and not unknown_sm)
+        for r in unknown_sm:
+            part["incomplete"].append("SnapMirror %s: health and state not read" % r.get("dst"))
+        part["smRel"] += len(sm or [])
+        for r in sm or []:
+            st_ = str(r.get("state") or "").replace("-", "_")
+            if r.get("healthy") is False or st_ == "broken_off":
                 cid = "sm:" + str(r.get("dst"))
-                word = "broken off" if str(r.get("state") or "").replace("-", "_") == "broken_off" else "unhealthy"
+                word = "broken off" if st_ == "broken_off" else "unhealthy"
                 part["smBroken"].append({"dst": r.get("dst") or "", "src": r.get("src") or "", "why": r.get("why") or "", "word": word.capitalize(), "cond": cid, "c": cl})
-                conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), word), "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""),
-                              "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
+                conds.append({"id": cid, "kind": "sm", "t": "SnapMirror %s %s" % (r.get("dst"), word),
+                              "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": fk, "cluster": cl, "site": site_of(rx, cl)})
+        # the storage path rows of this cluster: the numbers of this read
+        vols = dict(((v.get("svm"), v.get("name")), v) for v in snap.get("volumes") or [])
+        luns = dict(((x.get("svm"), x.get("path")), x) for x in snap.get("luns") or [])
+        aggr_by = dict((a["n"], a) for a in part["aggr"] if a.get("feed") == fk)
+        for pth in part["paths"].values():
+            for row in pth["rows"]:
+                if row.get("live") and row["addr"] == _addr(src.get("name")):
+                    v = vols.get((row["svm"], row["vol"])) or {}
+                    lun = luns.get((row["svm"], "/vol/%s/%s" % (row["vol"], row["lun"]))) if row["lun"] else None
+                    base = lun if row["lun"] else v
+                    size_, used_ = (base or {}).get("size"), (base or {}).get("used")
+                    ag = aggr_by.get(row["aggr"]) or {}
+                    row.update(feed=fk, size=size_, used=used_, pct=round(100.0 * used_ / size_, 1) if size_ and used_ is not None else None,
+                               src="LUN written" if row["lun"] else "volume used", vol_size=v.get("size"),
+                               aggr_free=ag.get("free"), cluster=cl)
+    if srcs and "ontap" in feeds and not db_used:
+        # the run is used only for WHICH volume is behind a datastore: its age is said on that card only, never makes Storage stale
+        feeds["netapp-run"] = dict(feeds.pop("ontap"), name="NetApp - refresh volume list (report database, the storage paths)")
+        for pth in part["paths"].values():
+            for row in pth["rows"]:
+                if row.get("feed") == "ontap":
+                    row["feed"] = "netapp-run"
     part["aggr"].sort(key=lambda a: -(a["v"] if a["v"] is not None else 101))
-    if live_cl:
-        part["ran"] = {"sm": True, "nodes": True}            # the live read reads both every time
-    part["clusters"] = sorted(set(part["clusters"]) | live_cl)
-    part["source"] = "live" if live_cl else part["source"]
-    return True
+    part["ran"] = dict((k, bool(v) and all(v)) for k, v in ran.items())
+    if not nm and srcs:
+        part["configured"] = True
+    part["clusters"] = sorted(set(part["clusters"]) | set(live_cl))
+    part["source"] = "live" if live_cl and not db_used else "live and report database" if live_cl else part["source"]
+    if _ds_rows(nm, vm, o, feeds, part, conds) and "netapp-run" in feeds:
+        feeds["ontap"] = feeds.pop("netapp-run")             # the run's datastore rows are on the wall: the run is a source of Storage
+        for d in part["ds"]:
+            d["feed"] = "ontap"
+    part["dsTotal"] = len(part["ds"])
+    return part, conds, feeds
 
 
 def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""):
@@ -531,7 +590,18 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     for c in c1 + c2:
         k = ks[c["kind"]]
         c.update(area=k["area"], sev=k["sev"], end=None)
-    conds = tracker.update(c1 + c2, now) if tracker is not None else [dict(c, start=c.get("start") or now) for c in c1 + c2]
+    # what this read could see: a condition of a source not current, of a check that did not run, or of an area not read whole is
+    # never "cleared" by its absence
+    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= o["stale"]) for k, f in list(f1.items()) + list(f2.items()))
+    whole = {"vmware": not vm["incomplete"], "storage": not st["incomplete"]}
+
+    def observed(c):
+        if c.get("feed") and not cur.get(c["feed"], False):
+            return False
+        if c.get("kind") == "sm" and not st["ran"].get("sm") or c.get("kind") == "node" and not st["ran"].get("nodes"):
+            return False
+        return whole.get(c.get("area"), True)
+    conds = tracker.update(c1 + c2, now, observed) if tracker is not None else [dict(c, start=c.get("start") or now) for c in c1 + c2]
     # a datastore / aggregate row points at its condition
     by = {}
     for c in conds:
