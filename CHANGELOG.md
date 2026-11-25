@@ -14,6 +14,21 @@ deploy*. The wall is on by default (`portal_wall: true`); its tab is named by `p
 (auto | true | false). Feedback: `portal_wall_feedback` (true), `portal_wall_feedback_groups` ([] = everyone who opens
 the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); the list is at `<portal>/wall/feedback`.
 
+- **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
+  amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
+  before acting."
+- **Storage on the wall is live ONTAP only** (`portal_wall_ontap_clusters`): without it Storage is "not on the wall yet".
+  The report database's NetApp refresh (15-30 min old by design) never lights anything; it fills only the storage path
+  card, as information with its age in words.
+- **Green only from an allow-list, alerts clear only when seen OK:** a host is OK only "connected" with its maintenance
+  mode known, a heartbeat only "green", a datastore only "accessible", SnapMirror only healthy and snapmirrored /
+  in_sync, a volume or LUN only "online" - anything else is unknown (grey). An alert whose object is gone from the read
+  or became unknown stays open as "last known" (grey, last seen HH:MM), never "cleared".
+- **Login back-off, serialised and write-ahead:** one collector thread reads every source in turn; the attempt is on
+  disk before any login; any outcome but a login that worked (a refusal, a timeout, a lost or broken answer) holds the
+  account one full window from that outcome, on the monotonic clock (a clock step never shortens it, a restart keeps it);
+  each ONTAP GET counts as a login (its password goes with every GET) and the poll stops at its first failed GET; a vCenter
+  re-login after a session expired goes through the same gate; an unusable back-off file holds every account one window.
 - **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
   default), Map - kept per viewer; `?style=`, `?area=`, `?kiosk=1`, Rotate (styles or areas, 30 / 60 / 120 s, pauses on
   input, starts again after 60 s idle). VMware and Storage are on the wall; VDI, Active Directory, Outages & problems

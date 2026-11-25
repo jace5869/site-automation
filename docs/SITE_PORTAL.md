@@ -1047,8 +1047,11 @@ condition needs the full window again).
   those jobs too. **One collector thread reads every source in turn** (never two at once). Any outcome of a login other
   than "it worked" - a refusal, a timeout or an answer lost after the request left - stops every source of that account
   at once (STALE, "login failed - check the credential") for `portal_wall_auth_retry_minutes` (15), counted from that
-  outcome. ONTAP's basic authentication sends the password with every GET: each GET counts as a login, and an HTTP 401 on
-  any of them is a refusal. A vCenter whose session expired logs in again through the same gate. A source that could not
+  outcome. ONTAP's basic authentication sends the password with every GET: each GET counts as a login, an HTTP 401 on
+  any of them is a refusal, and a poll stops at its first failed GET (before any 200 in that poll: held one window; after
+  one: a plain source error, tried again the next cycle). A vCenter login counts as working only on a whole answer (its
+  session key and cookie). The window runs on the monotonic clock - a clock step never shortens it - and the file keeps
+  the boot id, so a restart keeps the exact window (after a reboot: at most one window). A vCenter whose session expired logs in again through the same gate. A source that could not
   even be reached (no connection: nothing was sent) is tried again the next cycle. One log line per episode.
 - **One account, one back-off:** every source that uses the same account shares it - all the vCenters of
   `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
