@@ -63,7 +63,7 @@
 ## The report's top changed packages
 # sw_inventory_report_top: 15
 
-## Seconds rpm and dnf may take on a host
+## Seconds rpm may take on a host
 # sw_inventory_read_timeout: 120
 
 ## true = the job fails at its end when an export, the share copy, the website or the email failed

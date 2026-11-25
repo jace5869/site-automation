@@ -2479,7 +2479,7 @@ File: `roles/stigman_update/defaults/main.yml`
 
 File: `roles/sw_inventory/defaults/main.yml`
 
-> LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm and, from the host's own dnf records (never a repository), the repository it came from. Read-only on the hosts. Run it nightly (02:00). Each export is written on its own: one that fails says which, why (an SA-SWI code) and the fix; the others are still written.
+> LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm. Hands-off: rpm -qa as the login account, nothing written on the hosts. Run it nightly (02:00). Each export is written on its own: one that fails says which, why (an SA-SWI code) and the fix; the others are still written.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -2495,7 +2495,7 @@ File: `roles/sw_inventory/defaults/main.yml`
 | `sw_inventory_email_max_mb` | `10` | The CSV, the JSON and the shield zip each at most (MB): one bigger is left off and the email says where it is. The workbook always goes (its Packages sheet stops at sw_inventory_xlsx_max_rows) |
 | `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most this many rows (0 = all); the CSV has them all |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
-| `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |
+| `sw_inventory_read_timeout` | `120` | Seconds rpm may take on a host |
 | `sw_inventory_fail_on_output_error` | `true` | true = the job fails at its end when an export, the share copy, the website or the email failed (after the rest) |
 
 ## tenable_scan

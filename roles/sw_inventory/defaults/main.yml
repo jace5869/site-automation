@@ -1,8 +1,7 @@
 ---
 # LINUX SOFTWARE INVENTORY (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md): every installed RPM package
-# of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm and, from the
-# host's own dnf records (never a repository), the repository it came from. Read-only on the hosts. Run it nightly
-# (02:00). Each export is written on its own: one that fails says which, why (an SA-SWI code) and the fix; the others
+# of the Linux hosts of the Limit - name, epoch, version, release, arch, vendor, install time, source rpm. Hands-off:
+# rpm -qa as the login account, nothing written on the hosts. Run it nightly (02:00). Each export is written on its own: one that fails says which, why (an SA-SWI code) and the fix; the others
 # are still written.
 
 # The exports: shield (a text file per host), csv, json (one file per run and a latest one)
@@ -46,7 +45,7 @@ sw_inventory_xlsx_max_rows: 20000
 # The report's top changed packages
 sw_inventory_report_top: 15
 
-# Seconds rpm and dnf may take on a host
+# Seconds rpm may take on a host
 sw_inventory_read_timeout: 120
 
 # true = the job fails at its end when an export, the share copy, the website or the email failed (after the rest)

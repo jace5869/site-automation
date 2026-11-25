@@ -18,7 +18,7 @@ file share, and with the report email.
    ```
 
 3. For the email: `report_email_to`, as for the other reports.
-4. Launch it with Job type **Check** (reads the hosts, logs in to the share and looks at its folder, writes nothing),
+4. Launch it with Job type **Check** (nothing runs on the hosts; it logs in to the share and looks at its folder, writes nothing),
    then **Run**. Schedule it **nightly at 02:00** with your Limit.
 
 Success looks like this at the end of the job output:
@@ -32,14 +32,13 @@ share: 8 files in \\fileserver.corp.example.mil\it\inventory\linux
 
 ## What it reads
 
-One read-only script per host (`roles/sw_inventory/files/sw_read.sh`), sent to its shell; no file is left there.
+One script per host (`roles/sw_inventory/files/sw_read.sh`), sent to its shell as the login account - no sudo, no
+Python, no file staged, nothing written on the host. In **Check** nothing runs on the hosts at all.
 
 - Every installed package from `rpm -qa`: name, epoch, version, release, arch, vendor, install time, source RPM.
   Every installed instance is kept (several kernels, `i686` and `x86_64`).
-- The repository each came from: `dnf repoquery --installed -C --noplugins --disablerepo='*'` - dnf's own records,
-  no repository and no subscription service contacted (dnf adds a line to its own log). A busy dnf, or a host
-  without dnf, gives an empty repo column, never a failure.
 - The OS (`rhel 9.4`) and the running kernel.
+- The `repo` column stays empty in 1.133.0: dnf writes its own log even reading from its cache, so it is not run.
 - A read with a row it cannot parse is not used: the host is listed as not read, its last files stay.
 
 ## The exports
@@ -138,7 +137,7 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | `sw_inventory_email_max_mb` | `10` | The CSV, the JSON and the shield zip each at most (the workbook always goes) |
 | `sw_inventory_xlsx_max_rows` | `20000` | The workbook's Packages sheet at most (the CSV has all) |
 | `sw_inventory_report_top` | `15` | The report's top changed packages |
-| `sw_inventory_read_timeout` | `120` | Seconds rpm and dnf may take on a host |
+| `sw_inventory_read_timeout` | `120` | Seconds rpm may take on a host |
 | `sw_inventory_fail_on_output_error` | `true` | The job fails at its end when an export, the share, the website or the email failed |
 
 ## When something fails
@@ -160,6 +159,8 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | SA-SWI-31 | `sw_inventory_dir` cannot be written | a folder the job's user may write |
 | SA-SWI-32 | the state file cannot be read (no access, an I/O error) | read access for the job's user; it is left as it is |
 | SA-SWI-33 | the state file cannot be written | write access for the job's user |
+| SA-SWI-34 | a folder under `sw_inventory_dir` or a mounted share is a link that leads outside it | a real folder: nothing is written or deleted through a link |
 
-A host that cannot be reached is listed with the reason and never fails the job (`site_unreachable_fails: true`
-fails it). The report goes out even when no host was reached.
+A host that cannot be reached is listed with a reason in plain words (never the connection's own text) and never fails
+the job; `site_unreachable_fails: true` fails it after the report has gone. The report goes out even when no host was
+reached.

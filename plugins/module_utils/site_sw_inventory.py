@@ -112,8 +112,6 @@ def parse_read(text):
     if out["repo_rc"] not in (None, 0):
         out["repo_note"] = ("%s gave no repositories (exit %s: no local cache, or dnf busy) - the repo column is empty"
                             % (out["repo_tool"] or "dnf", out["repo_rc"]))
-    elif out["repo_tool"] == "none":
-        out["repo_note"] = "no dnf or repoquery on the host - the repo column is empty"
     return out
 
 

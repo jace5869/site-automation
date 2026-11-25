@@ -8,8 +8,9 @@ Run it with Check, then schedule it nightly at 02:00 with your Limit.
 
 - **New: Linux - software inventory** (`playbooks/linux_sw_inventory.yml`,
   [docs/LINUX_SW_INVENTORY.md](docs/LINUX_SW_INVENTORY.md)): every installed RPM package of the RHEL hosts (name, epoch,
-  version, release, arch, vendor, install time, source RPM; the repository from dnf's own records with `--noplugins -C
-  --disablerepo='*'`). Read-only; the script goes to the host's shell on its input, no file left there.
+  version, release, arch, vendor, install time, source RPM). Hands-off: `rpm -qa` as the login account (no sudo, no
+  Python, no file staged, nothing written on the host); in Check nothing runs on the hosts. The `repo` column stays
+  empty (dnf writes its own log, so it is not run).
 - **Three exports** (`sw_inventory_outputs`, default `[shield, csv, json]`): a text file per host (`<short name>.txt`,
   `#shield-host v1`, TAB rows sorted by name then version, every kernel kept), a CSV and a JSON (one per run and a
   latest one). Copied to a Windows file share over SMB (`sw_inventory_share`, Kerberos as the report website's share),
@@ -19,7 +20,7 @@ Run it with Check, then schedule it nightly at 02:00 with your Limit.
   not read, outputs not written, *Software changes (last night)*, top changed packages; a workbook.
 - **Each export, the share, the website and the email on its own**: one that fails says why (codes SA-SWI-01 to 31) and
   the fix, the rest still goes; the job fails at its end (`sw_inventory_fail_on_output_error`). A host not reached is
-  listed; the report goes out even when no host was reached.
+  listed with a reason in plain words; the report goes out even when no host was reached.
 - Tests: `tests/test_sw_inventory.py`; `tests/swinv/run_sw_inventory_test.sh` (UBI 8, 9, 10 over podman, both
   ansible-core versions).
 

@@ -275,7 +275,7 @@ class ModuleBase(unittest.TestCase):
                                             {"host": "win01.corp.example.mil", "skipped": True}],
                  read_at="2026-11-25T02:00:05Z", job=77, outputs=["shield", "csv"],
                  dir=os.path.join(self.tmp, "out"), shield_subdir="shield", share="", share_subdir="", share_auth="negotiate",
-                 share_encrypt=False, share_port=445, keep_days=90, xlsx_max_rows=20000,
+                 share_encrypt=False, share_port=445, keep_days=90, xlsx_max_rows=20000, share_refused=False,
                  email_max_mb=10.0, top=15)
         p.update(kw)
         return p
@@ -634,6 +634,65 @@ class ReviewFixes2(ModuleBase):
             t = text(os.path.join(ROOT, f)).lower()
             self.assertNotIn("database", t.replace("rpm database", ""), f)
             self.assertNotIn("sql", t, f)
+
+
+class ReviewFixes3(ModuleBase):
+    """1.133.0 review pass 2, items 1-11 (Codex)."""
+
+    def test_r3_01_a_refused_share_address_is_never_handed_on_or_shown(self):
+        res = mod.run(self.params(share="", share_refused=True))
+        self.assertEqual(self.state(res, "share")["code"], "SA-SWI-20")
+        res = mod.run(self.params(share="relative/Secret-Value/folder"))
+        self.assertEqual(self.state(res, "share")["code"], "SA-SWI-30")
+        self.assertNotIn("Secret-Value", json.dumps(res))
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        self.assertIn("share: \"{{ '' if (sw_inventory_share | default('', true)) is search('@')", task)
+
+    def test_r3_03_a_linked_sub_folder_is_never_written_through(self):
+        out, elsewhere = os.path.join(self.tmp, "out"), os.path.join(self.tmp, "elsewhere")
+        os.makedirs(out)
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(out, "shield"))
+        res = mod.run(self.params(outputs=["shield", "csv"]))
+        self.assertEqual((self.state(res, "shield")["state"], self.state(res, "shield")["code"]), ("failed", "SA-SWI-34"))
+        self.assertEqual(self.state(res, "csv")["state"], "ok")
+        self.assertEqual(os.listdir(elsewhere), [])
+        victim = os.path.join(elsewhere, "sw-inventory-20200101-0200.csv")
+        open(victim, "w").close()
+        os.symlink(victim, os.path.join(out, "sw-inventory-20200101-0201.csv"))
+        self.assertFalse(mod.LocalFolder(out).remove("sw-inventory-20200101-0201.csv"))
+        self.assertTrue(os.path.exists(victim))
+
+    def test_r3_05_the_read_runs_rpm_only(self):
+        script = text(os.path.join(ROOT, "roles", "sw_inventory", "files", "sw_read.sh"))
+        code = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+        for word in ("dnf ", "yum", "repoquery", "sudo", "> /", ">/var", "mktemp", "touch "):
+            self.assertNotIn(word, code)
+        self.assertIn("rpm -qa", code)
+        play = text(os.path.join(ROOT, "playbooks", "linux_sw_inventory.yml"))
+        self.assertIn("become: false", play)
+        read = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "read.yml"))
+        self.assertNotIn("check_mode: false", read)                  # Check runs nothing on the hosts
+        self.assertIn("not ansible_check_mode", read)
+
+    def test_r3_09_one_shield_file_that_fails_never_stops_the_next(self):
+        out = os.path.join(self.tmp, "out")
+        os.makedirs(os.path.join(out, "shield", "rhel-app01.txt"))          # a folder where the file goes
+        res = mod.run(self.params(outputs=["shield"]))
+        s = self.state(res, "shield")
+        self.assertEqual(s["state"], "failed")
+        self.assertIn("1 of 2 files not written", s["error"])
+        self.assertTrue(os.path.isfile(os.path.join(out, "shield", "rhel-db01.txt")))
+
+    def test_r3_11_the_email_names_only_where_a_file_really_is(self):
+        out = os.path.join(self.tmp, "out")
+        os.makedirs(os.path.join(out, "sw-inventory-20261125-020005-job77.csv"))   # the run's CSV cannot be written there
+        res = mod.run(self.params(outputs=["csv", "json"], email_max_mb=0.000001))
+        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
+        csv_note = [n for n in notes if n.startswith("sw-inventory-20261125-020005-job77.csv")][0]
+        json_note = [n for n in notes if n.startswith("sw-inventory-20261125-020005-job77.json")][0]
+        self.assertTrue(json_note.endswith("- it is in %s on the execution node" % out), json_note)
+        self.assertIn("not kept anywhere else (its copy failed", csv_note)
 
 
 class Catalog(unittest.TestCase):

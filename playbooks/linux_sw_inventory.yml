@@ -1,7 +1,7 @@
 ---
 # LINUX - SOFTWARE INVENTORY. Every installed RPM package of the Linux hosts of the Limit (target, default all): name,
-# epoch, version, release, arch, vendor, install time, source rpm, and the repository it came from (dnf's own records
-# only - no repository contacted). Read-only on the hosts. Run it nightly (02:00). Three exports (sw_inventory_outputs):
+# epoch, version, release, arch, vendor, install time, source rpm. Hands-off: rpm -qa as the login account, nothing
+# written on the hosts; Check runs nothing there. Run it nightly (02:00). Three exports (sw_inventory_outputs):
 # a text file per host (shield), a CSV and a JSON - in sw_inventory_dir, on a Windows file share (sw_inventory_share)
 # and with the report email; what changed since the last run. Each export on its own: one that fails says why and the
 # fix, the others still go. A host that cannot be reached is listed with the reason; the report goes out even when no
@@ -14,7 +14,7 @@
 
 - name: Linux - software inventory
   hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
-  become: true
+  become: false                         # hands-off: rpm -qa needs no root (and never sudo's log)
   gather_facts: false
   vars:
     site_report_title: Linux software inventory
@@ -28,7 +28,7 @@
       ansible.builtin.tempfile:
         state: directory
         prefix: sw-inventory-
-      register: _sw_work
+      register: _sw_work_made           # the only folder the cleanup ever deletes (never a variable one could set)
       delegate_to: localhost
       run_once: true
       become: false
@@ -36,7 +36,7 @@
 
     - name: The hosts of this run, that folder, the time
       ansible.builtin.set_fact:
-        _sw_work_path: "{{ _sw_work.path }}"
+        _sw_work_path: "{{ _sw_work_made.path }}"
         _sw_targets: "{{ ansible_play_hosts_all }}"
         _sw_read_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
       run_once: true

@@ -2,12 +2,13 @@
 # The Linux software inventory (playbooks/linux_sw_inventory.yml) on UBI 8, 9 and 10 containers over the podman
 # connection, with one host that cannot be reached (192.0.2.1, TEST-NET: no answer):
 #   0. only the unreachable host: the report still goes, the job stays green;
+#   0b. the same with site_unreachable_fails: the report first, then the job fails;
 #   1. the default exports (shield, csv, json) here and on a "share" folder, the unreachable host listed with why;
 #   1b. a share folder that is not there: SA-SWI-28 and the fix, the files still written here, the job fails at its end;
 #   2. which removed on the UBI 9 host: the second run's change list says so (removed);
 #   2b. the email (a fake relay): the CSV, the JSON and the shield zip; each over sw_inventory_email_max_mb left off;
 #   2c. the website and the email on their own: no sender set - the website written, the email said failed;
-#   3. Check: nothing new written.
+#   3. Check: nothing runs on the hosts, nothing new written.
 #   bash tests/swinv/run_sw_inventory_test.sh
 # Needs: podman (CONTAINER_ENGINE), registry.access.redhat.com/ubi{8,9,10}/ubi, the containers.podman collection
 # (SWINV_TEST_COLLECTIONS, else installed into a temporary folder from tests/patch/requirements.yml).
@@ -67,7 +68,13 @@ has() { if grep -q -F -- "$2" "$work/run.txt"; then echo "ok   - $1"; else echo 
 play --limit 'gone01*'; rc=$?
 check "run 0 (no host reached): green" "$rc" 0
 has "run 0: the report" "Software inventory: 0 hosts"
-has "run 0: why" "NOT REACHED"
+has "run 0: why, in fixed words" "NOT REACHED - the connection timed out"
+
+# 0b. site_unreachable_fails: the report first, then the job fails
+play --limit 'gone01*' -e site_unreachable_fails=true; rc=$?
+check "run 0b (site_unreachable_fails): the job fails" "$([ $rc -ne 0 ] && echo failed)" failed
+has "run 0b: the report went first" "Software inventory: 0 hosts"
+has "run 0b: then the failure" "(site_unreachable_fails: true)"
 
 # 1. the first run
 play; rc=$?
@@ -88,7 +95,7 @@ check "run 1: shield row count = rpm -qa" "$(($(wc -l < "$out/shield/rhel8-app01
 check "run 1: no blank line, a newline at the end" "$(grep -c '^$' "$out/shield/rhel10-app01.txt"; tail -c 1 "$out/shield/rhel10-app01.txt" | od -An -c | tr -d ' ')" "0
 \n"
 check "run 1: csv header" "$(head -n 1 "$out/sw-inventory-latest.csv" | tr -d '\r')" "host,os,kernel,read_at,name,epoch,version,release,arch,vendor,installed_at,repo,source_rpm"
-check "run 1: repo known from dnf's cache-only records" "$(grep -c ',rhel-9-for-x86_64-baseos-rpms,' "$out/sw-inventory-latest.csv" | awk '$1 > 10 {print "yes"}')" yes
+check "run 1: no repository lookup (hands-off): the repo column empty" "$(python3 -c 'import csv,sys; print(sorted(set(r["repo"] for r in csv.DictReader(open(sys.argv[1])))))' "$out/sw-inventory-latest.csv")" "['']"
 check "run 1: json hosts" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["hosts"]), [x["host"] for x in d["not_read"]])' "$out/sw-inventory-latest.json")" \
       "3 ['gone01.example.mil']"
 
@@ -145,6 +152,7 @@ play --check --limit 'rhel*'; rc=$?
 check "run 3 (Check): green" "$rc" 0
 check "run 3 (Check): nothing written" "$(find "$out" "$share" -type f -newer "$work/mark" | wc -l)" 0
 has "run 3 (Check): says check mode" "check mode"
+has "run 3 (Check): nothing ran on the hosts" "Check mode: not read (nothing runs on the hosts in Check)"
 
 if [ $fails -ne 0 ]; then echo "$fails FAILED (the last run's output: $work/run.txt)"; tail -n 60 "$work/run.txt"; exit 1; fi
 echo "all passed"

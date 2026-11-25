@@ -36,6 +36,7 @@ options:
   shield_subdir: {description: The shield files' folder under dir and under the share's folder., type: str, default: shield}
   share: {description: "A Windows file share's folder (\\\\server\\share\\folder) or a mounted folder the files are copied to ('' = none).", type: str, default: ''}
   share_subdir: {description: A folder under the share's folder for them ('' = the share's folder itself)., type: str, default: ''}
+  share_refused: {description: "The share address had a user or password in it: refused (the task never hands it on).", type: bool, default: false}
   share_auth: {description: "negotiate, kerberos or ntlm.", type: str, default: negotiate}
   share_encrypt: {description: SMB 3 encryption always., type: bool, default: false}
   share_port: {description: SMB's port., type: int, default: 445}
@@ -242,10 +243,11 @@ class SmbFolder(object):
 class LocalFolder(object):
     """A folder here: the files' dir (made), or a share mounted on the execution node (must be there, Check too)."""
 
-    def __init__(self, root, make=True, check=False):
+    def __init__(self, root, make=True, check=False, what="sw_inventory_dir"):
         self.root = root
-        if not os.path.isabs(root):
-            raise Fail("SA-SWI-30", "%s is not an absolute path" % root, "give the full path (/var/lib/...)")
+        if not os.path.isabs(root):             # the value never repeated (a share address could carry a login)
+            raise Fail("SA-SWI-30", "%s is neither an absolute path nor \\\\server\\share\\folder" % what,
+                       "give the full path (/var/lib/...), or the share as \\\\fileserver.yourdomain.mil\\share\\folder")
         if not make:
             if not os.path.isdir(root):
                 raise Fail("SA-SWI-28", "the folder %s is not there" % root, "make it once by hand, or mount the share")
@@ -258,6 +260,16 @@ class LocalFolder(object):
 
     def path(self, rel):
         return os.path.join(self.root, *rel.split("/")) if rel else self.root
+
+    def inside(self, p):
+        """p's folder, links resolved, is the root's or under it: a linked sub folder (shield -> /etc) is refused."""
+        base = os.path.realpath(self.root)
+        real = os.path.realpath(os.path.dirname(p))
+        if real != base and not real.startswith(base + os.sep):
+            raise Fail("SA-SWI-34", "%s leads outside %s (a link) - nothing written or deleted there" % (os.path.dirname(p), self.root),
+                       "remove the link, or make it a real folder")
+        if os.path.islink(p):
+            raise Fail("SA-SWI-34", "%s is a link - not written over, not deleted" % p, "remove the link")
 
     def read(self, rel):
         """The file, None when it is not there; any other error raises (a baseline never taken for missing)."""
@@ -275,6 +287,7 @@ class LocalFolder(object):
         tmp = None
         try:
             os.makedirs(os.path.dirname(p), exist_ok=True)
+            self.inside(p)
             fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(p) + ".", suffix=".tmp", dir=os.path.dirname(p))
             with os.fdopen(fd, "wb") as f:      # made new (O_EXCL): never through a link someone put there
                 f.write(body)
@@ -297,9 +310,10 @@ class LocalFolder(object):
 
     def remove(self, rel):
         try:
+            self.inside(self.path(rel))
             os.remove(self.path(rel))
             return True
-        except OSError:
+        except (OSError, Fail):
             return False
 
     def close(self):
@@ -423,13 +437,16 @@ def run(p, check=False, warn=lambda m: None):
             for o in want:
                 said(o, "failed", code=e.code, error=e.what, fix=e.fix)
             file_outs = []
+    if p.get("share_refused") and want:
+        said("share", "failed", code="SA-SWI-20", error="sw_inventory_share has a user or password in it (user@server) - not used, not shown",
+             fix="write only \\\\fileserver.yourdomain.mil\\share\\folder; the login comes from the Windows file share credential")
     if p["share"] and want:
         try:
             share_sub = safe_sub(p["share_subdir"], "sw_inventory_share_subdir")
             if smb_path(p["share"]):
                 share = SmbFolder(p["share"], p["share_auth"], p["share_encrypt"], p["share_port"])
             else:
-                share = LocalFolder(p["share"], make=False, check=check)
+                share = LocalFolder(p["share"], make=False, check=check, what="sw_inventory_share")
         except Fail as e:
             said("share", "failed", code=e.code, error=e.what, fix=e.fix)
             share = None
@@ -482,6 +499,7 @@ def run(p, check=False, warn=lambda m: None):
     if want and ok and state_ok:                # every host's last list: a host not read this run keeps its own
         files["state"] = [{"rel": STATE, "body": json.dumps(sw.state_merge(state_doc, ok), separators=(",", ":")).encode("utf-8")}]
     kept_here = bool(p["dir"])
+    done_here, done_share = set(), set()       # the files really written, here and on the share (the email says where)
     for o in want:
         if o not in file_outs:
             continue
@@ -491,18 +509,27 @@ def run(p, check=False, warn=lambda m: None):
         if check:
             said(o, "ok", where="(check mode: %d files to %s)" % (len(files[o]), local.root))
             continue
-        try:
-            for f in files[o]:
+        failed = []
+        for f in files[o]:                      # each file on its own: one that fails never stops the next
+            try:
                 local.write(f["rel"], f["body"])
-            gone, left = prune_dated(local, "", p["keep_days"], now) if o in ("csv", "json") else (0, [])
+                done_here.add(f["rel"])
+            except Fail as e:
+                failed.append(e)
+        gone, left = prune_dated(local, "", p["keep_days"], now) if o in ("csv", "json") else (0, [])
+        if left:
+            res["lines"].append("%s: %d old dated files could not be deleted in %s: %s" % (o, len(left), local.root, ", ".join(left[:5])))
+        if failed:
+            for e in failed:
+                res["lines"].append("%s: not written - %s %s" % (o, e.code, e.what))
+            more = " and %d more (the job output lists them all)" % (len(failed) - 50) if len(failed) > 50 else ""
+            said(o, "failed", code=failed[0].code, fix=failed[0].fix,
+                 error="%d of %d files not written - %s%s" % (len(failed), len(files[o]), "; ".join(e.what for e in failed[:50]), more))
+        else:
             said(o, "ok", where="%d file%s in %s%s%s" % (
                 len(files[o]), "" if len(files[o]) == 1 else "s", local.root,
                 "" if kept_here else " (the job's own folder: gone after the job)",
                 "; %d old dated files deleted" % gone if gone else ""))
-            if left:
-                res["lines"].append("%s: %d old dated files could not be deleted in %s: %s" % (o, len(left), local.root, ", ".join(left[:5])))
-        except Fail as e:
-            said(o, "failed", code=e.code, error=e.what, fix=e.fix)
     if files["state"] and local is not None and file_outs and not check:
         try:
             local.write(STATE, files["state"][0]["body"])
@@ -524,6 +551,7 @@ def run(p, check=False, warn=lambda m: None):
             for f in todo:
                 try:
                     share.write(join(share_sub, f["rel"]), f["body"])
+                    done_share.add(f["rel"])
                 except Fail as e:
                     failed.append(e)
             gone, left = prune_dated(share, share_sub, p["keep_days"], now)
@@ -555,13 +583,17 @@ def run(p, check=False, warn=lambda m: None):
         res["sheets_file"] = os.path.join(work, "sheets.json")
     except (Fail, IOError, OSError, ValueError) as e:
         notes.append("The workbook could not be made (%s): the report goes without it." % getattr(e, "what", e))
-    if share_ok:
-        elsewhere = "it is on the share, %s" % (share.path(share_sub) if share_sub else share.root)
-    elif kept_here and not check:
-        elsewhere = "it is in %s on the execution node" % p["dir"]
-    else:
-        elsewhere = "it was not kept anywhere else (set sw_inventory_share)"
-    written = set(x["name"] for x in res["outputs"] if x["state"] == "ok")
+    share_where = (share.path(share_sub) if share_sub else share.root) if share is not None else ""
+
+    def where_is(rels, it="it is", were="it was"):
+        """Where these files really are, from the writes that worked: the share, else sw_inventory_dir, else nowhere."""
+        if rels and share is not None and all(r in done_share for r in rels):
+            return "%s on the share, %s" % (it, share_where)
+        if rels and kept_here and not check and all(r in done_here for r in rels):
+            return "%s in %s on the execution node" % (it, p["dir"])
+        if share is None and not p["share"] and not kept_here:
+            return "%s not kept anywhere else (set sw_inventory_share)" % were
+        return "%s not kept anywhere else (its copy failed: see the outputs not written)" % were
     mail = []
     for kind, desc in (("csv", "CSV - every package of every host read"),
                        ("json", "JSON - every host's packages, the hosts not read, what changed")):
@@ -572,7 +604,7 @@ def run(p, check=False, warn=lambda m: None):
         except Fail as e:
             notes.append("The %s could not be attached (%s)." % (kind.upper(), e.what))
             continue
-        where_k = elsewhere if (share_ok or kind in written) else "it was not kept anywhere else (set sw_inventory_share)"
+        where_k = where_is([f["rel"] for f in files[kind]][:1])
         mail.append({"path": os.path.join(work, files[kind][0]["rel"]), "filename": files[kind][0]["rel"], "desc": desc,
                      "elsewhere": where_k})
     res["web_files"] = [dict((k, m[k]) for k in ("path", "filename", "desc")) for m in mail]
@@ -582,9 +614,8 @@ def run(p, check=False, warn=lambda m: None):
             with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
                 for f in files["shield"]:
                     z.writestr(f["rel"].rsplit("/", 1)[-1], f["body"])
-            where_z = elsewhere if (share_ok or "shield" in written) else "it was not kept anywhere else (set sw_inventory_share)"
             mail.append({"path": zp, "filename": os.path.basename(zp), "desc": "Zip - the shield text file of each host read",
-                         "elsewhere": where_z.replace("it is", "the shield files are", 1).replace("it was", "they were", 1)})
+                         "elsewhere": where_is([f["rel"] for f in files["shield"]], "the shield files are", "they were")})
         except (IOError, OSError) as e:
             notes.append("The shield zip could not be made (%s)." % (e.strerror or e))
     att, more = email_attachments(mail, p["email_max_mb"])
@@ -610,6 +641,7 @@ def main():
                            outputs=dict(type="list", elements="str", default=["shield", "csv", "json"]),
                            dir=dict(type="str", default=""), shield_subdir=dict(type="str", default="shield"),
                            share=dict(type="str", default=""), share_subdir=dict(type="str", default=""),
+                           share_refused=dict(type="bool", default=False),
                            share_auth=dict(type="str", default="negotiate"), share_encrypt=dict(type="bool", default=False),
                            share_port=dict(type="int", default=445), keep_days=dict(type="int", default=90),
                            xlsx_max_rows=dict(type="int", default=20000), email_max_mb=dict(type="float", default=10),

@@ -1,35 +1,36 @@
 ---
-# LINUX SOFTWARE INVENTORY, on each host (playbooks/linux_sw_inventory.yml): reached or not - a host that cannot be
-# reached stays in the play (its reason kept), so the controller step after it always runs, also when no host at all
-# was reached. Then one read-only script (files/sw_read.sh: rpm -qa, dnf's own records with --noplugins -C
-# --disablerepo='*'), sent to the host's sh with raw (no Python needed on the host, no file staged there). Its output
-# goes to a folder on the controller - never into a task result (AAP keeps those). A host's file is named by the SHA-1
-# of its inventory name.
+# LINUX SOFTWARE INVENTORY, on each host (playbooks/linux_sw_inventory.yml): hands-off - the login account, no sudo,
+# nothing written on the host; in Check nothing runs on the hosts at all. A host that cannot be reached stays in the
+# play with a fixed reason (never the connection's own text: it can carry what a proxy or a login helper printed), so the
+# controller step after it always runs. The read (files/sw_read.sh: rpm -qa) goes to the host's sh with raw (no Python
+# needed, no file staged); its output goes to a folder on the controller, never into a task result (AAP keeps those).
 - name: Software inventory | reach the host
   ansible.builtin.raw: echo reached      # no Python, no module
-  become: false
   changed_when: false
-  check_mode: false
   ignore_unreachable: true
-  register: _sw_reach
+  register: _sw_reach                   # Check: skipped (raw runs nothing in Check)
 
-- name: Software inventory | reached?
+- name: Software inventory | reached? (a fixed reason, never the connection's own text)
   ansible.builtin.set_fact:
     site_host_unreached: >-
-      {{ ((_sw_reach.msg | default('', true) | string | trim | regex_replace('\s*[\r\n]+\s*', ' ')) or 'unreachable')
-         if _sw_reach.unreachable | default(false) else '' }}
+      {{ '' if not _sw_reach.unreachable | default(false) else
+         'the connection timed out (switched off, a firewall, or the address)' if 'timed out' in _m or 'timeout' in _m else
+         'the login was refused (the Machine credential)' if 'permission denied' in _m or 'authentication' in _m
+                                                              or 'password' in _m or 'publickey' in _m else
+         'its name was not found (DNS, or the address in the inventory)' if 'could not resolve' in _m or 'name or service not known' in _m else
+         'the connection was refused (SSH not listening there)' if 'connection refused' in _m else
+         'no route to the host (the network)' if 'no route' in _m or 'network is unreachable' in _m else
+         'its SSH host key did not match (known_hosts)' if 'host key' in _m else
+         'it could not be reached (the job output above has the message of the connection)' }}
+  vars:
+    _m: "{{ _sw_reach.msg | default('', true) | string | lower }}"
 
-- name: Software inventory | not reached - listed in the report, the job goes on (site_unreachable_fails)
+- name: Software inventory | not reached - listed in the report (site_unreachable_fails fails the job after the report)
   ansible.builtin.debug:
     msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; the report lists it."
   when: site_host_unreached | length > 0
 
-- name: Software inventory | not reached - fail it (site_unreachable_fails)
-  ansible.builtin.fail:
-    msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}"
-  when: site_host_unreached | length > 0 and site_unreachable_fails | default(false) | bool
-
-- name: Software inventory | read the installed packages (rpm -qa; dnf from its own records only - read-only)
+- name: Software inventory | read the installed packages (rpm -qa, as the login account - nothing written on the host)
   ansible.builtin.raw: |
     SW_READ_TIMEOUT={{ sw_inventory_read_timeout | int }} sh -s <<'SW_READ_SCRIPT_END'
     {{ lookup('ansible.builtin.file', 'sw_read.sh') }}
@@ -39,10 +40,9 @@
   register: _sw_read
   changed_when: false
   failed_when: false
-  ignore_unreachable: true              # lost during the read: listed with why
-  check_mode: false                     # it only reads: a Check run lists the hosts' packages too
+  ignore_unreachable: true              # lost during the read: listed with a fixed reason
   no_log: true                          # the package list is not kept in AAP's job events (the next step keeps it)
-  when: site_host_unreached | length == 0
+  when: site_host_unreached | length == 0 and not ansible_check_mode
 
 - name: Software inventory | the read, to the controller's folder
   ansible.builtin.copy:
@@ -51,18 +51,25 @@
     mode: "0600"
   delegate_to: localhost
   become: false
-  check_mode: false                     # a temporary folder, deleted at the end
   no_log: true
+  register: _sw_stage
+  failed_when: false                    # a staging failure: this host listed as not read, with why
   # a read that ended, or one that said why it stopped (@@error: no rpm, rpm failed) - the controller says it
   when: >-
-    site_host_unreached | length == 0 and _sw_read.rc | default(1) == 0
+    site_host_unreached | length == 0 and not ansible_check_mode and _sw_read.rc | default(1) == 0
     and ('@@end' in _sw_read.stdout | default('') or '@@error' in _sw_read.stdout | default(''))
 
-- name: Software inventory | why a host was not read
+- name: Software inventory | why a host was not read (a fixed reason)
   ansible.builtin.set_fact:
     _sw_fail: >-
-      {{ '' if site_host_unreached | length > 0 or (_sw_read.rc | default(1) == 0 and ('@@end' in _sw_read.stdout | default('')
-                                                    or '@@error' in _sw_read.stdout | default(''))) else
-         ('the read failed (exit ' ~ (_sw_read.rc | default('?')) ~ '): '
-          ~ ((_sw_read.stderr | default(_sw_read.msg | default(''), true) | string | trim | regex_replace('\s+', ' '))[-300:]
-             or 'no output')) }}
+      {{ '' if site_host_unreached | length > 0 else
+         'Check mode: not read (nothing runs on the hosts in Check)' if ansible_check_mode else
+         'the connection was lost during the read' if _sw_read.unreachable | default(false) else
+         ('the read could not be kept on the controller (the folder of the job: space or access)'
+          if _sw_stage is not skipped and _sw_stage.dest | default('') | length == 0 else '') if _sw_ok else
+         'no POSIX shell on the host (/bin/sh)' if _sw_read.rc | default(0) == 127 else
+         'the read timed out (sw_inventory_read_timeout)' if _sw_read.rc | default(0) == 124 else
+         'the read failed (exit ' ~ (_sw_read.rc | default('?')) ~ '; the job output above has more)' }}
+  vars:
+    _sw_ok: >-
+      {{ _sw_read.rc | default(1) == 0 and ('@@end' in _sw_read.stdout | default('') or '@@error' in _sw_read.stdout | default('')) }}

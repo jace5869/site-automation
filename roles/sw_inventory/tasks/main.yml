@@ -6,17 +6,9 @@
 # export or a delivery failed. The hosts' reads are deleted at the end, whatever happened.
 - name: Software inventory | the controller step
   block:
-    - name: Software inventory | a folder for the hosts' reads, when none was made
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: sw-inventory-
-      register: _sw_work_new
-      check_mode: false
-      when: _sw_work_path is not defined
-
     - name: Software inventory | parse, compare with the last run, write the exports ({{ sw_inventory_outputs | join(', ') }})
       site_sw_inventory:
-        work_dir: "{{ _sw_work_path | default(_sw_work_new.path) }}"
+        work_dir: "{{ _sw_work_made.path }}"
         hosts: >-
           {%- set out = [] -%}
           {%- for h in _sw_targets | default([]) -%}
@@ -31,7 +23,9 @@
         outputs: "{{ (sw_inventory_outputs | replace(',', ' ')).split() if sw_inventory_outputs is string else sw_inventory_outputs }}"
         dir: "{{ sw_inventory_dir | default('', true) }}"
         shield_subdir: "{{ sw_inventory_shield_subdir }}"
-        share: "{{ sw_inventory_share | default('', true) }}"
+        # a user or password in the address (user@server): never handed on, never shown - refused by its flag
+        share: "{{ '' if (sw_inventory_share | default('', true)) is search('@') else sw_inventory_share | default('', true) }}"
+        share_refused: "{{ (sw_inventory_share | default('', true)) is search('@') }}"
         share_subdir: "{{ sw_inventory_share_subdir | default('', true) }}"
         share_auth: "{{ sw_inventory_share_auth }}"
         share_encrypt: "{{ sw_inventory_share_encrypt | bool }}"
@@ -109,12 +103,23 @@
         msg: "No email: {{ 'sw_inventory_email is false' if not sw_inventory_email | bool else 'report_email_to is not set (docs/EMAIL_REPORTS.md)' }}."
       when: not sw_inventory_email | bool or (report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0)
   always:
-    - name: Software inventory | the hosts' reads, deleted
+    - name: Software inventory | the hosts' reads, deleted (only the folder this run made)
       ansible.builtin.file:
-        path: "{{ _sw_work_path | default(_sw_work_new.path | default('')) }}"
+        path: "{{ _sw_work_made.path }}"
         state: absent
       check_mode: false
-      when: (_sw_work_path | default(_sw_work_new.path | default(''))) is match('^/.+/sw-inventory-[^/]+$')
+      when:
+        - _sw_work_made.path | default('') is match('^/.+/sw-inventory-[A-Za-z0-9_]+$')
+        - _sw_work_made.path == _sw_work_path | default('')
+
+- name: Software inventory | hosts not reached fail the job (site_unreachable_fails) - after the report
+  ansible.builtin.fail:
+    msg: >-
+      Not reached: {{ _sw.not_read | selectattr('reason', 'match', '^NOT REACHED') | map(attribute='host') | join(', ') }}
+      (site_unreachable_fails: true). The report above lists them with why.
+  when:
+    - site_unreachable_fails | default(false) | bool
+    - _sw.not_read | selectattr('reason', 'match', '^NOT REACHED') | list | length > 0
 
 - name: Software inventory | every export and delivery done (sw_inventory_fail_on_output_error)
   ansible.builtin.assert:
