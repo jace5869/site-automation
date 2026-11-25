@@ -44,6 +44,11 @@ the wall), `portal_wall_feedback_readers` (default `portal_approver_groups`); th
 - **Freshness:** every source shows *as of*; LATE after 3 min, STALE after 10 min; stale is never green (a hollow grey
   ?, "Not current", the last values grey). Storage from the NetApp run is as old as that run, and says so.
 - **What the wall watches** lists each wall condition with the thresholds in force. No "days until full" on the wall.
+- **Write-ahead login back-off and one source per cluster:** the attempt is on disk before any login (no write, no login;
+  a restart one second after a refusal sends nothing inside the window); a cluster read live is never mixed with the
+  NetApp run's rows of its address, and nothing is matched by name; a live ONTAP collection is read whole or counts as
+  failed; a source failing now is not current; a lost read never "clears" an alert; the expand survey says "LUN 100 GB,
+  use unknown" (sorted as least free) instead of the volume's numbers.
 - **Fail closed everywhere:** a value not read is "?" (never 0 % or OK; a LUN's unread blocks are never "0 % written"
   in NetApp - refresh volume list either), a source missing from the answer is not current, a vCenter that never returned
   its inventory or a host / datastore lacking a value keeps the whole area from green; a run's alert is cleared by a live

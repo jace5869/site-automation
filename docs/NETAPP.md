@@ -356,7 +356,8 @@ from the first day, whatever is written on it. So for a LUN the list and the por
 
 - A LUN's blocks written only drop after the host frees them (UNMAP). The datastore's figure is the better one.
 - The list's choice shows the LUN's size and free space: *vol_ds01 (svm_vmware) - LUN 2.00 TB, 18% free [VMware
-  datastore DS01, LUN]*.
+  datastore DS01, LUN]*. A LUN whose blocks written ONTAP did not give (and no datastore figure): *LUN 100.0 GB, use
+  unknown* - never the volume's numbers - and it sorts first, as the least free.
 - **The order** (the list and the portal's NetApp page): the volumes and LUNs on a VMware datastore first, then the rest;
   each least free first, by the fullness above; ties by name. When vCenter was not read, no row counts as a datastore:
   one list, least free first.

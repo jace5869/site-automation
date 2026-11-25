@@ -1038,9 +1038,11 @@ condition needs the full window again).
 - **One account, one back-off:** every source that uses the same account shares it - all the vCenters of
   `vmware_vcenters`, all the clusters of `ontap_clusters`, and a vCenter and an ONTAP credential that name one AD account
   (`CORP\svc-wall`, `svc-wall@corp.example.mil` and `SVC-Wall` are one). The deadline counts from the refusal itself, and
-  an active back-off is kept in the portal's data volume (`wall-backoff.json`, the account's name hashed), so restarting
-  the portal never brings the next login sooner. If that file cannot be written the deadline still holds (said once in the
-  log); if it cannot be read or written when the portal starts, every account waits one window first. The first refusal stops **all** of them; after the start and after each
+  the back-off file in the portal's data volume (`wall-backoff.json`, the account's name hashed) is **write-ahead**: before
+  any login (a vCenter Login, every ONTAP read) the attempt is written to disk first - if it cannot be written, no login is
+  sent ("login paused - the back-off file cannot be written"). A refusal's deadline is written the same way. At the start,
+  an attempt with no outcome holds its account one window, and a file that cannot be read, is not JSON or holds any entry
+  that is not valid holds every account one window. So a restart never brings a second login inside the window. The first refusal stops **all** of them; after the start and after each
   back-off **one** source tries the login first and the others wait for its answer (a source that does not answer at all
   passes the turn to the next). So a wrong or expired password costs exactly one failed login per back-off window,
   however many vCenters or clusters share it. A vCenter that answers *NoPermission*, or any HTTP 401 / 403 (a proxy
@@ -1064,6 +1066,13 @@ condition needs the full window again).
 - Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), the
   NetApp counters are grey "Not on the wall" when the portal has no NetApp read at all, and a wall with nothing read yet
   shows "No current data".
+- **One storage source per cluster:** a cluster in `portal_wall_ontap_clusters` (by its configured address) is shown only
+  from the live reads - the NetApp run's rows of that address are not used at all; every other cluster only from the run,
+  by its management address. Nothing is matched by name. A live read is all or nothing: a collection with errors, without
+  records or with pages left over counts as failed (its check not run, grey), and a state ONTAP did not give is unknown.
+- A source whose latest read failed (error, refused, paused) is not current whatever its last good read; a LATE source
+  is never shown beside a green light. A condition that disappears because its source or check could not see it stays
+  "last known", it is never shown "cleared".
 - With live ONTAP, the NetApp run in the report database is used only for the storage path card; its age is shown there
   and never makes the live storage look stale.
 
