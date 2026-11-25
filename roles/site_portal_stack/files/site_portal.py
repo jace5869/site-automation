@@ -646,17 +646,17 @@ class Config(object):
         self.wall_opts = wall_model.opts_of({})
         self.wall_auth_retry = 900
         self.wall_logins = {}
+        self.wall_bad_logins = []               # 1.130.1: a login secret that is neither JSON nor a plain dict (said in the log)
         try:
             wo = g("PORTAL_WALL_OPTS", "{}")
             wo = json.loads(wo) if isinstance(wo, str) else wo
             self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
             self.wall_auth_retry = max(300, min(86400, int(str(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900")).strip() or "900")))
             for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
-                try:
-                    lv = json.loads(g(env, "{}") or "{}")
-                except ValueError:
-                    lv = {}
-                if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
+                lv = wall_login(g(env, "{}"))
+                if lv is None:
+                    self.wall_bad_logins.append(k)
+                elif lv.get("user") and lv.get("password"):
                     self.wall_logins[k] = lv
         except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
@@ -6539,14 +6539,33 @@ def _safe_add(log, rec):
         pass
 
 
+def wall_login(text):
+    """1.130.1: a wall login secret -> dict, {} when empty, None when unreadable. JSON as the deploy writes it; also the dict
+    text an older deploy wrote (Python's form: single quotes) - read with ast.literal_eval (literals only, never code)."""
+    t = str(text or "").strip()
+    if not t:
+        return {}
+    try:
+        v = json.loads(t)
+    except ValueError:
+        try:
+            import ast
+            v = ast.literal_eval(t)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            return None
+    return v if isinstance(v, dict) else None
+
+
 def wall_sources(cfg, log=None, why=None):
     """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster.
     1.131.0 (field): every entry left out and any error is in the portal log; a login that gives no source is logged once
     ({"event": "wall", "collector": "no sources", "why": ...}) and its reason put in why (a dict) for the wall's area"""
-    if wall_live is None:
-        return []
     # the portal's log (its .add), or a plain function (tests, 1.130.1's form)
     say = log if callable(log) and not hasattr(log, "add") else (lambda d: _safe_add(log, d))
+    if wall_live is None:
+        if getattr(cfg, "wall_logins", None):
+            say({"event": "wall", "collector": "not started", "why": "the wall's collector is not in the service's files - deploy again"})
+        return []
     logins = cfg.wall_logins if isinstance(getattr(cfg, "wall_logins", None), dict) else {}
     left = {}
 
@@ -6568,10 +6587,11 @@ def wall_sources(cfg, log=None, why=None):
     except Exception:  # pylint: disable=broad-except
         reasons = {}
     if not src and logins and not reasons:
-        reasons_log = {k: "no user or no password in this login" for k in ("vcenter", "ontap") if k in logins}
-        say({"event": "wall", "collector": "no sources", "why": reasons_log or "the wall's logins are not usable"})
-    if reasons:
-        say({"event": "wall", "collector": "no sources" if not src else "part", "why": reasons})
+        missing = ["%s: no user or no password in this login" % k for k in ("vcenter", "ontap") if k in logins]
+        say({"event": "wall", "collector": "no sources", "why": "; ".join(missing) or "the wall's logins are not usable"})
+    if reasons:                             # one text, as 1.130.1 logs it: grep-able
+        say({"event": "wall", "collector": "no sources" if not src else "part",
+             "why": "; ".join("%s: %s" % ({"vmware": "VMware", "storage": "Storage"}[k], v) for k, v in sorted(reasons.items()))})
         if isinstance(why, dict):
             why.update(reasons)
     return src
@@ -6588,6 +6608,10 @@ class WallLive(object):
         self.lock = threading.Lock()
         self.collector = collector
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
+        bad = getattr(cfg, "wall_bad_logins", [])
+        for k in (bad if isinstance(bad, list) else []):
+            _safe_add(log, {"event": "wall", "source": k, "state": "login not readable",
+                            "why": "the %s login secret is not JSON - run Site portal - deploy again" % k})
         try:
             bad_places = wall_model.netmap_ignored(cfg.wall_opts)
         except Exception:  # pylint: disable=broad-except

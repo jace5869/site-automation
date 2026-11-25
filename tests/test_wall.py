@@ -158,7 +158,7 @@ class NoSources131(unittest.TestCase):
                                  "ontap": {"user": "svc", "password": "pw", "clusters": ["https://"]}})
         no = [r for r in recs if r.get("collector") == "no sources"]
         self.assertEqual(len(no), 1, recs)
-        self.assertIn("vmware", no[0]["why"])
+        self.assertIn("VMware: vCenter login present but no vCenter address", no[0]["why"])
         self.assertTrue(any(r.get("state") == "left out" and r.get("source") == "ontap" for r in recs), recs)
         areas = {a["id"]: a for a in w.model()["areas"]}
         self.assertEqual(areas["vmware"]["why"], "vCenter login present but no vCenter address: set portal_wall_vcenters")

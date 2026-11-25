@@ -638,9 +638,9 @@ portal_requester_groups: []                      # the same for who may run the 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
   account never counts. The named lists (`portal_readers`, `portal_approvers`, `portal_requesters`) count as well.
 - **A card and its AD account.** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). By default the portal looks
-  for the AD account whose `userPrincipalName` is `1234567890@mil` or carries a suffix before the `@mil`
-  (`1234567890.CTR@mil`): the default match is `{edipi}*@mil` (1.130.0; it still ends at `@mil` and starts with the
-  card's own EDIPI). Another attribute: `portal_ad_card_attribute` and
+  for the AD account whose `userPrincipalName` is exactly `1234567890@mil` (`{edipi}@mil`). A site whose accounts carry
+  a suffix sets it exactly, e.g. `portal_ad_card_match: "{edipi}.ctr@mil"`. Never put `*` after `{edipi}`: it would also
+  match the same person's other accounts (a privileged `1234567890.adm@mil`) or a longer number (1.130.1). Another attribute: `portal_ad_card_attribute` and
   `portal_ad_card_match` (`{edipi}`, `{cn}`; `*` and `?` match anything). For example
   `portal_ad_card_attribute: altSecurityIdentities` with `portal_ad_card_match: "*CN={cn}"`.
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
