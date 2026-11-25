@@ -6,12 +6,13 @@ roles/*/defaults/main.yml). Its own PDF, to read side by side with the setup gui
     python3 build_settings_reference.py [output.pdf]
 """
 import re
+import os
 import sys
 
 import build_ops_guide as g
 from sapdf import *  # noqa: F401,F403
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-Settings-Reference.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "Site-Automation-Settings-Reference.pdf")   # 1.131.0: the built guides live in guides/
 DOCS = [("docs/VARIABLES.md", "Settings: what they are, where they go, and who wins"),
         ("docs/VARIABLES_REFERENCE.md", "Every setting and its default")]
 

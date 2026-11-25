@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Site portal - deploy"
 #   playbook:    playbooks/site_portal_deploy.yml
-#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned)
+#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned), VMware vCenter (optional: the wall's live VMware read), NetApp ONTAP (optional: the wall's live storage read)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -132,8 +132,9 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_ad_card_attribute: userPrincipalName
 
 ## its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match
-## anything
-# portal_ad_card_match: "{edipi}@mil"
+## anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at
+## @mil)
+# portal_ad_card_match: "{edipi}*@mil"
 
 ## how often the members are read (60 to 3600); 60 s after a failed read
 # portal_ad_groups_seconds: 300
@@ -411,6 +412,101 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a run older than this is said to be old on the page (the refresh runs every 15-30 min)
 # portal_netapp_old_minutes: 60
 
+## ---- 1.130.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall")
+## ------------------------------------------- /portal/wall: one page for a wall screen - Lights,
+## Cockpit (the default) or Map, saved per viewer - with only the wall conditions below lit (routine
+## alarms never). VMware is read live by the portal itself (one kept vCenter session, one property
+## read a cycle, read-only calls only); Storage live from ONTAP only (GET only,
+## portal_wall_ontap_clusters, the "NetApp ONTAP" credential) - without it Storage is not on the
+## wall; the report database's NetApp refresh only fills the storage path card, as information.
+## Freshness: LATE after 3 min, STALE after 10 min.
+# portal_wall: true
+
+## the tab's and the page's name: what your site calls its operations center
+# portal_wall_title: "{{ outage_ops_center | default('Ops center', true) }}"
+
+## a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is
+## missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
+# portal_wall_preview: true
+
+## shown beside the title; one portal serves one enclave
+# portal_wall_enclave: "{{ site_enclave | default('', true) }}"
+
+## the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not
+## anyone looks
+# portal_wall_seconds: 60
+
+## kept for the settings check (5 to 1440); 1.130.0: any unclear or refused login answer STOPS every
+## wall login until the next Site portal - deploy
+# portal_wall_auth_retry_minutes: 15
+
+## vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the
+## VMware jobs use; read-only calls only). The credential's vCenter and these (vmware_vcenters:
+## names, or name:port) are read with that account. auto | true | false
+# portal_wall_vcenter: auto
+
+## more vCenters read with the same account (names, or name:port)
+# portal_wall_vcenters: "{{ vmware_vcenters | default([], true) }}"
+
+## vCenter's certificate checked (the CAs: portal_trust_host_cas)
+# portal_wall_vcenter_validate_certs: "{{ vmware_validate_certs | default(true) }}"
+
+## ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is
+## set (GET only). Off: the wall's storage comes from the NetApp page's run in the report database
+## (as old as that run). auto | true | false
+# portal_wall_ontap: auto
+
+## the clusters read live (management names or addresses)
+# portal_wall_ontap_clusters: "{{ ontap_clusters | default([], true) }}"
+
+## ONTAP's certificate checked (the CAs: portal_trust_host_cas)
+# portal_wall_ontap_validate_certs: "{{ ontap_validate_certs | default(true) }}"
+
+## The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall
+## watches" shows the ones in force a datastore this % used or more: warning (VMware / Storage team)
+# portal_wall_datastore_warn: 85
+
+## ... critical
+# portal_wall_datastore_crit: 95
+
+## an aggregate this % used or more: warning (Storage team)
+# portal_wall_aggr_warn: 85
+
+## ... critical
+# portal_wall_aggr_crit: 97
+
+## a host's or VM's CPU or memory at this % or more ...
+# portal_wall_high_pct: 90
+
+## ... for this many minutes or longer: warning (shorter spikes stay off the wall)
+# portal_wall_high_minutes: 15
+
+## hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in
+## maintenance: warning
+# portal_wall_maintenance_expected: []
+
+## a powered-on VM whose VMware Tools heartbeat is red: critical (false = off)
+# portal_wall_vm_heartbeat: true
+
+## the site of a cluster / host / datastore: the regex's first group on its name; "" = a 4-letter,
+## 2-digit prefix (SITA01)
+# portal_wall_site_pattern: ""
+
+## the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude,
+## latitude); none = the sites as a list
+# portal_wall_site_places: {}
+
+## Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback
+## button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at
+## <portal>/wall/feedback for the readers. No email.
+# portal_wall_feedback: true
+
+## AD groups that see and may use the button ([] = everyone who can open the wall)
+# portal_wall_feedback_groups: []
+
+## AD groups that may open the list (the approvers' groups by default)
+# portal_wall_feedback_readers: "{{ portal_approver_groups | default([], true) }}"
+
 ## The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when
 ## this deploy's job template has a "Report database" credential - attach it with the read-only
 ## account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on
@@ -463,6 +559,23 @@ portal_public_url: https://stigman.example.mil/portal/
 
 ## the credential's password (secret)
 # portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"
+
+## 1.130.0: the wall's collector - the site's existing accounts, copied to the portal server as
+## podman secrets (site-portal-vcenter, site-portal-ontap) the same way as the LDAP bind account:
+## never in a file, a unit, the page, the API or the logs the "VMware vCenter" credential's vCenter
+# portal_wall_vcenter_host: "{{ lookup('ansible.builtin.env', 'VMWARE_HOST') | trim }}"
+
+## its account
+# portal_wall_vcenter_username: "{{ lookup('ansible.builtin.env', 'VMWARE_USER') | trim }}"
+
+## its password (secret)
+# portal_wall_vcenter_password: "{{ lookup('ansible.builtin.env', 'VMWARE_PASSWORD') }}"
+
+## the "NetApp ONTAP" credential's account
+# portal_wall_ontap_username: "{{ lookup('ansible.builtin.env', 'ONTAP_USERNAME') | trim }}"
+
+## its password (secret)
+# portal_wall_ontap_password: "{{ lookup('ansible.builtin.env', 'ONTAP_PASSWORD') }}"
 
 # ---- aap_templates -------------------------------------------------------------------------------
 ## "" = the repository's aap/job_templates.yml; a path here = your own catalog
@@ -589,6 +702,29 @@ portal_public_url: https://stigman.example.mil/portal/
 
 ## nodes read at most (more: the first ones, said in the report)
 # netmap_max_nodes: 5000
+
+# ---- ontap_report --------------------------------------------------------------------------------
+## The clusters' management addresses (names or IPs), e.g. [cluster1.yoursite.mil,
+## cluster2.yoursite.mil]. The credential's account must exist on each of them.
+# ontap_clusters: []
+
+## Check the clusters' HTTPS certificates. ONTAP's own certificate is often self-signed: then put
+## its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"),
+## or set false.
+# ontap_validate_certs: true
+
+# ---- vmware_vm -----------------------------------------------------------------------------------
+## Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
+# vmware_validate_certs: true
+
+## Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security
+## settings read the credential's vCenter AND these (names, or name:port), with the same account.
+## The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters". e.g.
+## [vc01.yoursite.mil, vc02.yoursite.mil]
+# vmware_vcenters: []
+
+## What your site calls its operations center in the outage review.
+# outage_ops_center: "NOC"
 
 # ---- aap_portal_setup ----------------------------------------------------------------------------
 ## 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on

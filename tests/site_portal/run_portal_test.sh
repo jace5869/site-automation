@@ -101,7 +101,7 @@ cat > "$work/vars.json" <<EOF
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
- "portal_approver_groups": ["AAP-Approvers"],
+ "portal_approver_groups": ["AAP-Approvers"], "portal_ldap_server": "dc01.corp.example.mil",
  "portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
    "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
    "limit_from": "target", "approval": false, "fixes": false}},
@@ -298,9 +298,17 @@ case "$r" in *'"code": 200'*"portal-token"*) pass "the confirm page (a report's 
 # ---- 1.75.3: pick a host, then a finding - no job id typed
 r="$(c "$k/jdoe" get /portal/actions/disk_cleanup)"
 case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job and a finding, opened without them: asks for the host";; *) fail "pick: the host step" "$r";; esac
-r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
+# 1.129.1: the listing is read in the background; while it is read the typeahead has no hosts and the picker's list says reading -
+# poll as the browser does (20 s at most)
+for _ in $(seq 40); do
+    r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
+    [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "[]" ] || break; sleep 0.5
+done
 [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
-r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+for _ in $(seq 40); do
+    r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+    [ "$(echo "$r" | jq_ 'd["json"].get("reading", False)')" = "True" ] || break; sleep 0.5
+done
 [ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web_servers', 'group', 2), ('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1)]" ] \
     && pass "the picker's list: groups, then hosts (1.129.0; a group with its host count), filtered by any case" || fail "the picker's list" "$r"
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web_servers')"
@@ -339,7 +347,7 @@ case "$r" in *'"code": 400'*"braces that start a template"*) pass "template brac
 r="$(c "$k/jdoe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:\uff5b\uff5bx"}')"
 case "$r" in *'"code": 400'*"braces"*) pass "full-width look-alike braces: refused";; *) fail "full-width braces refused" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "nothere.example.mil"}')"
-case "$r" in *'"code": 400'*"not a host"*"portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
+case "$r" in *'"code": 400'*"Not started"*"not an enabled host of this job"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "web01.example.mil", "ansible_become_user": "root"}')"
 case "$r" in *'"code": 400'*"not a var of this action"*) pass "a var the action does not list: refused";; *) fail "an unlisted var refused" "$r";; esac
 tok="$(c "$k/jdoe" token /portal/actions/stig_recheck | jq_ 'd["token"]')"
@@ -469,7 +477,8 @@ if podman secret inspect site-portal-reportdb >/dev/null 2>&1 && grep -q "Secret
     && [ -z "$leak" ]; then pass "the report database's login: the podman secret site-portal-reportdb, not in a file, a unit, the log or podman inspect"
 else fail "the report database's secret" "leak: $leak; $(grep -c site-portal-reportdb "$units/site-portal-app.container")"; fi
 # 1.120.0: the AD groups' LDAP login ("LDAP Bind Account", microsoft.ad's env pair) - a podman secret, never anywhere else; no DC
-# here to read the group from: only the named approvers may decide, said on the page and in the log - never open
+# here that answers (1.130.0: the deploy refuses groups with no DC named at all): only the named approvers may decide, said on
+# the page and in the log - never open
 leak="$( (grep -rl "Test-Only-ldappw-1120" "$work/etc" "$units" "$work/log.jsonl" "$work/out.txt"; podman inspect site-portal-app | grep -c "Test-Only-ldappw-1120" | grep -v '^0$') 2>/dev/null)"
 if podman secret inspect site-portal-ldap >/dev/null 2>&1 && grep -q "Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN" "$units/site-portal-app.container" \
     && "$py" -c 'import json, sys; assert json.load(open(sys.argv[1]))["PORTAL_APPROVER_GROUPS"] == ["AAP-Approvers"]' "$work/etc/settings.json" \
@@ -489,6 +498,13 @@ if echo "$r" | grep -q 'id=\\"ad\\" data-src=\\"/portal/api/ad\\"' && echo "$a" 
     pass "the Active Directory page and its answer, from the container (the database login on, no SolarWinds login)"
 else fail "the Active Directory page" "$(echo "$r" | head -c 600)
 $a"; fi
+# 1.130.0: the ops-center wall, from the container (its files deployed: the page, its answer, its static files)
+r="$(c "$k/jdoe" get /portal/wall)"; a="$(c "$k/jdoe" get /portal/api/wall)"; js="$(c "$k/jdoe" get /portal/static/wall-page.js)"; land="$(c "$k/jdoe" get /portal/static/wall-land.js)"
+if echo "$r" | grep -q 'id=\\"wall\\"' && echo "$a" | jq_ 'd["json"]["areas"][1]["id"]' | grep -q vmware \
+    && echo "$js" | jq_ 'd["code"]' | grep -q 200 && echo "$land" | jq_ 'd["code"]' | grep -q 200; then
+    pass "the ops-center wall: its page, its answer and its files, from the container (no vCenter login: VMware not on)"
+else fail "the ops-center wall" "$(echo "$r" | head -c 600)
+$(echo "$a" | head -c 600)"; fi
 for _ in $(seq 1 20); do a="$(c "$k/jdoe" get /portal/api/ad)"; echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -q . && break; sleep 1; done
 if echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -Eq "PyMySQL is not in the portal's image|Can't connect|refused"; then
     pass "the database not read (here: $(echo "$a" | jq_ 'd["json"]["db"]["stale"]' | cut -c1-60)): said, no rows shown as current"

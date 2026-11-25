@@ -335,7 +335,7 @@ class Live(unittest.TestCase):
         self.assertLess(t.index('id="f-target"'), t.index('id="f-report_job"'))   # the file's order
         code, raw, _ = self.req("/actions/act_triage?target=web01.example.mil", dn=RROE)
         self.assertIn(b"Not for you", raw)
-        self.assertIn(b" disabled>Run", raw)
+        self.assertNotIn(b'id="go"', raw)                                 # 1.130.0: no Run button at all for someone who may not run it
         code, raw, _ = self.req("/actions/no_prompts?target=web01.example.mil")
         self.assertIn(b"Off.", raw)
         code, raw, _ = self.req("/actions/nothing_here")

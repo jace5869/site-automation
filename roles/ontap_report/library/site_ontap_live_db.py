@@ -225,25 +225,31 @@ def write(conn, now, job, template_id, run, expand_template="", expand_question=
     rid = int(cur.lastrowid or 0)
     rows = [(rid, L.row_key(v["address"].lower(), v.get("svm"), v["volume"], v.get("lun")), str(v["address"])[:191], str(v.get("cluster") or "")[:191],
              str(v.get("svm") or "")[:191], str(v["volume"])[:191], str(v.get("lun") or "")[:255], int(v.get("luns") or 0), int(v.get("size") or 0),
-             int(v.get("used") or 0), str(v.get("aggr") or "")[:191], int(v.get("aggr_free") or 0), str(v.get("datastore") or "")[:255],
+             int(v.get("used") or 0), str(v.get("aggr") or "")[:191], -1 if v.get("aggr_free") is None else int(v["aggr_free"]),     # -1: not read
+             str(v.get("datastore") or "")[:255],
              str(v.get("ds_kind") or "")[:8], 1 if v.get("offered") else 0, str(v.get("why") or "")[:300], str(v.get("choice") or ""),
              1 if v.get("root") else 0, int(v.get("full_size") or v.get("size") or 0), int(v.get("full_used") if v.get("full_used") is not None else v.get("used") or 0),
              str(v.get("full_src") or "volume")[:16], 1 if v.get("thick") else 0, _vol_obj(v)) for v in vols]
     for i in range(0, len(rows), CHUNK):
         cur.executemany(INSERT_VOL, rows[i:i + CHUNK])
     arows = [(rid, str(a["address"])[:191], str(a["name"])[:191], str(a.get("cluster") or "")[:191], str(a.get("node") or "")[:191],
-              int(a.get("size") or 0), int(a.get("used") or 0)) for a in aggrs]
+              # 1.130.0: an aggregate whose use was not read is written with size 0 - the readers show it as unknown ("?"), never 0 %
+              int(a.get("size") or 0) if a.get("used") is not None else 0, int(a.get("used") or 0)) for a in aggrs]
     if arows:
         cur.executemany(INSERT_AGGR, arows)
     at = epoch(now)
     pts, seen = [], set()
     for v in vols:                                     # one point a row: each LUN its own (its datastore's or its own fullness)
         k = (v["address"].lower(), "volume", _vol_obj(v))
+        if v.get("full_src") == "unknown":
+            continue                                   # 1.130.0: a LUN's use not read - no point for its growth
         if k not in seen:
             seen.add(k)
             pts.append((k[0][:191], "volume", k[2][:255], at, now, int(v.get("full_size") or v.get("size") or 0),
                         int(v.get("full_used") if v.get("full_used") is not None else v.get("used") or 0)))
     for a in aggrs:
+        if a.get("used") is None:
+            continue                                            # no point for the growth from a use that was not read
         pts.append((a["address"].lower()[:191], "aggr", str(a["name"])[:255], at, now, int(a.get("size") or 0), int(a.get("used") or 0)))
     for i in range(0, len(pts), CHUNK):
         cur.executemany(INSERT_POINT, pts[i:i + CHUNK])

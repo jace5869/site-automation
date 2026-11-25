@@ -29,7 +29,7 @@ before you distribute them.
 
 ## Your logo on them
 
-The PDFs here carry no logo. To put your site's logo on the cover (the 5W's briefs: in their band) and at
+The PDFs (in `guides/` at the top of the repository) carry no logo. To put your site's logo on the cover (the 5W's briefs: in their band) and at
 the top of every page of all eleven, build them again (see below) with `SITE_PDF_LOGO` set to the logo: a PNG with a
 transparent background, or a JPEG. The report logo works (`playbooks/files/report_logo.png`); a copy 300 px tall
 or more prints sharper. Keep the copies with your logo in your own repository or on a share - never in the public
@@ -37,7 +37,7 @@ repository.
 
 ```bash
 cd docs/pdf
-SITE_PDF_LOGO=../../playbooks/files/report_logo.png python3 build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
+SITE_PDF_LOGO=../../playbooks/files/report_logo.png python3 build_ops_guide.py
 # all eleven (the runbook needs ACT_LINUX_DIR, below):
 export SITE_PDF_LOGO=../../playbooks/files/report_logo.png
 for b in "ops_guide Site-Automation-Ops-Runbooks-Guide" "how_it_fits Site-Automation-How-It-Fits-Together" \
@@ -46,17 +46,20 @@ for b in "ops_guide Site-Automation-Ops-Runbooks-Guide" "how_it_fits Site-Automa
          "report_share Site-Automation-Report-Share-Guide" \
          "guide ACT-Automated-Triage-Guide" "runbook ACT-AAP-2.7-Runbook" \
          "5ws ACT-5Ws-Leadership-Brief" "5ws_act ACT-5Ws-Standalone-Brief"; do
-  set -- $b; python3 build_$1.py $2.pdf
+  set -- $b; python3 build_$1.py
 done
 ```
 
 ```powershell
 cd docs\pdf
 $env:SITE_PDF_LOGO = '..\..\playbooks\files\report_logo.png'
-python build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
+python build_ops_guide.py
 ```
 
 ## Rebuilding them
+
+Each script writes its PDF to `guides/` at the top of the repository (1.131.0; a path given as its argument goes there
+instead).
 
 The scripts that draw the PDFs are in this folder (`build_*.py`, with `actpdf.py` for the shared
 parts and `sapdf.py` for the look of all of them). They need Python 3, the
@@ -67,17 +70,17 @@ fonts (Fedora/RHEL: `dnf install google-noto-sans-fonts google-noto-sans-mono-fo
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install reportlab
 cd docs/pdf
-python3 build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf   # the setup guide
-python3 build_how_it_fits.py Site-Automation-How-It-Fits-Together.pdf
-python3 build_service_watch.py Service-Watch-Demo-AAP-ACT.pdf
-python3 build_settings_reference.py Site-Automation-Settings-Reference.pdf
-python3 build_vm_deploy_guide.py Site-Automation-VM-Deploy-Guide.pdf
-python3 build_ee_guide.py Site-Automation-EE-Guide.pdf
-python3 build_report_share.py Site-Automation-Report-Share-Guide.pdf
-python3 build_guide.py ACT-Automated-Triage-Guide.pdf
-ACT_LINUX_DIR=/opt/ACT python3 build_runbook.py ACT-AAP-2.7-Runbook.pdf
-python3 build_5ws.py ACT-5Ws-Leadership-Brief.pdf
-python3 build_5ws_act.py ACT-5Ws-Standalone-Brief.pdf
+python3 build_ops_guide.py   # the setup guide
+python3 build_how_it_fits.py
+python3 build_service_watch.py
+python3 build_settings_reference.py
+python3 build_vm_deploy_guide.py
+python3 build_ee_guide.py
+python3 build_report_share.py
+python3 build_guide.py
+ACT_LINUX_DIR=/opt/ACT python3 build_runbook.py
+python3 build_5ws.py
+python3 build_5ws_act.py
 ```
 
 The site-automation PDFs find the repository from where the script sits (or from

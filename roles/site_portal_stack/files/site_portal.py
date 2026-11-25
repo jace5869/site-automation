@@ -74,6 +74,11 @@ try:
     import site_report_db  # noqa: E402  1.101.2: the report database (PyMySQL, in the all-in-one EE the portal runs in)
 except ImportError:
     site_report_db = None
+import wall_model  # noqa: E402  1.130.0: the ops-center wall's rules and model (standard library, no I/O)
+try:
+    import wall_live  # noqa: E402  1.130.0: the wall's live collector (vCenter and ONTAP, read-only by construction)
+except ImportError:                     # an older deploy's files: the wall from the report database only
+    wall_live = None
 try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
 except ImportError:                     # an older deploy's files: the named lists only
@@ -127,6 +132,21 @@ def flag(v):
 
 def now_iso(t=None):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() if t is None else t))
+
+
+def _set_but_empty(v):
+    """a list setting given with entries that are all blank ([" "], ","): set, and empty once trimmed"""
+    if isinstance(v, list):
+        raw = v
+    else:
+        if isinstance(v, str) and v and not v.strip():
+            return True                                     # "   " in the settings: set, and nothing in it
+        t = str(v or "").strip()
+        try:
+            raw = json.loads(t) if t.startswith("[") else re.split(r"[,\n]", t) if t else []
+        except ValueError:
+            raw = [t]
+    return bool(raw) and not names(v)
 
 
 def names(v):
@@ -553,9 +573,19 @@ class Config(object):
                           "starttls": flag(g("PORTAL_LDAP_STARTTLS", "0")), "validate": flag(g("PORTAL_LDAP_VERIFY", "1")),
                           "ca_file": e.get("SSL_CERT_FILE", ""), "timeout": max(2, min(60, int(g("PORTAL_LDAP_TIMEOUT", "5")))),
                           "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
-        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
+        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}*@mil")).strip() or "{edipi}*@mil"     # 1.130.0: .CTR and other suffixes
         self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
-        groups = {"readers": self.reader_groups, "approvers": self.approver_groups, "requesters": self.requester_groups}
+        # 1.130.0: the wall's Feedback - on/off, who sees and may use the button ([] = everyone who may open the wall), who may read
+        # the list ([] = the approvers); the same LDAP read as the approvers' groups
+        self.wall_feedback = flag(g("PORTAL_WALL_FEEDBACK", "1"))
+        self.wall_feedback_groups = names(g("PORTAL_WALL_FEEDBACK_GROUPS", "[]")) if self.wall_feedback else []
+        self.wall_feedback_readers = names(g("PORTAL_WALL_FEEDBACK_READERS", "[]")) if self.wall_feedback else []
+        # Codex 1.130.0: a list that was set but holds no name (blanks only) is "nobody", never "everyone" or "the approvers"
+        self.wall_feedback_closed = set(k for k, env in (("groups", "PORTAL_WALL_FEEDBACK_GROUPS"), ("readers", "PORTAL_WALL_FEEDBACK_READERS"))
+                                        if self.wall_feedback and _set_but_empty(g(env, "[]")))
+        self.wall_test = flag(g("PORTAL_WALL_TEST", "0"))      # the test harness only: ?freeze= is honoured (a still clock for screenshots)
+        groups = {"readers": self.reader_groups, "approvers": self.approver_groups, "requesters": self.requester_groups,
+                  "wall_feedback": self.wall_feedback_groups, "wall_readers": self.wall_feedback_readers}
         self.ad_groups = (site_ad_groups.Groups(groups, self.ldap_opts, self.card_match, self.ad_groups_seconds)
                           if site_ad_groups and any(groups.values()) else None)
         if site_ad_groups:
@@ -605,6 +635,32 @@ class Config(object):
         self.netapp = flag(g("PORTAL_NETAPP", "1"))
         self.netapp_old_minutes = max(15, min(10080, int(g("PORTAL_NETAPP_OLD_MINUTES", "60"))))
         self.netapp_tab = False                  # set by NetappLive when the database has a run (the bar's tab)
+        # 1.130.0: the ops-center wall (/portal/wall): its tab's name (outage_ops_center), the enclave it serves, its thresholds
+        # (PORTAL_WALL_OPTS: wall_model.DEFAULTS' keys) and the live collector's logins - the site's existing "VMware vCenter" and
+        # "NetApp ONTAP" accounts, each a podman secret (PORTAL_WALL_VCENTER_LOGIN, PORTAL_WALL_ONTAP_LOGIN: JSON)
+        self.wall = flag(g("PORTAL_WALL", "1"))
+        self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
+        self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))
+        self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
+        self.wall_why = ""                     # 1.130.0 (Codex r6 #15): settings that cannot be read turn the wall off - never a crash
+        self.wall_opts = wall_model.opts_of({})
+        self.wall_auth_retry = 900
+        self.wall_logins = {}
+        try:
+            wo = g("PORTAL_WALL_OPTS", "{}")
+            wo = json.loads(wo) if isinstance(wo, str) else wo
+            self.wall_opts = wall_model.opts_of(wo if isinstance(wo, dict) else {})
+            self.wall_auth_retry = max(300, min(86400, int(str(g("PORTAL_WALL_AUTH_RETRY_SECONDS", "900")).strip() or "900")))
+            for k, env in (("vcenter", "PORTAL_WALL_VCENTER_LOGIN"), ("ontap", "PORTAL_WALL_ONTAP_LOGIN")):
+                try:
+                    lv = json.loads(g(env, "{}") or "{}")
+                except ValueError:
+                    lv = {}
+                if isinstance(lv, dict) and lv.get("user") and lv.get("password"):
+                    self.wall_logins[k] = lv
+        except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
+            self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
+            self.wall, self.wall_logins = False, {}
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -2563,7 +2619,7 @@ class Portal(object):
                 except OSError:
                     self.catalog_file = None
                     return
-            # The saved forms depend on the catalog's Windows playbooks, the picker rules and the card icon label (1.130.0: schema 6).
+            # The saved forms depend on the catalog's Windows playbooks, the picker rules and the card icon label (1.131.0: schema 6).
             scope = [6, sorted(cfg.windows_playbooks), cfg.limit_max_playbooks, cfg.windows_from, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area, cfg.label_icon,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.workflow_areas, cfg.limit_max,
@@ -2829,6 +2885,8 @@ class Portal(object):
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
         code, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
         iid = row.get("inventory") if code == 200 and isinstance(row, dict) else None
+        if kind == "workflow_job_templates" and code == 200 and isinstance(row, dict) and iid is None:
+            iid = self.aap._inventory_id()         # a built-in workflow keeps its inventory on its steps: portal_inventory, as in 1.129.0
         if type(iid) is not int or iid <= 0:
             return a, "could not check this template's inventory in AAP - try again"
         os_ = action_os(row.get("playbook") if kind == "job_templates" else "", a["aap"]["name"], self.cfg.windows_playbooks)
@@ -3991,6 +4049,7 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
                                            (("approvals",), "approvals", "Approvals"))
+                  + (((("wall",), "wall", getattr(cfg, "wall_title", "Ops center")),) if getattr(cfg, "wall", False) else ())
                   + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ())
                   + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ())
                   + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ()))
@@ -4035,6 +4094,28 @@ def message_page(cfg, title, text, user="", kind="info"):
     return shell(cfg, title, body, user, page="message")
 
 
+def ad_diag(cfg, cn):
+    """1.130.0: what the portal knows of AD for this refused person - read yes / no (and the short reason), each configured
+    group found and how many members, the card matched to an AD account yes / no. Never member names, accounts or DCs."""
+    g = cfg.ad_groups
+    if g is None:
+        return {"read": False, "why": "no AD groups set" if not cfg.ad_groups_why else "AD groups not available here", "groups": [], "card": None}
+    try:
+        return g.diag(cn)
+    except Exception:  # pylint: disable=broad-except
+        return {"read": False, "why": "AD could not be read", "groups": [], "card": None}
+
+
+def ad_diag_html(d):
+    yn = lambda v: "not known" if v is None else ("yes" if v else "no")    # noqa: E731
+    rows = "".join("<li>%s group <b>%s</b>: found %s%s</li>" % (esc(x["role"]), esc(x["name"]), esc(yn(x["found"])),
+                                                              (", %d members" % x["members"]) if x.get("members") is not None and x.get("found") else "")
+                   for x in d.get("groups") or [])
+    return ('<div class="note"><p><b>What the portal knows of AD</b></p><ul>'
+            '<li>AD read: <b>%s</b>%s</li>%s<li>Your card matched an AD account: <b>%s</b></li></ul></div>'
+            % ("yes" if d.get("read") else "no", (" (%s)" % esc(d.get("why"))) if not d.get("read") and d.get("why") else "", rows, esc(yn(d.get("card")))))
+
+
 def reader_refusal_page(cfg, cn):
     """Only the stylesheets used here need to be reachable before reader authorization."""
     banner = style = note = ""
@@ -4048,8 +4129,8 @@ def reader_refusal_page(cfg, cn):
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
 <link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
 <div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
-<p>Card CN: <b>%s</b></p>%s</div></main>%s</body></html>""" %
-            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, banner))
+<p>Card CN: <b>%s</b></p>%s</div>%s</main>%s</body></html>""" %
+            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
 
 
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
@@ -4433,17 +4514,20 @@ def action_page(cfg, portal, cn, name, query, embed=False):
         sub = "This form is made from the template's survey in AAP." if a.get("discovered") else line
         return ('<div class="dbody"><h2 id="dlg-t">%s</h2>%s<form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s">'
                 '<input type="hidden" name="portal-sig" value="%s">%s%s<div class="note info">%s<span>Runs in AAP under the portal\'s account. The portal records you (<b>%s</b>) as the person who asked for it.</span></div>'
-                '<div class="btns"><button type="button" data-close>Cancel</button><button type="submit" class="pri" id="go"%s>Launch job</button>'
+                '<div class="btns"><button type="button" data-close>Cancel</button>%s'
                 '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
                 % (esc(a["title"]), ('<p class="sub">%s</p>' % esc(sub)) if sub else "", esc(name), cfg.path, esc(name), esc(portal.token(cn)), esc(a.get("sig", "")),
-                   "".join(status), "".join(fields) + jt_html, icon("wait"), esc(cn), "" if can else " disabled"))
+                   "".join(status), "".join(fields) + jt_html, icon("wait"), esc(cn),
+                   # 1.130.0: a viewer who may not run it sees no Launch button at all (the server refuses the launch anyway)
+                   ('<button type="submit" class="pri" id="go"%s>Launch job</button>' % ("" if can else " disabled")) if allowed else ""))
     body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Confirm</span></p><h1>%s</h1>%s</div>%s'
             '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s"><input type="hidden" name="portal-sig" value="%s">%s'
-            '<div class="btns"><button type="submit" class="pri" id="go"%s>Run</button><a class="btn" href="%s">Cancel</a>'
+            '<div class="btns">%s<a class="btn" href="%s">Cancel</a>'
             '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
             '<div class="card panel"><h2>What happens</h2><dl class="def">%s</dl></div></div>'
             % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(line)) if line else "", "".join(status), esc(name), cfg.path, esc(name),
-               esc(portal.token(cn)), esc(a.get("sig", "")), ("".join(fields) or '<p class="sub">This action takes no values.</p>') + jt_html, "" if can else " disabled", cfg.path, dl))
+               esc(portal.token(cn)), esc(a.get("sig", "")), ("".join(fields) or '<p class="sub">This action takes no values.</p>') + jt_html,
+               ('<button type="submit" class="pri" id="go"%s>Run</button>' % ("" if can else " disabled")) if allowed else "", cfg.path, dl))
     return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
 
 
@@ -6346,15 +6430,251 @@ def netapp_page(cfg, cn, statics, token=""):
                  head='<link rel="stylesheet" href="%sstatic/netapp-page.css?v=%s">' % (cfg.path, v("netapp-page.css")))
 
 
-def make_handler(cfg, portal, static_dir):
+# ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js")
+
+
+def _safe_add(log, rec):
+    """a log line from the wall's paths: a full or read-only volume never stops the portal or the collector (Codex r6 #13)"""
+    try:
+        log.add(rec)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def wall_sources(cfg):
+    """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
+    if wall_live is None:
+        return []
+    try:
+        return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
+    except Exception:  # pylint: disable=broad-except  - the wall never stops the portal
+        return []
+
+
+class WallLive(object):
+    """The wall's answer: the live collector (wall_live.Collector: started here, reads every portal_wall_seconds whether or not
+    anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
+    someone looks), made into one model by wall_model.build. One answer every viewer shares, with an ETag."""
+
+    def __init__(self, cfg, log, nal=None, collector=None):
+        self.cfg, self.log, self.nal = cfg, log, nal
+        self.tracker = wall_model.Tracker()
+        self.lock = threading.Lock()
+        self.collector = collector
+        if self.collector is None and wall_live is not None:
+            src = wall_sources(cfg)
+            if src:
+                # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
+                keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
+                try:
+                    self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
+                                                         log=lambda d: _safe_add(log, dict({"event": "wall"}, **d)), keep_seconds=keep,
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"))
+                    self.collector.start()
+                except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
+                    _safe_add(log, {"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
+                    self.collector = None
+                # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
+                threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()
+
+    def viewed(self):
+        if self.nal is not None:
+            self.nal.viewed()
+
+    def follow(self):
+        """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""
+        while True:
+            time.sleep(self.cfg.wall_opts["seconds"])
+            try:
+                self.viewed()
+                self.model()
+            except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said in the log
+                _safe_add(self.log, {"event": "wall", "model": "not made", "why": clean(str(e), 200)})
+
+    def netapp(self):
+        """-> (the NetApp run's model or None, its read time (epoch) or None, why there is none)"""
+        n = self.nal
+        if n is None:
+            return None, None, ("the wall reads NetApp from the report database: the portal's deploy needs the \"Report database\" credential"
+                                if not self.cfg.report_db else "")
+        with n.lock:
+            m, stale = n.model, n.stale
+        if m is None:
+            return None, None, stale or (netapp_live.NO_LOGIN if n.db is None else "reading the report database")
+        if m.get("empty"):
+            return None, None, m["empty"]
+        at = ad_when((m.get("run") or {}).get("read_at"))
+        return m, at, stale or ""               # a failed refresh is said on the path card (the DB is never a light on the wall)
+
+    def model(self, now=None):
+        nm, at, why = self.netapp()
+        with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
+            now = time.time() if now is None else now      # enters the tracker after a newer one
+            view = self.collector.view() if self.collector is not None else None
+            return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
+                                    title=self.cfg.wall_title, nm_why=why)
+
+    def answer(self, etag_in="", cn=""):
+        m = self.model()
+        m["me"] = {"feedback": wall_may_feedback(self.cfg, cn), "reader": wall_may_read_feedback(self.cfg, cn),
+                   "areas": [list(x) for x in FEEDBACK_AREAS], "max": FEEDBACK_MAX}
+        m["auth_retry"] = self.cfg.wall_auth_retry
+        m["zone"] = self.cfg.tz_name or "UTC"
+        m["poll"] = 30
+        m["full"] = {"storage": (self.cfg.path + "netapp") if self.cfg.netapp else ""}
+        body = json.dumps(m, separators=(",", ":"), ensure_ascii=False, default=str)
+        # the ETag leaves out "now" (it moves every second; the page works the ages out itself)
+        tag = '"%s"' % hashlib.sha256(re.sub(r'^\{"now":[0-9.]+,', "{", body).encode("utf-8")).hexdigest()[:20]
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+
+
+FEEDBACK_AREAS = (("general", "The wall in general"), ("overview", "Overview"), ("storage", "Storage"), ("vmware", "VMware"), ("vdi", "VDI"),
+                  ("ad", "Active Directory"), ("tickets", "Outages & problems"), ("network", "Network"), ("styles", "Lights / Cockpit / Map"))
+FEEDBACK_MAX = 1000             # characters in one feedback
+FEEDBACK_KEEP = 5000            # the newest this many are kept
+
+
+def wall_may_feedback(cfg, cn):
+    """the Feedback button: on, and the person in portal_wall_feedback_groups (none set: everyone who may open the wall).
+    Fails closed: groups set but AD not read -> nobody."""
+    if not (cfg.wall and cfg.wall_feedback and cn) or "groups" in getattr(cfg, "wall_feedback_closed", ()):
+        return False
+    if not cfg.wall_feedback_groups:
+        return True
+    return bool(cfg.ad_groups is not None and cfg.ad_groups.has("wall_feedback", cn))
+
+
+def wall_may_read_feedback(cfg, cn):
+    """the feedback list: portal_wall_feedback_readers (none set: the approvers - portal_approvers and portal_approver_groups)"""
+    if not (cfg.wall and cfg.wall_feedback and cn) or "readers" in getattr(cfg, "wall_feedback_closed", ()):
+        return False
+    if cfg.wall_feedback_readers:
+        return bool(cfg.ad_groups is not None and cfg.ad_groups.has("wall_readers", cn))
+    return cn in cfg.approvers
+
+
+class WallFeedback(object):
+    """The wall's feedback, one JSON line each in PORTAL_DATA/wall-feedback.jsonl (the portal's own volume: the report database
+    login is read-only), the newest FEEDBACK_KEEP kept. Who: the card's CN, as every portal log line."""
+
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+
+    def add(self, cn, area, text, ref="", now=None):
+        """-> (code, answer)"""
+        area = str(area or "").strip()
+        text = str(text or "").strip()
+        ref = clean(str(ref or ""), 200)
+        if area not in dict(FEEDBACK_AREAS):
+            return 400, {"error": "Pick an area."}
+        if not text:
+            return 400, {"error": "Write what is good, missing or wrong."}
+        if len(text) > FEEDBACK_MAX:
+            return 400, {"error": "At most %d characters." % FEEDBACK_MAX}
+        row = {"at": int(now or time.time()), "user": cn, "area": area, "text": text, "ref": ref}
+        with self.lock:
+            rows = self.rows_locked()
+            rows.append(row)
+            rows = rows[-FEEDBACK_KEEP:]
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        return 201, {"ok": True}
+
+    def rows_locked(self):
+        out = []
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict):
+                        out.append(r)
+        except OSError:
+            pass
+        return out
+
+    def rows(self, area=""):
+        with self.lock:
+            rows = self.rows_locked()
+        rows = [r for r in rows if not area or r.get("area") == area]
+        return sorted(rows, key=lambda r: -int(r.get("at") or 0))
+
+    def csv(self, area=""):
+        import csv
+        import io
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["when (UTC)", "who", "area", "card", "feedback"])
+        def cell(v):
+            # a cell a spreadsheet would read as a formula (= + - @, a tab or a return first) starts with ' - text, never run
+            v = str(v or "")
+            return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+        for r in self.rows(area):
+            w.writerow([datetime.datetime.fromtimestamp(int(r.get("at") or 0), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        cell(r.get("user", "")), cell(r.get("area", "")), cell(r.get("ref", "")), cell(r.get("text", ""))])
+        return buf.getvalue()
+
+
+def feedback_page(cfg, cn, fb, area=""):
+    """/portal/wall/feedback: the list, newest first, an area filter, the CSV - for the readers only"""
+    area = area if area in dict(FEEDBACK_AREAS) else ""
+    rows = fb.rows(area)
+    opts = "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == area else "", esc(t)) for k, t in (("", "All areas"),) + FEEDBACK_AREAS)
+    names = dict(FEEDBACK_AREAS)
+    trs = "".join('<tr><td class="mono">%s</td><td>%s</td><td>%s</td><td>%s</td><td class="fbt">%s</td></tr>'
+                  % (esc(in_zone(datetime.datetime.fromtimestamp(int(r.get("at") or 0), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), cfg.tz)),
+                     esc(r.get("user", "")), esc(names.get(r.get("area"), r.get("area", ""))), esc(r.get("ref", "")), esc(r.get("text", ""))) for r in rows)
+    body = ('<div class="hero"><p class="crumb"><a href="%swall">%s</a></p><h1>Wall feedback</h1>'
+            '<p class="sub">%d %s, newest first. Kept on the portal server; no email.</p></div>'
+            '<form class="fbf" method="get" action="%swall/feedback"><label>Area <select name="area">%s</select></label> '
+            '<button class="btn" type="submit">Show</button> <a class="btn" href="%swall/feedback.csv%s">Download CSV</a></form>'
+            '<div class="tablewrap"><table class="fbtab"><thead><tr><th>When</th><th>Who</th><th>Area</th><th>Card</th><th>Feedback</th></tr></thead>'
+            '<tbody>%s</tbody></table></div>'
+            % (cfg.path, esc(cfg.wall_title), len(rows), "entry" if len(rows) == 1 else "entries", cfg.path, opts, cfg.path,
+               ("?area=" + area) if area else "", trs or '<tr><td colspan="5">No feedback yet.</td></tr>'))
+    return shell(cfg, "Wall feedback", body, cn, page="wall-feedback")
+
+
+# portal_wall_preview (default true): the user's bar for the wall's first release - a display fault may ship with this said on
+# every style, kiosk included (not dismissable)
+WALL_PREVIEW = ('<p class="wall-preview" role="note" id="wall-preview"><b>Preview</b> - a light may show OK when data is missing or late. '
+                'Check vCenter / NetApp before acting.</p>')
+
+
+def wall_page(cfg, cn, statics, token=""):
+    """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
+    v = lambda n: statics.get(n, "")
+    body = ((WALL_PREVIEW if getattr(cfg, "wall_preview", True) else "") +
+            '<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s"%s>'
+            '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
+            '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
+            '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-page.js")))
+    return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
+                 head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s">' % (cfg.path, v("wall-page.css")))
+
+
+def make_handler(cfg, portal, static_dir, wall=None):
     live = NetLive(cfg, portal.log) if not cfg.netmap_why else None
     history = NetmapHistoryLive(cfg) if live else None
     adl = AdLive(cfg, portal.log, getattr(portal, "aap", None)) if cfg.ad else None      # 1.101.2: the live AD page
     nal = NetappLive(cfg, portal.log, portal) if cfg.netapp else None                    # the NetApp page
     if nal is not None:
         nal.tab_soon()
+    wall = wall if cfg.wall else None
+    feedback = WallFeedback(os.path.join(cfg.data, "wall-feedback.jsonl"))       # 1.130.0: the wall's feedback (the portal's own volume)
+    if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
+        wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC:
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC:
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -6401,7 +6721,11 @@ def make_handler(cfg, portal, static_dir):
                 return None
             if not portal.may_use(user):
                 portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
-                self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
+                if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
+                    self._send(403, {"error": "You are not on the portal's readers list. Ask %s to add you." % cfg.access_contact,
+                                     "ad": ad_diag(cfg, user)})
+                else:
+                    self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
                 return None
             return user
 
@@ -6509,6 +6833,35 @@ def make_handler(cfg, portal, static_dir):
                 if path == "/netapp":
                     return self._send(200, netapp_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 code, body, etag = nal.answer(cn, (self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            # 1.130.0: the wall's feedback list (its readers only) and its CSV
+            if path in ("/wall/feedback", "/wall/feedback.csv"):
+                if not wall or not cfg.wall_feedback:
+                    return self._send(404, message_page(cfg, "Feedback off", "The wall's feedback is off here (portal_wall_feedback: false).", cn),
+                                      "text/html; charset=utf-8")
+                if not wall_may_read_feedback(cfg, cn):
+                    portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not a feedback reader"})
+                    return self._send(403, message_page(cfg, "Not for you", "The wall's feedback is for the readers (portal_wall_feedback_readers).", cn, kind="bad"),
+                                      "text/html; charset=utf-8")
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                area = (q.get("area") or [""])[-1]
+                if path.endswith(".csv"):
+                    return self._send(200, feedback.csv(area if area in dict(FEEDBACK_AREAS) else "").encode("utf-8"), "text/csv; charset=utf-8",
+                                      [("Content-Disposition", 'attachment; filename="wall-feedback.csv"')])
+                return self._send(200, feedback_page(cfg, cn, feedback, area), "text/html; charset=utf-8")
+            # 1.130.0: the ops-center wall
+            if path in ("/wall", "/api/wall"):
+                if not wall:
+                    return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),
+                                      "text/html; charset=utf-8") if path == "/wall" else self._send(404, {"error": "The wall is off here (portal_wall: false)."})
+                wall.viewed()
+                if path == "/wall":
+                    return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
+                try:
+                    code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip(), cn)
+                except Exception as e:  # pylint: disable=broad-except  - the page says "not reachable", never a stale green
+                    portal.log.add({"event": "wall", "answer": "not made", "why": clean(str(e), 200)})
+                    return self._send(503, {"error": "The wall's answer could not be made (the portal's log says why)."})
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:
@@ -6738,7 +7091,8 @@ def make_handler(cfg, portal, static_dir):
                 return self._refresh_post(cn)
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
             m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny|placement)$", path)
-            if not m_act and not m_dec:
+            m_fb = path == "/api/wall/feedback"                 # 1.130.0: the wall's Feedback button
+            if not m_act and not m_dec and not m_fb:
                 return self._send(404, {"error": "not found"})
             # CSRF: a page of this site sent it (same origin), with this person's token, as JSON
             if not self._same_origin() or not portal.token_ok(cn, self.headers.get("X-Portal-Token")) \
@@ -6758,6 +7112,14 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(400, {"error": "Not JSON."})
             if not isinstance(body, dict):
                 return self._send(400, {"error": "Not a JSON object."})
+            if m_fb:
+                if not wall or not wall_may_feedback(cfg, cn):
+                    portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "may not give wall feedback"})
+                    return self._send(403, {"error": "Feedback is not open to you here (portal_wall_feedback_groups)."})
+                code, out = feedback.add(cn, body.get("area"), body.get("text"), body.get("ref"))
+                if code == 201:
+                    portal.log.add({"event": "wall_feedback", "user": cn, "area": str(body.get("area"))[:20]})
+                return self._send(code, out)
             if m_act:
                 sent = body.get("vars", {})
                 sig = body.get("sig")
@@ -6853,8 +7215,52 @@ def pick_check(portal):
     return res
 
 
+def write_wall_token(data_dir, text):
+    """--wall-token: Site portal - deploy's reset token (32 lowercase hex, on stdin) into the data volume, durably - a new one
+    starts stopped wall logins again, once (wall_live.Collector). The journal first, the token last: a collector still
+    running sees the new token only after the journal is settled, so a refusal it records with that token is never
+    replaced by the clear record below (one deploy, at most one refused login)."""
+    tok = str(text or "").strip()
+    if not wall_live.TOKEN_RX.match(tok) if wall_live is not None else not re.fullmatch(r"[0-9a-f]{32}", tok):
+        raise ValueError("not a token (32 lowercase hex)")
+
+    def put(name, body):
+        fd, tmp = tempfile.mkstemp(prefix=name + ".", suffix=".tmp", dir=data_dir)
+        try:
+            os.write(fd, body)
+            os.fsync(fd)
+            os.close(fd)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, os.path.join(data_dir, name))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        dfd = os.open(data_dir, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    # the journal missing (a first deploy, an emptied volume) or in doubt: a person ran the deploy - a clear one (a valid stop
+    # record is never touched: the new token below is what starts it, once)
+    if wall_live is not None:
+        jp = os.path.join(data_dir, "wall-backoff.json")
+        try:
+            wall_live._parse_journal(wall_live._read_regular(jp, wall_live.JOURNAL_MAX))
+        except (OSError, ValueError):
+            try:
+                put("wall-backoff.json", json.dumps({"v": 5, "stopped": False, "at": None, "why": "", "token": "", "inflight": []}).encode("ascii"))
+            except OSError:
+                pass                                    # left in doubt: the collector stays stopped (fails closed)
+    put("wall-reset-token", (tok + "\n").encode("ascii"))
+
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--aap-check"]:
+    if sys.argv[1:] == ["--wall-token"]:
+        write_wall_token(os.environ.get("PORTAL_DATA", "/data"), sys.stdin.read(200))
+        sys.stdout.write("token written\n")
+    elif sys.argv[1:] == ["--aap-check"]:
         sys.stdout = sys.stderr                          # the journal's lines, if any, not in the answer
         res = aap_check(Config())
         sys.__stdout__.write(json.dumps(res) + "\n")

@@ -2192,7 +2192,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_approver_groups` | `[]` | Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_gr… (all of it: the role file) |
 | `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
 | `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
-| `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything |
+| `portal_ad_card_match` | `"{edipi}*@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at @mil) |
 | `portal_ad_groups_seconds` | `300` | how often the members are read (60 to 3600); 60 s after a failed read |
 | `portal_ldap_server` | (empty) | a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS |
 | `portal_ldap_domain` | `"{{ ad_reader_domain \| default('') }}"` | the domain's DNS name (its DCs from DNS; the base DN from it) |
@@ -2258,6 +2258,31 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ad_template` | (empty) | two AD templates (two forests): the ID of the one the page shows; "" = the newest run's |
 | `portal_netapp` | `true` | ---- the NetApp page (docs/SITE_PORTAL.md, "The NetApp page"; docs/NETAPP.md, "The live page") ---- /portal/netapp: NetApp - refresh volume list's newest run from the report database (ontap_live_db on that job, with its "Report database" credential) - each LUN and volume, VMware datastores first, each least free first… (all of it: the role file) |
 | `portal_netapp_old_minutes` | `60` | a run older than this is said to be old on the page (the refresh runs every 15-30 min) |
+| `portal_wall` | `true` | ---- 1.130.0: the ops-center wall (docs/SITE_PORTAL.md, "The ops-center wall") ------------------------------------------- /portal/wall: one page for a wall screen - Lights, Cockpit (the default) or Map, saved per viewer - with only the wall conditions below lit (routine alarms never). VMware is read live by the porta… (all of it: the role file) |
+| `portal_wall_title` | `"{{ outage_ops_center \| default('Ops center', true) }}"` | the tab's and the page's name: what your site calls its operations center |
+| `portal_wall_preview` | `true` | a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted |
+| `portal_wall_enclave` | `"{{ site_enclave \| default('', true) }}"` | shown beside the title; one portal serves one enclave |
+| `portal_wall_seconds` | `60` | the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks |
+| `portal_wall_auth_retry_minutes` | `15` | kept for the settings check (5 to 1440); 1.130.0: any unclear or refused login answer STOPS every wall login until the next Site portal - deploy |
+| `portal_wall_vcenter` | `auto` | vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the VMware jobs use; read-only calls only). The credential's vCenter and these (vmware_vcenters: names, or name:port) are read with that account. auto \| true \| false |
+| `portal_wall_vcenters` | `"{{ vmware_vcenters \| default([], true) }}"` | more vCenters read with the same account (names, or name:port) |
+| `portal_wall_vcenter_validate_certs` | `"{{ vmware_validate_certs \| default(true) }}"` | vCenter's certificate checked (the CAs: portal_trust_host_cas) |
+| `portal_wall_ontap` | `auto` | ONTAP live: auto = on when this deploy has the "NetApp ONTAP" credential and ontap_clusters is set (GET only). Off: the wall's storage comes from the NetApp page's run in the report database (as old as that run). auto \| true \| false |
+| `portal_wall_ontap_clusters` | `"{{ ontap_clusters \| default([], true) }}"` | the clusters read live (management names or addresses) |
+| `portal_wall_ontap_validate_certs` | `"{{ ontap_validate_certs \| default(true) }}"` | ONTAP's certificate checked (the CAs: portal_trust_host_cas) |
+| `portal_wall_datastore_warn` | `85` | The thresholds (docs/SITE_PORTAL.md, "Thresholds to confirm with each team"); "What the wall watches" shows the ones in force a datastore this % used or more: warning (VMware / Storage team) |
+| `portal_wall_datastore_crit` | `95` | ... critical |
+| `portal_wall_aggr_warn` | `85` | an aggregate this % used or more: warning (Storage team) |
+| `portal_wall_aggr_crit` | `97` | ... critical |
+| `portal_wall_high_pct` | `90` | a host's or VM's CPU or memory at this % or more ... |
+| `portal_wall_high_minutes` | `15` | ... for this many minutes or longer: warning (shorter spikes stay off the wall) |
+| `portal_wall_maintenance_expected` | `[]` | hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in maintenance: warning |
+| `portal_wall_vm_heartbeat` | `true` | a powered-on VM whose VMware Tools heartbeat is red: critical (false = off) |
+| `portal_wall_site_pattern` | (empty) | the site of a cluster / host / datastore: the regex's first group on its name; "" = a 4-letter, 2-digit prefix (SITA01) |
+| `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); none = the sites as a list |
+| `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
+| `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
+| `portal_wall_feedback_readers` | `"{{ portal_approver_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
 | `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
 | `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
 | `portal_report_db_port` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') \| default('3309', true) \| int }}"` | its port (the credential's) |
@@ -2270,6 +2295,11 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ldap_vars` | `{user: MICROSOFT_AD_LDAP_USERNAME, password: MICROSOFT_AD_LDAP_PASSWORD}` | 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a file, a unit or the logs 1.120.0: the "LDAP Bind Account" credential's login for the AD groups: where it is in this job - the name of an environment variable the credential sets, or of an extra vari… (all of it: the role file) |
 | `portal_solarwinds_username` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"` | 1.85.0: the "SolarWinds (read-only)" credential's user |
 | `portal_solarwinds_password` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"` | the credential's password (secret) |
+| `portal_wall_vcenter_host` | `"{{ lookup('ansible.builtin.env', 'VMWARE_HOST') \| trim }}"` | 1.130.0: the wall's collector - the site's existing accounts, copied to the portal server as podman secrets (site-portal-vcenter, site-portal-ontap) the same way as the LDAP bind account: never in a file, a unit, the page, the API or the logs the "VMware vCenter" credential's vCenter |
+| `portal_wall_vcenter_username` | `"{{ lookup('ansible.builtin.env', 'VMWARE_USER') \| trim }}"` | its account |
+| `portal_wall_vcenter_password` | `"{{ lookup('ansible.builtin.env', 'VMWARE_PASSWORD') }}"` | its password (secret) |
+| `portal_wall_ontap_username` | `"{{ lookup('ansible.builtin.env', 'ONTAP_USERNAME') \| trim }}"` | the "NetApp ONTAP" credential's account |
+| `portal_wall_ontap_password` | `"{{ lookup('ansible.builtin.env', 'ONTAP_PASSWORD') }}"` | its password (secret) |
 
 ## solarwinds_report
 

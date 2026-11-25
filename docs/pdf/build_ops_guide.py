@@ -14,7 +14,7 @@ import textwrap
 from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-Ops-Runbooks-Guide.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "Site-Automation-Ops-Runbooks-Guide.pdf")   # 1.131.0: the built guides live in guides/
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # The repository is found from where this script sits (<repo>/docs/pdf); a copy of the script
 # elsewhere needs SITE_AUTOMATION_DIR=<repo>.
@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.129.0"
+SA_VERSION = "1.131.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),

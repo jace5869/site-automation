@@ -3,12 +3,13 @@
 
 Rebuild after a release:  python3 build_guide.py [output.pdf]
 Needs reportlab and the Noto Sans / Noto Sans Mono TTFs (Fedora: google-noto-sans-fonts)."""
+import os
 import sys
 
 from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-Automated-Triage-Guide.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "ACT-Automated-Triage-Guide.pdf")   # 1.131.0: the built guides live in guides/
 
 def diagram_loop():
     W, H = CONTENT_W, 150

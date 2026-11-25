@@ -2228,7 +2228,7 @@ job_templates:
   - name: Site portal - deploy
     playbook: playbooks/site_portal_deploy.yml
     credentials: [machine, aap]
-    optional_credentials: [report_db_reader, report_db]
+    optional_credentials: [report_db_reader, report_db, vmware, ontap]
     ask_limit: true
     ask_variables: false
     ask_inventory: false

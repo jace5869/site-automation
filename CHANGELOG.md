@@ -1,8 +1,10 @@
 # Changelog
 
-## 1.130.0 — 2026-11-25
+## 1.131.0 — 2026-11-25
 
-**To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional.
+**To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional. The guides (PDFs) moved
+from `docs/pdf/` to `guides/` at the top of the repository: after applying, delete the old PDFs in `docs/pdf/` (the zip
+cannot remove them).
 
 - **Card icons on the Actions page.** Each card has an icon from what the job does (restart, clean up, deploy, report ...), else
   from its group; the tile is tinted by group. A **Changes servers** chip (pen) marks jobs whose name says they change
@@ -14,9 +16,116 @@
 - **Active Directory page: the domain report's replication matrix and map.** Source DCs in rows as in the report, the same
   bands; a cell opens its partitions, error and a copyable `repadmin` command; **Links, worst first** for a list; the
   replication map placed as on the network map. From the report database - no new rights. Each block shows its age.
-- **Readers (optional, off by default).** `portal_reader_groups: ["<readers group>"]` (or `portal_readers` by card name):
-  only those may open the portal; admins (`portal_requester_groups`) and approvers (`portal_approver_groups`) always may.
-  Both empty = as before (any valid card may view, without Run buttons). `portal_access_contact` = who the refusal page names.
+- **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
+
+## 1.130.0 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**. The wall's logins come from the credentials already on that template: the
+existing **VMware vCenter** and **NetApp ONTAP** credentials (the ones the VMware and NetApp jobs use - no new accounts) are
+copied to the portal server as the podman secrets `site-portal-vcenter` and `site-portal-ontap`. Storage is on the wall
+only with live ONTAP: list the clusters in `portal_wall_ontap_clusters`. Who may send feedback: `portal_wall_feedback_groups`
+([] = everyone who opens the wall; the list is at `<portal>/wall/feedback`, read by `portal_wall_feedback_readers`). The
+preview banner is on by default (`portal_wall_preview: true`) - set it false once your teams trust the wall. The wall is on
+by default (`portal_wall: true`); its tab is named by `portal_wall_title`. Thresholds (defaults fine for a first showing):
+`portal_wall_datastore_warn` / `_crit` (85 / 95), `portal_wall_aggr_warn` / `_crit` (85 / 97), `portal_wall_high_pct` (90)
+and `portal_wall_high_minutes` (15), `portal_wall_maintenance_expected` ([]), `portal_wall_vm_heartbeat` (true),
+`portal_wall_seconds` (60). The wall's logins run on ONE portal host per site. After any unclear or refused login they stay
+stopped: fix the cause, then run Site portal - deploy (every run lets the wall try once). Viewing the portal: nothing to
+set (any verified card may view); to limit it, `portal_reader_groups: ["<readers group>"]` (admins and approvers are readers).
+
+- **Viewing the portal no longer needs the run list** (1.129.1 gated the whole portal on portal_requesters / approvers and
+  their groups: anyone not in them could not even view): with both reader lists empty, any verified card may VIEW the
+  portal; running and approving still need their lists. Optional `portal_reader_groups` / `portal_readers` (card CNs)
+  limit who may view; admins and approvers are readers; `portal_access_contact` is the contact shown on a refusal.
+- **Contractor cards match:** the default `portal_ad_card_match` is now `{edipi}*@mil` - `1234567890@mil` and
+  `1234567890.CTR@mil` alike (still the card's own EDIPI, still ending at `@mil`).
+- **AD groups without a domain controller are refused at deploy** (Check and Run): groups set, no `portal_ldap_server`,
+  no DCs in the inventory and no `portal_ldap_domain` / `ad_reader_domain` would lock everyone out - the deploy says
+  what to set.
+- **A refused person sees what the portal knows of AD:** AD read yes / no (and why not, in a few words), each configured
+  group found and how many members, and whether their card matched an AD account - never names, accounts or DCs; the
+  `/api` refusal carries the same as JSON.
+- **Preview banner:** while `portal_wall_preview` is true (the default) every wall style, kiosk included, says on a thin
+  amber line that cannot be closed: "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp
+  before acting."
+- **Storage on the wall is live ONTAP only** (`portal_wall_ontap_clusters`): without it Storage is "not on the wall yet".
+  The report database's NetApp refresh (15-30 min old by design) never lights anything; it fills only the storage path
+  card, as information with its age in words.
+- **Green only from an allow-list, alerts clear only when seen OK:** a host is OK only "connected" with its maintenance
+  mode known, a heartbeat only "green", a datastore only "accessible", SnapMirror only healthy and snapmirrored /
+  in_sync, a volume or LUN only "online" - anything else is unknown (grey). An alert whose object is gone from the read
+  or became unknown stays open as "last known" (grey, last seen HH:MM), never "cleared".
+- **Stop on any doubt (the wall's logins):** after the password left, anything but a clear success - a refusal, 401 /
+  403 / 407, NoPermission, a timeout, a lost or odd answer, a 5xx - stops every wall login to every source at once (no
+  Logout, no further source) and it stays stopped across restarts. To resume: fix the cause, then run Site portal -
+  deploy (every run writes a new reset token before the service restarts; a stop keeps the token it saw, so one deploy
+  costs at most one refused login). One collector per data volume, one portal host runs the wall (the deploy refuses
+  more in a run and reminds on every run); the attempt is written before every poll; a poll marked at the start, or any doubt
+  about the journal, is a stop. The page says "Logins stopped at HH:MM: <source> <reason>. Fix the cause (password,
+  account), then run Site portal - deploy."
+- **The ops-center wall (`/portal/wall`), stage 1.** One page, three styles of one model - Lights, **Cockpit** (the
+  default), Map - kept per viewer; `?style=`, `?area=`, `?kiosk=1`, Rotate (styles or areas, 30 / 60 / 120 s, pauses on
+  input, starts again after 60 s idle). VMware and Storage are on the wall; VDI, Active Directory, Outages & problems
+  and Network are grey tiles "Not on the wall yet".
+- **Every gauge, tile, counter, light and row opens a detail card:** what is wrong, since when and how long, the value
+  against its threshold, what it touches (the VMs and datastores on a host that is down), the source and its age, and
+  where to check it. A datastore opens its storage path (datastore, LUN / volume, aggregate). Critical is loud (red,
+  icon and word, first in the Now strip); OK stays quiet.
+- **VMware live:** hosts not responding or disconnected, a vCenter not answering or its login failed, hosts in
+  maintenance not listed as expected, datastores inaccessible or full, a host's or VM's CPU or memory at 90 % for 15 min
+  or longer (short spikes stay off), VMs with a red heartbeat, hosts up x / y, the busiest cluster's CPU and memory.
+- **The collector is read-only by construction:** one kept vCenter session (a new login only when the session is
+  gone), one property read a cycle, only read calls in the code (any other is refused before it is sent); ONTAP GET
+  only with `fields=`. The logins are podman secrets on the portal server (`site-portal-vcenter`, `site-portal-ontap`),
+  as the LDAP bind account.
+- **The page never stays green on old data:** it redraws when a source goes LATE / STALE, says "Portal not reachable"
+  (everything grey) after two failed reads, keeps a condition from a current source Critical while another source is
+  stale, never shows a stale site as a green dot on the Map; an inaccessible datastore is Critical whatever its fill.
+- **Freshness:** every source shows *as of*; LATE after 3 min, STALE after 10 min; stale is never green (a hollow grey
+  ?, "Not current", the last values grey). Storage from the NetApp run is as old as that run, and says so.
+- **What the wall watches** lists each wall condition with the thresholds in force. No "days until full" on the wall.
+- **Write-ahead login back-off and one source per cluster:** the attempt is on disk before any login (no write, no login;
+  a restart one second after a refusal sends nothing inside the window); a cluster read live is never mixed with the
+  NetApp run's rows of its address, and nothing is matched by name; a live ONTAP collection is read whole or counts as
+  failed; a source failing now is not current; a lost read never "clears" an alert; the expand survey says "LUN 100 GB,
+  use unknown" (sorted as least free) instead of the volume's numbers.
+- **Fail closed everywhere:** a value not read is "?" (never 0 % or OK; a LUN's unread blocks are never "0 % written"
+  in NetApp - refresh volume list either), a source missing from the answer is not current, a vCenter that never returned
+  its inventory or a host / datastore lacking a value keeps the whole area from green; a run's alert is cleared by a live
+  read only for the exact cluster (a short name only when unique); a back-off file that cannot be used holds every account
+  for one window.
+- **One status rule:** green only when the check ran, its source is current and the value is OK - for every counter,
+  gauge, light, row, dot and card (a test walks them all in the three styles with sources old or missing). Checks not
+  run (`ontap_live_health: false`) are grey. A read on an old session never ends a login back-off; a cut 401 is a refusal.
+- Nothing green without a current read: a host state not read is unknown, the NetApp counters are grey with no NetApp
+  read, a wall with nothing read says "No current data"; a failed first read is tried again; `?freeze` (screenshots)
+  works only in the test harness, never on a production wall URL.
+- **Feedback** button on the wall (and "Feedback on this card"), kept on the portal server with the card name and the
+  time; the list for its readers at `/portal/wall/feedback` (area filter, CSV). Who may send and who may read: AD groups,
+  checked on the server (the button hidden and the send refused for others; the list 403).
+- docs/SITE_PORTAL.md, "The ops-center wall": the sources, the collector, the set-up, "Thresholds to confirm with each
+  team", "Wall feedback: how to open it and who sees it".
+- **Known in this preview (stage 2)** - display only, under the Preview banner; the logins are never affected:
+  - a host or SnapMirror relationship that was down and then disappears from the read stays "last known" on its own card,
+    but VMware / Storage may still show OK beside it (r5 #10);
+  - two VMs of one name in different folders of one vCenter share their alert (r5 #11);
+  - an ONTAP poll that takes longer than the stale limit stamps its first collections with the poll's end (r5 #15);
+  - with Storage off (no live ONTAP), the "Datastore full" group and counter can show OK from the vCenter read (r5 #17);
+  - a site whose only object cleared and left the read can show a green Map dot from other sources (r5 #18);
+  - the NetApp page (report database) can keep green chips while its own header says Not current, and shows a
+    SnapMirror row without health as Healthy (r5 #21, #22);
+  - the fuzz scanner does not read pseudo-elements, gradients, the tooltip or right/bottom borders;
+  - once a source's password was accepted in a cycle, a later read error on it (an ONTAP collection not whole, an odd
+    vCenter answer) is a plain source error and the cycle goes on (Codex r7 #1, #3; the password was proven);
+  - a portal whose log volume is full can still fail to start through the portal's own startup log lines (r7 #17, not
+    the wall's).
+  - a deleted object's alert stays "last seen" until the portal restarts; a paused or uninitialized but healthy
+    SnapMirror relationship is grey; one unreachable source delays the others by up to its timeout each cycle.
+- **Wall logins - known limits** (the wall never sends a refused password twice on its own; these need a person's hand):
+  - restoring an older copy of the portal's data volume (or of its wall-reset-token file) can allow one more login try;
+  - two portal hosts each running the wall with the same account can each fail it once - run the wall on one host;
+  - after a password was accepted, a read error later in the cycle still stops every wall login (stricter than needed:
+    run Site portal - deploy to start them again).
 
 ## 1.129.1 — 2026-11-25
 

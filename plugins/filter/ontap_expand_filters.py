@@ -252,7 +252,7 @@ def ontap_expand_choices(choices, found=None, limit=500):
 
     def full(e):
         size, used, _src = X.lun_fullness(e)
-        return float(used) / float(size or 1)
+        return 2.0 if used is None else float(used) / float(size or 1)        # use unknown: first, as the least free
     # (user 1.127.0) the ones on a VMware datastore first, then the rest; each least free first - a LUN volume by its LUN (or
     # its datastore), never by the volume (X.lun_fullness); ties by name. vCenter not read: no datastore, one list. The limit
     # keeps the first ones.
@@ -304,10 +304,11 @@ def ontap_expand_list_doc(r):
         name = e["volume"] + (("/" + e["lun"].rsplit("/", 1)[-1]) if e.get("lun") and int(e.get("luns") or 1) > 1 else "")
         fe = dict(e, ds_capacity=f.get("capacity"), ds_free=f.get("free"))
         fsize, fused, _src = X.lun_fullness(fe)
-        used = X.pct(fused, fsize)
-        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], X.human(e["aggr_free"]),
+        used = 100.0 if fused is None else X.pct(fused, fsize)              # use unknown: marked as if full
+        afree = e.get("aggr_free")                                          # None: the aggregate's use not read - never "all free"
+        rows.append([name, e["svm"], e["cluster"], X.human(e["size"]), X.fullness_text(fe), e["aggr"], "?" if afree is None else X.human(afree),
                      ("%s %s" % (f.get("kind"), f.get("datastore"))) if f.get("datastore") else ("LUN" if e.get("lun") else "-")])
-        cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if e["aggr_free"] < X.TB else "", ""])
+        cells.append(["", "", "", "", "warning" if used >= 90 else "", "", "warning" if afree is None or afree < X.TB else "", ""])
     sections.append({"title": "Choices", "columns": ["Volume", "SVM", "Cluster", "Volume size", "How full", "Aggregate", "Aggr free", "Datastore"],
                      "rows": rows, "cell_status": cells, "keep_case": True})
     if r.get("more"):

@@ -11,7 +11,7 @@ import sys
 from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-AAP-2.7-Runbook.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "ACT-AAP-2.7-Runbook.pdf")   # 1.131.0: the built guides live in guides/
 import os
 # the ACT-Linux checkout; set ACT_LINUX_DIR when it is not at the default
 RUNBOOK_MD = os.path.join(os.environ.get("ACT_LINUX_DIR", "/opt/ACT"), "docs", "AAP_2.7_RUNBOOK.md")

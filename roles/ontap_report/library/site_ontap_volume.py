@@ -165,10 +165,21 @@ def gb_of(rec, *path):
     return int(v or 0)
 
 
+def opt_of(rec, *path):
+    """as gb_of, but None when ONTAP did not give it (1.130.0: a LUN's blocks not read are never 0)"""
+    v = rec
+    for k in path:
+        v = (v or {}).get(k)
+    try:
+        return None if v is None else int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def vol_in(rec):
     return {"name": rec.get("name"), "svm": (rec.get("svm") or {}).get("name") or "", "size": gb_of(rec, "space", "size"),
             "uuid": rec.get("uuid"),
-            "used": gb_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
+            "used": opt_of(rec, "space", "used"), "state": rec.get("state"), "type": rec.get("type"), "style": rec.get("style"),
             "available": None if (rec.get("space") or {}).get("available") is None else gb_of(rec, "space", "available"),
             "snap_pct": float(((rec.get("space") or {}).get("snapshot") or {}).get("reserve_percent") or 0),
             "snap_used": int(((rec.get("space") or {}).get("snapshot") or {}).get("used") or 0),
@@ -180,6 +191,11 @@ def vol_in(rec):
 def aggr_in(rec):
     bs = (rec.get("space") or {}).get("block_storage") or {}
     return {"name": rec.get("name"), "size": int(bs.get("size") or 0), "used": None if bs.get("used") is None else int(bs["used"])}
+
+
+def aggr_free(a):
+    """an aggregate's free space for the list - None when its use was not read (1.130.0: never the whole aggregate as free)"""
+    return None if a.get("used") is None else max(0, int(a.get("size") or 0) - int(a["used"]))
 
 
 def lun_thick(rec):
@@ -234,18 +250,18 @@ def list_cluster(c, opts):
         if why:
             # the sizes too (the portal's NetApp page shows a volume not offered with its reason)
             excluded.append({"volume": v.get("name"), "svm": svm or "(node)", "cluster": name, "why": why, "address": c.address,
-                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)),
+                             "size": vi["size"], "used": vi["used"], "aggr": a["name"], "aggr_free": aggr_free(a),
                              "uuid": v.get("uuid") or "", "root": bool(v.get("is_svm_root")) or v.get("name") == "vol0" or not svm})
             continue
         base = {"cluster": name, "address": c.address, "svm": svm, "volume": vi["name"], "size": vi["size"], "used": vi["used"],
-                "aggr": a["name"], "aggr_free": max(0, a["size"] - (a["used"] or 0)), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
+                "aggr": a["name"], "aggr_free": aggr_free(a), "datastore": "", "nfs_path": (v.get("nas") or {}).get("path") or "",
                 "nfs_ips": addr.get(svm, []), "lun": "", "luns": 0, "naa": ""}
         mine = sorted(luns.get((svm, vi["name"]), []), key=lambda x: x.get("name") or "")
         for l_ in mine or [None]:
             e = dict(base)
             if l_:
                 e.update(lun=l_.get("name") or "", luns=len(mine), naa=X.naa(l_.get("serial_number")), lun_size=gb_of(l_, "space", "size"),
-                         lun_uuid=l_.get("uuid") or "", lun_used=gb_of(l_, "space", "used"), lun_thick=lun_thick(l_),
+                         lun_uuid=l_.get("uuid") or "", lun_used=opt_of(l_, "space", "used"), lun_thick=lun_thick(l_),
                          vol_available=vi["available"], snap_pct=vi["snap_pct"], guarantee=vi["guarantee"])
             e["uuid"] = v.get("uuid") or ""
             choices.append(e)

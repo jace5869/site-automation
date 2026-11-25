@@ -14,7 +14,7 @@ import build_ops_guide as g
 from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "Service-Watch-Demo-AAP-ACT.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "Service-Watch-Demo-AAP-ACT.pdf")   # 1.131.0: the built guides live in guides/
 import os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.environ.get("SITE_AUTOMATION_DIR") or (

@@ -65,7 +65,7 @@ check_disk_overrides:                  # a table inside a table
 | `inventories/example/` | a sample inventory. Copy blocks from it; AAP does not read it | **no** |
 | `ansible.cfg` | tells Ansible where the roles and filters are. AAP uses it too, but ignores its `inventory =` line | **no** |
 | `vendor/act/` | ACT, copied in from its own release | **no** |
-| `docs/`, `docs/pdf/` | these guides | **no** |
+| `docs/`, `docs/pdf/`, `guides/` | these guides (`guides/`: their PDFs) | **no** |
 | `tests/`, `.github/`, `.ansible-lint`, `.yamllint` | automatic checks of the code | **no** |
 | `poam/poam.csv` | **your** POA&M list | **yes** |
 
