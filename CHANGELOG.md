@@ -1,30 +1,22 @@
 # Changelog
 
-## 1.131.0 (part: card icons) — 2026-11-25
+## 1.130.0 — 2026-11-25
 
-To set up: run Site portal - deploy. Optionally add `portal-icon:<name>` to an AAP template to choose its card icon.
+**To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional.
 
-Actions cards now show an icon based on the template name or group. A pen and **Changes servers** mark names that indicate a change.
-
-## 1.131.0 (part: readable job output) — 2026-11-25
-
-To set up: run Site portal - deploy.
-
-The live job view groups results by task, shows short failure reasons, and lists failed and unreachable hosts first in the recap. Check runs say **would change**. Switch to **Raw** for AAP stdout, or set `portal_job_output_emoji: false` for text markers.
-
-## 1.131.0 (part: AD page matrix and map) — 2026-11-25
-
-To set up: run Site portal - deploy.
-
-The Active Directory page shows the domain report’s source-by-destination replication matrix and replication map
-from the report database. Open a cell for partition details and a copyable verification command, or switch to
-**Links, worst first**. Select a DC to read the job’s saved problems. Each block shows the run’s age.
-
-## 1.131.0 (part: readers) — 2026-11-25
-
-**To set up:** `portal_reader_groups: ["<readers group>"]` then **Site portal - deploy**; admins and approvers are readers automatically.
-
-Set `portal_readers` for individual card CNs and `portal_access_contact` for the contact shown on refusal. With both reader lists empty, any verified card may view the portal.
+- **Card icons on the Actions page.** Each card has an icon from what the job does (restart, clean up, deploy, report ...), else
+  from its group; the tile is tinted by group. A **Changes servers** chip (pen) marks jobs whose name says they change
+  something; a plan, check, report, finder or "nothing is sent" never gets it. Optional: the label `portal-icon:<name>` on an
+  AAP template picks its icon (the names: docs/SITE_PORTAL.md, *Card icons*).
+- **Readable job output.** The live job view groups results by task (ok lines folded per task), shows a failed task's reason
+  in one short line (redacted; the rest behind *more*), and lists failed and unreachable hosts first in the recap. Check runs
+  say **would change**. **Raw** shows AAP's output unchanged. `portal_job_output_emoji: false` = text markers ([OK], [FAILED]).
+- **Active Directory page: the domain report's replication matrix and map.** Source DCs in rows as in the report, the same
+  bands; a cell opens its partitions, error and a copyable `repadmin` command; **Links, worst first** for a list; the
+  replication map placed as on the network map. From the report database - no new rights. Each block shows its age.
+- **Readers (optional, off by default).** `portal_reader_groups: ["<readers group>"]` (or `portal_readers` by card name):
+  only those may open the portal; admins (`portal_requester_groups`) and approvers (`portal_approver_groups`) always may.
+  Both empty = as before (any valid card may view, without Run buttons). `portal_access_contact` = who the refusal page names.
 
 ## 1.129.1 — 2026-11-25
 

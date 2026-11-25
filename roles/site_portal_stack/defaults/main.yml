@@ -70,13 +70,9 @@ portal_allow_self_approval: false                   # true = an approver may app
 # Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or
 # sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind
 # Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only
-<<<<<<< HEAD
-# portal_approvers / portal_requesters count (with groups set, an empty portal_requesters is nobody - never everyone).
+# explicitly named card CNs count for those roles (with groups set, an empty portal_requesters is nobody - never everyone).
 # 1.129.1: DOMAIN\Group works too (the DOMAIN\ part is dropped) - in YAML write it in SINGLE quotes ('CORP\Group'): in double
 # quotes a backslash starts an escape (\U, \x ...) and all.yml no longer loads.
-=======
-# explicitly named card CNs count for those roles.
->>>>>>> rel-readers
 portal_approver_groups: []                          # e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
 portal_requester_groups: []                         # the same for who may run the actions (with portal_requesters); [] = none
 portal_ad_card_attribute: userPrincipalName         # the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine)
