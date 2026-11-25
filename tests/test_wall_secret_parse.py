@@ -92,6 +92,7 @@ class TokenContainerKeepsLabels(unittest.TestCase):
             text = fh.read()
         i = text.index("- name: Wall | a new reset token in the portal's data volume")
         task = text[i:text.index("\n- name:", i + 10)]
+        task = "\n".join(ln for ln in task.splitlines() if not ln.strip().startswith("#"))     # the command, not its comment
         self.assertIn("label=disable", task)
         self.assertNotIn(",Z", task)
         self.assertNotIn(":Z", task)
