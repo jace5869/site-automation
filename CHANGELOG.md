@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.129.1 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,
+then run **AAP - set up job templates** (Check, then Run).
+
+```yaml
+aap_templates_inventory_windows: "<your Windows inventory>"
+```
+
+The Hosts picker reads a large inventory in one AAP call. A slow first read now shows “Reading the inventory...” and avoids the premature “could not be read” error.
+Windows templates use the configured Windows inventory on creation, and Run updates existing templates that use a different inventory.
+
+- reads no host lists in big pages (an AAP whose host list is slow answers 503 to 100 a page)
+- Check and Run now warn when the portal account cannot read an inventory. Portal setup names each affected publish match,
+  and job template setup warns once for the configured Windows inventory. Give the account **Read** on that inventory in AAP.
+
 ## 1.129.0 — 2026-11-25
 
 **To set up:** (1) run **Site portal - deploy** (the new picker; the defaults of `portal_windows_hosts_from` and

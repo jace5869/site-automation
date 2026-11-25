@@ -127,6 +127,10 @@ portal_setup_portal_user: svc_site_portal
 ## Run it with Check first: it then only reads, and lists every template it would make, fix or label. It never deletes.
 ## The inventory a template is made with, and your site-automation project in AAP
 aap_templates_inventory: Site hosts
+## Optional separate inventory for new and existing Windows templates
+# aap_templates_inventory_windows: Windows hosts
+# aap_templates_inventory_windows_organization: ""  # defaults to the templates' organization
+# aap_templates_portal_user: "<portal account>"     # for the inventory read check when portal_setup_portal_user is undefined
 # aap_templates_project: site-automation
 ## Your credential of each kind the catalog (aap/job_templates.yml) names; a template needing a kind not here is skipped
 aap_templates_credentials:

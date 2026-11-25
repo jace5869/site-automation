@@ -20,6 +20,9 @@ options:
   project: {description: The site-automation project (its name)., type: str, required: true}
   inventory: {description: "The inventory a template is made with (its name).", type: str, default: ''}
   inventory_organization: {description: "1.79.11c: the inventory's organization when it is not the templates' ('' = the same).", type: str, default: ''}
+  inventory_windows: {description: "Inventory name to set on new and existing Windows templates.", type: str, default: ''}
+  inventory_windows_organization: {description: "Windows inventory's organization (empty uses the templates' organization).", type: str, default: ''}
+  portal_user: {description: "Portal account whose read access to the Windows inventory is checked.", type: str, default: ''}
   ee: {description: "{all: name, windows: name, network: name} - an execution environment per kind ('' = the project's).", type: dict, default: {}}
   credentials: {description: "{kind: credential name} (a list of names for several).", type: dict, default: {}}
   only: {description: "Only the templates whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
@@ -60,7 +63,7 @@ import os
 import re
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, connection
+from ansible.module_utils.site_aap import Api, connection, portal_inventory_warnings
 from ansible.module_utils.site_aap_workflows import NEVER_ALONE, limit_misses_localhost, survey_question
 
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
@@ -192,6 +195,7 @@ class Templates(object):
         self.uses, self.renamed = {}, []       # 1.83.0: {a step's catalog name: the site's template used}; old names to rename
         self.refused = []                      # 1.83.0 (Codex P1, final pass): steps not fit to wire - their workflows not made
         self.results, self.problems = [], []
+        self.warnings = []
 
     def all(self, path):
         out, nxt = [], path + ("&" if "?" in path else "?") + "page_size=200"
@@ -288,6 +292,28 @@ class Templates(object):
         return d
 
     # ---- what the settings name: resolved first, every one
+    def resolve_inventory(self, key):
+        name = self.p.get(key)
+        if not name:
+            return None
+        org = (self.p.get(key + "_organization") or "").strip()
+        what = "inventory (aap_templates_%s)" % key
+        if not org or org == self.p["organization"]:
+            row = self.one("inventories", name, what)
+            return int(row["id"]) if row else None
+        orgs = [o for o in self.all("organizations/?name=%s" % _q(org)) if o.get("name") == org]
+        if len(orgs) != 1:
+            self.problems.append("%s %r: organization %r (aap_templates_%s_organization) %s" %
+                                 (what, name, org, key, "not found" if not orgs else "%d match" % len(orgs)))
+            return None
+        rows = [r for r in self.all("inventories/?name=%s" % _q(name))
+                if r.get("name") == name and r.get("organization") == orgs[0]["id"]]
+        if len(rows) != 1:
+            self.problems.append("%s %r: %s" % (what, name, "not found in organization %r" % org if not rows
+                                                else "%d match - rename one in AAP" % len(rows)))
+            return None
+        return int(rows[0]["id"])
+
     def resolve(self):
         p = self.p
         self.org_id = None
@@ -295,23 +321,11 @@ class Templates(object):
         self.org_id = int(o["id"]) if o else None
         pr = self.one("projects", p["project"], "project (aap_templates_project)")
         self.project = int(pr["id"]) if pr else None
-        self.inventory = None
-        if p["inventory"]:
-            io = (p.get("inventory_organization") or "").strip()
-            if io and io != p["organization"]:
-                # 1.79.11c: an inventory of another organization (AAP lets a template use it when the credential's user
-                # has Use on it): looked up by its exact name in that organization only
-                orgs = [o for o in self.all("organizations/?name=%s" % _q(io)) if o.get("name") == io]
-                rows = [r for r in self.all("inventories/?name=%s" % _q(p["inventory"])) if r.get("name") == p["inventory"]
-                        and len(orgs) == 1 and r.get("organization") == orgs[0].get("id")]
-                if len(orgs) != 1 or len(rows) != 1:
-                    self.problems.append("inventory (aap_templates_inventory) %r: %s" % (p["inventory"], (
-                        "organization %r (aap_templates_inventory_organization) %s" % (io, "not found" if not orgs else "%d match" % len(orgs)))
-                        if len(orgs) != 1 else ("not found in organization %r" % io) if not rows else "%d match - rename one in AAP" % len(rows)))
-                inv = rows[0] if len(orgs) == 1 and len(rows) == 1 else None
-            else:
-                inv = self.one("inventories", p["inventory"], "inventory (aap_templates_inventory)")
-            self.inventory = int(inv["id"]) if inv else None
+        self.inventory = self.resolve_inventory("inventory")
+        self.windows_inventory = self.resolve_inventory("inventory_windows")
+        if self.windows_inventory:
+            target = (None, self.windows_inventory, p["inventory_windows"])
+            self.warnings.extend(portal_inventory_warnings(self.all, p.get("portal_user"), [target]))
         self.ees = {}
         for kind, name in sorted((p["ee"] or {}).items()):
             if name:
@@ -369,6 +383,7 @@ class Templates(object):
             if t.get("organization") == self.org_id:
                 self.tid.setdefault(t.get("name"), int(t["id"]))
         to_label = []                          # the catalog entries to label (label_portal)
+        self.inventory_changes = []
         self.ours_row = {}                     # 1.107.0: name -> the template of that name in the organization
         steps_of = self.workflow_steps()       # 1.92.0 review: the steps of every workflow we make - never labelled
         self.step_skip = {}
@@ -377,8 +392,14 @@ class Templates(object):
                 continue
             name = e["name"]
             ours = [t for t in by_name.get(name) or [] if t.get("organization") == self.org_id]
+            windows = fnmatch.fnmatchcase(e["playbook"], "playbooks/win_*.yml") or "machine_windows" in (e.get("credentials") or [])
+            win_inventory = self.windows_inventory if windows else None
             if len(ours) == 1:
-                self.ours_row[name] = ours[0]
+                t = self.ours_row[name] = ours[0]
+                # A catalog name can be reused for another job. Only move the Windows job.
+                if (win_inventory and t.get("inventory") != win_inventory
+                        and (t.get("playbook") == e["playbook"] or fnmatch.fnmatchcase(t.get("playbook") or "", "playbooks/win_*.yml"))):
+                    self.inventory_changes.append((name, int(t["id"]), self.show("inventory", t.get("inventory"))))
             if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked
                 self.problems.append("AAP has %d job templates named %r in the organization: rename one" % (len(ours), name))
                 continue
@@ -484,7 +505,7 @@ class Templates(object):
                 if not self.p.get("create_missing", True):     # 1.79.19: renames and match only
                     self.note(name, "missing", why="not made (aap_templates_create_missing: false)")
                     continue
-                if not self.inventory:          # Codex: needed only to make one - said before any write
+                if not (win_inventory or self.inventory):          # Codex: needed only to make one - said before any write
                     self.problems.append("aap_templates_inventory is not set: %r would be made, and a template is made with an "
                                          "inventory" % name)
                     continue
@@ -500,10 +521,12 @@ class Templates(object):
                     text = set_vars(base[0].get("extra_vars"), e.get("extra_vars") or {})
                     if base[0].get("inventory"):
                         fields = dict(fields, inventory=int(base[0]["inventory"]))
+                if win_inventory:
+                    fields["inventory"] = win_inventory
                 steps.append(("create", e, fields, want_creds, kinds, text))
                 continue
             t = ours[0]
-            if self.p.get("match") and self.inventory:      # 1.79.19: the inventory only with aap_templates_match
+            if self.p.get("match") and self.inventory and not win_inventory:      # 1.79.19: the inventory only with aap_templates_match
                 fields["inventory"] = self.inventory
             m = self.matched(e)
             diff, mdiff = {}, {}                  # mdiff: what aap_templates_match brings right without overwrite
@@ -692,11 +715,15 @@ class Templates(object):
                     return n
             return ("execution environment %s" % v) if v else "the project's"
         if k == "inventory":
+            if v is None:
+                return "none"
+            if v == self.windows_inventory:
+                return self.p["inventory_windows"]
             if v == self.inventory:
                 return self.p["inventory"]
             if not hasattr(self, "_inventories"):
                 self._inventories = dict((int(r["id"]), r.get("name")) for r in self.all("inventories/"))
-            return repr(self._inventories.get(v, "inventory %s" % v)) if v else "none"
+            return self._inventories.get(v, "inventory %s" % v)
         if isinstance(v, bool):
             return "yes" if v else "no"
         return v
@@ -831,6 +858,14 @@ class Templates(object):
         self.steps(steps)
         if self.problems:
             return
+        for name, tid, previous in self.inventory_changes:
+            if not self.check:
+                self.write("PATCH", "job_templates/%d/" % tid, {"inventory": self.windows_inventory})
+            row = self.row_of(name)
+            if row["action"] == "right":
+                row["action"] = "fix"
+            row["inventory_change"] = "%s inventory of %s from %s to %s" % (
+                "would set" if self.check else "set", name, previous, self.p["inventory_windows"])
         try:
             self.surveys(steps)
         except RuntimeError as ex:
@@ -894,6 +929,8 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(catalog=dict(type="list", elements="dict", required=True), organization=dict(type="str", required=True),
                            project=dict(type="str", required=True), inventory=dict(type="str", default=""), inventory_organization=dict(type="str", default=""),
+                           inventory_windows=dict(type="str", default=""), inventory_windows_organization=dict(type="str", default=""),
+                           portal_user=dict(type="str", default=""),
                            ee=dict(type="dict", default={}), credentials=dict(type="dict", default={}),
                            only=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
                            create_alias=dict(type="bool", default=False),
@@ -918,11 +955,13 @@ def main():
         s.problems.append(str(ex))
     order = dict((e.get("name"), i) for i, e in enumerate(p["catalog"]))
     s.results.sort(key=lambda r: order.get(r["name"], 10 ** 6))
-    changed = any(r["action"] in ("create", "fix") or r.get("labels") for r in s.results) or getattr(s, "wrote", False)
+    changed = any(r["action"] in ("create", "fix") or r.get("labels") or r.get("inventory_change") for r in s.results) or getattr(s, "wrote", False)
     for r in s.results:                                  # 1.92.0 review: a step not labelled - said on its own line
         why = (getattr(s, "step_skip", {}) or {}).get(r.get("name"))
         if why:
             r["also"] = (r["also"] + "; " + why) if r.get("also") else why
+    for warning in s.warnings:
+        module.warn(warning)
     module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused,
                      survey_adds=getattr(s, "survey_adds", {}),
                      stale_labels=[x for _, lines in sorted((getattr(s, "stale_labels", None) or {}).items()) for x in lines])

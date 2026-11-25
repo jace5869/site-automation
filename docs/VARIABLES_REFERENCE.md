@@ -199,7 +199,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_execution_environment` | (empty) | the job templates' execution environment ("" = the project's default) |
 | `portal_setup_inventories` | `default: "{{ portal_inventory \| default('') }}"` | the inventories by key: default (required) and, for the Windows templates, windows ("" or left out = default) |
 | `portal_setup_credentials` | `{}` | the AAP credential of each kind workflows.yml names: machine, machine_windows, aap, act_model_key, stigman_api, stigman_api_writer, windows_share ... A template with a kind not named here is skipped, said. |
-| `portal_setup_portal_user` | (empty) | the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given |
+| `portal_setup_portal_user` | (empty) | The portal's AAP account for Execute and Approve. Check and Run warn for each portal_publish_templates match whose inventory it cannot read. Give it Read on that inventory in AAP. Empty skips account checks and grants. |
 | `portal_setup_overwrite` | `false` | true = also bring up to date what was made or changed by hand (never deletes) |
 | `portal_setup_describe` | `true` | 1.79.11: the templates and workflows get the catalog's five-line descriptions (aap/job_templates.yml; Contact from aap_templates_description_owner / _contact) - false = workflows.yml's one line, as before |
 | `portal_setup_schedules` | `[]` | schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes: [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}] |
@@ -251,6 +251,9 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_project` | `site-automation` | your site-automation project in AAP (its name) |
 | `aap_templates_inventory` | (empty) | the inventory a template is made with (its name) - needed only to make one |
 | `aap_templates_inventory_organization` | (empty) | the inventory's organization when it is another one ("" = aap_templates_organization); the credential's user needs Use on it |
+| `aap_templates_inventory_windows` | (empty) | inventory name for new and existing Windows templates (playbooks/win_*.yml or required machine_windows credential) |
+| `aap_templates_inventory_windows_organization` | (empty) | Windows inventory organization ("" = aap_templates_organization) |
+| `aap_templates_portal_user` | `"{{ portal_setup_portal_user \| default('') }}"` | When portal_setup_portal_user is undefined, use this account. Check and Run warn once if it cannot read aap_templates_inventory_windows. Give it Read in AAP. |
 | `aap_templates_ee` | `{}` | the execution environment of each kind the catalog names (all, windows, network); a kind left out: the project's {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"} |
 | `aap_templates_credentials` | `{}` | your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon, act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several. 1.123.1: a credential of another organization is found too (the templates' own is look… (all of it: the role file) |
 | `aap_templates_only` | `[]` | only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog ["STIG*", "Health check", "Troubleshoot"] |

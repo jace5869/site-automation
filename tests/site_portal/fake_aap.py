@@ -283,6 +283,8 @@ class H(BaseHTTPRequestHandler):
         if not self._auth():
             return None
         log({"method": "GET", "path": p, "query": q})
+        if p.rstrip("/").split("/")[-1] in ("hosts", "all_hosts") and int(q.get("page_size", "25")) > 20:
+            return self._send(503, {"detail": "Host list gateway timeout"})
         if p == "me/":
             return self._send(200, {"results": [{"username": "svc_portal", "id": 77, "is_system_auditor": False}]})
         if p == "users/77/roles/":

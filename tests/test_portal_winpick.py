@@ -137,6 +137,7 @@ class Live(unittest.TestCase):
         p = sp.Portal(sp.Config(env))
         p.aap.connect()
         p.refresh(force=True)
+        p.aap.inventory_listing(iid=INV)  # tests using a populated picker
         return p
 
     @classmethod
@@ -271,14 +272,15 @@ class Live(unittest.TestCase):
     def test_k_a_failed_windows_read_refuses_the_launch(self):
         """1.129.0 (Codex): AAP not answering which hosts are Windows is never "no filter": the list says so, the launch is refused."""
         inv = next(i for i in fake_aap.STATE["inventories"] if i["id"] == INV)
-        p = self.make(self.env)
         inv["script_fail"] = True
         try:
+            p = self.make(self.env)
             r = p.aap.inventory_items("", 200, iid=INV, os_="windows")
-            self.assertIn("could not be read just now", r["os_note"])
-            self.assertIn("could not check which hosts are Windows", p.aap.expand(["all_app"], INV, "windows")[1])
+            self.assertIn("could not be read just now", r["error"])
+            self.assertEqual(r["items"], [])
+            self.assertIsNone(p.aap.expand(["all_app"], INV, "windows")[0])
             self.assertIn("could not check which hosts are Windows", p.aap.expand_now(["all_app"], INV, "windows")[1])
-            self.assertEqual(len(p.aap.expand(["all_app"], INV)[0]), 3)              # a Linux job does not need it
+            self.assertIsNone(p.aap.expand(["all_app"], INV)[0])
         finally:
             inv.pop("script_fail")
 
@@ -304,20 +306,13 @@ class Live(unittest.TestCase):
             inv["groups"].pop("dept")
             inv["groups"].pop("pool")
 
-    def test_m_groups_past_the_read_limit(self):
-        """1.129.0 (Codex): past GROUPS_MAX a group keeps its name (drop-down, search) and its hosts are read when it is opened or picked."""
-        keep = sp.Aap.GROUPS_MAX
-        sp.Aap.GROUPS_MAX = 1
-        try:
-            p = self.make(self.env)
-            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", with_groups=True)
-            self.assertEqual(len(r["groups"]), 4)                                 # all_app read; linux, sql, windows_servers by name
-            self.assertIn({"name": "windows_servers", "count": None}, r["groups"])
-            r = p.aap.inventory_items("", 200, iid=INV, os_="windows", group="sql")
-            self.assertEqual([i["name"] for i in r["items"]], ["srv-db02.corp.example.mil"])
-            self.assertEqual(p.aap.expand(["windows_servers"], INV, "windows"), (["srv-app02.corp.example.mil"], ""))
-        finally:
-            sp.Aap.GROUPS_MAX = keep
+    def test_m_search_reaches_groups_beyond_the_rows_shown(self):
+        from unittest import mock
+        with mock.patch.object(sp.Aap, "GROUPS_SHOWN", 1):
+            r = self.items(os_="windows", with_groups=True)
+            self.assertEqual(sum(row["kind"] == "group" for row in r["items"]), 1)
+            self.assertIn({"name": "windows_servers", "count": 1}, r["groups"])
+            self.assertEqual(self.items(q="windows_servers", os_="windows")["items"][0]["count"], 1)
 
     def test_n_a_capped_playbook_without_a_limit_prompt_is_not_offered(self):
         tid = fake_aap.add_template("job_templates", "Windows - cancel a scheduled restart", ["portal"], limit=False, inventory=INV)

@@ -1290,6 +1290,7 @@ class Found(unittest.TestCase):
         cls.portal = sp.Portal(cls.cfg)
         cls.portal.aap.connect()
         cls.portal.refresh(force=True)
+        cls.portal.aap.inventory_listing()  # form and launch tests start with a populated picker
         cls.cn = "DOE.JANE.Q.1234567890"
         cls.raw_launch = cls.portal.launch
 
@@ -1792,6 +1793,7 @@ class Found(unittest.TestCase):
         keep = self.portal.aap.api.base
         self.portal.aap.api.base = "api/nowhere/v2/"                                             # AAP cannot be read now: the old list stays for the picker
         try:
+            self.portal.aap.inventory_listing(force=True)  # finish the failed refresh before restoring the API
             self.assertTrue(self.portal.aap.inventory_items("")["items"])
             hosts, why = self.portal.aap.expand(["web_servers"])
         finally:
@@ -3630,15 +3632,13 @@ class Codex1(unittest.TestCase):
 
     def test_1_the_listing_asks_for_enabled_hosts_and_drops_a_disabled_one(self):
         def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                return page([{"name": "web01", "enabled": True}, {"name": "all", "enabled": False}, {"name": "web02", "enabled": False}])
-            if path.startswith("inventories/3/groups/"):
-                return page([])
-            return 404, {"detail": "no"}
+            # AWX includes disabled hosts when the script request supplies "all".
+            hosts = ["web01", "web02"] if "all=" in path else ["web01"]
+            self.assertTrue(path.startswith("inventories/3/script/?"))
+            return 200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {h: {} for h in hosts}}}
         a = self.aap(route)
-        inv = a.inventory_listing(force=True)
-        self.assertEqual(inv["hosts"], ["web01"])
-        self.assertTrue(any("enabled=true" in p for m, p in a.api.paths if "/hosts/" in p))
+        self.assertEqual(a.inventory_listing(force=True)["hosts"], ["web01"])
+        self.assertEqual(len(a.api.paths), 1)
 
     # P1: AAP's words after a failed launch
     def test_2_the_reason_is_the_portals_own(self):
@@ -3786,49 +3786,28 @@ class Codex1(unittest.TestCase):
 
     # P2: a failed read of the inventory keeps the last good listing
     def test_5_a_failed_read_keeps_the_last_good_listing(self):
-        state = {"mode": "good"}
-
-        def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                if state["mode"] == "hosts":
-                    return page([{"name": "web01", "enabled": True}], count=2)               # a short list
-                return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": True}])
-            if path.startswith("inventories/3/groups/"):
-                if state["mode"] == "groups":
-                    return 503, {"detail": "busy"}
-                return page([{"id": 7, "name": "web_servers"}])
-            if path.startswith("groups/7/all_hosts/"):
-                if state["mode"] == "members":
-                    return 503, {"detail": "busy"}
-                return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": True}])
-            return 404, {"detail": "no"}
-        a = self.aap(route)
+        doc = {"all": {}, "_meta": {"hostvars": {}}, "web_servers": {"hosts": ["web01", "web02"]}}
+        answer = [200, doc]
+        a = self.aap(lambda m, p, b: answer)
         good = a.inventory_listing(force=True)
-        self.assertEqual((good["hosts"], good["groups"], good["truncated"]), (["web01", "web02"], {"web_servers": ["web01", "web02"]}, False))
-        for mode in ("hosts", "groups", "members"):
-            state["mode"] = mode
-            got = a.inventory_listing(force=True)
-            self.assertIs(got, good, mode)                                       # the same listing, not a part of it
-            self.assertEqual(got["hosts"], ["web01", "web02"], mode)
-            self.assertEqual(got["groups"], {"web_servers": ["web01", "web02"]}, mode)
-            self.assertFalse(got["truncated"], mode)
-            good.pop("retry", None)
-        state["mode"] = "good"
+        for response in ((503, {}), (200, {}), (200, dict(doc, web_servers={"hosts": "web01"}))):
+            answer[:] = response
+            self.assertIs(a.inventory_listing(force=True), good)
+            self.assertEqual(good["groups"], {"web_servers": ["web01", "web02"]})
+            self.assertFalse(good["truncated"])
         n = len(a.api.paths)
-        good["retry"] = time.time() + 60                                         # a failed read: not asked again at once
         self.assertIs(a.inventory_listing(), good)
         self.assertEqual(len(a.api.paths), n)
 
-    def test_5_the_first_read_may_be_a_part(self):
-        def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                return page([{"name": "web01", "enabled": True}])
-            if path.startswith("inventories/3/groups/"):
-                return page([{"id": 7, "name": "web_servers"}])
-            return 503, {"detail": "busy"}
-        got = self.aap(route).inventory_listing(force=True)
+    def test_5_an_oversized_group_is_never_counted_short(self):
+        hosts = ["h%d" % n for n in range(201)]
+        a = self.aap(lambda m, p, b: (200, {"_meta": {"hostvars": {}}, "all": {}, "web_servers": hosts}))
+        a.HOST_PAGES_MAX = 1
+        got = a.inventory_listing(force=True)
         self.assertTrue(got["truncated"])
-        self.assertIn("web_servers", got["bad"])                                 # a group read in part is no group
+        self.assertIn("web_servers", got["bad"])
+        self.assertNotIn("web_servers", got["groups"])
+        self.assertIsNone(a.expand(["web_servers"])[0])
 
     # follow-up: one template that can never be read must not freeze the catalog
     def test_7_a_template_that_is_never_readable_is_only_left_out(self):
@@ -3884,24 +3863,14 @@ class Codex1(unittest.TestCase):
         self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])
         self.assertIn("for a long time", p.found["error"])
 
-    def test_7_a_listing_that_keeps_failing_is_not_kept_for_ever(self):
-        state = {"fail": False}
-
-        def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                return page([{"name": "web01", "enabled": True}])
-            if path.startswith("inventories/3/groups/"):
-                return (503, {"detail": "busy"}) if state["fail"] else page([])
-            return 404, {"detail": "no"}
-        a = self.aap(route)
+    def test_7_a_listing_that_keeps_failing_cannot_validate_a_pick_forever(self):
+        answer = [200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}]
+        a = self.aap(lambda m, p, b: answer)
         good = a.inventory_listing(force=True)
-        state["fail"] = True
-        self.assertIs(a.inventory_listing(force=True), good)                              # a failed read: the whole one stays
-        good["at"] = time.time() - sp.KEEP_WHOLE * self.cfg.discover_seconds - 5
-        good.pop("retry", None)
-        got = a.inventory_listing(force=True)
-        self.assertIsNot(got, good)                                                         # too old: what could be read serves, said (truncated)
-        self.assertTrue(got["truncated"])
+        answer[:] = 503, {}
+        self.assertIs(a.inventory_listing(force=True), good)
+        good["at"] -= a.listing_max_age() + 1
+        self.assertIn("could not be checked", a.expand(["web01"])[1])
 
     def test_7_when_nothing_can_be_read_the_old_listing_serves_the_picker(self):
         state = {"fail": False}
@@ -3909,9 +3878,7 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if state["fail"]:
                 return 503, {"detail": "busy"}
-            if path.startswith("inventories/3/hosts/"):
-                return page([{"name": "web01", "enabled": True}])
-            return page([])
+            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}
         a = self.aap(route)
         good = a.inventory_listing(force=True)
         state["fail"] = True
@@ -3919,33 +3886,19 @@ class Codex1(unittest.TestCase):
         self.assertIs(a.inventory_listing(force=True), good)                              # an empty read does not replace it
 
     def test_7_a_listing_over_the_page_cap_is_a_part_not_a_freeze(self):
-        def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                n = int(re.search(r"page=(\d+)", path).group(1)) if "page=" in path else 1
-                return page([{"name": "h%d" % n, "enabled": True}], nxt="inventories/3/hosts/?enabled=true&page=%d" % (n + 1), count=999)
-            if path.startswith("inventories/3/groups/"):
-                return page([])
-            return 404, {"detail": "no"}
-        a = self.aap(route)
+        hosts = ["h%d" % n for n in range(201)]
+        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {}}}))
+        a.HOST_PAGES_MAX = 1
         got = a.inventory_listing(force=True)
         self.assertTrue(got["truncated"])
-        self.assertEqual(len(got["hosts"]), a.HOST_PAGES_MAX)
+        self.assertEqual(len(got["hosts"]), 200)
 
     def test_7_a_whole_listing_is_not_waited_for_when_the_cap_stops_every_read(self):
-        state = {"big": False}
-
-        def route(m, path, body):
-            if path.startswith("inventories/3/hosts/"):
-                if state["big"]:
-                    n = int(re.search(r"page=(\d+)", path).group(1)) if "page=" in path else 1
-                    return page([{"name": "h%d" % n, "enabled": True}], nxt="inventories/3/hosts/?enabled=true&page=%d" % (n + 1), count=999)
-                return page([{"name": "web01", "enabled": True}])
-            if path.startswith("inventories/3/groups/"):
-                return page([])
-            return 404, {"detail": "no"}
-        a = self.aap(route)
+        hosts = ["web01"]
+        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {}}}))
+        a.HOST_PAGES_MAX = 1
         good = a.inventory_listing(force=True)
-        state["big"] = True                                                                 # the inventory grew past the page cap: it will again
+        hosts.extend("h%d" % n for n in range(200))
         got = a.inventory_listing(force=True)
         self.assertIsNot(got, good)
         self.assertTrue(got["truncated"])
@@ -4001,12 +3954,10 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if state["fail"]:
                 return 503, {"detail": "busy"}
-            if path.startswith("inventories/3/hosts/"):
-                return page([{"name": "web01", "enabled": True}])
-            return page([])
+            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}
         a = self.aap(route)
-        self.assertNotIn("stale", a.inventory_items(""))
         a.inventory_listing(force=True)
+        self.assertNotIn("stale", a.inventory_items(""))
         state["fail"] = True
         gaps = []
         for _ in range(3):

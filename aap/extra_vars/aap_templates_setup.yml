@@ -17,6 +17,10 @@
 ## Run it with Check first: it then only reads, and lists every template it would make, fix or label. It never deletes.
 ## The inventory a template is made with, and your site-automation project in AAP
 aap_templates_inventory: Site hosts
+## Optional separate inventory for new and existing Windows templates
+# aap_templates_inventory_windows: Windows hosts
+# aap_templates_inventory_windows_organization: ""  # defaults to the templates' organization
+# aap_templates_portal_user: "<portal account>"     # for the inventory read check when portal_setup_portal_user is undefined
 # aap_templates_project: site-automation
 ## Your credential of each kind the catalog (aap/job_templates.yml) names; a template needing a kind not here is skipped
 aap_templates_credentials:
@@ -141,6 +145,11 @@ aap_templates_credentials:
 # portal_label_area: "portal-area:"
 
 # ---- aap_portal_setup ----------------------------------------------------------------------------
+## The portal's AAP account for Execute and Approve. Check and Run warn for each
+## portal_publish_templates match whose inventory it cannot read. Give it Read on that inventory in
+## AAP. Empty skips account checks and grants.
+# portal_setup_portal_user: ""
+
 ## 1.68.1 the STIG scorecard, so it is not set up by hand: a job template of its own (workflow 40's
 ## check template copied - project, inventory, execution environment, credentials and Variables -
 ## with stigman_ckl_import_mode: scorecard) and a weekly schedule. Each is made once; one that is

@@ -31,6 +31,8 @@ class FakeApi(object):
 
     def __init__(self, names, kinds=None, orgs=None):
         self.rows, self.labels, self.roles, self.user_roles, self.writes = {"job_templates": [], "workflow_job_templates": []}, {}, {}, set(), []
+        self.users = [{"id": 20, "username": "svc_x"}]
+        self.access, self.reads = {}, []
         self.next = 100
         for n in names:
             kind = (kinds or {}).get(n, "job_templates")
@@ -41,6 +43,13 @@ class FakeApi(object):
         import re
         p = path.split("?")[0]
         if method == "GET":
+            self.reads.append(path)
+            if p == "users/":
+                return 200, {"results": self.users}
+            if p == "inventories/":
+                return 200, {"results": [{"id": 6, "name": "Windows hosts"}]}
+            if p in self.access:
+                return 200, {"results": self.access[p]}
             if p == "organizations/":
                 return 200, {"count": len(self.ORGS), "next": None, "results": self.ORGS}
             m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
@@ -92,7 +101,6 @@ def setup(api, check=False, **kw):
          "unpublish": [], "publish_label": "portal", "area_label": "portal-area:", "publish_max": 50}
     p.update(kw)
     s = S.Setup(api, p, check)
-    s.cache[("users", "svc_x", "")] = [{"id": 20, "username": "svc_x"}]
     plan = s.publish_plan()
     if plan is not None:
         s.publish_apply(plan)
@@ -205,6 +213,67 @@ class Check(unittest.TestCase):
         self.assertEqual(api.labels_of("Other tool"), ["portal"])
         self.assertIn("publish grant|Other tool: Execute|skipped", say(s))
         self.assertEqual(api.user_roles, set())
+
+
+class InventoryAccess(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi(["Windows report", "Windows check", "Other"])
+        for row in self.api.rows["job_templates"]:
+            row["inventory"] = 6
+        self.path = "inventories/6/access_list/"
+        self.api.access[self.path] = []
+
+    def publish(self, **kw):
+        return setup(self.api, publish=["Windows *", "* check"], **kw)
+
+    def test_effective_roles_on_the_inventory(self):
+        # AAP's inventory access list returns the user for both direct and inherited grants.
+        for source, role in [("direct_access", {"role": {"name": "Read"}}),
+                             ("direct_access", {"team_id": 7, "role": {"name": "Use"}}),
+                             ("indirect_access", {"role": {"name": "Auditor", "resource_type": "organization"}})]:
+            with self.subTest(role=role):
+                self.api.access[self.path] = [dict(self.api.users[0], summary_fields={source: [role]})]
+                self.assertEqual(self.publish(check=True).warnings, [])
+                self.assertIn(self.path + "?id=20&page_size=200", self.api.reads)
+                self.assertEqual(self.api.writes, [])
+
+    def test_missing_access_warns_per_matched_card_in_check_and_run(self):
+        self.api.access[self.path] = [{"id": 21, "username": "other"}]
+        self.api.access["inventories/5/access_list/"] = self.api.users
+        for check in (True, False):
+            self.api.reads.clear()
+            result = self.publish(check=check)
+            self.assertEqual(result.problems, [])
+            self.assertEqual(result.warnings, [
+                "%s: the portal's account svc_x cannot read inventory Windows hosts - its card stays hidden; give it Read on that inventory"
+                % name for name in ("Windows report", "Windows check")])
+            self.assertEqual(self.api.reads.count(self.path + "?id=20&page_size=200"), 1)
+            self.assertIn("users/?username=svc_x&page_size=200", self.api.reads)
+            if check:
+                self.assertEqual(self.api.writes, [])
+        self.assertEqual(self.api.user_roles, {1010, 1020})  # only the existing template Execute grants
+
+    def test_system_roles_need_no_inventory_lookup(self):
+        for flag in ("is_system_auditor", "is_superuser"):
+            self.api.users = [{"id": 20, "username": "svc_x", flag: True}]
+            self.assertEqual(self.publish(check=True).warnings, [])
+        self.assertFalse(any(self.path in p for p in self.api.reads))
+
+    def test_unknown_and_unset_user_skip_the_check_once(self):
+        self.api.users = []
+        for name in ("svc_x", ""):
+            result = self.publish(check=True, portal_user=name)
+            self.assertEqual(len(result.warnings), 1)
+            self.assertIn("not checked", result.warnings[0])
+        self.assertFalse(any(self.path in p for p in self.api.reads))
+
+    def test_unreadable_access_list_is_inconclusive(self):
+        self.api.access.clear()
+        result = self.publish(check=True)
+        self.assertEqual(result.problems, [])
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("not checked", result.warnings[0])
+        self.assertIn("HTTP 404", result.warnings[0])
 
 
 class Max(unittest.TestCase):
