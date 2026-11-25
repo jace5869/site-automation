@@ -334,6 +334,41 @@ class ReplicationPage(unittest.TestCase):
         self.assertEqual(d["problem_texts"], ["DC problem <recorded>"])
         self.assertTrue(all(s["p"] is None for s in reader.dbm["replication"]["map"]["sites"]))
 
+    def neon_r131(self, sql, *args):
+        """1.131.0 (Neon #3-#5): a stored row changed under the portal - then read again"""
+        reader = self.read()
+        self.db.db.execute(sql, args)
+        self.db.db.commit()
+        reader.read_db()
+        return reader
+
+    def test_neon_r131_3_an_empty_or_unknown_link_status_is_grey(self):
+        for status in ("", "info", "bogus"):                     # (the column is NOT NULL; the reader treats None as "" too)
+            with self.subTest(status=status):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_link SET status = ?", status)
+                page = sp.ad_page(self.cfg, "reader", {}, reader.initial_matrix())     # never a KeyError
+                self.assertEqual(reader.dbm["replication"]["ordered"][0]["st"], "unknown")
+                self.assertIn("Not read", page)
+                json.loads(reader.answer()[1])
+
+    def test_neon_r131_4_a_null_partition(self):
+        self.link("DC01", "DC02", 0.1)
+        reader = self.neon_r131("UPDATE ad_link SET nc_dn = '', nc = ''")     # (NOT NULL columns: empty is what can be stored)
+        page = sp.ad_page(self.cfg, "reader", {}, reader.initial_matrix())
+        self.assertIn("unknown partition", page)
+
+    def test_neon_r131_5_no_read_time_is_stale(self):
+        for at in ("", "bad-date"):
+            with self.subTest(at=at):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_run SET read_at = ?", at)
+                fallback = reader.initial_matrix()                                     # never a TypeError
+                self.assertIn("? AD job, time not known", fallback)
+                self.assertNotIn("s-ok", fallback)
+
     def test_old_job_never_shows_healthy_cells(self):
         import datetime as dt
         self.at -= dt.timedelta(minutes=self.cfg.ad_old_minutes + 1)

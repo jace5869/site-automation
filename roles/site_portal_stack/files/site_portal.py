@@ -1948,11 +1948,19 @@ def task_what(name):
     return t[:80]
 
 
+def _event_data(e):
+    """1.131.0 (Neon #6): an AAP job event and its event_data as dicts - anything else is an empty one, never a crash"""
+    e = e if isinstance(e, dict) else {}
+    d = e.get("event_data")
+    return e, d if isinstance(d, dict) else {}
+
+
 def cause_class(e):
     """The plain cause of a failure - never the module's own message (it can hold anything): could not connect, timed out, or failed."""
-    if e["event"] == "runner_on_unreachable":
+    e, d = _event_data(e)
+    if e.get("event") == "runner_on_unreachable":
         return "could not connect"
-    res = (e.get("event_data") or {}).get("res")
+    res = d.get("res")
     msg = output_text(res.get("msg")).lower() if isinstance(res, dict) and not output_censored(e) else ""
     return "timed out" if ("timed out" in msg or "timeout" in msg) else "failed"
 
@@ -1989,15 +1997,22 @@ RUNNER_RESULTS = {"runner_on_ok": "ok", "runner_on_failed": "failed", "runner_on
                   "runner_on_skipped": "skipped", "runner_retry": "retry", "runner_on_retry": "retry",
                   "runner_item_on_ok": "ok", "runner_item_on_failed": "failed", "runner_item_on_skipped": "skipped"}
 # A diagnostic can contain shell assignments, quoted JSON fields, or an Authorization header.
+# 1.131.0 (Neon): errs on over-redaction - a secret's whole value to the end of its line (a dict or list after it: the rest),
+# with the key quoted, single-quoted or JSON-escaped (\"password\": ...); Authorization headers in any form; a bearer or
+# basic credential anywhere; private-key PEM blocks whole
+OUTPUT_PEM = re.compile(r"-----BEGIN[^-\r\n]*(?:PRIVATE KEY|CERTIFICATE REQUEST|ENCRYPTED)[^-\r\n]*-----.*?(?:-----END[^-\r\n]*-----|\Z)", re.S)
 OUTPUT_SECRET = re.compile(
-    r"""((?:password|secret|token|key)[\w.-]*["']?\s*[:=]\s*)"""
-    r"""(?:"(?:\\.|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\])*(?:'|\\?\Z)|[\[{].*|(?:\\.|[^\s\\])*)""", re.I | re.S)
-OUTPUT_AUTH = re.compile(r"(authorization\s*:\s*)[^\r\n]*", re.I)
+    r"""((?:password|passwd|pwd|secret|token|key|credential)[\w.-]*(?:\\?["'])?\s*[:=]\s*)"""
+    r"""(?:(?!\[redacted\])[\[{].*|[^\r\n]*)""", re.I | re.S)
+OUTPUT_AUTH = re.compile(r"""((?:\\?["'])?(?:proxy-)?authorization(?:\\?["'])?\s*[:=]\s*)[^\r\n]*""", re.I)
+OUTPUT_BEARER = re.compile(r"\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.I)
 
 
 def redact_output(text):
+    text = OUTPUT_PEM.sub("[redacted]", str(text or ""))
+    text = OUTPUT_AUTH.sub(r"\1[redacted]", text)
     text = OUTPUT_SECRET.sub(r"\1[redacted]", text)
-    return OUTPUT_AUTH.sub(r"\1[redacted]", text)
+    return OUTPUT_BEARER.sub(r"\1 [redacted]", text)
 
 
 def output_text(value):
@@ -2005,7 +2020,7 @@ def output_text(value):
 
 
 def output_censored(e):
-    d = e.get("event_data") or {}
+    e, d = _event_data(e)
     res = d.get("res") or {}
 
     def hidden(data):
@@ -2039,7 +2054,10 @@ def debug_message(data, res):
 
 
 def output_event_lines(e):
-    ev, d = e.get("event"), e.get("event_data") or {}
+    e, d = _event_data(e)
+    if not e:
+        return []
+    ev = e.get("event")
     res = d.get("res") if isinstance(d.get("res"), dict) else {}
     hidden = output_censored(e)
     task = clipped(output_text(d.get("task") or e.get("task")), 200)
@@ -2075,7 +2093,8 @@ def output_event_lines(e):
     elif kind == "ok":
         if e.get("changed") or res.get("changed"):
             kind = "changed"
-        elif not hidden and (d.get("resolved_action") or d.get("task_action") or e.get("task_action") or "").split(".")[-1] == "debug":
+        elif not hidden and str(next((a for a in (d.get("resolved_action"), d.get("task_action"), e.get("task_action")) if isinstance(a, str) and a), "")
+                                ).split(".")[-1] == "debug":
             message = debug_message(d, res)
             if message:
                 kind = "msg"
@@ -3437,18 +3456,15 @@ class Portal(object):
                     break
                 events.extend(page["results"])
                 next_page = self.aap._relative(page.get("next"))
-            events = list(reversed(events[:self.cfg.events]))
+            events = [x for x in reversed(events[:self.cfg.events]) if isinstance(x, dict)]     # Neon #6: never a crash on an odd event
             view["check_mode"] = (jd.get("job_type") or u.get("job_type")) == "check"
             view["readable"] = [line for e in events for line in output_event_lines(e)]
             # Keep the bounded, ANSI-free output field of the existing JSON API.
-            lines = [redact_output(clean(e["stdout"])) for e in events if e.get("stdout") and not output_censored(e)]
+            lines = [redact_output(clean(e["stdout"])) for e in events if isinstance(e.get("stdout"), str) and e["stdout"] and not output_censored(e)]
             view["output"] = "\n".join(lines)[-200000:]
             view["output_more"] = bool(code == 200 and (ev.get("count") or 0) > len(events))
             summaries, why = self.aap._paged("jobs/%d/job_host_summaries/?page_size=200" % jid)
-            view["hosts"] = [{"host": h.get("host_name") or (h.get("summary_fields") or {}).get("host", {}).get("name", ""),
-                              "ok": h.get("ok", 0), "changed": h.get("changed", 0), "failed": h.get("failures", 0),
-                              "unreachable": h.get("dark", 0), "skipped": h.get("skipped", 0)}
-                             for h in summaries] if not why else []
+            view["hosts"] = [host_summary(h) for h in summaries if isinstance(h, dict)] if not why else []
         else:                           # an approval step and the like: its status only
             view["artifacts"], view["links"], view["buttons"] = {}, [], []
         return 200, view
@@ -5048,6 +5064,20 @@ def output_marker(kind, emoji, check):
     return '<b class="output-marker om-%s">%s</b>' % (kind, label)
 
 
+def _count(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
+def host_summary(h):
+    """1.131.0 (Neon #7): one AAP host summary -> {host, ok, changed, failed, unreachable, skipped}; a host gone from the
+    inventory (summary_fields.host null), a count null or not a number, a name null: 'unknown host' and 0 - never a crash"""
+    sf = h.get("summary_fields") if isinstance(h.get("summary_fields"), dict) else {}
+    hs = sf.get("host") if isinstance(sf.get("host"), dict) else {}
+    name = h.get("host_name") if isinstance(h.get("host_name"), str) and h.get("host_name") else hs.get("name")
+    return {"host": name if isinstance(name, str) and name else "unknown host", "ok": _count(h.get("ok")), "changed": _count(h.get("changed")),
+            "failed": _count(h.get("failures")), "unreachable": _count(h.get("dark")), "skipped": _count(h.get("skipped"))}
+
+
 def output_recap(hosts, emoji, check):
     if not hosts:
         return ""
@@ -5055,12 +5085,13 @@ def output_recap(hosts, emoji, check):
     counts = collections.Counter()
     rows = []
     for h in hosts:
+        h = dict(h, **dict((k, _count(h.get(k))) for k in columns))
         kind = next((k for k in ("failed", "unreachable", "changed") if h[k]), "ok")
         counts[kind] += 1
         cells = "".join('<td class="num%s">%d</td>' % ("" if h[k] else " zero", h[k]) for k in columns)
         row = '<tr class="out-%s"><th scope="row">%s</th><td>%s</td>%s</tr>' % (
             kind, esc(output_text(h["host"])), output_marker(kind, emoji, check), cells)
-        rows.append(({"failed": 0, "unreachable": 1}.get(kind, 2), h["host"].casefold(), row))
+        rows.append(({"failed": 0, "unreachable": 1}.get(kind, 2), str(h.get("host") or "").casefold(), row))
     change = "would change" if check else "changed"
     summary = ('<p class="output-sum">%s <span class="om-ok">%d ok</span> <span class="om-failed">%d failed</span> '
                '<span class="om-unreachable">%d unreachable</span> <span>· %d %s</span></p>') % (
@@ -5126,7 +5157,10 @@ def job_output_html(cfg, job, url, raw_url, raw):
         body += output_list(job.get("readable") or [], emoji, check)
     else:
         code, stdout = raw
-        body = ('<pre class="output-raw"><code>%s</code></pre>' % esc(stdout) if code == 200 else
+        # 1.131.0 (Neon #1): Raw is AAP's output with the same redaction as Readable - never unredacted (a no_log task stays
+        # AAP's own censored text)
+        body = ('<p class="muted-line">Raw AAP output (secrets redacted)</p><pre class="output-raw"><code>%s</code></pre>'
+                % esc(redact_output(stdout if isinstance(stdout, str) else str(stdout or ""))) if code == 200 else
                 '<p class="muted-line">AAP could not provide stdout.</p>')
     return ('<section id="job-output"%s><div class="hd"><h3>Job output</h3><nav class="seg2" aria-label="Output view">%s</nav>'
             '</div>%s</section>' % (' data-raw' if raw is not None else "", nav, body))
@@ -6153,11 +6187,13 @@ class AdLive(ReportIndex):
             message = error or ("No AD run in the report database yet." if m or self.db_missing else "Reading the report database…")
             return '<p class="note">%s <a href="">Refresh</a></p>' % esc(message)
         run = m["run"]
-        age = int((time.time() - ad_when(run["read_at"])) // 60)
-        stale = bool(error) or age > self.cfg.ad_old_minutes
+        at = ad_when(run.get("read_at"))
+        age = int((time.time() - at) // 60) if isinstance(at, (int, float)) else None     # Neon #5: no time: stale, never a TypeError
+        stale = bool(error) or age is None or age > self.cfg.ad_old_minutes
         return ('<section class="sec" id="ad-replication"><h2>Replication matrix'
-                '<span class="adp-fresh" data-at="%s">%sAD job, %d min ago</span></h2><p class="muted">%s</p>%s</section>' %
-                (esc(run["read_at"]), "? " if stale else "", age, esc(error or run["why"] or run["coverage"]),
+                '<span class="adp-fresh" data-at="%s">%sAD job, %s</span></h2><p class="muted">%s</p>%s</section>' %
+                (esc(run.get("read_at") or ""), "? " if stale else "", ("%d min ago" % age) if age is not None else "time not known",
+                 esc(error or run.get("why") or run.get("coverage") or ""),
                  ad_replication.matrix_html(m["replication"], stale)))
 
 

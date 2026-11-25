@@ -124,10 +124,12 @@ def _pairs(repl, now, o, tz, saved=False):
     """The links folded into pairs (from, to): each its worst partition's link, with how many partitions it carries."""
     by = {}
     for ln in repl.get("links") or []:
-        age = _ad.age_hours(ln.get("last_success"), now)
+        age = _ad.age_hours(ln.get("last_success"), now) if now is not None else None    # no read time: no age (Neon #5)
         st, why = link_status(age, int(ln.get("failures") or 0), o)
-        if saved and ln.get("now") in RANK:
-            st = ln["now"]  # ad_link stores the verdict with the job's thresholds and tombstone lifetime
+        if saved:
+            # ad_link stores the verdict with the job's thresholds and tombstone lifetime; an empty, NULL or unknown one: not
+            # read (grey) - 1.131.0 (Neon #3), never green from the age alone, never a KeyError
+            st = ln.get("now") if ln.get("now") in RANK else "unknown"
         x = dict(ln, age=age, st=st, why=why)
         dst, src, _nc = ident.link_id(ln)
         by.setdefault((src, dst), []).append(x)

@@ -1252,7 +1252,8 @@ Failed and unreachable lines show the module message, or the first line of stder
 The preview fits on one line of up to 160 characters. **more** opens up to 2,000 characters. The readable view omits
 variable dumps and censored results and redacts password, secret, token and key assignments before display.
 
-**Raw** opens AAP’s plain-text stdout for the same job. Both views work without JavaScript. **Refresh** gets another snapshot.
+**Raw** opens AAP’s plain-text stdout for the same job, with the same redaction as the readable view (passwords, keys,
+tokens, Authorization headers, bearer credentials and private-key blocks; it errs on redacting too much). Both views work without JavaScript. **Refresh** gets another snapshot.
 `portal_job_events` sets the recent event window for Readable (default `300`). Set `portal_job_output_emoji: false` to
 use text markers such as `[OK]` and `[FAILED]`. With the default `true`, screen readers read the status word beside each emoji.
 

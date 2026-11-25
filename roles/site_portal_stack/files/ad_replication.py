@@ -1,11 +1,16 @@
 """The AD report's replication views, using one saved run and the portal's map settings."""
 from hashlib import sha256
-from html import escape
+from html import escape as _escape
 
 import ad_repl_filters as report
 import site_ad_layer as layer
 import site_swis
 from site_time import local as local_time
+
+
+def escape(value):
+    """1.131.0 (Neon #4): a NULL or non-text value from the report database is text here - never an AttributeError"""
+    return _escape("" if value is None else str(value))
 
 
 def map_data(dcs, links, at, opts, scale):
@@ -54,7 +59,7 @@ def panel_id(src, dst):
 def state_value(st, value, stale):
     state = "unknown" if stale or st not in report.WORD else st
     return '<span class="adp-state s-%s" title="%s">%s</span>' % (
-        state, "Stale" if stale else report.WORD[state], "?" if stale else escape(value))
+        state, "Stale" if stale else report.WORD.get(state, "Not read"), "?" if stale else escape(value))
 
 
 def grid(mx, stale):
@@ -116,7 +121,7 @@ def details(pair, tz, stale):
         if error.isdecimal() and error != "0":
             error += " (description unavailable)"
         out.append('<tr><th scope="row">%s</th><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>' %
-                   (escape(x["nc_dn"] or x["nc"]), state_value(x["st"], report.WORD[x["st"]], stale),
+                   (escape(x.get("nc_dn") or x.get("nc") or "unknown partition"), state_value(x["st"], report.WORD.get(x["st"], "Not read"), stale),
                     escape(last), escape(failure), x["failures"], escape(error)))
     out.extend(["</tbody></table></div>", verify(dst), "</aside>"])
     return "".join(out)
@@ -147,7 +152,7 @@ def matrix_html(data, stale):
         sites = " → ".join(data["site_of"].get(k) or report.NO_SITE for k in key)
         out.append('<tr><td><a href="#%s">%s → %s</a></td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>' %
                    (panel_id(*key), escape(p["frm"]), escape(p["to"]), escape(sites),
-                    state_value(p["st"], report.WORD[p["st"]], stale), escape(p["ls_local"] or "Never"),
+                    state_value(p["st"], report.WORD.get(p["st"], "Not read"), stale), escape(p.get("ls_local") or "Never"),
                     p["failures"], escape(report._err(p["error"]) or "—")))
     out.append("</tbody></table></div>")
     for p in data["ordered"]:

@@ -12,7 +12,8 @@ cannot remove them).
   AAP template picks its icon (the names: docs/SITE_PORTAL.md, *Card icons*).
 - **Readable job output.** The live job view groups results by task (ok lines folded per task), shows a failed task's reason
   in one short line (redacted; the rest behind *more*), and lists failed and unreachable hosts first in the recap. Check runs
-  say **would change**. **Raw** shows AAP's output unchanged. `portal_job_output_emoji: false` = text markers ([OK], [FAILED]).
+  say **would change**. **Raw** shows AAP's output with the same redaction (secrets, Authorization headers, bearer credentials,
+  private keys - on the side of too much). `portal_job_output_emoji: false` = text markers ([OK], [FAILED]).
 - **Active Directory page: the domain report's replication matrix and map.** Source DCs in rows as in the report, the same
   bands; a cell opens its partitions, error and a copyable `repadmin` command; **Links, worst first** for a list; the
   replication map placed as on the network map. From the report database - no new rights. Each block shows its age.

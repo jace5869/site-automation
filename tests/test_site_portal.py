@@ -1185,6 +1185,56 @@ class Live(unittest.TestCase):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
 
 
+class NeonR131Output(unittest.TestCase):
+    """1.131.0 (Neon): the job output never shows a secret - Raw included - and never crashes on odd AAP data"""
+
+    def test_1_raw_is_redacted(self):
+        from types import SimpleNamespace
+        stdout = ('fatal: [fail01]: FAILED! => {"msg": "auth failed: password=\\"Hunter2\\" API_KEY=\'s3cr3t\'", '
+                  '"invocation": {"module_args": {"token": "tok_123"}}}\nAuthorization: Bearer eyJhbGciOiJIUzI1NiJ9.secret\nok: [web01]')
+        page = sp.job_output_html(SimpleNamespace(job_output_emoji=False), {}, "/portal/jobs/1", "/portal/jobs/1?output=raw", (200, stdout))
+        for secret in ("Hunter2", "s3cr3t", "tok_123", "eyJhbGciOiJIUzI1NiJ9"):
+            self.assertNotIn(secret, page)
+        self.assertIn("Raw AAP output (secrets redacted)", page)
+        self.assertIn("ok: [web01]", page)
+
+    def test_2_redaction_forms(self):
+        cases = ['{"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.secret"}', "{'Authorization': 'Basic dXNlcjpwYXNz'}",
+                 'HTTP 400: "{\\"password\\": \\"Hunter2\\"}"', "token: Bearer eyJhbGciOiJIUzI1NiJ9.secret.sig",
+                 "ssh_key: -----BEGIN RSA PRIVATE KEY-----\nMIIEpSECRETBODY\n-----END RSA PRIVATE KEY-----",
+                 "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktSECRETBODY\n-----END OPENSSH PRIVATE KEY-----",
+                 '"Proxy-Authorization": "Basic dXNlcjpwYXNzSECRET"', "curl -H 'Authorization: Bearer abcdefghSECRET'"]
+        for text in cases:
+            with self.subTest(text=text[:40]):
+                out = sp.redact_output(text)
+                for secret in ("eyJhbGciOiJIUzI1NiJ9", "dXNlcjpwYXNz", "Hunter2", "SECRETBODY", "SECRET"):
+                    self.assertNotIn(secret, out, out)
+        self.assertEqual(sp.redact_output("TASK [x] ok: [h] => changed=1"), "TASK [x] ok: [h] => changed=1")
+        self.assertIn("next line", sp.redact_output("ssh_key: -----BEGIN RSA PRIVATE KEY-----\nX\n-----END RSA PRIVATE KEY-----\nnext line"))
+
+    def test_6_odd_events_are_skipped(self):
+        for e in ({"event": "runner_on_ok", "event_data": "corrupt"}, {"event": "runner_on_ok", "event_data": []}, None, "x", 5,
+                  {"event": "runner_on_ok", "event_data": {"task_action": 123}}, {"event": "runner_on_ok", "event_data": {"task_action": ["debug"]}},
+                  {"event": "runner_on_failed", "event_data": {"res": "not a dict"}}):
+            with self.subTest(e=repr(e)[:60]):
+                sp.output_event_lines(e)                    # never raises
+                sp.output_censored(e)
+                if isinstance(e, dict):
+                    sp.cause_class(e)
+
+    def test_7_odd_host_summaries(self):
+        rows = [{"host_name": "", "summary_fields": {"host": None}, "ok": 1, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": "web01", "ok": None, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": None, "summary_fields": {"host": {"name": None}}, "ok": 1, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": "db01", "summary_fields": "x", "ok": "3", "changed": -1, "failures": True, "dark": 0, "skipped": 0}]
+        hosts = [sp.host_summary(h) for h in rows]
+        self.assertEqual([h["host"] for h in hosts], ["unknown host", "web01", "unknown host", "db01"])
+        self.assertEqual(hosts[1]["ok"], 0)
+        self.assertEqual((hosts[3]["ok"], hosts[3]["changed"], hosts[3]["failed"]), (0, 0, 0))
+        html_ = sp.output_recap(hosts + [{"host": None, "ok": None, "changed": 0, "failed": 0, "unreachable": 0, "skipped": 0}], False, False)
+        self.assertIn("unknown host", html_)
+
+
 class ReadableOutput(unittest.TestCase):
     def event(self, event, res=None, **data):
         return {"event": event, "counter": 1, "event_data": dict({"task": "Inspect", "host": "host-a", "res": res or {}}, **data)}
@@ -1220,7 +1270,8 @@ class ReadableOutput(unittest.TestCase):
         self.assertEqual(opener.open.call_args.args[0].get_header("Accept"), "text/plain")
 
     def test_failure_preview_more_escaping_and_redaction(self):
-        text = """<file> password="private words" API_KEY='private words'\nSECRET=private Token=private """ + "x" * 2200
+        # 1.131.0: a secret's value is redacted to the end of its line (over-redaction on purpose): the long text on its own line
+        text = """<file> password="private words" API_KEY='private words'\nSECRET=private Token=private\n""" + "x" * 2200
         for kind in ("runner_on_failed", "runner_on_unreachable"):
             row, = sp.output_event_lines(self.event(kind, {"msg": text, "stderr": "unused"}))
             self.assertTrue(row["message"].endswith("…"))
