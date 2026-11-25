@@ -225,7 +225,7 @@ def vmware_part(view, o, now):
         if state == "ok":
             ok.append((fk, "vc:" + name))
         if state in ("auth", "error"):
-            why = "login failed - check the credential" if state == "auth" else (src.get("why") or "not answering")
+            why = (src.get("why") or "login failed - check the credential") if state == "auth" else (src.get("why") or "not answering")
             conds.append({"id": "vc:" + name, "kind": "vc", "t": "vCenter %s %s" % (name, "login failed" if state == "auth" else "not answering"),
                           "obj": why, "start": src.get("fail_since") or now, "feed": "", "vc": name, "site": site_of(rx, name)})
         snap = src.get("snap") or {}
@@ -391,7 +391,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
         if state in ("auth", "error", "paused"):
             conds.append({"id": "node:" + addr, "kind": "node",
                           "t": "Storage cluster %s %s" % (addr, "login failed" if state == "auth" else "login paused" if state == "paused" else "not answering"),
-                          "obj": "login failed - check the credential" if state == "auth" else (src.get("why") or ""), "feed": "", "cluster": cl,
+                          "obj": (src.get("why") or "login failed - check the credential") if state == "auth" else (src.get("why") or ""), "feed": "", "cluster": cl,
                           "start": src.get("fail_since"), "site": site})
         elif state == "ok":
             ok.append((fk, "node:" + addr))

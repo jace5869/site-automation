@@ -16,6 +16,7 @@ portal itself - not by AAP jobs - so the wall's "as of" is a minute old, not an 
 The accounts are given by the caller (the portal's secrets site-portal-vcenter / site-portal-ontap): read-only roles
 are enough (docs/SITE_PORTAL.md, "The ops-center wall")."""
 import base64
+import binascii
 import collections
 import hashlib
 import http.client
@@ -71,8 +72,8 @@ def account(user):
 
 
 class Gate(object):
-    """1.130.0 review: one shared account (the site's own, the AAP jobs' too): its logins one at a time, and none at all while
-    the last one was refused (until the collector opens the gate again after auth_retry). Each source of that account holds it."""
+    """1.130.0 (stop on refusal): each source's login gate - write-ahead before every credentialed send (ahead), and none at
+    all once logins are stopped (bad)."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -86,10 +87,11 @@ class Gate(object):
 
     def check(self):
         if self.bad:
-            raise AuthError(AUTH_WHY + " (the same account was refused for another source; not tried)")
+            raise Paused("logins are stopped (not sent)")
 
 
 PAUSED_WHY = "login paused - the back-off file cannot be written (no login is sent until it can)"
+PAGES_MAX = 200                         # vCenter pages one read may take (a token repeated or pages left over: the read failed)
 
 
 class CollectionFailed(Exception):
@@ -195,6 +197,8 @@ class VcenterSource(object):
         self.cookie, self.sc, self.view, self.session_key = "", None, "", ""
         self.logins = 0                                        # how many times this source logged in (a test counts them)
         self.login_sent = self.login_ok = False                # this poll: a login was sent / vCenter said it worked
+        self.secret = (self.user, self._pw)                    # the logins' fingerprint (a changed credential starts the logins again)
+        self.stop_ev = None                                    # the collector's stop: no credentialed send after it
         self.lock = threading.Lock()
 
     # -- the wire --------------------------------------------------------------------------------------------------------
@@ -253,8 +257,10 @@ class VcenterSource(object):
             self.sc = dict((k, rv.findtext("v:" + k, "", NS).strip()) for k in ("propertyCollector", "viewManager", "sessionManager", "rootFolder"))
         with self.gate.lock:                                       # one login at a time for this account, none while it is bad
             self.gate.check()
+            if self.stop_ev is not None and self.stop_ev.is_set():
+                raise NotSent("the collector is stopping")
             self.gate.before_login()
-            self.login_sent = True                             # from here on, only "the login worked" ends it without a hold
+            self.login_sent = True                             # from here on, only a whole poll ends it without a pause
             try:
                 r = self._send("Login", '%s<userName>%s</userName><password>%s</password>'
                                % (_mor("_this", "SessionManager", self.sc["sessionManager"]), _xesc(self.user), _xesc(self._pw)))
@@ -276,10 +282,12 @@ class VcenterSource(object):
         self.session_key = key                                     # this session's key (vCenter's Sessions list shows it)
         try:
             self._make_view()
+            if not self.view:
+                raise RuntimeError("vCenter made no inventory view for the new session")
         except Exception as e:
             self._drop()                                           # never a session left behind (and no new login a minute later)
-            if isinstance(e, SoapFault) and e.kind == "NoPermission":
-                raise AuthError("the account may not read the inventory (NoPermission) - check its role")
+            if isinstance(e, SoapFault) and (e.kind in ("NoPermission", "NotAuthenticated") or self._gone(e)):
+                raise AuthError("vCenter refused the new session at once (%s) - logins stopped" % (e.kind or "NotAuthenticated"))
             raise
 
     def _drop(self):
@@ -305,11 +313,14 @@ class VcenterSource(object):
         pc = _mor("_this", "PropertyCollector", self.sc["propertyCollector"])
         r = self._send("RetrievePropertiesEx", '%s%s<options><maxObjects>%d</maxObjects></options>'
                        % (pc, spec, PAGE))
-        objs = []
+        objs, toks, pages = [], set(), 0
         while True:
             rv = r.find("v:returnval", NS)
             if rv is None:
+                if pages:                                      # a continuation that did not answer: the read is not whole
+                    raise RuntimeError("vCenter's next page had no answer - the read is not whole")
                 break
+            pages += 1
             for o in rv.findall("v:objects", NS):
                 ob = o.find("v:obj", NS)
                 vals = {}
@@ -319,6 +330,9 @@ class VcenterSource(object):
             tok = rv.findtext("v:token", "", NS).strip()
             if not tok:
                 break
+            if tok in toks or pages >= PAGES_MAX:
+                raise RuntimeError("vCenter %s - the read is not whole" % ("repeated a page token" if tok in toks else "had more than %d pages" % PAGES_MAX))
+            toks.add(tok)
             r = self._send("ContinueRetrievePropertiesEx", '%s<token>%s</token>' % (pc, _xesc(tok)))
         return objs
 
@@ -354,7 +368,13 @@ class VcenterSource(object):
                 self._drop()
                 raise AuthError("vCenter dropped the new session at once (a proxy or a broken role?) - held one window")
             self._login()                                      # the session is gone (vCenter restarted, timed out): one login
-            return shape(self._retrieve())
+            try:
+                return shape(self._retrieve())
+            except SoapFault as e3:
+                if e3.kind in ("NotAuthenticated", "NoPermission") or self._gone(e3):
+                    self._drop()
+                    raise AuthError("vCenter refused the new session at once (%s) - logins stopped" % (e3.kind or "NotAuthenticated"))
+                raise
 
     def close(self):
         with self.lock:
@@ -447,6 +467,8 @@ class OntapSource(object):
         self._auth = "Basic " + base64.b64encode(("%s:%s" % (user or "", password or "")).encode("utf-8")).decode("ascii")
         self.lock = threading.Lock()
         self.login_sent = self.login_ok = False                # this poll: the credential sent / an answer that was not a refusal
+        self.secret = (str(user or ""), str(password or ""))
+        self.stop_ev = None
         u = urllib.parse.urlsplit("https://" + self.address if "://" not in self.address else self.address)
         self._host, self._port = u.hostname, u.port or 443        # a bad port: ValueError (sources_from_config skips the entry)
         if not self._host:
@@ -454,6 +476,8 @@ class OntapSource(object):
 
     def _get(self, path):
         """one GET; an answer that is not a refusal (any other HTTP status) says the login worked"""
+        if self.stop_ev is not None and self.stop_ev.is_set():
+            raise NotSent("the collector is stopping")         # never a credentialed GET after stop()
         d = self._http("GET", path)                            # 200 and JSON, or an exception (the poll stops there)
         self.login_ok = True
         return d
@@ -489,8 +513,11 @@ class OntapSource(object):
         while nxt and seen < ONTAP_MAX_PAGES:
             seen += 1
             d = self._get(nxt)
+            if isinstance(d, dict) and isinstance(d.get("records"), list) and "num_records" in d and d["num_records"] != len(d["records"]):
+                raise CollectionFailed("%s: num_records %r but %d records - the answer is not whole" % (path, d["num_records"], len(d["records"])))
             if not isinstance(d, dict) or "errors" in d or "error" in d or not isinstance(d.get("records"), list):
-                raise CollectionFailed("%s: %s" % (path, "an error in the answer" if isinstance(d, dict) and ("errors" in d or "error" in d)
+                # an odd answer after the credential left (an error in a 200, no records): the poll stops, the source waits
+                raise RuntimeError("%s: %s" % (path, "an error in the answer" if isinstance(d, dict) and ("errors" in d or "error" in d)
                                                    else "no records in the answer"))
             out.extend(d["records"])
             links = d.get("_links") if isinstance(d.get("_links"), dict) else {}
@@ -506,6 +533,8 @@ class OntapSource(object):
     def _read(self):
         """-> (the cluster, its nodes or None, {collection: rows or None}, {collection: why it failed})"""
         c = self._get("/api/cluster?fields=name,version")
+        if not isinstance(c, dict) or "error" in c or "errors" in c or not c.get("name"):
+            raise RuntimeError("ONTAP's /api/cluster answer is not a cluster (an error or an odd answer)")
         failed, got = {}, {}
 
         def one(key, fn):
@@ -579,12 +608,27 @@ class OntapSource(object):
 
 
 # ---- the collector --------------------------------------------------------------------------------------------------------
-def _boot_id():
+JOURNAL_MAX = 64 * 1024                 # bytes: a bigger back-off journal is not trusted (stop)
+JOURNAL_KEYS = {"v", "salt", "stopped", "fp", "at", "why", "inflight", "reset"}
+
+
+def _parse_journal(raw):
+    """the journal's bytes -> dict, or raise ValueError (never anything else: a journal never stops the portal)"""
+    if len(raw) > JOURNAL_MAX:
+        raise ValueError("bigger than %d bytes" % JOURNAL_MAX)
     try:
-        with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as fh:
-            return fh.read().strip()[:64]
-    except OSError:
-        return ""
+        d = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
+    except (ValueError, UnicodeError, OverflowError, RecursionError, MemoryError, TypeError) as e:
+        raise ValueError("not strict UTF-8 JSON (%s)" % type(e).__name__)
+    if not isinstance(d, dict) or set(d) != JOURNAL_KEYS or type(d["v"]) is not int or d["v"] != 3:
+        raise ValueError("not in the wall's format (v3)")
+    ok = (isinstance(d["salt"], str) and 16 <= len(d["salt"]) <= 64 and type(d["stopped"]) is bool and isinstance(d["fp"], str)
+          and len(d["fp"]) <= 64 and isinstance(d["why"], str) and len(d["why"]) <= 500 and isinstance(d["reset"], str) and len(d["reset"]) <= 200
+          and (d["at"] is None or (type(d["at"]) in (int, float) and 0 < d["at"] < 1e11))
+          and isinstance(d["inflight"], list) and len(d["inflight"]) <= 1000 and all(isinstance(x, str) and len(x) <= 64 for x in d["inflight"]))
+    if not ok:
+        raise ValueError("holds a value that is not valid")
+    return d
 
 
 def _strict_pairs(pairs):
@@ -600,267 +644,266 @@ def _no_constant(name):
     raise ValueError("not a number: %s" % name)
 
 
-class Collector(object):
-    """Polls every source in turn, every `seconds` - ONE thread for all of them (never two polls at once, so a shared
-    account's logins are one after the other by construction); view() -> what the wall draws from (the module's doc).
+class BrokenSource(object):
+    """a wall source the portal could not make (a bad address, a TLS bundle it cannot read ...): shown as "not configured
+    correctly", never read, never a login - and never a stop of the portal"""
 
-    The login back-off, per account (the sources of one account share it) - Codex verify 3/4 and Neon's round-4 list:
-      - write-ahead: before any login the attempt is written durably to the back-off file (no write, no login); a file that
-        already holds this account's deadline or an attempt with no outcome (another process, a lost write): no login;
-      - any outcome but a login that worked holds the account one full window (auth_retry) from when that outcome came: a
-        refusal, a timeout, an answer lost or broken after the request left; for ONTAP (its password goes with every GET) an
-        error after a GET of this poll already answered 200 is a plain source error (the next cycle tries again); a
-        connection that never opened sent nothing and holds nothing;
-      - the window is kept on the MONOTONIC clock (a wall-clock step never shortens it); the file keeps the wall deadline,
-        the monotonic one and the boot id, so a restart in the same boot keeps the exact window and one after a reboot at
-        most one window;
-      - at the start, an attempt with no outcome holds its account one full window from now; a deadline further than one
-        window is cut to one window; a file that cannot be read, is not strict UTF-8 JSON (no NaN, no key twice) or holds an
-        entry that is not valid holds every account one window - after that window, the same unchanged file is written
-        over (a file changed meanwhile is read again); the same when the file cannot be read while running;
-      - a login that worked but whose outcome cannot be written keeps its account held until it can be;
-      - the file is read and written under an advisory lock (fcntl) - one process at a time."""
+    def __init__(self, kind, name, why):
+        self.kind, self.name = kind, str(name)
+        self.key = "%s:%s" % (kind, self.name)
+        self.why = "not configured correctly: %s" % short(why)
+        self.secret, self.stop_ev, self.login_sent = None, None, False
+
+    def poll(self):
+        raise NotSent(self.why)
+
+    def close(self):
+        pass
+
+
+class Collector(object):
+    """Polls every source in turn, every `seconds` - ONE thread for all of them; view() -> what the wall draws from.
+
+    STOP ON REFUSAL (1.130.0; the accounts are the site's own, shared with the AAP jobs and rotated by the password vault -
+    a stale copy that kept retrying could lock one):
+      - one collector per data volume: an exclusive lock on wall-collector.lock beside the journal, held for the process's
+        life; without it this process never logs in anywhere ("login off");
+      - every credentialed send (a vCenter Login, every ONTAP GET) is written ahead to the journal first (no write, no send);
+      - a DEFINITE refusal from any source (a refused login, any 401 / 403, NoPermission, a new session refused at once)
+        STOPS EVERY LOGIN to every source, persisted with a fingerprint of the configured credentials: it stays stopped
+        across restarts until the credentials change (Site portal - deploy with the fixed credential) or the deploy's
+        portal_wall_logins_reset is given a new value;
+      - an AMBIGUOUS outcome (a timeout, a lost or odd answer, a 5xx after the credential left) pauses that source one window
+        (auth_retry), in this process; a send in flight when the portal stopped makes every source wait one window at the
+        next start; a connection that never opened sent nothing and pauses nothing;
+      - any doubt about the journal (missing where it was before, unreadable, not valid, too big) stops every login until
+        the deploy's reset - it is created only on first use (no journal and no lock file yet)."""
 
     def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time, state_file=None,
-                 mono=None, boot_id=None):
+                 mono=None, reset=""):
         self.sources = list(sources)
         self.seconds, self.auth_retry, self.keep = max(1, int(seconds)), max(1, int(auth_retry)), int(keep_seconds)
         self.log = log or (lambda d: None)
         self.clock = clock
-        # the window's clock: monotonic in the portal; a test's fake clock stands for both
         self.mono = mono or (time.monotonic if clock is time.time else clock)
-        self.boot = _boot_id() if boot_id is None else str(boot_id)
-        self.lock = threading.Lock()                           # the state (view() reads it from the web threads)
-        self.cycling = threading.Lock()                        # one cycle at a time (the collector's thread; a test)
-        self.st = dict((s.key, {"kind": s.kind, "name": s.name, "state": "never", "why": "", "at": None, "tried": None, "next_try": None,
-                                "snap": None, "fail_since": None}) for s in self.sources)
+        self.reset = str(reset or "")[:200]
+        self.lock = threading.Lock()
+        self.cycling = threading.Lock()
+        self.st = dict((s.key, {"kind": s.kind, "name": s.name, "state": "never", "why": getattr(s, "why", "") if isinstance(s, BrokenSource) else "",
+                                "at": None, "tried": None, "next_try": None, "snap": None, "fail_since": None}) for s in self.sources)
         self.hist = {}
         self.stop_ev = threading.Event()
         self.thread = None
-        self.buckets = {}
-        for s in self.sources:
-            cred = getattr(s, "cred", None) or (s.kind, s.key)
-            b = self.buckets.setdefault(cred, {"gate": getattr(s, "gate", None) or Gate(), "next_try": None, "mono_until": None, "keys": [],
-                                               "since": None, "stuck": False})
-            b["keys"].append(s.key)
-            b["gate"].bad = False                              # a new collector: what holds an account comes from the file
-            s.gate = b["gate"]
-            s._bucket = cred
+        self.pause = {}                                        # source key -> monotonic end of its pause (an ambiguous outcome)
+        self.wait_all = None                                   # monotonic end of "every source waits" (a send in flight at the start)
+        self.stopped = None                                    # why every login is stopped (a refusal, or the journal in doubt)
+        self.off = None                                        # why this process never logs in (no lock)
         self.state_file = state_file
         self.flock = threading.Lock()
-        self.quarantine = None                                 # (the unusable file's fingerprint, monotonic end of its window)
-        self.seen = {}                                         # account key -> its entry as this process last read or wrote it
+        self.journal = None
+        self.lock_fd = None
         self._said = set()
-        for c, b in self.buckets.items():
-            b["gate"].ahead = (lambda cred=c: self._ahead(cred)) if state_file else None
+        for s in self.sources:
+            s.gate = Gate()
+            s.gate.ahead = (lambda src=s: self._ahead(src)) if state_file else None
+            try:
+                s.stop_ev = self.stop_ev
+            except AttributeError:
+                pass
+        self.fp_src = "\x1e".join(sorted("%s\x1f%s" % tuple(getattr(s, "secret", None) or (s.key, "")) for s in self.sources))
         if state_file:
-            self._restore()
+            try:
+                self._open()
+            except Exception as e:  # pylint: disable=broad-except  - never a stop of the portal: no logins instead
+                self._stop_all("the back-off journal could not be opened (%s) - no login until Site portal - deploy" % short(e), persist=False)
+
+    # ---- the journal ------------------------------------------------------------------------------------------------
+    def _fp(self, salt):
+        return hashlib.sha256((salt + "\x1d" + self.fp_src).encode("utf-8")).hexdigest()
+
+    def _lock_path(self):
+        return os.path.join(os.path.dirname(os.path.abspath(self.state_file)), "wall-collector.lock")
+
+    def _open(self):
+        import fcntl
+        lp = self._lock_path()
+        existed = os.path.exists(lp)
+        try:
+            fd = os.open(lp, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as e:
+            self._login_off("the lock file cannot be opened (%s)" % short(e))
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            os.close(fd)
+            self._login_off("another collector holds the lock, or it is not available (%s)" % short(e))
+            return
+        self.lock_fd = fd
+        try:
+            seen_reset = os.read(fd, 400).decode("utf-8", "replace").strip()
+        except OSError:
+            seen_reset = ""
+        new_reset = bool(self.reset) and self.reset != seen_reset
+        try:
+            with open(self.state_file, "rb") as fh:
+                raw = fh.read(JOURNAL_MAX + 1)
+            why = None
+        except FileNotFoundError:
+            raw, why = None, "missing"
+        except OSError as e:
+            raw, why = None, "cannot be read (%s)" % short(e)
+        d = None
+        if raw is not None:
+            try:
+                d = _parse_journal(raw)
+            except ValueError as e:
+                why = str(e)
+        if d is None:
+            if (why == "missing" and not existed) or new_reset:
+                d = self._fresh()                              # first use, or the deploy's reset: a new journal
+                if not self._save(d):
+                    self._stop_all("the back-off journal cannot be written - no login until it can (Site portal - deploy)", persist=False)
+                    return
+                self._mark_reset(fd, new_reset)
+                self.journal = d
+                return
+            self._stop_all("the back-off journal is %s - every login stopped until Site portal - deploy with portal_wall_logins_reset "
+                           "set to a new value" % why, persist=False)
+            return
+        self.journal = d
+        changed = False
+        if new_reset or (d["stopped"] and d["fp"] != self._fp(d["salt"])):
+            d.update(stopped=False, fp="", at=None, why="", inflight=[], reset=self.reset if new_reset else d["reset"])
+            changed = True
+            self._say("logins start", "the credentials changed or the deploy reset the logins: logins start again")
+        if d["inflight"]:                                      # a send in flight (or paused) when the portal stopped: every source waits
+            self.wait_all = self.mono() + self.auth_retry      # one window from now - the marks stay until it is over (a restart
+            for k in self.st:                                  # meanwhile waits a window again: never early)
+                self.st[k].update(state="auth", why="a login was under way when the portal stopped - every source waits one window",
+                                  next_try=self.clock() + self.auth_retry)
+        if changed and not self._save(d):
+            self._stop_all("the back-off journal cannot be written - no login until it can", persist=False)
+            return
+        if changed:
+            self._mark_reset(fd, new_reset)
+        if d["stopped"]:
+            self._stop_all(d["why"] or "logins stopped", persist=False)
+
+    def _mark_reset(self, fd, new_reset):
+        if new_reset:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                os.ftruncate(fd, 0)
+                os.write(fd, self.reset.encode("utf-8"))
+                os.fsync(fd)
+            except OSError:
+                pass
+
+    def _fresh(self):
+        return {"v": 3, "salt": binascii.hexlify(os.urandom(16)).decode("ascii"), "stopped": False, "fp": "", "at": None, "why": "",
+                "inflight": [], "reset": self.reset}
+
+    def _save(self, d):
+        """durably: a temp file, fsync, rename, fsync of the folder -> True, or False (said once)"""
+        folder = os.path.dirname(os.path.abspath(self.state_file))
+        try:
+            fd, tmp = tempfile.mkstemp(prefix=os.path.basename(self.state_file) + ".", suffix=".tmp", dir=folder)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(d, fh)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, self.state_file)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            dfd = os.open(folder, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+            self._said.discard("not written")
+            return True
+        except OSError as e:
+            self._say("not written", short(e))
+            return False
+
+    def _change(self, mutate):
+        """the journal changed in memory and written: True, or False (not written - the change is NOT kept)"""
+        with self.flock:
+            if self.journal is None:
+                return False
+            d = json.loads(json.dumps(self.journal))
+            mutate(d)
+            if not self._save(d):
+                return False
+            self.journal = d
+            return True
 
     @staticmethod
-    def _hkey(cred):
-        return hashlib.sha256(("%s|%s" % cred).encode("utf-8")).hexdigest()[:24]
+    def _hkey(key):
+        return hashlib.sha256(("src|%s" % key).encode("utf-8")).hexdigest()[:24]
 
+    def _ahead(self, src):
+        """before a credentialed send: written first - False: not written (or logins off / stopped), so nothing is sent"""
+        if self.off or self.stopped:
+            return False
+        h = self._hkey(src.key)
+        return self._change(lambda d: d["inflight"].append(h) if h not in d["inflight"] else None)
+
+    def _done(self, src):
+        h = self._hkey(src.key)
+        if self.journal is not None and h in self.journal["inflight"]:
+            self._change(lambda d: d["inflight"].remove(h) if h in d["inflight"] else None)   # not written: a restart waits one window
+
+    # ---- states -------------------------------------------------------------------------------------------------------
     def _say(self, what, why):
         if what not in self._said:
             self._said.add(what)
             self.log({"event": "wall", "backoff_file": self.state_file, "state": what, "why": why})
 
-    def _held(self, b):
-        return b["stuck"] or (b["mono_until"] is not None and self.mono() < b["mono_until"])
+    def _login_off(self, why):
+        self.off = "login off - %s" % why
+        for k in self.st:
+            self.st[k].update(state="auth", why=self.off, next_try=None)
+        for s in self.sources:
+            s.gate.bad = True
+        self._say("login off", self.off)
 
-    def _hold(self, b, mono_until, why, state="auth"):
-        """the account held until mono_until (monotonic); next_try (wall) is what the page says"""
-        b["mono_until"] = max(b["mono_until"] or 0, mono_until)
-        b["next_try"] = self.clock() + (b["mono_until"] - self.mono())
-        b["since"] = b["since"] or self.clock()
-        b["gate"].bad = True
-        for k in b["keys"]:
-            self.st[k].update(state=state, why=why, next_try=b["next_try"])
+    def _stop_all(self, why, persist=True, src=None):
+        """every login to every source stopped - persisted (with the credentials' fingerprint) when it is a refusal"""
+        self.stopped = why
+        for s in self.sources:
+            s.gate.bad = True
+        with self.lock:
+            for k in self.st:
+                self.st[k].update(state="auth", why=why, next_try=None, fail_since=self.st[k]["fail_since"] or self.clock())
+        if persist and self.journal is not None:
+            h = self._hkey(src.key) if src is not None else None
+            fp = self._fp(self.journal["salt"])
 
-    @staticmethod
-    def _valid(e):
-        def num(x):
-            return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0
-        if not isinstance(e, dict):
-            return False
-        keys = set(e)
-        if keys == {"attempt"}:
-            return num(e["attempt"])
-        if keys == {"until"}:
-            return num(e["until"])
-        if keys == {"until", "mono", "boot"}:
-            return num(e["until"]) and num(e["mono"]) and isinstance(e["boot"], str) and len(e["boot"]) <= 64
-        return False
+            def m(d):
+                d.update(stopped=True, fp=fp, at=self.clock(), why=why[:500])
+                if h in d["inflight"]:
+                    d["inflight"].remove(h)
+            if not self._change(m):
+                self._say("stop not written", "logins stopped, but the journal could not be written: a restart waits one window, then tries once")
+        self._say("logins stopped", why)
 
-    def _fingerprint(self):
-        try:
-            st = os.stat(self.state_file)
-            return (st.st_ino, st.st_size, st.st_mtime_ns)
-        except OSError:
-            return None
+    def _pause(self, s, why):
+        until = self.mono() + self.auth_retry
+        with self.lock:
+            self.pause[s.key] = until
+            self.st[s.key].update(state="auth", why=why, next_try=self.clock() + self.auth_retry,
+                                  fail_since=self.st[s.key]["fail_since"] or self.clock())
+        # the write-ahead mark stays while it is paused: a restart meanwhile waits one window from then
+        self.log({"event": "wall", "source": s.key, "state": "login paused one window", "why": why})
 
-    def _read(self):
-        """the file -> ({account key: entry}, None), or ({}, why it cannot be used); no file yet: ({}, None)"""
-        try:
-            with open(self.state_file, "rb") as fh:
-                raw = fh.read()
-        except FileNotFoundError:
-            return {}, None
-        except OSError:
-            return {}, "cannot be read"
-        try:
-            d = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
-        except (UnicodeError, ValueError):
-            return {}, "is not strict UTF-8 JSON"
-        if not isinstance(d, dict) or set(d) != {"v", "accounts"} or type(d["v"]) is not int or d["v"] != 2 or not isinstance(d["accounts"], dict):
-            return {}, "is not in the wall's format"
-        for e in d["accounts"].values():
-            if not self._valid(e):
-                return {}, "holds an entry that is not valid"
-        return dict((str(k), e) for k, e in d["accounts"].items()), None
-
-    def _quarantine(self, why):
-        """the file unusable: every account held one window; after it, the same unchanged file may be written over"""
-        if self.quarantine is None or self.quarantine[0] != self._fingerprint():
-            self.quarantine = (self._fingerprint(), self.mono() + self.auth_retry)
-            for b in self.buckets.values():
-                self._hold(b, self.quarantine[1], "the back-off file (%s) %s - every login held for %d s"
-                           % (os.path.basename(self.state_file), why, self.auth_retry))
-            self._say("not usable", "%s: every account held for one window" % why)
-
-    class _Locked(object):
-        """the advisory lock beside the file (fcntl): one process at a time reads or writes it"""
-
-        def __init__(self, path):
-            self.path, self.fd = path + ".lock", None
-
-        def __enter__(self):
-            try:
-                import fcntl
-            except ImportError:                                # not POSIX: the thread lock only
-                return self
-            try:
-                self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-            except OSError:                                    # a folder that cannot be written: nothing is written there either
-                return self
-            fcntl.flock(self.fd, fcntl.LOCK_EX)
-            return self
-
-        def __exit__(self, *a):
-            if self.fd is not None:
-                os.close(self.fd)                              # closing releases the lock
-            return False
-
-    def _restore(self):
-        now, mono = self.clock(), self.mono()
-        try:
-            with self.flock, self._Locked(self.state_file):
-                d, why = self._read()
-        except OSError as e:
-            d, why = {}, "cannot be locked (%s)" % short(e)
-        if why is not None:
-            self._quarantine(why)
-            return
-        self.seen = dict(d)
-        cut = []
-        for c, b in self.buckets.items():
-            e = d.get(self._hkey(c))
-            if not e:
-                continue
-            if "attempt" in e:                                 # a login with no outcome: one full window from now
-                self._hold(b, mono + self.auth_retry, "a login was under way when the portal stopped - held one window")
-                cut.append(c)
-                continue
-            left = min(self.auth_retry, max(0.0, e["until"] - now))       # never more than one window (a far deadline: one window)
-            until = mono + left
-            if e.get("boot") and e["boot"] == self.boot and self.boot:
-                until = max(until, min(e["mono"], mono + self.auth_retry))  # the same boot: the monotonic deadline too
-            if until > mono:
-                self._hold(b, until, AUTH_WHY + " (backed off before the portal restarted)")
-        for c in cut:                                          # the attempt becomes its window's deadline (if it cannot be written:
-            self._outcome(c, self.buckets[c]["mono_until"])    # the attempt stays, and holds again - never less)
-
-    def _write(self, mutate):
-        """read-modify-write under the locks, durably (a temp file, fsync, rename, fsync of the folder) -> True, or False (said
-        once). A file that cannot be read is never written over - until its quarantine window is over and it is unchanged."""
-        try:
-            with self.flock, self._Locked(self.state_file):
-                d, why = self._read()
-                if why is not None:
-                    q, fp = self.quarantine, self._fingerprint()
-                    if q is not None and self.mono() >= q[1] and q[0] == fp:
-                        d = {}                                 # its window is over and nobody changed it: written over
-                    else:
-                        if q is None or q[0] != fp:            # this file first seen unusable now: its window starts
-                            self.quarantine = (fp, self.mono() + self.auth_retry)
-                        self._say("not read", "the back-off file %s - no login until it can be read (written over %d s after, if unchanged)"
-                                  % (why, self.auth_retry))
-                        return False
-                if mutate(d) is False:
-                    return False
-                fd, tmp = tempfile.mkstemp(prefix=os.path.basename(self.state_file) + ".", suffix=".tmp",
-                                           dir=os.path.dirname(os.path.abspath(self.state_file)))
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        json.dump({"v": 2, "accounts": d}, fh)
-                        fh.flush()
-                        os.fsync(fh.fileno())
-                    os.replace(tmp, self.state_file)
-                except BaseException:
-                    try:
-                        os.unlink(tmp)
-                    except OSError:
-                        pass
-                    raise
-                dfd = os.open(os.path.dirname(os.path.abspath(self.state_file)), os.O_RDONLY)
-                try:
-                    os.fsync(dfd)
-                finally:
-                    os.close(dfd)
-                self.quarantine = None
-                self.seen = dict(d)
-                self._said.discard("not written")
-                return True
-        except OSError as e:
-            self._say("not written", short(e))
-            return False
-
-    def _ahead(self, cred):
-        """before a login: the attempt, written first - False: not written (or the file already holds this account), no login"""
-        h, now = self._hkey(cred), self.clock()
-        b = self.buckets[cred]
-
-        def m(d):
-            e = d.get(h)
-            if e is not None and (e != self.seen.get(h) or "attempt" in e):
-                # changed by another process, or an attempt never resolved: never a login now - held one window
-                self._hold(b, self.mono() + self.auth_retry, "the back-off file holds this account - held one window")
-                return False
-            d[h] = {"attempt": now}
-        return self._write(m)
-
-    def _outcome(self, cred, mono_until):
-        """after a login: the account's deadline (monotonic), or nothing to hold (None: it worked, or nothing was sent)"""
-        if not self.state_file:
-            return True
-        h = self._hkey(cred)
-
-        def m(d):
-            e = d.get(h)
-            if e is not None and e != self.seen.get(h):        # another process wrote this account meanwhile: its entry stays
-                if "until" in e:
-                    with self.lock:
-                        self._hold(self.buckets[cred], self.mono() + min(self.auth_retry, max(0.0, e["until"] - self.clock())),
-                                   "the back-off file holds this account (another writer)")
-                if mono_until is None:
-                    return None
-            if mono_until is None:
-                d.pop(h, None)
-            else:
-                until = self.clock() + max(0.0, mono_until - self.mono())
-                d[h] = {"until": max(until, (e or {}).get("until") or 0), "mono": mono_until, "boot": self.boot or "-"}
-        return self._write(m)
-
+    # ---- the loop -----------------------------------------------------------------------------------------------------
     def start(self):
         if self.thread is not None:
             return
@@ -876,81 +919,63 @@ class Collector(object):
             self.stop_ev.wait(self.seconds)
 
     def stop(self, timeout=60):
-        self.stop_ev.set()
+        self.stop_ev.set()                                     # the sources check it before every credentialed send
         if self.thread is not None and self.thread is not threading.current_thread():
-            self.thread.join(timeout)                          # the poll under way ends first
-        for s in self.sources:
-            try:
-                s.close()
-            except Exception:  # pylint: disable=broad-except
-                pass
+            self.thread.join(timeout)
+        with self.cycling:                                     # a cycle someone else runs ends first
+            for s in self.sources:
+                try:
+                    s.close()
+                except Exception:  # pylint: disable=broad-except
+                    pass
 
     def cycle(self):
         """every source once, one after the other, in this thread"""
         with self.cycling:
             for s in self.sources:
-                if self.stop_ev.is_set():
+                if self.stop_ev.is_set() or self.off or self.stopped:
                     break
-                with self.lock:
-                    b = self.buckets[s._bucket]
-                if b["stuck"]:                                 # a login that worked, its outcome not written yet: write it first
-                    if self._outcome(s._bucket, None):
-                        b["stuck"] = False
+                now, mono = self.clock(), self.mono()
+                if self.wait_all is not None:
+                    if mono < self.wait_all:
+                        break
+                    if self._change(lambda d: d.update(inflight=[])):
+                        self.wait_all = None                   # the window after a start with sends in flight is over
                     else:
-                        continue
+                        break
+                if mono < self.pause.get(s.key, 0):
+                    continue
                 with self.lock:
-                    if self._held(b):
-                        continue                               # the account is held: every source of it waits
-                    if b["mono_until"] is not None:
-                        b["mono_until"], b["next_try"] = None, None
-                        b["gate"].bad = False                  # the window is over: the next source of it may try
-                    now = self.clock()
                     self.st[s.key]["tried"] = now
                 self._run(s, now)
 
     def wait(self, timeout=60):
-        """kept for callers of the threaded collector: a cycle ends before cycle() returns"""
         return None
-
-    def _hold_account(self, s, now, why, first_log):
-        """an outcome that is not a login that worked: the account held one window from now (the outcome's time)"""
-        with self.lock:
-            b = self.buckets[s._bucket]
-            first = b["since"] is None
-            self._hold(b, self.mono() + self.auth_retry, AUTH_WHY + " (the same account)")
-            self.st[s.key].update(why=why)
-            for k in b["keys"]:
-                self.st[k]["fail_since"] = self.st[k]["fail_since"] or now
-            until = b["mono_until"]
-        self._outcome(s._bucket, until)                        # durably; if it cannot be, the attempt stays (a restart holds)
-        if first:
-            self.log({"event": "wall", "source": s.key, "state": first_log,
-                      "why": "%s; this account's %d source(s) not tried again for %d s" % (why, len(b["keys"]), self.auth_retry)})
 
     def _run(self, s, now):
         try:
             snap = s.poll()
         except AuthError as e:
-            self._hold_account(s, now, str(e) or AUTH_WHY, "login refused")
+            who = (getattr(s, "secret", None) or ("?",))[0]
+            self._stop_all("Logins stopped at %s: %s refused %s (%s). Fix the credential, then run Site portal - deploy."
+                           % (time.strftime("%H:%M", time.localtime(self.clock())), s.name, who or "the account", short(e, 160)), src=s)
             return
-        except Paused:
+        except Paused as e:
             with self.lock:
                 st = self.st[s.key]
-                first = st["state"] != "paused"
-                if not self._held(self.buckets[s._bucket]):
-                    st.update(state="paused", why=PAUSED_WHY, next_try=None, fail_since=st["fail_since"] or now)
-            if first:
-                self.log({"event": "wall", "source": s.key, "state": "login paused", "why": PAUSED_WHY})
+                if not (self.off or self.stopped):
+                    first = st["state"] != "paused"
+                    st.update(state="paused", why=PAUSED_WHY if "file" in str(e) or not str(e) else str(e), next_try=None,
+                              fail_since=st["fail_since"] or now)
+                    if first:
+                        self.log({"event": "wall", "source": s.key, "state": "login paused", "why": st["why"]})
             return
         except Exception as e:  # pylint: disable=broad-except
-            sent, ok = getattr(s, "login_sent", False), getattr(s, "login_ok", False)
-            if sent and not ok and not isinstance(e, NotSent):
-                # the credential left and no answer said it worked (a timeout, a lost or broken answer): as a refusal
-                self._hold_account(s, now, "the login's answer did not come or was not whole (%s) - held one window as a refusal" % short(e),
-                                   "login not answered")
+            if getattr(s, "login_sent", False) and not isinstance(e, NotSent):
+                self._pause(s, "the credential was sent and the answer was not whole (%s) - this source waits one window" % short(e))
                 return
-            if sent and not self._outcome(s._bucket, None):    # it worked, or nothing left: clear the attempt - or stay held
-                self.buckets[s._bucket]["stuck"] = True
+            if getattr(s, "login_sent", False):
+                self._done(s)                                  # nothing left on the wire after the write-ahead
             with self.lock:
                 st = self.st[s.key]
                 first = st["state"] != "error"
@@ -958,14 +983,10 @@ class Collector(object):
             if first:
                 self.log({"event": "wall", "source": s.key, "state": "not read", "why": short(e)})
             return
-        if getattr(s, "login_sent", False) or s.kind == "ontap":
-            if not self._outcome(s._bucket, None):             # the login worked: nothing to hold - once that is written
-                self.buckets[s._bucket]["stuck"] = True
-                self._say("outcome not written", "a login worked but the back-off file could not be cleared - its account waits")
+        if getattr(s, "login_sent", False):
+            self._done(s)
         done = self.clock()
         with self.lock:
-            b = self.buckets[s._bucket]
-            b["since"] = None
             st = self.st[s.key]
             was = st["state"]
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
@@ -1039,6 +1060,9 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
             except (ValueError, TypeError) as e:
                 log({"event": "wall", "source": "vcenter", "state": "left out", "why": short(e)})
                 continue
+            except Exception as e:  # pylint: disable=broad-except  - a TLS bundle not readable ...: shown, never a stop of the portal
+                log({"event": "wall", "source": "vcenter", "state": "not configured correctly", "why": short(e)})
+                src = BrokenSource("vcenter", h, e)
             if src.key.lower() not in seen:
                 seen.add(src.key.lower())
                 out.append(src)
@@ -1056,4 +1080,7 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
                                        verify=on.get("verify", True) is not False, cafile=cafile, timeout=timeout))
             except (ValueError, TypeError) as e:
                 log({"event": "wall", "source": "ontap", "state": "left out", "why": short(e)})
+            except Exception as e:  # pylint: disable=broad-except
+                log({"event": "wall", "source": "ontap", "state": "not configured correctly", "why": short(e)})
+                out.append(BrokenSource("ontap", c, e))
     return out

@@ -2255,7 +2255,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_preview` | `true` | a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted |
 | `portal_wall_enclave` | `"{{ site_enclave \| default('', true) }}"` | shown beside the title; one portal serves one enclave |
 | `portal_wall_seconds` | `60` | the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks |
-| `portal_wall_auth_retry_minutes` | `15` | a refused login: that source stops at once and is tried again no sooner than this (5 to 1440) - the accounts are shared with the AAP jobs, a lockout would stop them too |
+| `portal_wall_auth_retry_minutes` | `15` | an unclear login answer (a timeout, a lost answer): that source waits this long (5 to 1440) - a REFUSED login stops every wall login until the credential changes |
+| `portal_wall_logins_reset` | (empty) | stop on refusal: a new value here (e.g. today's date) and Site portal - deploy start the wall's logins again when the credential was right all along (a changed credential starts them by itself) |
 | `portal_wall_vcenter` | `auto` | vCenter: auto = on when this deploy has the "VMware vCenter" credential (the same account the VMware jobs use; read-only calls only). The credential's vCenter and these (vmware_vcenters: names, or name:port) are read with that account. auto \| true \| false |
 | `portal_wall_vcenters` | `"{{ vmware_vcenters \| default([], true) }}"` | more vCenters read with the same account (names, or name:port) |
 | `portal_wall_vcenter_validate_certs` | `"{{ vmware_validate_certs \| default(true) }}"` | vCenter's certificate checked (the CAs: portal_trust_host_cas) |

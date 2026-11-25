@@ -2,6 +2,8 @@
 """Round-4 counterexamples. Run with python3 tests/test_wall_r4_repro.py -v."""
 
 # DROPPED / REWRITTEN
+# Journal (P1.1, P1.2, P2.1 x5): the per-account back-off journal is gone (1.130.0 stop on refusal); each case is rewritten
+# to the new rules in tests/test_wall_stop_on_refusal.py (Lifecycle, Refusals, Ambiguous, Journal, Shutdown).
 # P1.4 (both report caps): a capped report by itself must never mark a wall check run.
 # P2.2 (URL and addressless rows): even unmatchable DB rows must leave live lights alone.
 # P2.2 (path before the first poll): DB numbers are allowed as neutral path information.
@@ -94,155 +96,6 @@ def reader(address=ARRAY, user="reader"):
     return s
 
 
-class Journal(unittest.TestCase):
-    def setUp(self):
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        self.path = Path(folder.name) / "journal.json"
-        self.clock = Clock()
-        self.clock.t = 1000
-        self.a = reader()
-        self.key = live.Collector._hkey(self.a.cred)
-
-    def collector(self, *sources):
-        return live.Collector(sources or [self.a], auth_retry=WINDOW, clock=self.clock,
-                              state_file=str(self.path))
-
-    @staticmethod
-    def cycle(c):
-        c.cycle()
-        c.wait()
-        c.wait()  # the old collector can start another worker when its first probe finishes
-
-    def seed(self, entries):
-        self.path.write_text(json.dumps({"v": 2, "accounts": entries}), encoding="utf-8")
-
-    def deadline(self, c):
-        return c.view()["sources"][self.a.key]["next_try"]
-
-    def test_p1_1_success_erases_later_write_ahead(self):
-        b = reader(OTHER)
-        c = self.collector(self.a, b)
-        self.cycle(c)  # a verified shared account
-        second_read = threading.Event()
-        first_committed = threading.Event()
-        read_a, read_b = self.a.poll, b._read
-        journal_during_b = []
-
-        def finish_a():
-            snap = read_a()
-            second_read.wait(1)  # a serial collector will start B only after this returns
-            return snap
-
-        def inspect_b():
-            second_read.set()
-            first_committed.wait(2)
-            journal_during_b.append(json.loads(self.path.read_text())["accounts"])
-            return read_b()
-
-        replace = os.replace
-
-        def commit(tmp, dest):
-            replace(tmp, dest)
-            if self.key not in json.loads(self.path.read_text())["accounts"]:
-                first_committed.set()
-
-        with patch.object(self.a, "poll", finish_a), patch.object(b, "_read", inspect_b), \
-                patch.object(os, "replace", commit):
-            self.cycle(c)
-        self.assertEqual(len(journal_during_b), 1)
-        self.assertIn(self.key, journal_during_b[0], "B still has an outstanding read")
-        self.seed(journal_during_b[0])
-        self.assertEqual(self.deadline(self.collector(reader())), self.clock() + WINDOW)
-
-    def test_p1_1_sources_share_one_poll_thread(self):
-        b = reader(OTHER, user="reader2")
-        threads = []
-        snapshot = self.a._read.return_value
-
-        def record():
-            threads.append(threading.current_thread())
-            return snapshot
-
-        self.a._read.side_effect = b._read.side_effect = record
-        self.cycle(self.collector(self.a, b))
-        self.assertEqual(len(threads), 2)
-        self.assertIs(threads[0], threads[1])
-
-    def test_p1_2_delayed_refusal_with_unsaved_outcome(self):
-        def refuse():
-            self.clock.t += 30
-            raise live.AuthError("refused")
-        self.a._read.side_effect = refuse
-        replace = os.replace
-
-        def save(tmp, dest):
-            if self.a._read.called:
-                raise OSError("outcome could not be committed")
-            replace(tmp, dest)
-
-        c = self.collector()
-        with patch.object(os, "replace", save):
-            self.cycle(c)
-        self.assertEqual(self.deadline(c), 1030 + WINDOW)
-        self.assertEqual(self.a._read.call_count, 1)
-        self.clock.t += 1
-        self.assertEqual(self.deadline(self.collector(reader())), self.clock() + WINDOW)
-
-    def test_p1_2_lost_response_holds_from_outcome(self):
-        # _get is the authenticated request boundary. No network connection is made.
-        del self.a._read
-        for error in (TimeoutError, ConnectionResetError, ValueError):
-            with self.subTest(error=error.__name__):
-                self.seed({})
-                self.clock.t = 1000
-                def lost(_path):
-                    self.clock.t += 30
-                    raise error("response unavailable")
-                self.a._get = Mock(side_effect=lost)
-                c = self.collector()
-                self.cycle(c)
-                self.clock.t = 1030 + WINDOW - 1
-                self.cycle(c)
-                self.assertEqual((self.a._get.call_count, self.deadline(c)), (1, 1030 + WINDOW))
-
-    def test_p2_1_restart_holds_in_progress_from_now(self):
-        self.seed({self.key: {"attempt": self.clock()}})
-        self.clock.t += WINDOW - 1
-        self.assertEqual(self.deadline(self.collector()), self.clock() + WINDOW)
-
-    def assert_startup_hold(self):
-        c = self.collector()
-        self.cycle(c)
-        self.assertEqual((self.a._read.call_count, self.deadline(c)), (0, self.clock() + WINDOW))
-
-    def test_p2_1_empty_entry_holds(self):
-        self.seed({self.key: {}})
-        self.assert_startup_hold()
-
-    def test_p2_1_null_deadline_holds(self):
-        for invalid in ({"until": None}, {"attempt": None}, None, {"until": float("nan")},
-                        {"until": float("inf")}):
-            with self.subTest(entry=invalid):
-                self.a._read.reset_mock()
-                self.seed({self.key: invalid})
-                self.assert_startup_hold()
-
-    def test_p2_1_invalid_utf8_holds(self):
-        self.path.write_bytes(b'{"v":2,"accounts":{"\xff":{}}}')
-        try:
-            self.assert_startup_hold()
-        except UnicodeDecodeError as exc:
-            self.fail(f"collector must start and hold after a journal decoding failure: {exc}")
-
-    def test_p2_1_failed_journal_read_preserves_other_accounts(self):
-        other_key = live.Collector._hkey(reader(OTHER, user="reader2").cred)
-        self.seed({other_key: {"until": self.clock() + WINDOW}})
-        before = self.path.read_bytes()
-        c = self.collector()
-        with patch("builtins.open", side_effect=OSError("journal unavailable")):
-            self.cycle(c)
-        self.assertEqual((self.a._read.call_count, self.path.read_bytes()), (0, before))
 
 
 class Storage(unittest.TestCase):
@@ -360,7 +213,7 @@ class Observations(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 s = reader()
                 s._get = Mock(return_value={"records": [], key: value})
-                with self.assertRaises(live.CollectionFailed):
+                with self.assertRaises((live.CollectionFailed, RuntimeError)):   # 1.130.0: an odd answer stops the poll
                     s.records("/api/snapmirror/relationships", "state")
 
     def test_p2_3_next_without_href_at_page_limit(self):

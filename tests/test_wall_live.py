@@ -425,29 +425,6 @@ class CollectorTest(unittest.TestCase):
         c.wait(10)
         clock.t += secs
 
-    def test_auth_backoff(self):
-        f = Fake(result=W.AuthError(W.AUTH_WHY))
-        c, clock, logs = self.make(f)
-        for _ in range(14):                                   # 14 minutes: tried once
-            self.step(c, clock)
-        self.assertEqual(f.calls, 1)
-        s = c.view()["sources"][f.key]
-        self.assertEqual((s["state"], s["why"]), ("auth", "login failed - check the credential"))
-        self.assertEqual(len(logs), 1)
-        self.assertIn("login refused", json.dumps(logs[0]))
-        for _ in range(2):                                    # 15 min passed: once more, still refused: no second log line
-            self.step(c, clock)
-        self.assertEqual(f.calls, 2)
-        self.assertEqual(len(logs), 1)
-        f.result = None
-        for _ in range(14):                                   # within the next 15 min: not tried
-            self.step(c, clock)
-        self.assertEqual(f.calls, 2)
-        self.step(c, clock)                                   # 15 min after the last try: tried, read
-        self.assertEqual(f.calls, 3)
-        self.assertEqual(c.view()["sources"][f.key]["state"], "ok")
-        self.assertEqual(logs[-1]["state"], "read again")
-        self.assertEqual(len(logs), 2)
 
     def test_last_good_snapshot_kept_while_failing(self):
         f = Fake(result={"hosts": [{"name": "esx01", "cpu_pct": 10.0, "mem_pct": 20.0}], "vms": []})
@@ -548,73 +525,6 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(W.sources_from_config({"vcenter": {"user": "u", "hosts": ["vc01"]}}), [])      # no password: none
 
 
-class SharedAccount(unittest.TestCase):
-    """1.130.0 review: the site's shared accounts - one refused login backs off every source of that account; after the start
-    and after each back-off one source tries first and the others wait for its answer: exactly one bad login per window"""
-
-    def make(self, srcs, auth_retry=900):
-        logs = []
-        clock = Clock()
-        return W.Collector(srcs, seconds=60, auth_retry=auth_retry, log=logs.append, clock=clock), clock, logs
-
-    def step(self, c, clock):
-        c.cycle()
-        c.wait(10)
-        time.sleep(0.05)
-        c.wait(10)                                             # the kicked ones too
-        clock.t += 60
-
-    def test_three_vcenters_one_bad_login_per_window(self):
-        stubs = [vim_stub(self) for _ in range(3)]
-        srcs = [W.VcenterSource("127.0.0.1", "wall-reader", "old", verify=False, port=p) for _v, p in stubs]
-        c, clock, logs = self.make(srcs)
-        for _ in range(14):                                     # 14 minutes: inside the window
-            self.step(c, clock)
-        self.assertEqual(sum(v.methods.count("Login") for v, _p in stubs), 1)
-        self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"auth"})
-        self.assertEqual(len(logs), 1)
-        for _ in range(16):                                     # past 15 minutes: one more try, still one source
-            self.step(c, clock)
-        self.assertEqual(sum(v.methods.count("Login") for v, _p in stubs), 2)
-        for v, _p in stubs:
-            v.password = "old"                                  # the account fixed: the next window's probe, then the others at once
-        for _ in range(16):
-            self.step(c, clock)
-        self.assertEqual([v.logins for v, _p in stubs], [1, 1, 1])
-        self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"ok"})
-
-    def test_a_vcenter_that_does_not_answer_passes_the_probe_on(self):
-        stubs = [vim_stub(self) for _ in range(2)]
-        dead = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=closed_port(), timeout=2)
-        srcs = [dead] + [W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=p) for _v, p in stubs]
-        c, clock, _logs = self.make(srcs)
-        self.step(c, clock)                                     # no connection: nothing was sent - not a refusal, no hold
-        self.assertEqual([v.logins for v, _p in stubs], [1, 1])
-        self.assertEqual(c.view()["sources"][dead.key]["state"], "error")
-        self.assertIsNone(c.view()["sources"][srcs[1].key]["next_try"])
-
-    def test_other_accounts_are_not_held(self):
-        (v1, p1), (v2, p2) = vim_stub(self), vim_stub(self)
-        bad = W.VcenterSource("127.0.0.1", "wall-reader", "old", verify=False, port=p1)
-        other = W.VcenterSource("127.0.0.1", "other-reader", "pass", verify=False, port=p2)
-        c, clock, _logs = self.make([bad, other])
-        for _ in range(3):
-            self.step(c, clock)
-        self.assertEqual((v1.methods.count("Login"), v2.logins), (1, 1))
-        self.assertEqual(c.view()["sources"][other.key]["state"], "ok")
-
-    def test_two_ontap_clusters_one_bad_request_per_window(self):
-        a, b = Ontap("right"), Ontap("right")
-        sa, pa = serve(ontap_handler(a))
-        sb, pb = serve(ontap_handler(b))
-        for x in (sa, sb):
-            self.addCleanup(x.server_close)
-            self.addCleanup(x.shutdown)
-        srcs = [W.OntapSource("127.0.0.1:%d" % p, "wall-reader", "wrong", verify=False) for p in (pa, pb)]
-        c, clock, _logs = self.make(srcs)
-        for _ in range(10):
-            self.step(c, clock)
-        self.assertEqual(len(a.paths) + len(b.paths), 1)
 
 
 class Faults(unittest.TestCase):
@@ -667,52 +577,15 @@ class Codex(unittest.TestCase):
         self.addCleanup(so.shutdown)
         srcs = [W.VcenterSource("127.0.0.1", "CORP\\svc-wall", "old", verify=False, port=vp),
                 W.OntapSource("127.0.0.1:%d" % op, "svc-wall@corp.example.mil", "old", verify=False)]
-        c, clock, _logs = SharedAccount.make(self, srcs)
+        clock = Clock()
+        c = W.Collector(srcs, seconds=60, auth_retry=900, clock=clock)
         for _ in range(10):
-            SharedAccount.step(self, c, clock)
+            c.cycle()
+            clock.t += 60
         self.assertEqual(vim.methods.count("Login") + len(o.paths), 1)              # one bad login for the one account
         self.assertEqual(set(x["state"] for x in c.view()["sources"].values()), {"auth"})
 
-    def test_the_back_off_outlives_a_restart(self):
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        state = os.path.join(d, "wall-backoff.json")
-        vim, vp = vim_stub(self)
-        mk = lambda: W.VcenterSource("127.0.0.1", "svc-wall", "old", verify=False, port=vp)    # noqa: E731
-        clock = Clock()
-        c = W.Collector([mk()], seconds=60, auth_retry=900, clock=clock, state_file=state)
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(vim.methods.count("Login"), 1)
-        self.assertEqual(oct(os.stat(state).st_mode & 0o777), "0o600")
-        self.assertNotIn("svc-wall", open(state).read())                          # the account's key hashed
-        clock.t += 300                                                            # the portal restarts 5 minutes later
-        c2 = W.Collector([mk()], seconds=60, auth_retry=900, clock=clock, state_file=state)
-        self.assertEqual(list(c2.view()["sources"].values())[0]["state"], "auth")
-        for _ in range(9):                                                        # to 14 minutes after the refusal: no login
-            c2.cycle()
-            c2.wait(10)
-            clock.t += 60
-        self.assertEqual(vim.methods.count("Login"), 1)
-        clock.t += 120
-        c2.cycle()
-        c2.wait(10)
-        self.assertEqual(vim.methods.count("Login"), 2)                           # after the window: one try
 
-    def test_the_deadline_is_from_the_refusal(self):
-        clock = Clock()
-
-        class Slow(Fake):
-            def poll(self):
-                self.calls += 1
-                clock.t += 840                                                    # it waited 14 min behind another read
-                raise W.AuthError(W.AUTH_WHY)
-        f = Slow()
-        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock)
-        start = clock.t
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(c.view()["sources"][f.key]["next_try"], start + 840 + 900)
 
     def test_a_401_on_login_is_a_refusal_whatever_the_body(self):
         vim, port = vim_stub(self)
@@ -724,26 +597,6 @@ class Codex(unittest.TestCase):
 class CodexVerify(unittest.TestCase):
     """Codex verify 1.130.0: a read on an old session never ends a back-off; a cut 401 is a refusal"""
 
-    def test_an_in_flight_read_never_clears_the_back_off(self):
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        state = os.path.join(d, "wall-backoff.json")
-        a, b = Fake(key="vcenter:vc01.corp.example.mil"), Fake(key="vcenter:vc02.corp.example.mil")
-        a.cred = b.cred = ("account", "svc-wall")
-        clock = Clock()
-        c = W.Collector([a, b], seconds=60, auth_retry=900, clock=clock, state_file=state)
-        c.cycle()
-        c.wait(10)
-        time.sleep(0.05)
-        c.wait(10)                                             # both read once: the account verified
-        clock.t += 60
-        a.delay, b.result = 0.5, W.AuthError(W.AUTH_WHY)       # vc02 refused now; vc01's read (an old session) ends after it
-        c.cycle()
-        c.wait(10)
-        bk = list(c.buckets.values())[0]
-        self.assertEqual(bk["next_try"], clock.t + 900)          # still backed off
-        self.assertEqual([e.get("until") for e in json.load(open(state))["accounts"].values()], [clock.t + 900])   # and the file still says so
-        self.assertEqual(c.view()["sources"][a.key]["state"], "auth")
 
     def cut_401(self, verb):
         class H(http.server.BaseHTTPRequestHandler):
@@ -771,185 +624,10 @@ class CodexVerify(unittest.TestCase):
             W.OntapSource("127.0.0.1:%d" % port, "u", "p", verify=False, timeout=5).poll()
 
 
-class BackoffFile(unittest.TestCase):
-    """Codex verify 2: the back-off file - a failed write is said once and the deadline kept; a file that cannot be read or
-    written at the start holds every account for one window"""
-
-    def test_a_failed_write_is_said_once_and_kept(self):
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        f = Fake(result=W.AuthError(W.AUTH_WHY))
-        logs, clock = [], Clock()
-        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock, log=logs.append, state_file=os.path.join(d, "wall-backoff.json"))
-        os.chmod(d, 0o500)                                                # the folder turns read-only after the start
-        self.addCleanup(os.chmod, d, 0o700)
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(c.view()["sources"][f.key]["next_try"], clock.t + 900)
-        self.assertEqual(len([x for x in logs if x.get("state") == "not written"]), 1)
-        clock.t += 901
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(len([x for x in logs if x.get("state") == "not written"]), 1)      # said once, not at every refusal
-
-    def test_an_unreadable_file_holds_every_account(self):
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        state = os.path.join(d, "wall-backoff.json")
-        with open(state, "w") as fh:
-            fh.write("{not json")
-        f = Fake()
-        clock = Clock()
-        c = W.Collector([f], seconds=60, auth_retry=900, clock=clock, state_file=state)
-        for _ in range(14):
-            c.cycle()
-            c.wait(10)
-            clock.t += 60
-        self.assertEqual(f.calls, 0)                                       # held for the whole window: nobody logs in
-        self.assertEqual(c.view()["sources"][f.key]["state"], "auth")
-        clock.t += 120
-        c.cycle()
-        c.wait(10)
-        self.assertEqual(f.calls, 1)
 
 
-class WriteAhead(unittest.TestCase):
-    """Codex verify 3: the back-off file is write-ahead - no login unless the attempt is written first; a refusal, then a
-    restart one second later: no second login inside the window; a login cut by a restart holds its account"""
-
-    def setUp(self):
-        self.d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.d, True)
-        self.state = os.path.join(self.d, "wall-backoff.json")
-        self.vim, self.port = vim_stub(self)
-
-    def src(self, pw="old"):
-        return W.VcenterSource("127.0.0.1", "svc-wall", pw, verify=False, port=self.port)
-
-    def run_cycles(self, c, clock, n, step=1):
-        for _ in range(n):
-            c.cycle()
-            c.wait(10)
-            clock.t += step
-
-    def test_no_write_no_login(self):
-        os.chmod(self.d, 0o500)
-        self.addCleanup(os.chmod, self.d, 0o700)
-        clock, logs = Clock(), []
-        s = self.src("pass")
-        c = W.Collector([s], seconds=60, auth_retry=900, clock=clock, log=logs.append, state_file=self.state)
-        self.run_cycles(c, clock, 3, 60)
-        self.assertEqual(self.vim.methods.count("Login"), 0)                    # never sent
-        st = c.view()["sources"][s.key]
-        self.assertEqual(st["state"], "paused")
-        self.assertIn("back-off file", st["why"])
-        self.assertEqual(len([x for x in logs if x.get("state") == "login paused"]), 1)
-
-    def test_refused_then_restart_one_second_later(self):
-        clock = Clock()
-        c = W.Collector([self.src()], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
-        ahead = c._ahead
-
-        def ahead_then_lock_the_folder(cred):                                  # the attempt written - then the folder turns
-            ok = ahead(cred)                                                    # read-only: the refusal's deadline is not written
-            os.chmod(self.d, 0o500)
-            return ok
-        for b in c.buckets.values():
-            b["gate"].ahead = lambda cred=list(c.buckets)[0]: ahead_then_lock_the_folder(cred)
-        self.run_cycles(c, clock, 1)
-        os.chmod(self.d, 0o700)                                                 # writable again for the restart
-        self.assertEqual(self.vim.methods.count("Login"), 1)
-        c2 = W.Collector([self.src()], seconds=60, auth_retry=900, clock=clock, state_file=self.state)    # the restart, 1 s later
-        self.run_cycles(c2, clock, 898)                                         # to 899 s after the refusal
-        self.assertEqual(self.vim.methods.count("Login"), 1)
-
-    def test_a_login_cut_by_a_restart_holds_its_account(self):
-        clock = Clock()
-        with open(self.state, "w") as fh:                                      # the attempt written, then the process killed
-            json.dump({"v": 2, "accounts": {W.Collector._hkey(("account", "svc-wall")): {"attempt": clock.t - 10}}}, fh)
-        c = W.Collector([self.src("pass")], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
-        self.run_cycles(c, clock, 14, 60)                                       # to 850 s after the attempt
-        self.assertEqual(self.vim.methods.count("Login"), 0)
-        self.run_cycles(c, clock, 2, 60)
-        self.assertEqual(self.vim.methods.count("Login"), 1)                    # after the window: one login, it works
-        self.assertEqual(json.load(open(self.state))["accounts"], {})           # and nothing is held any more
-
-    def test_files_that_cannot_be_trusted_hold_every_account(self):
-        clock = Clock()
-        h = W.Collector._hkey(("account", "svc-wall"))
-        for text in ('{"v": 2, "accounts": {"%s": {"until": "soon"}}}' % h, '{"v": 2, "accounts": {"%s": {"until": %d}}}' % (h, clock.t + 10 ** 7),
-                     '{"%s": 1000}' % h, '[1]', '{"v": 2, "accounts": {"x": {"attempt": 5, "other": 1}}}'):
-            with open(self.state, "w") as fh:
-                fh.write(text)
-            s = self.src("pass")
-            c = W.Collector([s], seconds=60, auth_retry=900, clock=clock, state_file=self.state)
-            self.assertEqual(c.view()["sources"][s.key]["state"], "auth", text)
-            self.assertLessEqual(c.view()["sources"][s.key]["next_try"], clock.t + 900, text)     # one window, never years
-        self.assertEqual(self.vim.methods.count("Login"), 0)
 
 
-class BackoffContract(unittest.TestCase):
-    """The user's back-off contract (round 4): ONTAP basic auth sends the password with EVERY GET - each GET is a login for the
-    back-off, a 401 on any of them is a refusal (one full window for the account); vCenter's new login after its session
-    expired goes through the same gate (written ahead, held the same way)."""
-
-    def collector(self, srcs, path):
-        clock = Clock()
-        clock.t = 1000
-        return W.Collector(srcs, seconds=60, auth_retry=900, clock=clock, state_file=path), clock
-
-    def journal(self, path):
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)["accounts"]
-
-    def test_a_401_on_a_later_ontap_get_holds_the_account(self):
-        o = Ontap()
-        o.deny = {"/api/snapmirror/relationships"}              # the 6th GET of the poll is refused, the first five answered
-        srv, port = serve(ontap_handler(o))
-        self.addCleanup(srv.server_close)
-        self.addCleanup(srv.shutdown)
-        d = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
-        self.addCleanup(shutil.rmtree, d, True)
-        path = os.path.join(d, "wall-backoff.json")
-        src = W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False)
-        c, clock = self.collector([src], path)
-        c.cycle()
-        st = c.view()["sources"][src.key]
-        self.assertEqual((st["state"], st["next_try"]), ("auth", 1900))
-        self.assertEqual([e["until"] for e in self.journal(path).values()], [1900])
-        n = len(o.paths)
-        for t in (1060, 1500, 1899):
-            clock.t = t
-            c.cycle()
-        self.assertEqual(len(o.paths), n)                         # nothing sent inside the window
-        c2, _clock = self.collector([W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False)], path)
-        self.assertEqual(c2.view()["sources"][src.key]["next_try"], 1900)     # a restart keeps it
-
-    def test_a_vcenter_relogin_after_expiry_goes_through_the_gate(self):
-        vim, port = vim_stub(self)
-        d = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
-        self.addCleanup(shutil.rmtree, d, True)
-        path = os.path.join(d, "wall-backoff.json")
-        src = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=port)
-        c, clock = self.collector([src], path)
-        c.cycle()
-        self.assertEqual((vim.logins, self.journal(path)), (1, {}))       # logged in, nothing held
-        vim.drop_next, vim.password = True, "changed"                     # the session expires and the password changed
-        clock.t = 1060
-        c.cycle()                                                         # the new login: written ahead, refused, held
-        self.assertEqual(vim.methods.count("Login"), 2)
-        self.assertEqual([e["until"] for e in self.journal(path).values()], [1960])
-        clock.t = 1900
-        c.cycle()
-        self.assertEqual(vim.methods.count("Login"), 2)                   # no login inside the window
-        # the file cannot be written: the re-login is not sent at all
-        os.chmod(d, 0o500)
-        self.addCleanup(os.chmod, d, 0o700)
-        vim.password = "pass"
-        clock.t = 1961
-        c.cycle()
-        self.assertEqual(vim.methods.count("Login"), 2)
-        self.assertEqual(c.view()["sources"][src.key]["state"], "paused")
 
 
 class AllOrNothing(unittest.TestCase):
@@ -969,12 +647,16 @@ class AllOrNothing(unittest.TestCase):
         return W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False).poll()
 
     def test_errors_or_no_records_fail_the_collection(self):
-        s = self.snap({"/api/snapmirror/relationships": {"records": [], "errors": [{"message": "busy"}]},
-                       "/api/cluster/nodes": {"num_records": 0}})
-        self.assertIsNone(s["snapmirror"])
+        """1.130.0: an error in a 200 or no records is an odd answer after the credential left - the poll stops there (the
+        collector pauses the source); a num_records that does not match: that collection failed"""
+        with self.assertRaises(RuntimeError):
+            self.snap({"/api/snapmirror/relationships": {"records": [], "errors": [{"message": "busy"}]}})
+        with self.assertRaises(RuntimeError):
+            self.snap({"/api/cluster/nodes": {"num_records": 0}})
+        s = self.snap({"/api/cluster/nodes": {"records": [], "num_records": 2}})
         self.assertIsNone(s["nodes"])
-        self.assertEqual(sorted(s["failed"]), ["nodes", "snapmirror"])
-        self.assertTrue(s["aggrs"])                                            # the others still read
+        self.assertIn("nodes", s["failed"])
+        self.assertTrue(s["aggrs"])
 
     def test_a_next_link_after_the_last_page_fails_it(self):
         s = self.snap({}, pages=1)                                             # the stub pages the aggregates by 2 (3 of them)

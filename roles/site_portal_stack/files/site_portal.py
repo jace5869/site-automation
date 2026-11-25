@@ -548,7 +548,8 @@ class Config(object):
         # "NetApp ONTAP" accounts, each a podman secret (PORTAL_WALL_VCENTER_LOGIN, PORTAL_WALL_ONTAP_LOGIN: JSON)
         self.wall = flag(g("PORTAL_WALL", "1"))
         self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
-        self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))     # the preview banner on every style (portal_wall_preview)
+        self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))
+        self.wall_logins_reset = str(g("PORTAL_WALL_LOGINS_RESET", "")).strip()[:200]     # a new value: stopped logins start again     # the preview banner on every style (portal_wall_preview)
         self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
         try:
             wo = g("PORTAL_WALL_OPTS", "{}")
@@ -5852,7 +5853,10 @@ def wall_sources(cfg):
     """the collector's sources from the wall's logins (the site's own vCenter and ONTAP accounts): one per vCenter, one per cluster"""
     if wall_live is None:
         return []
-    return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
+    try:
+        return wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None)
+    except Exception:  # pylint: disable=broad-except  - the wall never stops the portal
+        return []
 
 
 class WallLive(object):
@@ -5870,10 +5874,14 @@ class WallLive(object):
             if src:
                 # the history covers the sustained window and three reads more (portal_wall_high_minutes up to 240)
                 keep = max(3900, cfg.wall_opts["high_minutes"] * 60 + 3 * cfg.wall_opts["seconds"])
-                self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
-                                                     log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep,
-                                                     state_file=os.path.join(cfg.data, "wall-backoff.json"))
-                self.collector.start()
+                try:
+                    self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
+                                                         log=lambda d: log.add(dict({"event": "wall"}, **d)), keep_seconds=keep,
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), reset=cfg.wall_logins_reset)
+                    self.collector.start()
+                except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
+                    log.add({"event": "wall", "collector": "not started", "why": clean(str(e), 200)})
+                    self.collector = None
                 # the conditions' starts and the cleared ones follow the reads, not the viewers: worked out every read
                 threading.Thread(target=self.follow, name="wall-follow", daemon=True).start()
 

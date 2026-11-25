@@ -992,6 +992,7 @@
       PORTAL_WALL_PREVIEW: "{{ '1' if portal_wall_preview | bool else '0' }}"
       PORTAL_WALL_ENCLAVE: "{{ portal_wall_enclave | default('', true) | string | trim }}"
       PORTAL_WALL_AUTH_RETRY_SECONDS: "{{ (portal_wall_auth_retry_minutes | int * 60) | string }}"
+      PORTAL_WALL_LOGINS_RESET: "{{ portal_wall_logins_reset | default('', true) | string | trim }}"
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
       PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
       PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
