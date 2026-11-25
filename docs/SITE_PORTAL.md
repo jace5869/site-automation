@@ -942,7 +942,7 @@ answer returns HTTP 304. Times use `report_time_zone`. A stale or missed read da
 replaces them with a message. The live SolarWinds map below continues with its own refresh interval. See
 [Network map history](NETWORK_MAP.md#history-11110) for the streak and gap rules.
 
-## The Active Directory page (1.101.2)
+## The Active Directory page
 
 The portal's **Active Directory** page (`/portal/ad`) shows the AD health job's runs from the report database
 ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The AD runs for the portal*). The portal draws it from the database. It has
@@ -952,9 +952,25 @@ no static page behind it.
   link to that run's full report on the report website.
 - **At a glance**: the status now, DCs read, DCs with a problem (since when), SolarWinds down or warning, replication
   failing (since when), replication late, the AD job's runs in 24 h, the worst DC of 7 days.
-- **Domain controllers**, worst first: now, since when, its runs of the last 24 h (one square each; every 30 min: 48), SolarWinds now (by domain and name), what is wrong.
-- **Replication links that need a look**: now, the last success, failures, the error.
+- **Replication matrix** uses the domain report’s convention. The source DC is the row and the receiving DC is the
+  column, grouped by AD site. Each cell shows the worst partition’s age at the time of the job. Low starts at 4 h,
+  Warning at 6 h and Critical at 24 h by default. Consecutive failures give at least Warning. A dash means the
+  partition has never replicated, **?** means replication was not read, and **·** marks DCs that are not partners.
+  Select a link with a click or Enter to see each partition’s last success, consecutive failures and recorded error,
+  with a copyable `repadmin /showrepl <DEST> /verbose` command. The matrix and partition details work without JavaScript.
+- **Links, worst first** lists every recorded directional pair. Above `ad_repl_matrix_max_dcs` (default and maximum
+  12), the grid shows source site × destination site. Opening a site cell shows its worst pair.
+- **Replication map** uses the domain report’s map renderer. Lines show the worst replication between two sites.
+  As in the report map, a failing connection is red. Sites use the portal deploy’s `netmap_sites` coordinates and `ad_site_map` aliases. With no positions or a single
+  shared location, sites form a ring. Select a site to inspect replication between its DCs.
+- **Domain controllers** lists each DC worst first with its current status, time in that state, 24-hour run strip,
+  SolarWinds status and worst problem. Open a DC for its saved identity, read coverage and problem texts from that run.
 - **DCs with a problem, last 7 days**: a chart (the worst run of each 2 hours) and the last runs as a table.
+
+Each block shows the age of its source run as **AD job, N min ago**. After `portal_ad_old_minutes` (90 by default),
+current AD states turn grey and show **?**. Partition timestamps and DC history remain available as records of the job.
+The matrix, map and DC details use the existing `ad_run`, `ad_dc` and `ad_link` tables with the read-only report login.
+They need no LDAP connection or additional AD rights.
 
 While someone has the page open, the server reads the database every minute and SolarWinds every `portal_ad_seconds`
 (600). One read serves every viewer. The page asks the server every minute, with an ETag. A DC whose state changes

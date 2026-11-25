@@ -439,6 +439,11 @@
     - {src: netmap_history.py, dest: netmap_history.py}
     - {src: static/netmap-history.js, dest: static/netmap-history.js}
     - {src: static/netmap-history.css, dest: static/netmap-history.css}
+    - {src: ad_replication.py, dest: ad_replication.py}
+    - {src: "{{ role_path }}/../../plugins/filter/ad_filters.py", dest: ad_filters.py}
+    - {src: "{{ role_path }}/../../plugins/filter/ad_repl_filters.py", dest: ad_repl_filters.py}
+    - {src: "{{ role_path }}/../ad_report/files/web/admap.js", dest: static/admap.js}
+    - {src: "{{ role_path }}/../ad_report/files/web/admap.css", dest: static/admap.css}
     - {src: static/ad-page.js, dest: static/ad-page.js}
     - {src: static/ad-page.css, dest: static/ad-page.css}
     # the NetApp page: its reader (the refresh volume list job's runs in the report database) and its files
@@ -895,6 +900,7 @@
         # 1.102.0: the AD layer - the report database's AD replication (1.101.2), matched as the AD report matches
         ad_layer: "{{ netmap_ad_layer | default(true) | bool }}"
         ad_site_map: "{{ ad_site_map | default({}, true) }}"
+        ad_repl_matrix_max_dcs: "{{ ad_repl_matrix_max_dcs | default(12) | int }}"
         ad_scale: {low_hours: "{{ ad_repl_low_hours | default(4) | float }}", warn_hours: "{{ ad_repl_warn_hours | default(6) | float }}",
                    crit_hours: "{{ ad_repl_crit_hours | default(24) | float }}"}
         page: "{{ netmap_page_size | default(1000) | int }}"

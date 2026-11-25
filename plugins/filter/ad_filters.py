@@ -20,10 +20,13 @@ else:
     import site_ad_ident as ident
 
 # the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
-_spec = importlib.util.spec_from_file_location(
-    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
-_tm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_tm)
+_time_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py")
+if os.path.isfile(_time_path):
+    _spec = importlib.util.spec_from_file_location("site_time", _time_path)
+    _tm = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_tm)
+else:
+    import site_time as _tm  # flat installation on the portal
 
 # 1.56.0 low: worth knowing, nothing to do now (never a problem, never the report's status)
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}

@@ -474,6 +474,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## Low)
 # ad_repl_low_hours: 4
 
+## more DCs than this: the matrix is site x site, each cell the worst link (12 at most: what fits
+## 800 px)
+# ad_repl_matrix_max_dcs: 12
+
 ## an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301}
 # ad_site_map: {}
 

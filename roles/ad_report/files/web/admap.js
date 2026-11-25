@@ -3,10 +3,8 @@
    connections between them - colour: time since the last success (the matrix's scale), width: the WAN traffic between the
    two sites in SolarWinds, dashes moving with it - and a site with several DCs opening in place into its DCs and the
    connections inside it. No inline script or style in the page; motion: report_motion and the system's wish. */
-(function () {
-  var box = document.getElementById('am'), src = document.getElementById('admap-data');
-  if (!box || !src) return;
-  var D; try { D = JSON.parse(src.textContent); } catch (e) { return; }
+function drawAdMap(box, D, portal, stale) {
+  if (!box || !D || !D.sites || !D.sites.length) return;
   var html = document.documentElement;
   function still() {
     if (html.classList.contains('motion-off') || html.getAttribute('data-motion') === 'off' || /[?&]motion=off\b/.test(location.search)) return true;
@@ -20,7 +18,7 @@
   function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   var wrap = box.querySelector('.am-wrap'), tip = box.querySelector('.am-tip'), note = box.querySelector('.am-note'), leg = box.querySelector('.am-leg');
   var sites = D.sites || [], links = D.links || [], inside = D.inside || {}, open = '';
-  var byName = {}; sites.forEach(function (s) { byName[s.n] = s; });
+  var byName = Object.create(null); sites.forEach(function (s) { byName[s.n] = s; });
   function ago(h) { return h == null ? 'never' : h < 1 ? Math.round(h * 60) + ' min ago' : h < 48 ? (Math.round(h * 10) / 10) + ' h ago' : Math.round(h / 24) + ' days ago'; }
   function bpsText(b) { if (!b) return ''; var u = [[1e12, 'Tbps'], [1e9, 'Gbps'], [1e6, 'Mbps'], [1e3, 'kbps']]; for (var i = 0; i < u.length; i++) if (b >= u[i][0]) return (Math.round(b / u[i][0] * 10) / 10) + ' ' + u[i][1]; return b + ' bps'; }
   var placedN = sites.filter(function (s) { return s.p; }).length;
@@ -33,14 +31,14 @@
      one place: no geography, the ring. Labels: the worst and the bubbles first, the rest only where they fit - every dot names
      itself on hover and focus. */
   var openLoc = '', openSite = '', RANKC = { critical: 0, warning: 1, low: 2, ok: 3 };
-  function worstOf(cs) { return cs.reduce(function (w, c) { return RANKC[c] < RANKC[w] ? c : w; }, 'ok'); }
+  function worstOf(cs) { if (stale) return 'unknown'; return cs.reduce(function (w, c) { return RANKC[c] < RANKC[w] ? c : w; }, 'ok'); }
   function draw() {
     [].slice.call(wrap.querySelectorAll('svg')).forEach(function (x) { x.remove(); });
     tip.hidden = true;
     var W = Math.max(560, Math.round(wrap.clientWidth || 1000)), H = Math.round(Math.max(380, W * 0.55));
     var svg = sv('svg', { 'class': 'am-svg', viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Replication map' });
     wrap.insertBefore(svg, tip);
-    var placed = sites.filter(function (s) { return s.p; }), un = sites.filter(function (s) { return !s.p; }), pos = {}, pj = null;
+    var placed = sites.filter(function (s) { return s.p; }), un = sites.filter(function (s) { return !s.p; }), pos = Object.create(null), pj = null;
     if (placed.length) {
       var la = placed.map(function (s) { return s.p[0]; }), lo = placed.map(function (s) { return s.p[1]; });
       var lat0 = Math.min.apply(0, la) - 3, lat1 = Math.max.apply(0, la) + 3, lon0 = Math.min.apply(0, lo) - 4, lon1 = Math.max.apply(0, lo) + 4;
@@ -50,7 +48,7 @@
       placed.forEach(function (s) { pos[s.n] = pj(s.p[0], s.p[1]); });
     }
     /* the locations: AD sites on one network-map site, or within 30 px */
-    var loc = {}, locs = [];
+    var loc = Object.create(null), locs = [];
     placed.forEach(function (s) {
       var hit = locs.filter(function (L) { return L.nm === s.nm || Math.hypot(L.x - pos[s.n][0], L.y - pos[s.n][1]) < 30; })[0];
       if (!hit) { hit = { id: '', nm: s.nm, x: pos[s.n][0], y: pos[s.n][1], m: [] }; locs.push(hit); }
@@ -74,7 +72,7 @@
     var oneSpot = locs.length === 1 && placed.length > 1;
     if (oneSpot || !placed.length) {                     // everything in one place (or nowhere): no geography - the ring
       var hub = sites.slice().sort(function (a, b) { return b.dcs.length - a.dcs.length; })[0], rest = sites.filter(function (s) { return s !== hub; });
-      pos = {}; pos[hub.n] = [W / 2, H / 2]; loc = {}; locs = [];
+      pos = Object.create(null); pos[hub.n] = [W / 2, H / 2]; loc = Object.create(null); locs = [];
       rest.forEach(function (s, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / Math.max(1, rest.length); pos[s.n] = [W / 2 + W * 0.36 * Math.cos(a), H / 2 + H * 0.38 * Math.sin(a)]; });
       sites.forEach(function (s) { var L = { id: 'S:' + s.n, nm: s.nm, x: pos[s.n][0], y: pos[s.n][1], m: [s] }; locs.push(L); loc[s.n] = L; });
       note.textContent = !oneSpot ? note.textContent : un.length
@@ -92,7 +90,7 @@
     links.forEach(function (l) { [l.a, l.b].forEach(function (n) { if (loc[n]) (linksAt[loc[n].id] = linksAt[loc[n].id] || []).push(l.cls); }); });
     Object.keys(inside).forEach(function (n) { if (loc[n]) (inside[n] || []).forEach(function (t) { (linksAt[loc[n].id] = linksAt[loc[n].id] || []).push(t.cls); }); });   // DC to DC inside a site counts too
     /* where a link's end is drawn: the AD site when its location is the open one, else its location */
-    var O = openLoc && (locs.filter(function (L) { return L.id === openLoc; })[0] || locs.filter(function (L) { return L.m.some(function (s) { return 'L:' + s.n === openLoc.split('\n')[0]; }); })[0]), R = 0, mpos = {};
+    var O = openLoc && (locs.filter(function (L) { return L.id === openLoc; })[0] || locs.filter(function (L) { return L.m.some(function (s) { return 'L:' + s.n === openLoc.split('\n')[0]; }); })[0]), R = 0, mpos = Object.create(null);
     if (O) openLoc = O.id;
     if (O) {                                             // the opened place stays inside the drawing (its labels too)
       R = Math.min(130, Math.max(60, 26 * O.m.length), W * 0.14);
@@ -115,8 +113,10 @@
     var gL = sv('g'), gS = sv('g'), gI = sv('g'); svg.appendChild(gL); svg.appendChild(gS); svg.appendChild(gI);
     var maxB = Math.max.apply(0, links.map(function (l) { return l.wan && l.wan.bps || 0; }).concat([1]));
     function place(ev, cx, cy) {
+      tip.hidden = false;
+      if (portal) return;  // the portal's tooltip is anchored by its stylesheet
       var r = wrap.getBoundingClientRect(), x = (ev && ev.clientX ? ev.clientX - r.left : cx / W * r.width) + 14, y = (ev && ev.clientY ? ev.clientY - r.top : cy / H * r.height) + 14;
-      tip.hidden = false; tip.style.left = Math.max(4, Math.min(x, r.width - 350)) + 'px'; tip.style.top = Math.max(4, Math.min(y, r.height - 190)) + 'px';
+      tip.style.left = Math.max(4, Math.min(x, r.width - 350)) + 'px'; tip.style.top = Math.max(4, Math.min(y, r.height - 190)) + 'px';
     }
     function hit(d, kids, cx, cy, label, g, hw) {
       var h = sv('path', { d: d, 'class': 'am-hit', tabindex: '0', role: 'button', 'aria-label': label });
@@ -145,7 +145,7 @@
       var layer = straight ? gI : gL;
       var hasWan = ls.some(function (l) { return l.wan; });
       layer.appendChild(sv('path', { d: d, 'class': (straight ? 'am-i' : 'am-l') + ' k-' + cls + (!straight && !hasWan ? ' k-none' : ''), 'stroke-width': w.toFixed(1) }));
-      if (!straight && util >= 0) { var f = sv('path', { d: d, 'class': 'am-flow', 'stroke-width': Math.max(1.2, w * .45).toFixed(1) }); f.style.animationDuration = (5 / (0.25 + util / 50)).toFixed(2) + 's'; gL.appendChild(f); }
+      if (!portal && !straight && util >= 0) { var f = sv('path', { d: d, 'class': 'am-flow', 'stroke-width': Math.max(1.2, w * .45).toFixed(1) }); f.style.animationDuration = (5 / (0.25 + util / 50)).toFixed(2) + 's'; gL.appendChild(f); }
       hit(d, function () {
         if (ls.length === 1 && !straight) return lineCard(ls[0]);
         if (ls.length === 1) return [el('b', '', ['Same place: ' + ls[0].a + ' - ' + ls[0].b]),
@@ -210,14 +210,14 @@
     }
     var which = openSite || open, S0 = which && byName[which];
     if (S0) {                                            // an AD site's DCs (from the map, or from an opened location)
-      var cp = O && openSite ? [O.x, O.y] : pos[which] || [W / 2, H / 2], R2 = Math.min(84, W * 0.08), dp = {};
+      var cp = O && openSite ? [O.x, O.y] : pos[which] || [W / 2, H / 2], R2 = Math.min(84, W * 0.08), dp = Object.create(null);
       if (O && openSite) [].slice.call(gI.childNodes).forEach(function (n) { n.remove(); });
       S0.dcs.forEach(function (d, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / S0.dcs.length; dp[d.toLowerCase()] = [cp[0] + R2 * Math.cos(a), cp[1] + R2 * Math.sin(a)]; });
       gI.appendChild(sv('circle', { cx: cp[0], cy: cp[1], r: R2 + 30, 'class': 'am-ring' }));
-      (inside[which] || []).forEach(function (t) {
+      (own(inside, which) ? inside[which] : []).forEach(function (t) {
         var a = dp[t.a.toLowerCase()], b = dp[t.b.toLowerCase()]; if (!a || !b) return;
         var d = 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1];
-        gI.appendChild(sv('path', { d: d, 'class': 'am-i k-' + t.cls }));
+        gI.appendChild(sv('path', { d: d, 'class': 'am-i k-' + (stale ? 'unknown' : t.cls) }));
         hit(d, function () { return [el('b', '', ['Inside ' + which + ': ' + t.a + ' - ' + t.b]),
           el('div', '', ['Last success ' + ago(t.h) + (t.fail ? '; failing' + (t.err ? ': ' + t.err : '') : '')]),
           el('div', 'm', ['Partitions: ' + (t.parts || []).join(', ')]), el('div', 'm', ['No WAN: the same site'])]; },
@@ -238,10 +238,22 @@
   leg.replaceChildren.apply(leg, [el('span', '', [el('i', 'ok'), 'under ' + (D.scale.low || D.scale.warn) + ' h']),
     D.scale.low ? el('span', '', [el('i', 'low'), D.scale.low + '-' + D.scale.warn + ' h (Low)']) : null,
     el('span', '', [el('i', 'warning'), D.scale.warn + '-' + D.scale.crit + ' h']), el('span', '', [el('i', 'critical'), D.scale.crit + ' h or failing']),
-    el('span', '', [el('i', 'none'), 'no WAN link in SolarWinds']), el('span', '', [el('i', 'thick'), 'between sites: as wide as the WAN traffic']),
+    portal ? null : el('span', '', [el('i', 'none'), 'no WAN link in SolarWinds']), portal ? null : el('span', '', [el('i', 'thick'), 'between sites: as wide as the WAN traffic']),
     el('span', '', [el('i', 'thin'), 'inside a site: thin, straight'])].filter(Boolean));
+  if (stale) leg.textContent = '? Stale AD job';
   window.amTest = {};
   draw();
-  var t = 0; window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(draw, 150); });
+  var t = 0;
+  function resize() { clearTimeout(t); t = setTimeout(draw, 150); }
+  window.addEventListener('resize', resize);
   window.amTest = window.amTest || {}; window.amTest.open = function (n) { open = n || ''; openLoc = ''; openSite = ''; draw(); }; window.amTest.data = D;
+  return function () { clearTimeout(t); window.removeEventListener('resize', resize); };
+}
+
+(function () {
+  var box = document.getElementById('am'), src = document.getElementById('admap-data');
+  if (!box || !src) return;
+  var data;
+  try { data = JSON.parse(src.textContent); } catch (e) { return; }
+  drawAdMap(box, data);
 })();
