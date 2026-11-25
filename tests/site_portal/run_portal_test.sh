@@ -301,8 +301,8 @@ case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job
 r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
 [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
 r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
-[ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1), ('web_servers', 'group', 2)]" ] \
-    && pass "the picker's list: hosts and groups (a group with its host count), filtered by any case" || fail "the picker's list" "$r"
+[ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web_servers', 'group', 2), ('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1)]" ] \
+    && pass "the picker's list: groups, then hosts (1.129.0; a group with its host count), filtered by any case" || fail "the picker's list" "$r"
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web_servers')"
 case "$r" in *'"code": 200'*"web01.example.mil"*"web03.example.mil"*) pass "a group picked: its hosts, one section each";; *) fail "pick: a group" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=nothere.example.mil')"
