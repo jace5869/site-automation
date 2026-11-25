@@ -318,6 +318,24 @@ class Codex1311(WallTuning):
         self.assertEqual(sorted(c2.view()["sources"]), ["vcenter:vc01.corp.example.mil", "vcenter:vc02"])
 
 
+    def test_field_vms_without_tools_never_grey_vmware(self):
+        self.vc.result = {"hosts": [dict(demo.host("h1", "c", 5, 5, [], []), id="host-1")],
+                          "vms": [self.vm("appliance", tools_version="guestToolsNotInstalled", tools="guestToolsNotRunning", heartbeat="gray"),
+                                  self.vm("legacy", tools="guestToolsNotRunning", heartbeat="gray", id="vm-9")]}
+        for _ in range(3):
+            answer = self.read()
+        vmware = next(a for a in answer["areas"] if a["id"] == "vmware")
+        self.assertTrue(vmware["complete"], vmware.get("incomplete"))
+        self.assertFalse(self.active(answer, "vmhung"))
+        self.assertEqual(answer["vmware"]["heartbeat_unwatched"], 2)
+
+    def test_field_a_status_words_icon_is_text_sized_everywhere(self):
+        import os
+        css = open(os.path.join(os.path.dirname(M.__file__), "static", "wall-page.css")).read()
+        self.assertIn(".word svg{width:1em;height:1em;flex:none;vertical-align:-0.125em}", css)
+        self.assertIn(".sK .word svg{width:15px;height:15px;flex:none}", css)          # Cockpit keeps its 15 px
+
+
 for _n in [n for n in vars(WallTuning) if n.startswith("test_")]:
     setattr(Codex1311, _n, None)                    # (it shares WallTuning's setup; only its own tests run there)
 

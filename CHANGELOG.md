@@ -20,7 +20,8 @@ and the Now strip groups repeated conditions into a single detail link.
   watched when a later read leaves a property out. vCLS VMs are recognised by their managedBy only, never their name.
   Host hardware lights only from vCenter's hardware alarms (`portal_wall_hw_alarms`, whole names), never `overallStatus`.
   A failed alarm-name lookup never discards the inventory; a root-volume exclusion never reaches a LUN of an unnamed SVM;
-  a SnapMirror condition kept as last known stays on the SnapMirror panel.
+  a SnapMirror condition kept as last known stays on the SnapMirror panel. A status word's icon is text-sized in every drawer and style (it filled
+  the drawer's width outside Cockpit). Powered-on VMs without VMware Tools never grey VMware.
 - **VM outage watch: CPU and memory spikes.** Yellow CPU and memory usage alarms are hidden by default. Red alarms count after
   15 continuous minutes in the window, with affected names grouped by alarm kind. Hidden spikes cannot trigger a report,
   email or job failure. Usage alarms are matched by whole name (`CPU usage telemetry unavailable` is an ordinary alarm); a currently

@@ -637,6 +637,8 @@ body.kiosk .appbar{display:none}
 .lamp.s-off,.s-off.lamp{background:transparent;border:2px dashed var(--edge);color:var(--muted)}
 .s-off{--lc:var(--edge);--lk:var(--muted)}
 .lamp.s-off::after{opacity:0}
+/* 1.131.1 (field): a status word's icon is text-sized everywhere (the drawer, Lights, Map) - never the panel's width */
+.word svg{width:1em;height:1em;flex:none;vertical-align:-0.125em}
 .word.off,.wd.off,.w.off{color:var(--muted)}
 .amenu a.off{cursor:default;opacity:.75}
 .amenu a.off:hover{background:transparent}
