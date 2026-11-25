@@ -216,6 +216,8 @@ class VcenterSource(object):
         conn = http.client.HTTPSConnection(self.host, self.port, timeout=self.timeout, context=self.ctx)
         try:
             _connect(conn, "vCenter %s" % self.name)
+            if method == "Login":
+                self.login_sent = True                         # the connection is open: from here the password may have left (Neon r7 #4)
             h = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": '"%s"' % SOAP_ACTION}
             if self.cookie:
                 h["Cookie"] = self.cookie
@@ -268,7 +270,6 @@ class VcenterSource(object):
             if self.stop_ev is not None and self.stop_ev.is_set():
                 raise NotSent("the collector is stopping")
             self.gate.before_login()
-            self.login_sent = True                             # from here on, only a whole poll ends it without a pause
             try:
                 r = self._send("Login", '%s<userName>%s</userName><password>%s</password>'
                                % (_mor("_this", "SessionManager", self.sc["sessionManager"]), _xesc(self.user), _xesc(self._pw)))
@@ -505,6 +506,7 @@ class OntapSource(object):
         conn = http.client.HTTPSConnection(self._host, self._port, timeout=self.timeout, context=self.ctx)
         try:
             _connect(conn, "ONTAP %s" % self.name)
+            self.login_sent = True                             # every ONTAP request carries the password: open = it may have left
             conn.request(verb, path, headers={"Authorization": self._auth, "Accept": "application/json"})
             r = conn.getresponse()
             if r.status in (401, 403, 407):                        # the status first: a cut 401 is still a refusal
@@ -576,7 +578,6 @@ class OntapSource(object):
             self.login_sent = self.login_ok = False
             self.gate.check()
             self.gate.before_login()                               # every ONTAP request carries the password: written down first
-            self.login_sent = True
             try:
                 c, nodes, got, failed = self._read()
             except AuthError:
@@ -1044,7 +1045,7 @@ class Collector(object):
             self._done(s)
             return
         except Exception as e:  # pylint: disable=broad-except
-            if getattr(s, "login_sent", False) and not isinstance(e, NotSent):
+            if getattr(s, "login_sent", False):                # the password left in this poll (NotSent only when no connection opened for it)
                 self._stop_all("%s gave no clear answer after the credential was sent (%s)" % (s.name, short(e, 160)), src=s)
                 return
             self._done(s)                                      # nothing left on the wire (or only a session read): a plain error

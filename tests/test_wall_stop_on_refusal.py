@@ -609,6 +609,7 @@ class R7(Base):
         col = self.coll(self.vc())                             # ... then the restart
         self.run_for(col, 3 * 3600)
         self.assertEqual(self.wire.logins(), 2)               # the first run's login + ONE refused - never a second
+        self.assertTrue(col.stopped)
 
     def test_neon_r7_3_no_separate_history_to_lose(self):
         col = self.coll(self.vc(pw="wrong"))
@@ -620,6 +621,40 @@ class R7(Base):
         col = self.coll(self.vc(pw="wrong"))
         self.run_for(col, 3600)
         self.assertEqual(self.wire.logins(), 1)
+
+    def test_neon_r7_4_a_login_that_left_counts_whatever_fails_after(self):
+        """Login sent and answered, then the view's own connection cannot open: the password left - stopped, no Login every 60 s"""
+        col = self.coll(self.vc(), self.ontap())
+
+        def hook(h, w):
+            if w == "Login":
+                self.wire.connect_error["vc1"] = ConnectionRefusedError("refused")   # the next connection (the view) cannot open
+        self.wire.hook = hook
+        col.cycle()
+        self.wire.hook = None
+        self.wire.connect_error.pop("vc1", None)
+        self.run_for(col, 3600)
+        per_account = {h: self.wire.logins(h) for h in ("vc1", "on1")}
+        self.assertEqual(per_account, {"vc1": 1, "on1": 0})
+        self.assertTrue(col.stopped)
+
+    def test_neon_r7_4_no_connection_for_the_login_itself_sent_nothing(self):
+        self.wire.add_vc("vc1")
+        col = self.coll(self.vc())
+        state = {"n": 0}
+        real = self.wire.conn()
+
+        class Conn(real):
+            def connect(me):
+                if me.host == "vc1":
+                    state["n"] += 1
+                    if state["n"] == 2:                        # RetrieveServiceContent opens; the Login's connection does not
+                        raise ConnectionRefusedError("refused")
+                return real.connect(me)
+        with mock.patch.object(http.client, "HTTPSConnection", Conn):
+            col.cycle()
+        self.assertEqual(self.wire.logins("vc1"), 0)
+        self.assertFalse(col.stopped)
 
     def test_r7_18_a_source_name_that_cannot_be_encoded(self):
         class Odd(object):                                     # a name that cannot be encoded; nothing sent
