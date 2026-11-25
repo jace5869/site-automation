@@ -8,6 +8,8 @@ The wall learns which VMs have running Tools, merges duplicate vCenters and filt
 alerts and rankings. Host hardware and SnapMirror lag now light the wall. Grey tiles and gauges identify the source,
 and the Now strip groups repeated conditions into a single detail link.
 
+- Rotate rotates: only clicks, keys, scrolling or touch pause it (not moving the mouse); it resumes after 20 s; kiosk ignores the mouse
+
 ## 1.131.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional. The guides (PDFs) moved

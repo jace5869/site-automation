@@ -430,7 +430,7 @@
     document.body.classList.toggle("kiosk", on);
     if (user) { try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* not allowed here */ } }
   }
-  var ROT = {on: false, mode: "styles", every: 60, left: 60, paused: false, idle: 0}, IDLE_RESUME = 60;
+  var ROT = {on: false, mode: "styles", every: 60, left: 60, resumeAt: 0}, IDLE_RESUME = 20;
   function renderRot() {
     $("#rotOn").checked = ROT.on; $("#rotEvery").value = String(ROT.every);
     $("#rotStyles").checked = ROT.mode === "styles"; $("#rotAreas").checked = ROT.mode === "areas";
@@ -438,17 +438,28 @@
     $("#rotLbl").textContent = ROT.on ? (ROT.mode === "styles" ? "Rotate styles" : "Rotate areas") : "Rotate";
     var cd = $("#rotCd");
     if (!ROT.on) { cd.textContent = "off"; cd.className = "rcd"; }
-    else if (ROT.paused) { cd.textContent = "paused · " + (IDLE_RESUME - ROT.idle) + " s"; cd.className = "rcd paused"; }
+    else if (ROT.resumeAt) { cd.textContent = "paused - resumes in " + Math.max(0, Math.ceil((ROT.resumeAt - Date.now()) / 1000)) + " s"; cd.className = "rcd paused"; }
     else { cd.textContent = "next in " + ROT.left + " s"; cd.className = "rcd on"; }
     $("#rotNote").textContent = (ROT.mode === "styles" ? "Styles: Lights, Cockpit, Map on the same area (" + areaTitle(S.area) + "). " :
       "Areas: " + ["Overview"].concat(areaList().filter(function (a) { return a.on; }).map(function (a) { return a.short || a.name; })).join(", ") + " in " + STYLE_NAME[S.style] + ". ") +
-      "Pauses on mouse or keyboard use, starts again after " + IDLE_RESUME + " s with no input.";
+      "Clicks, keys, scrolling or touch pause rotation. In kiosk mode only keys pause it. Rotation resumes after " + IDLE_RESUME + " s.";
   }
   function rotStep() {
     if (ROT.mode === "styles") setStyle(STYLES[(STYLES.indexOf(S.style) + 1) % STYLES.length], false);
     else { var seq = ["overview"].concat(areaList().filter(function (a) { return a.on; }).map(function (a) { return a.id; })), i = seq.indexOf(S.area); setArea(seq[(i + 1) % seq.length]); }
   }
-  function activity() { if (!ROT.on) return; ROT.paused = true; ROT.idle = 0; renderRot(); }
+  function rotateShortcut(e) {
+    return (e.key === "r" || e.key === "R") && !(e.target.closest && e.target.closest("select,input,textarea"));
+  }
+  function activity(e) {
+    if (!ROT.on || $("#ddRot").contains(e.target)) return;
+    if (e.type === "keydown") {
+      if (rotateShortcut(e) || ["Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock", "NumLock", "ScrollLock",
+          "Fn", "FnLock", "Symbol", "SymbolLock", "Hyper", "Super"].indexOf(e.key) >= 0) return;
+    } else if (document.body.classList.contains("kiosk")) return;
+    ROT.resumeAt = Date.now() + IDLE_RESUME * 1000;
+    renderRot();
+  }
   function wire() {
     $("#areaBtn").addEventListener("click", function (e) { e.stopPropagation(); togglePop("#ddArea"); });
     $("#rotBtn").addEventListener("click", function (e) { e.stopPropagation(); togglePop("#ddRot"); });
@@ -466,10 +477,10 @@
     $("#kioskBtn").addEventListener("click", function () { setKiosk(true, true); });
     $("#fbBtn").addEventListener("click", function () { openFeedback(""); });
     $("#kexit").addEventListener("click", function () { setKiosk(false, true); });
-    $("#rotOn").addEventListener("change", function () { ROT.on = this.checked; ROT.left = ROT.every; ROT.paused = false; renderRot(); });
+    $("#rotOn").addEventListener("change", function () { ROT.on = this.checked; ROT.left = ROT.every; ROT.resumeAt = 0; renderRot(); });
     $("#rotEvery").addEventListener("change", function () { ROT.every = +this.value; ROT.left = ROT.every; renderRot(); });
     root.querySelectorAll('input[name="rotMode"]').forEach(function (r) { r.addEventListener("change", function () { ROT.mode = this.value; ROT.left = ROT.every; renderRot(); }); });
-    ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach(function (t) { document.addEventListener(t, activity, {passive: true}); });
+    ["mousedown", "click", "keydown", "wheel", "touchstart"].forEach(function (t) { document.addEventListener(t, activity, {capture: true, passive: true}); });
     // one click handler for the whole stage: a detail ref wins, then an area link
     stage.addEventListener("click", function (e) {
       var d = e.target.closest("[data-d]");
@@ -496,7 +507,7 @@
       else if (e.key === "1" || e.key === "2" || e.key === "3") setStyle(STYLES[+e.key - 1], true);
       else if (e.key === "k" || e.key === "K") setKiosk(!document.body.classList.contains("kiosk"), true);
       else if (e.key === "t" || e.key === "T") $("#themeBtn").click();
-      else if (e.key === "r" || e.key === "R") togglePop("#ddRot");
+      else if (rotateShortcut(e)) togglePop("#ddRot");
     });
     document.addEventListener("pointermove", function (e) {
       if (!e.target.closest) return;
@@ -1602,7 +1613,7 @@
       if (!W) { if (--firstIn <= 0) { firstIn = PULL || 30; load(true); } return; }      // the first read failed: tried again
       tickClock();
       if (ROT.on) {
-        if (ROT.paused) { ROT.idle++; if (ROT.idle >= IDLE_RESUME) { ROT.paused = false; ROT.left = ROT.every; } }
+        if (ROT.resumeAt) { if (Date.now() >= ROT.resumeAt) { ROT.resumeAt = 0; ROT.left = ROT.every; } }
         else { ROT.left--; if (ROT.left <= 0) { ROT.left = ROT.every; renderRot(); rotStep(); return; } }
         renderRot();
       }
