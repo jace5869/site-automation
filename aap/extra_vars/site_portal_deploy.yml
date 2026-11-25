@@ -283,8 +283,11 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the service trusts what this server trusts (/etc/pki/ca-trust): AAP's certificate
 # portal_trust_host_cas: true
 
-## a job page shows its last this many lines of output (the rest is in AAP)
+## recent AAP events to show in readable job output
 # portal_job_events: 300
+
+## show emoji beside status words in job output (false uses text markers such as [OK])
+# portal_job_output_emoji: true
 
 ## read AAP's ALLOW_JINJA_IN_EXTRA_VARS and warn when it is "always"
 # portal_check_jinja: true

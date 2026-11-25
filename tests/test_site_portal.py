@@ -1185,6 +1185,117 @@ class Live(unittest.TestCase):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
 
 
+class ReadableOutput(unittest.TestCase):
+    def event(self, event, res=None, **data):
+        return {"event": event, "counter": 1, "event_data": dict({"task": "Inspect", "host": "host-a", "res": res or {}}, **data)}
+
+    def test_event_mapping(self):
+        for event, data, kind in [
+            ("playbook_on_play_start", {"play": "Fleet"}, "play"), ("playbook_on_task_start", {}, "task"),
+            ("runner_on_ok", {}, "ok"), ("runner_on_ok", {"res": {"changed": True}}, "changed"),
+            ("runner_on_skipped", {}, "skipped"), ("runner_on_failed", {}, "failed"),
+            ("runner_on_unreachable", {}, "unreachable"), ("runner_retry", {"res": {"retries": 3, "attempts": 1}}, "retry"),
+            ("warning", {"warning": "Clock skew"}, "warning"),
+            ("runner_on_ok", {"task_action": "ansible.builtin.debug", "res": {"msg": "The plan"}}, "msg")
+        ]:
+            row, = sp.output_event_lines(self.event(event, **data))
+            self.assertEqual(row["kind"], kind)
+            if kind in ("retry", "warning", "msg"):
+                self.assertIn(row["message"], ("2 retries left", "Clock skew", "The plan"))
+        verbose = dict(self.event("verbose"), stdout="[WARNING]: test warning")
+        self.assertEqual(sp.output_event_lines(verbose)[0]["message"], "test warning")
+        self.assertEqual(sp.output_event_lines(dict(verbose, stdout="variable dump")), [])
+        self.assertEqual([r["kind"] for r in sp.output_event_lines(self.event("runner_on_ok", {"warnings": ["warning"]}))], ["warning", "ok"])
+
+    def test_raw_stdout_transport(self):
+        from unittest.mock import Mock, patch
+        body = "\nPLAY [test] ***\r\n  <file> & café\n"
+        response = io.BytesIO(body.encode("utf-8"))
+        response.getcode = lambda: 200
+        opener = Mock()
+        opener.open.return_value = response
+        client = sp.Aap(sp.Config({"PORTAL_AAP_URL": "https://controller.example.test", "PORTAL_AAP_TOKEN": "test"})).api
+        with patch.object(sp.site_aap, "build_opener", return_value=opener):
+            self.assertEqual(client.call("GET", "jobs/1/stdout/?format=txt", plain_text=True), (200, body))
+        self.assertEqual(opener.open.call_args.args[0].get_header("Accept"), "text/plain")
+
+    def test_failure_preview_more_escaping_and_redaction(self):
+        text = """<file> password="private words" API_KEY='private words'\nSECRET=private Token=private """ + "x" * 2200
+        for kind in ("runner_on_failed", "runner_on_unreachable"):
+            row, = sp.output_event_lines(self.event(kind, {"msg": text, "stderr": "unused"}))
+            self.assertTrue(row["message"].endswith("…"))
+            self.assertNotIn("\n", row["message"])
+            self.assertEqual(len(row["more"]), 2000)
+            self.assertNotIn("private", repr(row))
+            self.assertNotIn("unused", repr(row))
+            body = sp.output_list([row], True, False)
+            self.assertNotIn("<file>", body)
+            preview, more = body.split("<details")
+            self.assertIn("&lt;file&gt;", preview)
+            self.assertIn("<summary>more</summary><pre>&lt;file&gt;", more)
+            self.assertNotIn("x" * 10, preview)
+            self.assertIn("x" * 10, more)
+        row, = sp.output_event_lines(self.event("runner_on_failed", {"msg": "a" * 161}))
+        self.assertEqual(row["message"], "a" * 159 + "…")
+        for res in ({"stderr": "first\nunused", "stdout": "unused"}, {"stdout": "first\nunused"}):
+            row, = sp.output_event_lines(self.event("runner_on_failed", res))
+            self.assertEqual(row["message"], "first")
+            self.assertNotIn("unused", repr(row))
+
+    def test_censored_and_variable_results(self):
+        for kind in ("runner_on_failed", "runner_on_unreachable", "runner_on_ok", "warning"):
+            for scope in ("event", "event_data", "res", "censored", "loop", "stdout"):
+                event = self.event(kind, {"msg": "private", "warnings": ["private"], "stderr": "private"}, task_action="debug")
+                data = event["event_data"]
+                if scope in ("event", "event_data", "res"):
+                    {"event": event, "event_data": data, "res": data["res"]}[scope]["_ansible_no_log"] = True
+                elif scope == "censored":
+                    data["res"]["censored"] = "no_log"
+                elif scope == "loop":
+                    data["res"]["results"] = [{"_ansible_no_log": True}]
+                else:
+                    event["stdout"] = "the output has been hidden due to no_log"
+                self.assertNotIn("private", repr(sp.output_event_lines(event)), (kind, scope))
+        for data in ({"res": {"hostvars": "private"}}, {"res": {"msg": {"var": "private"}}},
+                     {"task_args": {"var": "msg"}, "res": {"msg": "private"}},
+                     {"res": {"msg": "private", "invocation": {"module_args": {"var": "msg"}}}}):
+            row, = sp.output_event_lines(self.event("runner_on_ok", task_action="debug", vars={"x": "private"}, **data))
+            self.assertEqual((row["kind"], row["message"]), ("ok", ""))
+            self.assertNotIn("private", repr(row))
+
+    def test_per_task_folds_check_recap_and_text_mode(self):
+        lines = []
+        for counter, (kind, task, host) in enumerate([
+            ("playbook_on_task_start", "one", ""), ("runner_on_ok", "one", "a"), ("runner_on_failed", "one", "b"),
+            ("playbook_on_task_start", "two", ""), ("runner_on_ok", "two", "a"), ("runner_on_ok", "one", "c")
+        ]):
+            event = self.event(kind, task="Same name", task_uuid=task, host=host, res={"msg": "Failed here"})
+            lines.extend(sp.output_event_lines(dict(event, counter=counter)))
+        base = dict(ok=2, changed=0, failed=0, unreachable=0, skipped=1)
+        hosts = [dict(base, host="a", changed=1), dict(base, host="b", unreachable=1), dict(base, host="c", failed=1), dict(base, host="d")]
+        job = {"readable": lines, "hosts": hosts, "check_mode": True}
+        cfg = sp.Config({})
+        body = sp.job_output_html(cfg, job, "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertIn('aria-hidden="true">🧪</span> Check', body)
+        self.assertIn('aria-hidden="true">🔄</span> would change', body)
+        self.assertIn("2 ok 1 failed 1 unreachable · 1 would change", re.sub("<[^>]+>", "", body))
+        self.assertEqual(re.findall(r'<th scope="row">(.*?)</th>', body), ["c", "b", "a", "d"])
+        self.assertIn('ok</b> on 2 hosts', body)
+        self.assertIn('ok</b> on 1 host', body)
+        self.assertIn('</details></li><li class="out-failed">', body)
+        self.assertIn("Failed here", body)
+        cfg = sp.Config({"PORTAL_JOB_OUTPUT_EMOJI": "false"})
+        body = sp.job_output_html(cfg, job, "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertIn("[CHECK]", body)
+        self.assertIn("[CHANGED] would change", body)
+        for kind, (emoji, marker, _) in sp.OUTPUT_MARKERS.items():
+            self.assertNotIn(emoji, body)
+            self.assertIn("[%s]" % marker, sp.output_marker(kind, False, False))
+        run = sp.job_output_html(cfg, dict(job, check_mode=False), "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertNotIn("would change", run)
+        self.assertNotIn("[CHECK]", run)
+
+
 class Plain(unittest.TestCase):
     """1.78.0: a running job in plain words - the event lines, the cause classes, what a job has done so far, the "Now" line."""
 
@@ -2314,7 +2425,7 @@ class Found(unittest.TestCase):
         self.assertNotIn("Hunter2", h)                                                              # a password: never
         self.assertNotIn("refreshes every 3 s", h)                                                  # it is over: nothing to refresh
         self.assertIn("<b>fail01.example.mil</b> failed</span>", h)                                 # its chip: a task ran and failed
-        self.assertNotIn("14 minutes off", h)                                                       # never the module's own words
+        self.assertIn("14 minutes off", h)                                                          # the redacted failure preview
         self.assertIn('href="/portal/jobs/%d"' % jid, h)                                            # Refresh without scripts
 
     def test_64_a_running_job_and_the_pane(self):
@@ -2654,6 +2765,37 @@ class DeployPlanPages(unittest.TestCase):
         if launched:
             self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
         return wid, jid
+
+    def test_job_output_on_the_live_and_raw_routes(self):
+        from unittest.mock import patch
+        wid, jid = self._vm_workflow(vm_plan())
+        job_path = "jobs/%d/" % jid
+        url = "/jobs/%d?via=%d" % (jid, wid)
+        fake_aap.STATE["jobs"][jid]["limit"] = "host-a,fail-b"
+        api = self.portal.aap.api
+        original = api.call
+        stdout = "\nTASK [Inspect] ***\n<raw>&\r\n  "
+        def route(method, path, body=None, plain_text=False):
+            if plain_text:
+                self.assertEqual((method, path), ("GET", job_path + "stdout/?format=txt"))
+                return 200, stdout
+            code, data = original(method, path, body)
+            if path == job_path:
+                data = dict(data, job_type="check")
+            return code, data
+        with patch.object(api, "call", side_effect=route):
+            pane = self.get(url + "&pane=1")
+            self.assertIn('aria-hidden="true">🧪</span> Check', pane)
+            self.assertIn('aria-hidden="true">🔄</span> would change', pane)
+            self.assertIn("14 minutes off", pane)
+            self.assertNotIn("Hunter2", pane)
+            self.assertIn("What just happened", pane)
+            self.assertIn("via=%d&amp;output=raw#job-output" % wid, pane)
+            raw = self.get(url + "&output=raw")
+            self.assertIn('<pre class="output-raw"><code>%s</code></pre>' % html.escape(stdout), raw)
+            self.assertIn('href="/portal/jobs/%d?via=%d#job-output">Readable' % (jid, wid), raw)
+            self.assertNotIn("14 minutes off", raw)
+            self.assertEqual(self.request(self.handler, url + "&output=raw", cert(RROE))[0], 404)
 
     def test_read_only_no_touch_job_shows_the_outcome(self):
         plan = dict(vm_plan(), phase="no_touch", no_touch=dict(outcome="built", why=[], workflow_job=None))
@@ -3504,8 +3646,8 @@ class Spin1796(unittest.TestCase):
             def __init__(self, st, done):
                 self.st, self.done = st, done
 
-            def progress(self, jid, cn, via=None):
-                return 200, {"done": self.done, "status": self.st, "now": "" if self.done else "Gathering facts", "hosts_line": "",
+            def job_progress(self, jid, view):
+                return {"done": self.done, "status": self.st, "now": "" if self.done else "Gathering facts", "hosts_line": "",
                              "hosts": [{"host": "web01.example.mil", "state": "running"}, {"host": "web03.example.mil", "state": "done"}],
                              "steps": [{"name": "Recheck", "type": "job", "status": "running", "word": "Running", "note": "", "job": None}], "lines": []}
 
@@ -5320,7 +5462,6 @@ class Results1782(unittest.TestCase):
         with open(os.path.join(FILES, "site_portal.py")) as fh:
             src = fh.read()
         self.assertNotIn('<p class="muted-line">Technical output', src)                                                      # it read like an error
-        self.assertIn('    tech = ""', src)
 
 
 

@@ -2227,7 +2227,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_aap_ui` | (empty) | AAP's address for the "Open in AAP" links, as people open it ("" = portal_aap_url) |
 | `portal_aap_timeout` | `30` | seconds an AAP call may take |
 | `portal_trust_host_cas` | `true` | the service trusts what this server trusts (/etc/pki/ca-trust): AAP's certificate |
-| `portal_job_events` | `300` | a job page shows its last this many lines of output (the rest is in AAP) |
+| `portal_job_events` | `300` | recent AAP events to show in readable job output |
+| `portal_job_output_emoji` | `true` | show emoji beside status words in job output (false uses text markers such as [OK]) |
 | `portal_check_jinja` | `true` | read AAP's ALLOW_JINJA_IN_EXTRA_VARS and warn when it is "always" |
 | `portal_own_nginx` | `false` | ---- portal_own_nginx: true - its own nginx with TLS and client certificates, for a server of its own ----------------- |
 | `portal_nginx_image` | `docker.io/library/nginx:stable` | pin the tag your site uses (an enclave: its registry's copy) |

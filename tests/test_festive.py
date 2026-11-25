@@ -806,8 +806,8 @@ class FakePortal(object):
         return [{"id": j, "title": t, "status": st, "group": g, "started": "2026-12-14T09:0%d:00.000000Z" % i, "elapsed": 60, "by": ME}
                 for i, (j, t, st, g) in enumerate(rows)]
 
-    def progress(self, jid, cn, via=None):
-        return 200, {"done": True, "hosts": [{"host": "app0%d.corp.example.mil" % i, "state": "done"} for i in (1, 2)], "hosts_line": "2 hosts: 2 done",
+    def job_progress(self, jid, view):
+        return {"done": True, "hosts": [{"host": "app0%d.corp.example.mil" % i, "state": "done"} for i in (1, 2)], "hosts_line": "2 hosts: 2 done",
                      "lines": [{"k": "changed", "host": "app01.corp.example.mil", "text": "12 packages updated"}]}
 
     def job(self, jid, via=None, cn=None):

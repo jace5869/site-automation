@@ -1018,6 +1018,23 @@ token (the browser never talks to AAP), at most 90 times a minute for one person
 the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
 latest snapshot, and **Refresh** reloads it.
 
+### Job output
+
+**Readable** follows the job in play and task order. Open **ok on N hosts** to see the hosts for a task.
+Changed, skipped, retrying, warning and debug message lines stay visible. A **Check** banner identifies a job AAP ran
+in Check mode. Its changed results say **would change**. When AAP has published host summaries, **Recap** counts host
+outcomes and lists failed hosts first, then unreachable hosts, with each host’s task counts alongside it.
+
+Failed and unreachable lines show the module message, or the first line of stderr or stdout when the message is absent.
+The preview fits on one line of up to 160 characters. **more** opens up to 2,000 characters. The readable view omits
+variable dumps and censored results and redacts password, secret, token and key assignments before display.
+
+**Raw** opens AAP’s plain-text stdout for the same job. Both views work without JavaScript. **Refresh** gets another snapshot.
+`portal_job_events` sets the recent event window for Readable (default `300`). Set `portal_job_output_emoji: false` to
+use text markers such as `[OK]` and `[FAILED]`. With the default `true`, screen readers read the status word beside each emoji.
+
+### Job results
+
 **Results.** A job that ends with an address the portal knows shows it as a button, for example **Open the report →** (the report's page, in a new tab)
 or **Open ticket INC0012345 →**. The known results are `site_report_url` (and the other report page keys), the ticket keys, and a short list
 (`site_scorecard_url`, `stigman_url`). No other artifact key is shown, and a job with no known result has no *Results* heading.

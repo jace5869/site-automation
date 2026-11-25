@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.131.0 (part: readable job output) — 2026-11-25
+
+To set up: run Site portal - deploy.
+
+The live job view groups results by task, shows short failure reasons, and lists failed and unreachable hosts first in the recap. Check runs say **would change**. Switch to **Raw** for AAP stdout, or set `portal_job_output_emoji: false` for text markers.
+
 ## 1.129.1 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,
