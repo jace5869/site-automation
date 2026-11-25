@@ -296,9 +296,9 @@ def ontap_handler(o):
             o.verbs.append(verb)
             o.paths.append(self.path)
             auth = base64.b64decode((self.headers.get("Authorization") or "Basic ").split(" ", 1)[1] or b"").decode()
-            if auth != "wall-reader:" + o.password:
-                return self.out(401, {"error": {"message": "not authorized"}})
             u = urllib.parse.urlsplit(self.path)
+            if auth != "wall-reader:" + o.password or u.path in getattr(o, "deny", ()):
+                return self.out(401, {"error": {"message": "not authorized"}})
             q = urllib.parse.parse_qs(u.query)
             if u.path in o.override:
                 return self.out(200, o.override[u.path])
@@ -886,6 +886,70 @@ class WriteAhead(unittest.TestCase):
             self.assertEqual(c.view()["sources"][s.key]["state"], "auth", text)
             self.assertLessEqual(c.view()["sources"][s.key]["next_try"], clock.t + 900, text)     # one window, never years
         self.assertEqual(self.vim.methods.count("Login"), 0)
+
+
+class BackoffContract(unittest.TestCase):
+    """The user's back-off contract (round 4): ONTAP basic auth sends the password with EVERY GET - each GET is a login for the
+    back-off, a 401 on any of them is a refusal (one full window for the account); vCenter's new login after its session
+    expired goes through the same gate (written ahead, held the same way)."""
+
+    def collector(self, srcs, path):
+        clock = Clock()
+        clock.t = 1000
+        return W.Collector(srcs, seconds=60, auth_retry=900, clock=clock, state_file=path), clock
+
+    def journal(self, path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)["accounts"]
+
+    def test_a_401_on_a_later_ontap_get_holds_the_account(self):
+        o = Ontap()
+        o.deny = {"/api/snapmirror/relationships"}              # the 6th GET of the poll is refused, the first five answered
+        srv, port = serve(ontap_handler(o))
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        d = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "wall-backoff.json")
+        src = W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False)
+        c, clock = self.collector([src], path)
+        c.cycle()
+        st = c.view()["sources"][src.key]
+        self.assertEqual((st["state"], st["next_try"]), ("auth", 1900))
+        self.assertEqual(list(self.journal(path).values()), [{"until": 1900}])
+        n = len(o.paths)
+        for t in (1060, 1500, 1899):
+            clock.t = t
+            c.cycle()
+        self.assertEqual(len(o.paths), n)                         # nothing sent inside the window
+        c2, _clock = self.collector([W.OntapSource("127.0.0.1:%d" % port, "wall-reader", "pw", verify=False)], path)
+        self.assertEqual(c2.view()["sources"][src.key]["next_try"], 1900)     # a restart keeps it
+
+    def test_a_vcenter_relogin_after_expiry_goes_through_the_gate(self):
+        vim, port = vim_stub(self)
+        d = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "wall-backoff.json")
+        src = W.VcenterSource("127.0.0.1", "wall-reader", "pass", verify=False, port=port)
+        c, clock = self.collector([src], path)
+        c.cycle()
+        self.assertEqual((vim.logins, self.journal(path)), (1, {}))       # logged in, nothing held
+        vim.drop_next, vim.password = True, "changed"                     # the session expires and the password changed
+        clock.t = 1060
+        c.cycle()                                                         # the new login: written ahead, refused, held
+        self.assertEqual(vim.methods.count("Login"), 2)
+        self.assertEqual(list(self.journal(path).values()), [{"until": 1960}])
+        clock.t = 1900
+        c.cycle()
+        self.assertEqual(vim.methods.count("Login"), 2)                   # no login inside the window
+        # the file cannot be written: the re-login is not sent at all
+        os.chmod(d, 0o500)
+        self.addCleanup(os.chmod, d, 0o700)
+        vim.password = "pass"
+        clock.t = 1961
+        c.cycle()
+        self.assertEqual(vim.methods.count("Login"), 2)
+        self.assertEqual(c.view()["sources"][src.key]["state"], "paused")
 
 
 class AllOrNothing(unittest.TestCase):
