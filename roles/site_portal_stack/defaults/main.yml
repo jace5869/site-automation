@@ -59,15 +59,18 @@ portal_reports_dir: /srv/reports
 portal_reports_mount: ro,z
 
 # ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) -------------------------------
-portal_requesters: []                               # who may run the actions (an action's own who overrides); [] = any person with a verified card
+portal_readers: []                                  # card CNs allowed to view. With both reader lists empty, any verified card may view.
+portal_reader_groups: []                            # AD groups allowed to view (names or DNs). Named and AD requesters and approvers always have reader access.
+portal_access_contact: ""                           # contact shown on reader refusal. Empty uses "your portal administrator".
+portal_requesters: []                               # card CNs allowed to run actions. Both requester lists empty = any reader. An action's own who overrides.
 portal_approvers: []                                # who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works)
 portal_launches_per_hour: 20                        # one person's launches in an hour, at most
 portal_vm_deploy_placement_template: "VM - deploy placement change"  # AAP job that checks and records a placement before approval
 portal_allow_self_approval: false                   # true = an approver may approve or deny a run they started themselves
-# 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or
+# Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or
 # sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind
 # Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only
-# portal_approvers / portal_requesters count (with groups set, an empty portal_requesters is nobody - never everyone).
+# explicitly named card CNs count for those roles.
 portal_approver_groups: []                          # e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
 portal_requester_groups: []                         # the same for who may run the actions (with portal_requesters); [] = none
 portal_ad_card_attribute: userPrincipalName         # the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine)

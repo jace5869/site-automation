@@ -2181,12 +2181,15 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_logo_src` | (empty) | the image on the controller, copied to portal_logo by the deploy ("" = nothing copied) |
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
 | `portal_reports_mount` | `ro,z` | how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a folder another container mounts with :Z, a private label, is relabeled by that container's next start - see docs/SITE_PORTAL.md, SELinux) |
-| `portal_requesters` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- who may run the actions (an action's own who overrides); [] = any person with a verified card |
+| `portal_readers` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- card CNs allowed to view. With both reader lists empty, any verified card may view. |
+| `portal_reader_groups` | `[]` | AD groups allowed to view (names or DNs). Named and AD requesters and approvers always have reader access. |
+| `portal_access_contact` | (empty) | contact shown on reader refusal. Empty uses "your portal administrator". |
+| `portal_requesters` | `[]` | card CNs allowed to run actions. Both requester lists empty = any reader. An action's own who overrides. |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
 | `portal_vm_deploy_placement_template` | `"VM - deploy placement change"` | AAP job that checks and records a placement before approval |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
-| `portal_approver_groups` | `[]` | 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_a… (all of it: the role file) |
+| `portal_approver_groups` | `[]` | Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_gr… (all of it: the role file) |
 | `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
 | `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
 | `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything |

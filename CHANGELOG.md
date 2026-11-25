@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.131.0 (part: readers) — 2026-11-25
+
+**To set up:** `portal_reader_groups: ["<readers group>"]` then **Site portal - deploy**; admins and approvers are readers automatically.
+
+Set `portal_readers` for individual card CNs and `portal_access_contact` for the contact shown on refusal. With both reader lists empty, any verified card may view the portal.
+
 ## 1.129.1 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. For a separate Windows inventory, add the following line to all.yml,

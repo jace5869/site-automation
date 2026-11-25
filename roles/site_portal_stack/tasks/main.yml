@@ -208,25 +208,27 @@
     fail_msg: "portal_theme_season is {{ portal_theme_season }}; it must be none, christmas or auto (report_theme_season_style 16bit or 8bit) - nothing was changed"
     quiet: true
 
-# 1.120.0: approvers and requesters from AD groups - on when a group is set; the DCs asked: portal_ldap_server, else the
-# inventory's DCs (as the AD report finds them), else the domain's from DNS (the portal asks)
-- name: Settings | the AD groups - no blank name (it would read as no group at all)
+# A blank reader entry could turn a restricted portal into an open one.
+- name: Settings | check the card reader list and AD group lists
   ansible.builtin.assert:
     that:
-      - portal_approver_groups | default([], true) is not string
-      - portal_requester_groups | default([], true) is not string
-      - (portal_approver_groups | default([], true) | map('string') | map('trim') | reject('equalto', '') | list | length)
-        == (portal_approver_groups | default([], true) | length)
-      - (portal_requester_groups | default([], true) | map('string') | map('trim') | reject('equalto', '') | list | length)
-        == (portal_requester_groups | default([], true) | length)
-    fail_msg: >-
-      portal_approver_groups and portal_requester_groups are lists of AD group names or DNs, none of them blank - nothing was changed.
-      docs/SITE_PORTAL.md, "Approvers from AD groups"
+      - item.entries is sequence and item.entries is not string and item.entries is not mapping
+      - (item.entries | select('string') | map('trim') | reject('equalto', '') | list | length) == (item.entries | length)
+    fail_msg: "{{ item.setting }} must be a list of nonblank strings."
     quiet: true
+  loop:
+    - {setting: portal_readers, entries: "{{ portal_readers }}"}
+    - {setting: portal_reader_groups, entries: "{{ portal_reader_groups }}"}
+    - {setting: portal_requester_groups, entries: "{{ portal_requester_groups | default([], true) }}"}
+    - {setting: portal_approver_groups, entries: "{{ portal_approver_groups | default([], true) }}"}
+  loop_control:
+    label: "{{ item.setting }}"
 
-- name: Settings | the AD groups (portal_approver_groups, portal_requester_groups)
+- name: Settings | the AD groups and domain controllers
   ansible.builtin.set_fact:
-    _portal_ldap_on: "{{ (portal_approver_groups | default([], true) | length > 0) or (portal_requester_groups | default([], true) | length > 0) }}"
+    _portal_ldap_on: >-
+      {{ (portal_reader_groups | length > 0) or (portal_approver_groups | default([], true) | length > 0)
+         or (portal_requester_groups | default([], true) | length > 0) }}
     _portal_ldap_servers: >-
       {%- set out = [] -%}
       {%- for x in (portal_ldap_server | default('', true) | string).split(',') if x | trim | length > 0 -%}
@@ -634,9 +636,9 @@
 - name: Secret | the AD groups' LDAP login - there is one
   ansible.builtin.debug:
     msg: >-
-      WARNING - portal_approver_groups / portal_requester_groups are set, but this job has no LDAP login: attach the "LDAP Bind Account"
+      WARNING - portal AD groups are set, but this job has no LDAP login: attach the "LDAP Bind Account"
       credential to its template (portal_ldap_vars names where its user and password are). Until then the portal reads no group: only
-      portal_approvers and portal_requesters count (said on its Approvals page). docs/SITE_PORTAL.md, "Approvers from AD groups".
+      portal_readers, portal_approvers and portal_requesters count toward group-restricted access. docs/SITE_PORTAL.md, "Approvers from AD groups".
   when: _portal_ldap_on | bool and not ((_portal_ldap_login | from_json).user | length > 0 and (_portal_ldap_login | from_json).password | length > 0)
 
 - name: Secret | the AD groups' LDAP login - current state
@@ -837,6 +839,9 @@
       PORTAL_AAP_UI: "{{ portal_aap_ui | trim }}"
       PORTAL_AAP_TIMEOUT: "{{ portal_aap_timeout | string }}"
       PORTAL_INVENTORY: "{{ portal_inventory }}"
+      PORTAL_READERS: "{{ portal_readers }}"
+      PORTAL_ACCESS_CONTACT: "{{ portal_access_contact | default('', true) | string }}"
+      PORTAL_READER_GROUPS: "{{ portal_reader_groups }}"
       PORTAL_REQUESTERS: "{{ portal_requesters }}"
       PORTAL_APPROVERS: "{{ portal_approvers }}"
       # 1.120.0: approvers and requesters from AD groups (the login: the secret site-portal-ldap)

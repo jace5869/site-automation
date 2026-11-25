@@ -31,15 +31,37 @@ The portal starts only what the actions file lists, only with values its rules a
 3. **No template braces.** AAP renders Jinja in extra vars when a playbook reads them. So the portal refuses `{{`,
    `{%` and `{#` in every value - also with spaces or invisible characters between, and in look-alike (full-width)
    braces.
-4. **Only the people you list, if you list any.** With `portal_requesters` empty (the default), anyone whose card
-   nginx accepts may start the listed actions. Fill `portal_requesters` (or an action's own `who`) to restrict it.
-   `portal_approvers` says who may decide approvals here.
+4. **Access by role.** The reader lists control who can enter the portal. The requester lists and each action's
+   own `who` control Run. The approver lists control decisions.
 5. **The portal's own AAP account.** It needs Execute on the listed workflows and templates, Approve on those with
    an approval node, and Read on `portal_inventory`. To list the findings of the report jobs (*Pick a host, then a
    finding*) it also needs **Auditor** on the organization. Never a write role (step 2).
 
 **What AAP gets with a launch:** the checked values as extra vars, `portal_requested_by` (the person's name from
 their card), and the limit when the action sets one. Nothing else.
+
+## Who may do what
+
+Every person needs a verified card. Each role accepts exact card CNs and members of its configured AD groups.
+
+| Role | Settings | Access |
+|---|---|---|
+| Readers | `portal_readers`, `portal_reader_groups` | Open portal pages and APIs, including reports, AD, NetApp, jobs and approvals. The wall’s kiosk mode also requires reader access. Individual job visibility still applies. |
+| Admins (requesters) | `portal_requesters`, `portal_requester_groups` | Read automatically and run actions. An action's own `who` overrides its requester rule. When both requester lists are empty, any reader can run actions that use the default rule. |
+| Approvers | `portal_approvers`, `portal_approver_groups` | Read automatically and approve or deny eligible workflows. With both approver lists empty, nobody may decide in the portal. |
+
+With both **reader** lists empty (the default), any verified card may view the portal. Set either list to
+restrict viewing to the readers, requesters and approvers. If your site used requester lists to restrict entry,
+set a reader list when you deploy this version. To give people view-only access, also configure
+who may run actions and check any action-specific `who` settings. The Approvals page shows which list grants your card access.
+
+Attach **LDAP Bind Account** to **Site portal - deploy** when using groups. The portal reads all three roles
+together every `portal_ad_groups_seconds` and keeps the result between reads. Before the first read, after a failed
+read, or after the result expires, only explicitly named card CNs grant entry to a restricted portal.
+
+A refused reader receives HTTP 403 with their card CN and the contact in `portal_access_contact` (default
+“your portal administrator”). The refusal page explains when AD groups are unavailable. The portal logs one
+reader refusal per person per hour.
 
 ## How it works
 
@@ -601,7 +623,7 @@ the check's plan (*What it will change*, below) and the report the steps before 
 
 ### Approvers from AD groups (1.120.0)
 
-The approvers and the requesters can be AD groups as well as names. Each person still needs a verified card.
+Readers, approvers and requesters can be AD groups as well as names. Each person still needs a verified card.
 
 ```yaml
 portal_approver_groups: [AAP-Approvers]          # a group's name (cn or sAMAccountName) or its DN
@@ -609,7 +631,7 @@ portal_requester_groups: []                      # the same for who may run the 
 ```
 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
-  account never counts. The named lists (`portal_approvers`, `portal_requesters`) count as well.
+  account never counts. The named lists (`portal_readers`, `portal_approvers`, `portal_requesters`) count as well.
 - **A card and its AD account.** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). By default the portal looks
   for the AD account whose `userPrincipalName` is `1234567890@mil`. Another attribute: `portal_ad_card_attribute` and
   `portal_ad_card_match` (`{edipi}`, `{cn}`; `*` and `?` match anything). For example
@@ -617,7 +639,7 @@ portal_requester_groups: []                      # the same for who may run the 
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
   failed read it tries again in a minute.
 - **AD down: the named lists only.** When AD cannot be read, or before the first read, nobody counts as a group member. Only
-  `portal_approvers` and `portal_requesters` count. The Approvals page says so, and so does the portal's log
+  `portal_readers`, `portal_approvers` and `portal_requesters` count for restricted roles. The Approvals page says so, and so does the portal's log
   (`ad-groups` events). It never falls open: with `portal_requester_groups` set, an empty `portal_requesters` means nobody,
   not everyone.
 - **`portal_allow_self_approval`** is unchanged. A new card of the same person (the same EDIPI under a new name) is the same
@@ -1495,7 +1517,9 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it (an air-gapped host loads it: [ENCLAVES.md](ENCLAVES.md), section 5) |
 | `portal_reports_dir` | `/srv/reports` | the folder the report jobs write to, on this server |
 | `portal_inventory` | | the AAP inventory an action's host must be in |
-| `portal_requesters` | `[]` | who may run the actions (CNs); `[]` = any person with a verified card |
+| `portal_readers`, `portal_reader_groups` | `[]` | reader card CNs and AD group names or DNs. Both empty allows any verified card. |
+| `portal_access_contact` | `""` | contact to ask for reader access |
+| `portal_requesters` | `[]` | card CNs allowed to run actions. Both requester lists empty allows any reader, subject to the action's own `who`. |
 | `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
@@ -1521,7 +1545,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `/portal/` says *502 Bad Gateway* | the service is not running (`sudo systemctl status site-portal-app`), or it is on another network than nginx |
 | *404 Not Found* for `/portal/` | the lines are not loaded: step 5's `grep -c`, then `nginx -s reload` |
 | *Not accepted. No client certificate was accepted* | nginx asked for no card (`ssl_verify_client`), or the browser sent none |
-| *You are not on the list of people who may use this portal* | `portal_requesters`, or an action's `who` |
+| *You are not on the portal's readers list* | Ask the contact shown to check your card CN or group membership. If the page says AD is unavailable, check the LDAP Bind Account on the deploy template. |
 | *Refused: send it from the portal's page* | the page is older than 8 hours, or was opened from another address: reload it |
 | A value *holds {{ - braces that start a template are not allowed* | the value holds template braces; take them out |
 | *Reports* answers *Not found* | `portal_reports_dir`, or the folder's SELinux label (*The report folder and SELinux*) |
