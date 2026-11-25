@@ -545,6 +545,12 @@ for _ in $(seq 1 20); do
     after="$(podman exec site-portal-app wc -l /data/portal-log.jsonl 2>/dev/null | cut -d' ' -f1)"
     [ "${after:-0}" -gt "${before:-0}" ] && break; sleep 1
 done
+for _ in $(seq 1 60); do                                          # the collector's first poll: the name never resolves - said, once
+    podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null && break; sleep 2
+done
+if podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null; then
+    pass "the wall's collector reads with the new login and says why it could not (a name that does not resolve)"
+else fail "the wall's collector said why it could not read" "$(podman exec site-portal-app grep '"event": "wall"' /data/portal-log.jsonl 2>&1 | tail -5)"; fi
 denied="$(journalctl --user -u site-portal-app --since "-5min" --no-pager 2>/dev/null | grep -c 'PermissionError')"
 if echo "$css" | jq_ 'd["code"]' | grep -q 200 && echo "$css" | grep -q -- '--' && [ "${after:-0}" -gt "${before:-0}" ] && [ "$denied" = 0 ]; then
     pass "after the wall's token step the running portal still serves portal.css and writes its log (the 1.130.2 regression)"
