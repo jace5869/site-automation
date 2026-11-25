@@ -369,6 +369,17 @@ class ReplicationPage(unittest.TestCase):
                 self.assertIn("? AD job, time not known", fallback)
                 self.assertNotIn("s-ok", fallback)
 
+    def test_codex_5_zero_or_bad_date_is_old_in_the_api_too(self):
+        for at in ("0000-00-00 00:00:00", "", "bad-date"):
+            with self.subTest(at=at):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_run SET read_at = ?", at)          # never a ValueError
+                answer = json.loads(reader.answer()[1])["db"]["model"]
+                self.assertTrue(answer["run"]["old"], answer["run"])
+                self.assertNotIn("s-ok", answer["matrix_html"])
+        self.assertIsNone(sp.AdDb._dt("0000-00-00 00:00:00"))
+
     def test_old_job_never_shows_healthy_cells(self):
         import datetime as dt
         self.at -= dt.timedelta(minutes=self.cfg.ad_old_minutes + 1)

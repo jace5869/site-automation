@@ -842,7 +842,7 @@ def site_portal_title_label(label, prefix):
 def _lonlat_ok(v):
     try:
         lat, lon = float(v.get("lat")), float(v.get("lon"))
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return False
     return -90 <= lat <= 90 and -180 <= lon <= 180
 

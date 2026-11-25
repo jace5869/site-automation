@@ -223,7 +223,7 @@ def _num(v):
     try:
         f = float(v)
         return f if f == f and abs(f) != float("inf") else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):       # 1.131.0: an integer too big for a float: not a number
         return None
 
 

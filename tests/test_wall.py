@@ -105,6 +105,23 @@ class NetmapPlaces131(unittest.TestCase):
         self.assertEqual(M.place_of("SITA01", M.opts_of({})), None)
         self.assertEqual(M.opts_of({"netmap_sites": "not a mapping"})["netmap_sites"], {})
 
+    def test_most_specific_pattern_and_bad_numbers(self):
+        o = M.opts_of({"netmap_sites": {"*": {"lat": 1, "lon": 2}, "ABC*": {"lat": 3, "lon": 4}, "AB?01": {"lat": 5, "lon": 6},
+                                        "BIG*": {"lat": 10 ** 400, "lon": 0}, "NAN*": {"lat": float("nan"), "lon": 0},
+                                        "INF*": {"lat": "inf", "lon": 0}}})
+        self.assertEqual(M.place_of("ABC02", o), [4.0, 3.0])                # ABC* is more specific than * (the first match)
+        self.assertEqual(M.place_of("ABC01", o), [6.0, 5.0])                # AB?01 more specific than ABC*
+        import site_swis
+        conf = {"*": [1, 2], "ABC*": [3, 4], "AB?01": [5, 6]}
+        for name in ("ABC01", "ABC02", "ZZZ"):                               # the same choice as the network map
+            self.assertEqual(M.place_of(name, o), list(reversed([float(x) for x in site_swis.place(conf, name)])))
+        for s in ("BIG1", "NAN1", "INF1"):
+            self.assertEqual(M.place_of(s, o), [2.0, 1.0])                  # the bad entry left out: the catch-all
+        self.assertEqual(M.netmap_ignored(o), ["BIG*", "INF*", "NAN*"])
+        self.assertIsNone(site_swis._num(10 ** 400))
+        import site_portal_filters as F
+        self.assertIn("Map places from netmap_sites: 3", F.site_portal_wall_summary({"netmap_sites": o["netmap_sites"]}))
+
     def test_summary_text(self):
         import site_portal_filters as F
         base = {"wall": True, "vc_on": False, "vc_mode": "auto", "vc_host": "", "vcenters": [], "vc_user": "", "vc_pass": False,
@@ -155,6 +172,35 @@ class NoSources131(unittest.TestCase):
         with mock.patch.object(wall_live, "sources_from_config", side_effect=RuntimeError("boom")):
             w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": ["vc01.corp.example.mil"]}})
         self.assertTrue(any(r.get("collector") == "no sources" and "boom" in json.dumps(r) for r in recs), recs)
+
+    def test_codex_new1_an_address_with_a_password_never_shows_it(self):
+        w, recs = self.run_with({"ontap": {"user": "svc", "password": "pw", "clusters": ["https://admin:S3cretPw@cluster1.example.mil"]}})
+        self.assertNotIn("S3cretPw", json.dumps(recs))
+        self.assertNotIn("S3cretPw", json.dumps(w.model()))
+        self.assertTrue(any("user or password" in json.dumps(r) for r in recs), recs)
+
+    def test_codex_new5_a_source_error_is_said_as_that_error(self):
+        from unittest import mock
+        import wall_live
+        with mock.patch.object(wall_live, "sources_from_config", side_effect=RuntimeError("boom")):
+            w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": ["vc01.corp.example.mil"]}})
+        no = [r for r in recs if r.get("collector") == "no sources"]
+        self.assertEqual(len(no), 1, recs)
+        self.assertIn("boom", no[0]["why"])
+        why = {a["id"]: a for a in w.model()["areas"]}["vmware"]["why"]
+        self.assertIn("boom", why)
+        self.assertNotIn("no vCenter address", why)
+
+    def test_bad_places_logged_once(self):
+        from unittest import mock
+        recs = []
+        log = mock.Mock()
+        log.add.side_effect = recs.append
+        cfg = mock.Mock(wall_opts=M.opts_of({"netmap_sites": {"X*": {"lat": 10 ** 400, "lon": 1}}}), wall_auth_retry=900,
+                        data=tempfile.mkdtemp(dir=os.environ.get("TMPDIR")), wall_logins={}, wall_enclave="", wall_title="NOC")
+        self.addCleanup(shutil.rmtree, cfg.data, True)
+        sp.WallLive(cfg, log, None)
+        self.assertEqual([r.get("sites") for r in recs if r.get("map")], [["X*"]])
 
     def test_no_password_logged_once(self):
         w, recs = self.run_with({"ontap": {"user": "svc", "password": "", "clusters": ["cl01.corp.example.mil"]}})

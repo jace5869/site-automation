@@ -1968,7 +1968,8 @@ def cause_class(e):
 def event_line(e):
     """One AAP job event as a plain line -> {k: ok | changed | bad | unreach | skip, host, text} or None (an event that says nothing a person needs).
     Failed lines carry the host, the task and the cause class only."""
-    ev, d = str(e.get("event") or ""), e.get("event_data") or {}
+    e, d = _event_data(e)
+    ev = str(e.get("event") or "")
     host = output_text(e.get("host_name") or d.get("host"))
     what = task_what(d.get("task"))
     if not host or not what:
@@ -2001,22 +2002,73 @@ RUNNER_RESULTS = {"runner_on_ok": "ok", "runner_on_failed": "failed", "runner_on
 # with the key quoted, single-quoted or JSON-escaped (\"password\": ...); Authorization headers in any form; a bearer or
 # basic credential anywhere; private-key PEM blocks whole
 OUTPUT_PEM = re.compile(r"-----BEGIN[^-\r\n]*(?:PRIVATE KEY|CERTIFICATE REQUEST|ENCRYPTED)[^-\r\n]*-----.*?(?:-----END[^-\r\n]*-----|\Z)", re.S)
-OUTPUT_SECRET = re.compile(
-    r"""((?:password|passwd|pwd|secret|token|key|credential)[\w.-]*(?:\\?["'])?\s*[:=]\s*)"""
-    r"""(?:(?!\[redacted\])[\[{].*|[^\r\n]*)""", re.I | re.S)
+# the tail of a key block whose BEGIN line is elsewhere (another event, cut off): from the start to its END line
+OUTPUT_PEM_TAIL = re.compile(r"\A(?:(?!-----BEGIN).)*?-----END[^-\r\n]*(?:PRIVATE KEY|CERTIFICATE REQUEST|ENCRYPTED)[^-\r\n]*-----", re.S)
+# the key, quoted with any number of backslashes before its quote (JSON inside JSON inside ...)
+OUTPUT_SECRET_KEY = re.compile(r"""((?:password|passwd|pwd|secret|token|key|credential)[\w.-]*(?:\\*["'])?\s*[:=]\s*)""", re.I)
+
+
+def _secret_end(text, i):
+    """where a secret's value that starts at i ends (over-redaction on purpose): a dict or list - the rest of the text; a
+    quoted value (any number of backslashes before its quote) - the end of the line of its closing quote (the same quote with
+    the same backslashes), or the rest of the text when it never closes (a multi-line value); else the end of its line"""
+    if text.startswith("[redacted]", i):
+        return i
+    if i < len(text) and text[i] in "[{":
+        return len(text)
+    j = i
+    while j < len(text) and text[j] == "\\":
+        j += 1
+    if j < len(text) and text[j] in "\"'":
+        q, n, k = text[j], j - i, j + 1
+        while True:
+            k = text.find(q, k)
+            if k < 0:
+                return len(text)
+            b = k
+            while b > j + 1 and text[b - 1] == "\\":
+                b -= 1
+            if k - b == n:
+                break
+            k += 1
+        i = k + 1
+    m = re.compile(r"[\r\n]").search(text, i)
+    return m.start() if m else len(text)
+
+
+def _redact_secrets(text):
+    out, pos = [], 0
+    for m in OUTPUT_SECRET_KEY.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _secret_end(text, m.end())
+        out.append(text[pos:m.end()])
+        out.append("[redacted]" if end > m.end() else "")
+        pos = max(end, m.end())
+    out.append(text[pos:])
+    return "".join(out)
 OUTPUT_AUTH = re.compile(r"""((?:\\?["'])?(?:proxy-)?authorization(?:\\?["'])?\s*[:=]\s*)[^\r\n]*""", re.I)
 OUTPUT_BEARER = re.compile(r"\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.I)
 
 
 def redact_output(text):
     text = OUTPUT_PEM.sub("[redacted]", str(text or ""))
+    text = OUTPUT_PEM_TAIL.sub("[redacted]", text)
     text = OUTPUT_AUTH.sub(r"\1[redacted]", text)
-    text = OUTPUT_SECRET.sub(r"\1[redacted]", text)
+    text = _redact_secrets(text)
     return OUTPUT_BEARER.sub(r"\1 [redacted]", text)
 
 
 def output_text(value):
     return redact_output(clean(value)).strip() if isinstance(value, str) else ""
+
+
+def events_output(events):
+    """the job's events' stdout as one text, redacted once over the joined text (Codex 1.131.0 #2): a key block split over
+    two events is still one block; no_log events and odd events left out; the last 200000 characters"""
+    lines = [clean(e["stdout"]) for e in events or [] if isinstance(e, dict) and isinstance(e.get("stdout"), str) and e["stdout"]
+             and not output_censored(e)]
+    return redact_output("\n".join(lines))[-200000:]
 
 
 def output_censored(e):
@@ -2126,12 +2178,18 @@ class Progress(object):
 
     def feed(self, events):
         base = self.counter
-        for e in events:
-            n = int(e.get("counter") or 0)
+        for e in events or []:
+            if not isinstance(e, dict):                 # Codex 1.131.0 #6: an odd event is skipped, never a crash
+                continue
+            try:
+                n = int(e.get("counter") or 0)
+            except (TypeError, ValueError):
+                n = 0
             if n and n <= base:                         # already counted (a second reader, or a page AAP gave twice)
                 continue
             self.counter = max(self.counter, n)
-            ev, d = str(e.get("event") or ""), e.get("event_data") or {}
+            e, d = _event_data(e)
+            ev = str(e.get("event") or "")
             if ev == "playbook_on_task_start":
                 self.tasks += 1
                 self.what = task_what(d.get("task"))
@@ -3460,8 +3518,7 @@ class Portal(object):
             view["check_mode"] = (jd.get("job_type") or u.get("job_type")) == "check"
             view["readable"] = [line for e in events for line in output_event_lines(e)]
             # Keep the bounded, ANSI-free output field of the existing JSON API.
-            lines = [redact_output(clean(e["stdout"])) for e in events if isinstance(e.get("stdout"), str) and e["stdout"] and not output_censored(e)]
-            view["output"] = "\n".join(lines)[-200000:]
+            view["output"] = events_output(events)
             view["output_more"] = bool(code == 200 and (ev.get("count") or 0) > len(events))
             summaries, why = self.aap._paged("jobs/%d/job_host_summaries/?page_size=200" % jid)
             view["hosts"] = [host_summary(h) for h in summaries if isinstance(h, dict)] if not why else []
@@ -5807,7 +5864,10 @@ class AdDb(object):
         if isinstance(v, datetime.datetime):
             return v.replace(tzinfo=None)
         m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d))?", str(v or ""))
-        return datetime.datetime(*[int(x or 0) for x in m.groups()]) if m else None
+        try:
+            return datetime.datetime(*[int(x or 0) for x in m.groups()]) if m else None
+        except ValueError:                      # a zero date (0000-00-00) or an impossible one: no time (Codex 1.131.0 #5)
+            return None
 
     def read(self, template_id=None, now=None):
         """The model, or an exception (said by the caller: the page shows no rows as current)."""
@@ -6166,7 +6226,8 @@ class AdLive(ReportIndex):
         if r:
             at = ad_when(r.get("read_at"))
             r["age_min"] = int((now - at) // 60) if at else None
-            r["old"] = r["age_min"] is not None and r["age_min"] > self.cfg.ad_old_minutes
+            # no readable read time: old, exactly as the page's first HTML says (Codex 1.131.0 #5)
+            r["old"] = r["age_min"] is None or r["age_min"] > self.cfg.ad_old_minutes
             r["as_of"] = shown(self.cfg, r.get("read_at"))
             r["next"] = shown(self.cfg, sched.get("next")) if sched.get("next") else ""
         replication = m.get("replication")
@@ -6484,27 +6545,33 @@ def wall_sources(cfg, log=None, why=None):
     ({"event": "wall", "collector": "no sources", "why": ...}) and its reason put in why (a dict) for the wall's area"""
     if wall_live is None:
         return []
+    # the portal's log (its .add), or a plain function (tests, 1.130.1's form)
+    say = log if callable(log) and not hasattr(log, "add") else (lambda d: _safe_add(log, d))
+    logins = cfg.wall_logins if isinstance(getattr(cfg, "wall_logins", None), dict) else {}
     left = {}
 
     def note(d):
         if isinstance(d, dict) and d.get("state") == "left out":
             left.setdefault(d.get("source") or "", []).append(str(d.get("why") or ""))
-        _safe_add(log, d)
+        say(d)
 
     try:
-        src = wall_live.sources_from_config(cfg.wall_logins, cafile=os.environ.get("SSL_CERT_FILE") or None, log=note)
-    except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal; said in the log
-        _safe_add(log, {"event": "wall", "collector": "no sources", "why": "the wall's logins could not be read: " + clean(str(e), 200)})
-        src = []
+        src = wall_live.sources_from_config(logins, cafile=os.environ.get("SSL_CERT_FILE") or None, log=note)
+    except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal; said in the log AS that error
+        err = "the wall's sources could not be made: " + clean(str(e), 200)
+        say({"event": "wall", "collector": "no sources", "why": err})
+        if isinstance(why, dict):
+            why.update({{"vcenter": "vmware", "ontap": "storage"}[k]: err for k in ("vcenter", "ontap") if k in logins})
+        return []
     try:
-        reasons = wall_live.no_source_why(cfg.wall_logins, src, left)
+        reasons = wall_live.no_source_why(logins, src, left)
     except Exception:  # pylint: disable=broad-except
         reasons = {}
-    if not src and cfg.wall_logins and not reasons:
-        reasons_log = {k: "no user or no password in this login" for k in ("vcenter", "ontap") if k in cfg.wall_logins}
-        _safe_add(log, {"event": "wall", "collector": "no sources", "why": reasons_log or "the wall's logins are not usable"})
+    if not src and logins and not reasons:
+        reasons_log = {k: "no user or no password in this login" for k in ("vcenter", "ontap") if k in logins}
+        say({"event": "wall", "collector": "no sources", "why": reasons_log or "the wall's logins are not usable"})
     if reasons:
-        _safe_add(log, {"event": "wall", "collector": "no sources" if not src else "part", "why": reasons})
+        say({"event": "wall", "collector": "no sources" if not src else "part", "why": reasons})
         if isinstance(why, dict):
             why.update(reasons)
     return src
@@ -6521,6 +6588,13 @@ class WallLive(object):
         self.lock = threading.Lock()
         self.collector = collector
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
+        try:
+            bad_places = wall_model.netmap_ignored(cfg.wall_opts)
+        except Exception:  # pylint: disable=broad-except
+            bad_places = []
+        if bad_places:                      # said once; the Map leaves them out (Codex 1.131.0 new #4)
+            _safe_add(log, {"event": "wall", "map": "netmap_sites entries left out", "sites": bad_places[:20],
+                            "why": "lat / lon not a number in range"})
         if self.collector is None and wall_live is not None:
             src = wall_sources(cfg, log, self.no_source)
             if src:

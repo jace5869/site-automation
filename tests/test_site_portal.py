@@ -1212,6 +1212,31 @@ class NeonR131Output(unittest.TestCase):
         self.assertEqual(sp.redact_output("TASK [x] ok: [h] => changed=1"), "TASK [x] ok: [h] => changed=1")
         self.assertIn("next line", sp.redact_output("ssh_key: -----BEGIN RSA PRIVATE KEY-----\nX\n-----END RSA PRIVATE KEY-----\nnext line"))
 
+    def test_codex_2_repeatedly_encoded_and_split_blocks(self):
+        inner = json.dumps({"password": "Hunter2"})
+        for text in (json.dumps({"body": json.dumps({"x": inner})}), json.dumps(json.dumps(json.dumps(inner)))):
+            self.assertNotIn("Hunter2", sp.redact_output(text), text)
+        events = [{"event": "verbose", "stdout": "ssh_key: |\n  -----BEGIN RSA PRIVATE KEY-----"},
+                  {"event": "verbose", "stdout": "  MIIEpSECRETBODY"},
+                  {"event": "verbose", "stdout": "  -----END RSA PRIVATE KEY-----"}, {"event": "verbose", "stdout": "ok: [web01]"}, None]
+        out = sp.events_output(events)
+        self.assertNotIn("SECRETBODY", out)
+        self.assertIn("ok: [web01]", out)
+        self.assertNotIn("SECRETBODY", sp.redact_output("MIIEpSECRETBODY\n-----END RSA PRIVATE KEY-----\nok"))
+
+    def test_codex_new2_quoted_multiline_secret(self):
+        for text in ('password: "line1\nSECRETLINE2"\nkeep', "password: 'a\nb\nSECRETLINE3'\nkeep", 'password="a\\"b\nSECRETC" x\nkeep'):
+            out = sp.redact_output(text)
+            self.assertNotIn("SECRET", out, out)
+            self.assertTrue(out.endswith("\nkeep"), out)
+
+    def test_codex_6_progress_feed_skips_odd_events(self):
+        pr = sp.Progress()
+        pr.feed([None, "x", 5, [], {"event": "runner_on_ok", "event_data": "corrupt", "counter": "bad"},
+                 {"event": "runner_on_ok", "host_name": "web01", "counter": 3, "event_data": {"task": "A | b"}}])
+        self.assertIn("web01", pr.hosts)
+        self.assertIsNone(sp.event_line(None))
+
     def test_6_odd_events_are_skipped(self):
         for e in ({"event": "runner_on_ok", "event_data": "corrupt"}, {"event": "runner_on_ok", "event_data": []}, None, "x", 5,
                   {"event": "runner_on_ok", "event_data": {"task_action": 123}}, {"event": "runner_on_ok", "event_data": {"task_action": ["debug"]}},

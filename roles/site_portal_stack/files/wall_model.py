@@ -13,6 +13,11 @@ import collections
 import fnmatch
 import re
 
+try:
+    import site_swis                       # the network map's own matching (plugins/module_utils): one rule for both maps
+except ImportError:                        # pragma: no cover - the portal image has it
+    site_swis = None
+
 LATE_S = 180                     # amber (LATE) after 3 min
 STALE_S = 600                    # STALE (not current, never green) after 10 min
 KEEP_CLEARED_S = 4 * 3600        # cleared conditions on the Map's timeline
@@ -124,12 +129,40 @@ def site_rule(pattern):
 
 
 def _lonlat(v):
-    """a netmap_sites value {lat, lon} -> [lon, lat] (the wall's order); anything else: None"""
+    """a netmap_sites value {lat, lon} -> [lon, lat] (the wall's order); anything else (not a number, NaN, inf, too big,
+    out of range): None"""
     try:
         lat, lon = float(v.get("lat")), float(v.get("lon"))
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return None
     return [lon, lat] if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def _glob(pattern, name):
+    rx = "^" + re.escape(str(pattern).casefold()).replace(r"\*", ".*").replace(r"\?", ".") + "$"
+    return re.match(rx, str(name).casefold()) is not None
+
+
+def _netmap_place(conf, name):
+    """the network map's own rule (site_swis.place): the site's name first (any case), else the MOST specific pattern"""
+    if site_swis is not None:
+        return site_swis.place(conf, name)
+    for k, v in conf.items():
+        if not re.search(r"[*?]", k) and k.casefold() == str(name).casefold():
+            return v
+    best = None
+    for k, v in conf.items():
+        if re.search(r"[*?]", k) and _glob(k, name):
+            n = len(re.sub(r"[*?]", "", k))
+            if best is None or n > best[0]:
+                best = (n, v)
+    return best[1] if best else None
+
+
+def netmap_ignored(o):
+    """the netmap_sites keys the wall cannot use (lat / lon not a number in range) - logged once by the portal"""
+    nm = o.get("netmap_sites") if isinstance(o.get("netmap_sites"), dict) else {}
+    return sorted(str(k) for k, v in nm.items() if _lonlat(v) is None)
 
 
 def place_of(site, o):
@@ -142,14 +175,13 @@ def place_of(site, o):
     for k, v in own.items():
         if str(k).casefold() == s.casefold():
             return v
-    nm = o.get("netmap_sites") or {}
+    nm = o.get("netmap_sites") if isinstance(o.get("netmap_sites"), dict) else {}
+    conf = {}
     for k, v in nm.items():
-        if str(k).casefold() == s.casefold():
-            return _lonlat(v)
-    for k, v in nm.items():
-        if any(c in str(k) for c in "*?[") and fnmatch.fnmatchcase(s.casefold(), str(k).casefold()):
-            return _lonlat(v)
-    return None
+        p = _lonlat(v)
+        if p is not None:                  # an entry that is no place is left out (the network map does the same)
+            conf[re.sub(r"\s+", " ", str(k).strip())] = p
+    return _netmap_place(conf, s)
 
 
 def netmap_places(o):
