@@ -12,6 +12,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -72,7 +73,7 @@ class Rules(unittest.TestCase):
         self.assertIsNone(sp.windows_hosts({}, self.script(inventory())))
         vr = sp.windows_rules({"vars": {"ansible_connection": ["winrm"]}})
         # the inventory's own Variables, when neither the host nor a group sets it; a dotted name reads into a mapping
-        doc = {"all": {"vars": {"ansible_connection": "winrm"}, "hosts": ["a", "b"]}, "_meta": {"hostvars": {"b": {"ansible_connection": "ssh"}}}}
+        doc = {"all": {"vars": {"ansible_connection": "winrm"}, "hosts": ["a", "b"]}, "_meta": {"hostvars": {"a": {}, "b": {"ansible_connection": "ssh"}}}}
         self.assertEqual(sp.windows_hosts(vr, doc), {"a"})
         doc = {"all": {"hosts": ["a", "b"]}, "_meta": {"hostvars": {"a": {"config": {"guestId": "windows2019srv_64Guest"}},
                                                                     "b": {"config": {"guestId": "rhel9_64Guest"}}}}}
@@ -155,6 +156,53 @@ class Live(unittest.TestCase):
 
     def items(self, **kw):
         return self.portal.aap.inventory_items(kw.pop("q", ""), 200, iid=INV, **kw)
+
+    def test_builtin_checks_enabled_host_in_template_inventory(self):
+        a = self.portal.actions["disk_space_request"]
+        tid = 818
+        sent = dict(report_job="907", finding_id="disk_full:test")
+        enabled = {"prod-only": True, "disabled": False}
+
+        def route(method, path, body=None):
+            if path == "job_templates/%d/" % tid:
+                return 200, {"id": tid, "inventory": INV}
+            parts = urllib.parse.urlsplit(path)
+            query = urllib.parse.parse_qs(parts.query)
+            if parts.path == "inventories/%d/hosts/" % INV:
+                self.assertEqual(query.get("enabled"), ["true"])
+                host = query["name"][0]
+                rows = [{"name": host, "enabled": enabled[host]}] if host in enabled else []
+                return 200, {"count": len(rows), "results": rows}
+            if parts.path == "inventories/3/hosts/":
+                return 200, {"count": 1, "results": [{"name": "site-only", "enabled": True}]}
+            raise AssertionError(path)
+
+        with patch.object(self.portal, "state", return_value=(tid, "")), patch.object(self.portal.aap, "call", side_effect=route), \
+                patch.object(self.portal.aap, "inv_id", 3):
+            for host, allowed in (("site-only", False), ("disabled", False), ("prod-only", True)):
+                _, problems = self.portal.check("disk_space_request", dict(sent, target=host), a)
+                self.assertEqual("target" not in problems, allowed, host)
+
+    def test_inventory_move_during_live_check_refuses_launch(self):
+        a = self.act("Windows - schedule a restart")
+        template = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == a["tid"])
+        expand = self.portal.aap.expand_now
+
+        def move(*args):
+            checked = expand(*args)
+            template["inventory"] = INV + 1
+            return checked
+
+        try:
+            with patch.object(self.portal.aap, "expand_now", side_effect=move), patch.object(self.portal.aap, "call", wraps=self.portal.aap.call) as api:
+                code, out = self.launch(a, ["all_app"])
+                self.assertEqual(code, 409, out)
+                self.assertIn("this job changed in AAP - open it again", out["error"])
+                self.assertFalse(any(c.args[0] == "POST" for c in api.call_args_list))
+        finally:
+            template["inventory"] = INV
+            self.portal.aap.changed_templates.add(("job_templates", a["tid"]))
+            self.portal.refresh(force=True)
 
     def test_a_restart_is_a_windows_job_with_its_own_cap(self):
         a = self.act("Windows - schedule a restart")
@@ -364,7 +412,9 @@ class Live(unittest.TestCase):
         from unittest import mock
         for doc in ({}, {"all": {}}, {"_meta": {}}, {"_meta": {"hostvars": []}, "all": {}}, []):
             with mock.patch.object(self.portal.aap, "call", return_value=(200, doc)):
-                self.assertEqual(self.portal.aap.classify(INV), (None, "could not check which hosts are Windows just now - try again"), doc)
+                win, why = self.portal.aap.classify(INV)
+                self.assertIsNone(win, doc)
+                self.assertIn("try again", why)
 
     def test_r_group_priority_between_depth_and_name(self):
         """1.129.0 (Codex verify): siblings - a higher ansible_group_priority wins over a later name (Ansible's sort_groups)."""

@@ -397,7 +397,7 @@ class Templates(object):
             if len(ours) == 1:
                 t = self.ours_row[name] = ours[0]
                 # A catalog name can be reused for another job. Only move the Windows job.
-                if (win_inventory and t.get("inventory") != win_inventory
+                if (win_inventory and t.get("project") == self.project and t.get("inventory") != win_inventory
                         and (t.get("playbook") == e["playbook"] or fnmatch.fnmatchcase(t.get("playbook") or "", "playbooks/win_*.yml"))):
                     self.inventory_changes.append((name, int(t["id"]), self.show("inventory", t.get("inventory"))))
             if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked

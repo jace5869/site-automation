@@ -224,6 +224,17 @@ class WindowsInventory(unittest.TestCase):
         self.setup_templates()
         self.assertEqual(self.writes, [])
 
+    def test_inventory_move_requires_setup_project(self):
+        self.setup_templates(inventory_windows="")
+        report = self.templates[1]
+        report["project"] = 99
+        self.writes.clear()
+        rows = self.setup_templates(check=True, only=["Report"])
+        self.assertFalse(any("inventory_change" in row for row in rows))
+        self.setup_templates(only=["Report"])
+        self.assertEqual(self.writes, [])
+        self.assertEqual(report["inventory"], 4)
+
     def test_empty_setting_preserves_existing_inventory(self):
         self.setup_templates()
         self.writes.clear()

@@ -73,10 +73,16 @@ def base_of(domain):
     return ",".join("DC=" + p for p in str(domain or "").strip().strip(".").split(".") if p)
 
 
+def account_name(name):
+    """1.129.1: DOMAIN\\Group (as Windows writes it) -> Group: one domain (the portal reads one), so the NetBIOS part is dropped."""
+    s = str(name or "").strip()
+    return s.split("\\", 1)[1].strip() if "\\" in s and not is_dn(s) else s
+
+
 def short_name(name):
-    """A group as said on the page: its CN when it is a DN."""
+    """A group as said on the page: its CN when it is a DN, its name without DOMAIN\\ when written so."""
     m = re.match(r"(?i)^\s*cn=((?:\\,|[^,])+)", str(name or ""))
-    return m.group(1).replace("\\,", ",") if m else str(name or "").strip()
+    return m.group(1).replace("\\,", ",") if m else account_name(name)
 
 
 class Reader(object):
@@ -183,7 +189,7 @@ class Reader(object):
         if is_dn(name):
             r = self.search(c, name.strip(), "(objectClass=group)", ["distinguishedName"], "base", missing_ok=True)
             return (name.strip(), "") if r else ("", "not found in AD")
-        n = escape_filter_chars(str(name).strip())
+        n = escape_filter_chars(account_name(name))
         r = self.search(c, base, "(&(objectCategory=group)(|(cn=%s)(sAMAccountName=%s)))" % (n, n), ["distinguishedName"])
         dns = sorted(set(e.get("dn") or "" for e in r) - {""})
         if len(dns) > 1:

@@ -364,7 +364,7 @@ class H(BaseHTTPRequestHandler):
             return self._paged_list(q, p, list((t or {}).get("nodes", [])))
         md = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
         if md:                                                           # 1.78.0: one template (the portal asks again before it launches)
-            t = next((t for t in STATE["templates"][md.group(1)] if t["id"] == int(md.group(2)) and t.get("labels") is not None), None)
+            t = next((t for t in STATE["templates"][md.group(1)] if t["id"] == int(md.group(2))), None)
             return self._send(200, row_of(t)) if t else self._send(404, {"detail": "Not found."})
         m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/(launch|survey_spec)/$", p)
         if m:

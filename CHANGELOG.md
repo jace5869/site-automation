@@ -9,12 +9,19 @@ then run **AAP - set up job templates** (Check, then Run).
 aap_templates_inventory_windows: "<your Windows inventory>"
 ```
 
-The Hosts picker reads a large inventory in one AAP call. A slow first read now shows “Reading the inventory...” and avoids the premature “could not be read” error.
-Windows templates use the configured Windows inventory on creation, and Run updates existing templates that use a different inventory.
-
-- reads no host lists in big pages (an AAP whose host list is slow answers 503 to 100 a page)
-- Check and Run now warn when the portal account cannot read an inventory. Portal setup names each affected publish match,
-  and job template setup warns once for the configured Windows inventory. Give the account **Read** on that inventory in AAP.
+- **Portal AD groups written DOMAIN\Group** (as Windows shows them) are found: the DOMAIN\ part is dropped (one domain). In all.yml write such a name in single quotes ('CORP\Group' - in double quotes a backslash is an escape and the file no longer loads), or the name alone.
+- The Hosts picker loads the inventory in one AAP request and shows progress during a slow first read.
+- Windows template setup creates or moves matching templates in the setup project to the configured Windows inventory.
+- Setup warns when the portal account needs Read access to a published template’s inventory.
+- Catalog jobs that require `machine_windows`, including Active Directory health report, use the Windows filter for picks and launches.
+- Built-in actions check single hosts against enabled hosts in the template’s inventory.
+- If a template changes inventories during a host check, the portal asks you to reopen the job.
+- Missing host variables or cyclic groups stop an inventory refresh. The picker keeps the last good list and shows the reason.
+- While an expired list refreshes, the picker keeps polling and waits for current data to validate a pick.
+- Host search withholds suggestions after a failed refresh or when the listing exceeds its maximum age.
+- A background inventory read times out after two minutes so a later refresh can retry.
+- The portal refuses inventories above 50,000 hosts or 2,000,000 group memberships and reports which limit was exceeded.
+- If AAP returns groups but incomplete host data, the portal asks you to try again.
 
 ## 1.129.0 — 2026-11-25
 

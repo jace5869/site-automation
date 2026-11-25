@@ -12,9 +12,12 @@ import json
 import os
 import socket
 import ssl
+import time
+from concurrent.futures import Future, TimeoutError as FutureTimeout
+from threading import Lock, Thread, local
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 # the credential's variables, by their NAMES: CONTROLLER_* (AAP 2.4 and later), AAP_* (2.5 and later), TOWER_* (older)
 VARS = {"host": ("CONTROLLER_HOST", "AAP_HOSTNAME", "TOWER_HOST"),
@@ -29,6 +32,76 @@ class _NoRedirect(HTTPRedirectHandler):
     """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+_read_context = local()
+
+
+class ReadDeadline:
+    """One wall-clock budget for a background inventory lookup, HTTP response and parsing."""
+
+    def __init__(self, seconds):
+        self.end = time.monotonic() + seconds
+        self.lock = Lock()
+        self.sock = None
+
+    def remaining(self):
+        left = self.end - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("inventory read deadline exceeded")
+        return left
+
+    def watch(self, sock):
+        with self.lock:
+            self.remaining()
+            self.sock = sock
+
+    def run(self, read, *args):
+        # Only the caller publishes the result. A late DNS lookup or parser cannot replace a retry.
+        result = Future()
+
+        def worker():
+            _read_context.deadline = self
+            try:
+                result.set_result(read(*args))
+            except Exception as exc:
+                result.set_exception(exc)
+            finally:
+                del _read_context.deadline
+
+        Thread(target=worker, daemon=True).start()
+        try:
+            value = result.result(timeout=self.remaining())
+        except FutureTimeout:
+            if time.monotonic() < self.end:
+                raise  # A shorter socket timeout from the worker.
+            with self.lock:
+                if self.sock is not None:
+                    # Interrupt even a peer that trickles headers or body bytes inside every socket timeout.
+                    try:
+                        self.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+            raise TimeoutError("inventory read deadline exceeded") from None
+        self.remaining()
+        return value
+
+
+class _DeadlineHandler(HTTPHandler, HTTPSHandler):
+    """Capture the connected socket before urllib starts reading the response headers."""
+    def __init__(self, deadline, context):
+        HTTPSHandler.__init__(self, context=context)
+        self.deadline = deadline
+
+    def do_open(self, http_class, req, **kwargs):
+        deadline = self.deadline
+
+        class Connection(http_class):
+            def getresponse(self):
+                deadline.watch(self.sock)
+                return super().getresponse()
+
+        return super().do_open(Connection, req, **kwargs)
 
 
 def connection(env=None):
@@ -89,17 +162,23 @@ class Api(object):
             req.add_header("Authorization", "Basic " + base64.b64encode(pair).decode())
         # a redirect is an answer, never a path to follow: followed, the Authorization header would go wherever it
         # points (a proxy's login page, another host, plain http)
-        opener = build_opener(_NoRedirect(), HTTPSHandler(context=self.ctx)) if self.conn["host"].startswith("https") \
-            else build_opener(_NoRedirect())
+        deadline = getattr(_read_context, "deadline", None)
+        handlers = [_NoRedirect()]
+        if deadline:
+            handlers.append(_DeadlineHandler(deadline, self.ctx))
+        elif self.conn["host"].startswith("https"):
+            handlers.append(HTTPSHandler(context=self.ctx))
+        opener = build_opener(*handlers)
         try:
-            r = opener.open(req, timeout=self.timeout)
-            raw = r.read()
+            timeout = min(self.timeout, deadline.remaining()) if deadline else self.timeout
+            with opener.open(req, timeout=timeout) as r:
+                raw, status = r.read(), r.getcode()
             try:
                 data = json.loads(raw) if raw else {}
             except ValueError:
                 return -1, {"detail": "the answer to %s %s is not AAP's (HTTP %d, not JSON): the credential's URL must be AAP's own address"
-                                      % (method, path.split("?")[0], r.getcode())}
-            return r.getcode(), data if isinstance(data, dict) else {"results": data}
+                                      % (method, path.split("?")[0], status)}
+            return status, data if isinstance(data, dict) else {"results": data}
         except HTTPError as e:
             try:
                 if 300 <= e.code < 400:

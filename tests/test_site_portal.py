@@ -206,7 +206,7 @@ class Braces(unittest.TestCase):
         v, p = rules.check_values(t, dict(ok, target="web01;id"))
         self.assertIn("not a host name", p["target"])
         v, p = rules.check_values(t, ok, lambda h: False)
-        self.assertIn("not a host of the portal's inventory", p["target"])
+        self.assertIn("not an enabled host of this job's inventory", p["target"])
         v, p = rules.check_values(t, ok, lambda h: None)
         self.assertIn("could not be looked up", p["target"])
         c = a["ckl_import"]
@@ -328,7 +328,7 @@ class Live(unittest.TestCase):
         self.assertNotIn(' disabled>Run', t)
         code, raw, _ = self.req("/actions/act_triage?target=nothere.example.mil&report_job=907&finding_id=eventlog%3A%7B%7B7%7D%7D")
         t = raw.decode()
-        self.assertIn("is not a host of the portal&#x27;s inventory", t)
+        self.assertIn("is not an enabled host of this job&#x27;s inventory", t)
         self.assertIn("braces that start a template", t)
         self.assertIn('value="eventlog:{{7}}"', t)                       # shown as it came, as text: the field to correct
         self.assertIn('<input id="f-report_job" name="report_job" value="907" maxlength="12"', t)
@@ -1746,6 +1746,7 @@ class Found(unittest.TestCase):
     def test_31_empty_groups_and_odd_members(self):
         inv = fake_aap.STATE["inventories"][0]
         inv["groups"]["empty_one"] = []
+        inv["hosts"].append("web*")
         inv["groups"]["odd_one"] = ["web01.example.mil", "web*"]
         try:
             self.portal.aap.inventory_listing(force=True)
@@ -1758,6 +1759,7 @@ class Found(unittest.TestCase):
             self.assertEqual(code, 400, out)
             self.assertIn("cannot be used in a Limit", out["error"])
         finally:
+            inv["hosts"].remove("web*")
             del inv["groups"]["empty_one"], inv["groups"]["odd_one"]
             self.portal.aap.inventory_listing(force=True)
 
@@ -3601,6 +3603,8 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if path.startswith("inventories/3/groups/"):
                 return page([{"id": 7, "name": "web_servers"}])
+            if path.startswith("inventories/3/hosts/?name=web_servers"):
+                return page([])
             if path.startswith("groups/7/all_hosts/"):
                 return page([{"name": "web01", "enabled": True}, {"name": "all", "enabled": True}])
             if path.startswith("inventories/3/hosts/?name=all"):
@@ -3618,6 +3622,8 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if path.startswith("inventories/3/groups/"):
                 return page([{"id": 7, "name": "web_servers"}])
+            if path.startswith("inventories/3/hosts/?name=web_servers"):
+                return page([])
             if path.startswith("groups/7/all_hosts/"):
                 return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": False}])
             if path.startswith("inventories/3/hosts/?name=web02"):
@@ -3786,7 +3792,7 @@ class Codex1(unittest.TestCase):
 
     # P2: a failed read of the inventory keeps the last good listing
     def test_5_a_failed_read_keeps_the_last_good_listing(self):
-        doc = {"all": {}, "_meta": {"hostvars": {}}, "web_servers": {"hosts": ["web01", "web02"]}}
+        doc = {"all": {}, "_meta": {"hostvars": {"web01": {}, "web02": {}}}, "web_servers": {"hosts": ["web01", "web02"]}}
         answer = [200, doc]
         a = self.aap(lambda m, p, b: answer)
         good = a.inventory_listing(force=True)
@@ -3801,7 +3807,7 @@ class Codex1(unittest.TestCase):
 
     def test_5_an_oversized_group_is_never_counted_short(self):
         hosts = ["h%d" % n for n in range(201)]
-        a = self.aap(lambda m, p, b: (200, {"_meta": {"hostvars": {}}, "all": {}, "web_servers": hosts}))
+        a = self.aap(lambda m, p, b: (200, {"_meta": {"hostvars": {h: {} for h in hosts}}, "all": {}, "web_servers": hosts}))
         a.HOST_PAGES_MAX = 1
         got = a.inventory_listing(force=True)
         self.assertTrue(got["truncated"])
@@ -3864,7 +3870,7 @@ class Codex1(unittest.TestCase):
         self.assertIn("for a long time", p.found["error"])
 
     def test_7_a_listing_that_keeps_failing_cannot_validate_a_pick_forever(self):
-        answer = [200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}]
+        answer = [200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {"web01": {}}}}]
         a = self.aap(lambda m, p, b: answer)
         good = a.inventory_listing(force=True)
         answer[:] = 503, {}
@@ -3878,7 +3884,7 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if state["fail"]:
                 return 503, {"detail": "busy"}
-            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}
+            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {"web01": {}}}}
         a = self.aap(route)
         good = a.inventory_listing(force=True)
         state["fail"] = True
@@ -3887,7 +3893,7 @@ class Codex1(unittest.TestCase):
 
     def test_7_a_listing_over_the_page_cap_is_a_part_not_a_freeze(self):
         hosts = ["h%d" % n for n in range(201)]
-        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {}}}))
+        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {h: {} for h in hosts}}}))
         a.HOST_PAGES_MAX = 1
         got = a.inventory_listing(force=True)
         self.assertTrue(got["truncated"])
@@ -3895,7 +3901,7 @@ class Codex1(unittest.TestCase):
 
     def test_7_a_whole_listing_is_not_waited_for_when_the_cap_stops_every_read(self):
         hosts = ["web01"]
-        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {}}}))
+        a = self.aap(lambda m, p, b: (200, {"all": {"hosts": hosts}, "_meta": {"hostvars": {h: {} for h in hosts}}}))
         a.HOST_PAGES_MAX = 1
         good = a.inventory_listing(force=True)
         hosts.extend("h%d" % n for n in range(200))
@@ -3954,7 +3960,7 @@ class Codex1(unittest.TestCase):
         def route(m, path, body):
             if state["fail"]:
                 return 503, {"detail": "busy"}
-            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {}}}
+            return 200, {"all": {"hosts": ["web01"]}, "_meta": {"hostvars": {"web01": {}}}}
         a = self.aap(route)
         a.inventory_listing(force=True)
         self.assertNotIn("stale", a.inventory_items(""))
@@ -3964,14 +3970,14 @@ class Codex1(unittest.TestCase):
             a.inventory_listing(force=True)
             gaps.append(round(a.listing["retry"] - time.time()))
         self.assertEqual(gaps, [15, 30, 60])
-        self.assertRegex(a.inventory_items("")["stale"], r"^Host list from [0-9]{2}:[0-9]{2}, AAP not answering\.$")
+        self.assertRegex(a.inventory_items("")["stale"], r"^Host list from [0-9]{2}:[0-9]{2}, refresh failed \(HTTP 503\)\.$")
         self.assertEqual(len(a.inventory_items("")["items"]), 1)                                              # still serves the picker
 
     def test_8_the_listing_is_kept_and_checked_for_the_same_time(self):
         a = self.aap(lambda m, p, b: (503, {"detail": "busy"}))                                              # AAP does not answer: the listing is what there is
         self.assertEqual(a.listing_max_age(), max(300, sp.KEEP_WHOLE * self.cfg.discover_seconds))
         a.listing = {"hosts": ["web01"], "groups": {}, "bad": set(), "truncated": False, "at": time.time() - a.listing_max_age() + 5}
-        self.assertEqual(a.expand(["web01"])[1], "")                                                         # still fresh enough to check with
+        self.assertIn("try again", a.expand(["web01"])[1])                                              # the attempted refresh failed
         a.listing["at"] -= 10
         self.assertIn("could not be checked", a.expand(["web01"])[1])                                        # and not a second longer
         self.assertIn("web01", json.dumps(a.inventory_items("")))                                            # (the picker may still show it)
@@ -4582,6 +4588,7 @@ class Caps1782(unittest.TestCase):
         cls.portal = sp.Portal(cls.cfg)
         cls.portal.aap.connect()
         cls.portal.aap.resolve(cls.portal.actions)
+        cls.portal.aap.inventory_listing()
         cls.cn = "DOE.JANE.Q.1234567890"
 
     @classmethod

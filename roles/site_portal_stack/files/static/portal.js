@@ -486,6 +486,7 @@ function hostPickers() {
       const wantGroups = !groupsAsked;
       try {
         r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim()) + (box.dataset.inv ? "&inv=" + encodeURIComponent(box.dataset.inv) : "")
+          + (box.dataset.action ? "&action=" + encodeURIComponent(box.dataset.action) : "")
           + (box.dataset.os ? "&os=" + encodeURIComponent(box.dataset.os) : "") + (group ? "&group=" + encodeURIComponent(group) : "") + (wantGroups ? "&groups=1" : ""),
           {signal: controller.signal});
         if (!Array.isArray(r.items)) throw new Error("Incomplete inventory response");
