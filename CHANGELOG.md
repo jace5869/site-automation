@@ -13,6 +13,7 @@ aap_templates_inventory_windows: "<your Windows inventory>"
 - The Hosts picker loads the inventory in one AAP request and shows progress during a slow first read.
 - Windows template setup creates or moves matching templates in the setup project to the configured Windows inventory.
 - Setup warns when the portal account needs Read access to a published template’s inventory.
+- Built-in workflows validate hosts against the inventory their steps share, including when the workflow itself has no inventory. The portal skips jobs with unreadable playbooks and accepts catalog entries with null credentials.
 - Catalog jobs that require `machine_windows`, including Active Directory health report, use the Windows filter for picks and launches.
 - Built-in actions check single hosts against enabled hosts in the template’s inventory.
 - If a template changes inventories during a host check, the portal asks you to reopen the job.

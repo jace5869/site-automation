@@ -165,7 +165,7 @@ class Live(unittest.TestCase):
 
         def route(method, path, body=None):
             if path == "job_templates/%d/" % tid:
-                return 200, {"id": tid, "inventory": INV}
+                return 200, {"id": tid, "inventory": INV, "playbook": "playbooks/disk_space_request.yml", "summary_fields": {"inventory": INV}}
             parts = urllib.parse.urlsplit(path)
             query = urllib.parse.parse_qs(parts.query)
             if parts.path == "inventories/%d/hosts/" % INV:

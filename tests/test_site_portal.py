@@ -3134,7 +3134,7 @@ class Speed1990(unittest.TestCase):
         with open(actions, "w") as fh:
             json.dump({"actions": ACTIONS}, fh)
         self.cfg = sp.Config({"PORTAL_DATA": tmp.name, "PORTAL_ACTIONS": actions, "PORTAL_AAP_URL": "https://controller.example.test"})
-        self.rows = [{"type": kind, "id": index, "name": "Example %02d" % index, "modified": "2026-11-21T00:00:00Z",
+        self.rows = [{"type": kind, "id": index, "playbook": "report.yml", "name": "Example %02d" % index, "modified": "2026-11-21T00:00:00Z",
                       "survey_enabled": True, "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]},
                                                                  "user_capabilities": {"start": True}}}
                      for index, kind in enumerate(["job_template"] * 16 + ["workflow_job_template"], 1)]
@@ -3727,7 +3727,7 @@ class Codex1(unittest.TestCase):
         self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])          # something to show, asked again soon
 
     def test_3_discover_says_when_aap_did_not_answer(self):
-        tpl = {"id": 11, "name": "Some job", "survey_enabled": True, "ask_limit_on_launch": False, "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]}}}
+        tpl = {"id": 11, "name": "Some job", "playbook": "report.yml", "survey_enabled": True, "ask_limit_on_launch": False, "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]}}}
         for code, incomplete in ((503, True), (429, True), (-1, True), (500, True), (403, False), (404, False)):
             def route(m, path, body, code=code):
                 if path.startswith("job_templates/?role_level"):
@@ -4266,7 +4266,7 @@ class Titles1781c(unittest.TestCase):
 
     @staticmethod
     def tpl(i, name, *labels):
-        return {"id": i, "name": name, "survey_enabled": False, "ask_limit_on_launch": False,
+        return {"id": i, "name": name, "playbook": "report.yml", "survey_enabled": False, "ask_limit_on_launch": False,
                 "summary_fields": {"labels": {"count": len(labels) + 1, "results": [{"name": "portal"}] + [{"name": l} for l in labels]}}}
 
     def titles(self, out):
@@ -4439,7 +4439,7 @@ class Home1782(unittest.TestCase):
         cfg = sp.Config(self.env)
 
         def tpl(i, name, labelled=True):
-            return {"id": i, "name": name, "survey_enabled": False, "ask_limit_on_launch": False,
+            return {"id": i, "name": name, "playbook": "report.yml", "survey_enabled": False, "ask_limit_on_launch": False,
                     "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal" if labelled else "other"}]}}}
         mine = [tpl(1, "Runs"), tpl(2, "Not labelled", False)]
         seen = []

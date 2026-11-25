@@ -4,6 +4,7 @@ import copy
 import http.client
 import json
 import os
+import tempfile
 import threading
 import time
 import unittest
@@ -178,18 +179,95 @@ class ScriptListing(unittest.TestCase):
         with patch.object(sp, "SCRIPT_MAX_MEMBERSHIPS", 132, create=True):
             self.assertEqual(sp.script_listing({}, doc, 100)["groups"]["parent9"], sorted(hosts))
 
+    def test_builtin_workflow_launch_checks_the_step_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "actions.json"
+            path.write_text(json.dumps(yaml.safe_load((Path(fixtures.FILES) / "actions.yml").read_text())))
+            cfg = sp.Config({"PORTAL_ACTIONS": str(path), "PORTAL_DATA": tmp, "PORTAL_REQUESTERS": "[]"})
+            portal = sp.Portal(cfg, aap=self.aap)
+            self.aap.ids["act_triage"] = (44, "")
+            nodes = [{"id": jid, "unified_job_template": jid, "summary_fields": {
+                "unified_job_template": {"name": name, "unified_job_type": "job"}}}
+                     for jid, name in ((1, "Linux"), (2, "Windows"))]
+            steps = {1: INV, 2: INV}
+            workflow = {"inventory": None}
+            enabled = False
+            sent = {"target": "server", "report_job": "907", "finding_id": "eventlog:test"}
+
+            def route(method, path, body):
+                if path == "workflow_job_templates/44/":
+                    return 200, workflow
+                if path.startswith("workflow_job_templates/44/workflow_nodes/"):
+                    return 200, {"count": len(nodes), "results": nodes}
+                if path.startswith("job_templates/"):
+                    return 200, {"ask_limit_on_launch": True, "inventory": steps[int(path.split("/")[1])],
+                                 "playbook": "playbooks/act_triage_finding.yml"}
+                if path == "inventories/%d/hosts/?name=server&enabled=true&page_size=2" % INV:
+                    return 200, {"count": 1, "results": [{"name": "server", "enabled": enabled}]}
+                if method == "POST" and path == "workflow_job_templates/44/launch/":
+                    self.assertEqual(body["limit"], "server")
+                    return 201, {"workflow_job": 123}
+                self.fail(path)
+
+            self.api.side_effect = route
+            with patch.object(portal, "refresh"):
+                code, out = portal.launch("DOE.JANE", "127.0.0.1", "act_triage", sent)
+                self.assertEqual(code, 400, out)
+                self.assertIn("not an enabled host", out["problems"]["target"])
+                enabled = True
+                code, out = portal.launch("DOE.JANE", "127.0.0.1", "act_triage", sent)
+                self.assertEqual(code, 201, out)
+                workflow["inventory"] = 3
+                steps[2] = None  # inherits the workflow's inventory, unlike the Linux step
+                self.api.reset_mock()
+                code, out = portal.launch("DOE.JANE", "127.0.0.1", "act_triage", sent)
+                self.assertNotEqual(code, 201)
+                self.assertIn("uses inventory 3", out["error"])
+                self.assertIn("uses inventory %d" % INV, out["error"])
+                self.assertFalse(any(c.args[0] == "POST" for c in self.api.call_args_list))
+
+    def test_job_with_unreadable_playbook_is_unavailable(self):
+        name = "Active Directory health report"
+        portal = sp.Portal.__new__(sp.Portal)
+        portal.aap, portal.cfg = self.aap, self.aap.cfg
+        action = {"aap": {"type": "job", "name": name}, "vars": {"target": {"kind": "inventory_host"}}}
+        for fields in ({}, {"playbook": None}, {"playbook": []}, {"playbook": 1}, {"playbook": "  "}):
+            row = dict(fields, id=20, name=name, inventory=INV)
+            with self.subTest(fields=fields):
+                self.api.return_value = 200, row
+                read = self.aap._read_labelled("job", "job_templates", row, {}, name, ["portal"])
+                self.assertIsNone(read.action)
+                self.assertIn("playbook", read.skipped)
+            with self.subTest(builtin=fields), patch.object(portal, "state", return_value=(20, "")):
+                _, why = portal._action_inventory(name, action)
+                self.assertIn("playbook", why)
+
+    def test_only_boolean_true_enables_a_host(self):
+        for fields in ({}, {"enabled": False}, {"enabled": 1}, {"enabled": "true"}, {"enabled": True}):
+            with self.subTest(fields=fields):
+                row = dict(fields, name="server")
+                self.api.return_value = 200, {"count": 1, "results": [row]}
+                self.assertEqual(self.aap.host_known("server", INV) is True, fields.get("enabled") is True)
+                self.api.side_effect = [(200, {"count": 1, "results": [{"id": 1, "name": "rack"}]}),
+                                        (200, {"count": 0, "results": []}), (200, {"count": 1, "results": [row]})]
+                hosts, _ = self.aap.expand_now(["rack"], INV)
+                self.assertEqual("server" in (hosts or []), fields.get("enabled") is True)
+                self.api.side_effect = None
+
     def test_catalog_windows_filter_for_picker_and_launch(self):
         root = Path(fixtures.ROOT)
         entries = yaml.safe_load((root / "aap/job_templates.yml").read_text())["job_templates"]
         entry = next(t for t in entries if t["name"] == "Active Directory health report")
         paths = [t["playbook"] for t in entries if "machine_windows" in t.get("credentials", [])]
+        entries.append({"playbook": "playbooks/no_credentials.yml", "credentials": None})
         tasks = yaml.safe_load((root / "roles/site_portal_stack/tasks/main.yml").read_text())
         fact = next((t["ansible.builtin.set_fact"]["_portal_windows_playbooks"] for t in tasks
                      if "_portal_windows_playbooks" in t.get("ansible.builtin.set_fact", {})), "{{ [] }}")
         setting = next((t["vars"]["_settings"]["PORTAL_WINDOWS_PLAYBOOKS"] for t in tasks
                         if "PORTAL_WINDOWS_PLAYBOOKS" in t.get("vars", {}).get("_settings", {})), "{{ [] }}")
+        from jinja2 import StrictUndefined
         from jinja2.nativetypes import NativeEnvironment
-        env = NativeEnvironment()
+        env = NativeEnvironment(undefined=StrictUndefined)
         env.tests["contains"] = lambda seq, value: value in seq
         env.filters["to_json"] = json.dumps
         deployed = env.from_string(fact).render(_portal_catalog_doc={"job_templates": entries})
@@ -210,7 +288,7 @@ class ScriptListing(unittest.TestCase):
         def route(method, path, body):
             if "/script/" in path:
                 return 200, self.doc
-            rows = [] if "/groups/" in path else [{"name": linux}]
+            rows = [] if "/groups/" in path else [{"name": linux, "enabled": True}]
             return 200, {"count": len(rows), "results": rows}
         self.api.side_effect = route
         self.assertIn("not a Windows host", portal.limit_hosts(a, {a["limit_from"]: [linux]})[1])
