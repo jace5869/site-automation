@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""1.133.0: the Linux software inventory's controller step (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md):
+"""1.132.0: the Linux software inventory's controller step (playbooks/linux_sw_inventory.yml, docs/LINUX_SW_INVENTORY.md):
 the hosts' reads (roles/sw_inventory/files/sw_read.sh, one file per host in work_dir) parsed here, compared with each
 host's last list (sw-inventory-state.json) and written - every export on its own: one that fails says which, why (an
 SA-SWI code) and the fix, and the others are still written.

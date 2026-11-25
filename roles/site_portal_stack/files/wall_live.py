@@ -1106,12 +1106,34 @@ def _endpoint(text, default_port=443):
     t = str(text or "").strip()
     u = urllib.parse.urlsplit(t if "://" in t else "//" + t)
     if u.scheme not in ("", "https") or not u.hostname or u.username or u.password:
-        raise ValueError("not a host or https address: %r" % t)
+        if u.username or u.password:                           # 1.130.1: never the user or password into the log or the page
+            raise ValueError("an address with a user or password in it (%s): give the host name only" % (u.hostname or "?"))
+        raise ValueError("not a host or https address: %r" % t[:120])
     port = u.port or default_port                              # a bad port: ValueError from urlsplit
     if not 0 < port < 65536:
         raise ValueError("bad port in %r" % t)
     host = u.hostname
     return ("[%s]" % host if ":" in host else host), port
+
+
+def no_source_why(cfg, sources, left_out=None):
+    """1.131.0 (field): {"vmware": why, "storage": why} for a login that is there but gave no source - the wall says that
+    instead of "no login". left_out: {"vcenter": [why ...], "ontap": [why ...]} from sources_from_config's log."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    left_out = left_out or {}
+    kinds = {getattr(s, "kind", "") for s in sources or []}
+    out = {}
+    vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
+    if str(vc.get("user") or "").strip() and vc.get("password") and "vcenter" not in kinds:
+        why = left_out.get("vcenter") or []
+        out["vmware"] = ("vCenter login present but its address was left out: %s - fix portal_wall_vcenters" % "; ".join(why[:3]) if why else
+                         "vCenter login present but no vCenter address: set portal_wall_vcenters")
+    on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
+    if str(on.get("user") or "").strip() and on.get("password") and "ontap" not in kinds:
+        why = left_out.get("ontap") or []
+        out["storage"] = "ONTAP login present but the cluster list is empty or not usable: %s" % (
+            "; ".join(why[:3]) if why else "no cluster (portal_wall_ontap_clusters / ontap_clusters)")
+    return out
 
 
 def sources_from_config(cfg, timeout=30, cafile=None, log=None):

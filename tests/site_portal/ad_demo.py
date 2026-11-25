@@ -22,7 +22,7 @@ ansible.module_utils.site_report_db = site_report_db
 import site_portal as sp  # noqa: E402
 import site_ad_db as adb  # noqa: E402
 import ad_db_filters as dbf  # noqa: E402
-from test_portal_ad import Lite  # noqa: E402
+from test_portal_ad import Lite, copy_ad_static  # noqa: E402
 
 NOW = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
 NOW = NOW - datetime.timedelta(minutes=NOW.minute % 30)
@@ -114,7 +114,10 @@ sp.AD_POLL = 15 if state == "stale" else 60
 portal = sp.Portal(cfg)
 portal.aap.ready = ""
 sys.stdout.flush()
-H = sp.make_handler(cfg, portal, os.path.join(wt, "roles", "site_portal_stack", "files", "static"))
+static = os.path.join(tmp, "static")
+os.mkdir(static)
+copy_ad_static(static)
+H = sp.make_handler(cfg, portal, static)
 
 
 class Front(H):

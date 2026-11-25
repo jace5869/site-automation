@@ -1,7 +1,7 @@
 # Start here: what this is and how the pieces fit
 
 > **Confused by all the moving pieces?** Read [HOW_IT_FITS_TOGETHER.md](HOW_IT_FITS_TOGETHER.md)
-> (or its PDF in `docs/pdf/`). It shows what the code, the inventory, the credentials and the
+> (or its PDF in `guides/`). It shows what the code, the inventory, the credentials and the
 > survey each do, how a setting travels from a YAML file to a host, and how to update the
 > repository safely.
 

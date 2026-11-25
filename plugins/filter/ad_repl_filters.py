@@ -120,12 +120,16 @@ def _next_step(p):
     return ("No error: the link may only replicate on a schedule. Check the site link's schedule.", "repadmin /showrepl %s" % to)
 
 
-def _pairs(repl, now, o, tz):
+def _pairs(repl, now, o, tz, saved=False):
     """The links folded into pairs (from, to): each its worst partition's link, with how many partitions it carries."""
     by = {}
     for ln in repl.get("links") or []:
-        age = _ad.age_hours(ln.get("last_success"), now)
+        age = _ad.age_hours(ln.get("last_success"), now) if now is not None else None    # no read time: no age (Neon #5)
         st, why = link_status(age, int(ln.get("failures") or 0), o)
+        if saved:
+            # ad_link stores the verdict with the job's thresholds and tombstone lifetime; an empty, NULL or unknown one: not
+            # read (grey) - 1.131.0 (Neon #3), never green from the age alone, never a KeyError
+            st = ln.get("now") if ln.get("now") in RANK else "unknown"
         x = dict(ln, age=age, st=st, why=why)
         dst, src, _nc = ident.link_id(ln)
         by.setdefault((src, dst), []).append(x)
@@ -137,6 +141,8 @@ def _pairs(repl, now, o, tz):
                     "nc_dn": w.get("nc_dn") or (w.get("nc") if str(w.get("nc") or "").upper().startswith(("DC=", "CN=")) else ""),
                     "last_success": _ad.time_text(w.get("last_success")), "last_failure": _ad.time_text(w.get("last_failure")),
                     "failures": int(w.get("failures") or 0), "error": str(w.get("error") or ""), "ncs": len(lst)}
+        if saved:
+            pairs[k]["partitions"] = lst  # the portal opens every partition, worst first
         pairs[k]["ls_local"] = _ad._tm.local(pairs[k]["last_success"], tz) if pairs[k]["last_success"] else ""
         pairs[k]["lf_local"] = _ad._tm.local(pairs[k]["last_failure"], tz) if pairs[k]["last_failure"] else ""
     return pairs
@@ -158,9 +164,10 @@ def _say(age):
     return ("%s ago" % _ad.age_text(age)) if age is not None else "never replicated"
 
 
-def _matrix(dcs, pairs, o, site_of):
+def _matrix(dcs, pairs, o, site_of, portal=False):
     """The matrix the atlas and brief looks draw (report_matrix.html.j2): DC x DC by site, or site x site past max_dcs
-    (each column a number, its site in the row of that number); None past FIT_COLS sites (the list instead)."""
+    (each column a number, its site in the row of that number); None past FIT_COLS sites (the list instead).
+    The portal keeps the scrollable site grid and uses each observed cell's pair to open its partition details."""
     labels = {ident.dc_site(d) or NO_SITE: d["site"] or NO_SITE for d in dcs}
     site_keys = {ident.dc_id(d): ident.dc_site(d) or NO_SITE for d in dcs}
     sites = sorted(labels, key=lambda s: (s == NO_SITE, labels[s].lower(), s))
@@ -185,6 +192,8 @@ def _matrix(dcs, pairs, o, site_of):
                 elif (ident.dc_id(d), ident.dc_id(c)) in pairs:
                     p = pairs[(ident.dc_id(d), ident.dc_id(c))]
                     cells.append({"st": p["st"], "text": age_cell(p["age"]), "say": _say(p["age"]), "tip": _tip(p, site_of)})
+                    if portal:
+                        cells[-1]["pair"] = (p["src_id"], p["dst_id"])
                 elif not to["read"]:
                     cells.append({"st": "unknown", "text": "?", "say": "not read",
                                   "tip": "%s → %s\nNot read: %s" % (d["name"], c["name"], to["why"] or "no data")})
@@ -193,14 +202,17 @@ def _matrix(dcs, pairs, o, site_of):
             rows.append({"name": d["name"], "site": labels[s], "site_id": s, "first": by_site[s][0] is d, "span": len(by_site[s]), "cells": cells})
         return _marks({"mode": "dc", "groups": [{"name": labels[s], "site_id": s, "n": len(by_site[s])} for s in sites], "cols": cols, "rows": rows,
                        "legend": legend, "axis": "From ↓ To →"})
-    if len(sites) > FIT_COLS:
+    if len(sites) > FIT_COLS and not portal:
         return None
     # site x site: each cell the worst pair from a DC of the row's site to a DC of the column's
+    site_pairs = {}
+    for (f, t), p in pairs.items():
+        site_pairs.setdefault((site_keys.get(f, NO_SITE), site_keys.get(t, NO_SITE)), []).append(p)
     rows = []
     for a in sites:
         cells = []
         for b in sites:
-            ps = [p for (f, t), p in pairs.items() if site_keys.get(f, NO_SITE) == a and site_keys.get(t, NO_SITE) == b]
+            ps = site_pairs.get((a, b), [])
             unread = [d["name"] for d in by_site[b] if not d["read"]]
             if not ps:
                 cells.append({"st": "unknown" if unread else "none", "text": "?" if unread else "", "say": "not read" if unread else "",
@@ -213,6 +225,8 @@ def _matrix(dcs, pairs, o, site_of):
             if unread:
                 tip += "\nNot read: " + ", ".join(unread)
             cells.append({"st": w["st"], "text": age_cell(w["age"]), "say": _say(w["age"]), "tip": tip})
+            if portal:
+                cells[-1]["pair"] = (w["src_id"], w["dst_id"])
         rows.append({"name": "%s (%d)" % (labels[a], len(by_site[a])), "key": str(len(rows) + 1), "site": "", "first": False, "span": 1,
                      "cells": cells})
     return _marks({"mode": "site", "groups": [], "rows": rows, "legend": legend, "axis": "From site ↓ To site →",

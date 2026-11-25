@@ -11,7 +11,7 @@ import sys
 import build_ops_guide as g
 from actpdf import *  # noqa: F401,F403
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-EE-Guide.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "Site-Automation-EE-Guide.pdf")   # 1.131.0: the built guides live in guides/
 GUIDE = os.path.join(g.REPO, "docs", "EXECUTION_ENVIRONMENT.md")
 EES = os.path.join(g.REPO, "ee")
 FOLDERS = [("windows", "EE 1: Windows, AD and SQL"), ("network", "EE 2: Network (Cisco and Palo Alto)"),

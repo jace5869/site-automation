@@ -1185,6 +1185,193 @@ class Live(unittest.TestCase):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
 
 
+class NeonR131Output(unittest.TestCase):
+    """1.131.0 (Neon): the job output never shows a secret - Raw included - and never crashes on odd AAP data"""
+
+    def test_1_raw_is_redacted(self):
+        from types import SimpleNamespace
+        stdout = ('fatal: [fail01]: FAILED! => {"msg": "auth failed: password=\\"Hunter2\\" API_KEY=\'s3cr3t\'", '
+                  '"invocation": {"module_args": {"token": "tok_123"}}}\nAuthorization: Bearer eyJhbGciOiJIUzI1NiJ9.secret\nok: [web01]')
+        page = sp.job_output_html(SimpleNamespace(job_output_emoji=False), {}, "/portal/jobs/1", "/portal/jobs/1?output=raw", (200, stdout))
+        for secret in ("Hunter2", "s3cr3t", "tok_123", "eyJhbGciOiJIUzI1NiJ9"):
+            self.assertNotIn(secret, page)
+        self.assertIn("Raw AAP output (secrets redacted)", page)
+        self.assertIn("ok: [web01]", page)
+
+    def test_2_redaction_forms(self):
+        cases = ['{"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.secret"}', "{'Authorization': 'Basic dXNlcjpwYXNz'}",
+                 'HTTP 400: "{\\"password\\": \\"Hunter2\\"}"', "token: Bearer eyJhbGciOiJIUzI1NiJ9.secret.sig",
+                 "ssh_key: -----BEGIN RSA PRIVATE KEY-----\nMIIEpSECRETBODY\n-----END RSA PRIVATE KEY-----",
+                 "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktSECRETBODY\n-----END OPENSSH PRIVATE KEY-----",
+                 '"Proxy-Authorization": "Basic dXNlcjpwYXNzSECRET"', "curl -H 'Authorization: Bearer abcdefghSECRET'"]
+        for text in cases:
+            with self.subTest(text=text[:40]):
+                out = sp.redact_output(text)
+                for secret in ("eyJhbGciOiJIUzI1NiJ9", "dXNlcjpwYXNz", "Hunter2", "SECRETBODY", "SECRET"):
+                    self.assertNotIn(secret, out, out)
+        self.assertEqual(sp.redact_output("TASK [x] ok: [h] => changed=1"), "TASK [x] ok: [h] => changed=1")
+        self.assertIn("next line", sp.redact_output("ssh_key: -----BEGIN RSA PRIVATE KEY-----\nX\n-----END RSA PRIVATE KEY-----\nnext line"))
+
+    def test_codex_2_repeatedly_encoded_and_split_blocks(self):
+        inner = json.dumps({"password": "Hunter2"})
+        for text in (json.dumps({"body": json.dumps({"x": inner})}), json.dumps(json.dumps(json.dumps(inner)))):
+            self.assertNotIn("Hunter2", sp.redact_output(text), text)
+        events = [{"event": "verbose", "stdout": "ssh_key: |\n  -----BEGIN RSA PRIVATE KEY-----"},
+                  {"event": "verbose", "stdout": "  MIIEpSECRETBODY"},
+                  {"event": "verbose", "stdout": "  -----END RSA PRIVATE KEY-----"}, {"event": "verbose", "stdout": "ok: [web01]"}, None]
+        out = sp.events_output(events)
+        self.assertNotIn("SECRETBODY", out)
+        self.assertIn("ok: [web01]", out)
+        self.assertNotIn("SECRETBODY", sp.redact_output("MIIEpSECRETBODY\n-----END RSA PRIVATE KEY-----\nok"))
+
+    def test_codex_new2_quoted_multiline_secret(self):
+        for text in ('password: "line1\nSECRETLINE2"\nkeep', "password: 'a\nb\nSECRETLINE3'\nkeep", 'password="a\\"b\nSECRETC" x\nkeep'):
+            out = sp.redact_output(text)
+            self.assertNotIn("SECRET", out, out)
+            self.assertTrue(out.endswith("\nkeep"), out)
+
+    def test_codex_6_progress_feed_skips_odd_events(self):
+        pr = sp.Progress()
+        pr.feed([None, "x", 5, [], {"event": "runner_on_ok", "event_data": "corrupt", "counter": "bad"},
+                 {"event": "runner_on_ok", "host_name": "web01", "counter": 3, "event_data": {"task": "A | b"}}])
+        self.assertIn("web01", pr.hosts)
+        self.assertIsNone(sp.event_line(None))
+
+    def test_6_odd_events_are_skipped(self):
+        for e in ({"event": "runner_on_ok", "event_data": "corrupt"}, {"event": "runner_on_ok", "event_data": []}, None, "x", 5,
+                  {"event": "runner_on_ok", "event_data": {"task_action": 123}}, {"event": "runner_on_ok", "event_data": {"task_action": ["debug"]}},
+                  {"event": "runner_on_failed", "event_data": {"res": "not a dict"}}):
+            with self.subTest(e=repr(e)[:60]):
+                sp.output_event_lines(e)                    # never raises
+                sp.output_censored(e)
+                if isinstance(e, dict):
+                    sp.cause_class(e)
+
+    def test_7_odd_host_summaries(self):
+        rows = [{"host_name": "", "summary_fields": {"host": None}, "ok": 1, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": "web01", "ok": None, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": None, "summary_fields": {"host": {"name": None}}, "ok": 1, "changed": 0, "failures": 0, "dark": 0, "skipped": 0},
+                {"host_name": "db01", "summary_fields": "x", "ok": "3", "changed": -1, "failures": True, "dark": 0, "skipped": 0}]
+        hosts = [sp.host_summary(h) for h in rows]
+        self.assertEqual([h["host"] for h in hosts], ["unknown host", "web01", "unknown host", "db01"])
+        self.assertEqual(hosts[1]["ok"], 0)
+        self.assertEqual((hosts[3]["ok"], hosts[3]["changed"], hosts[3]["failed"]), (0, 0, 0))
+        html_ = sp.output_recap(hosts + [{"host": None, "ok": None, "changed": 0, "failed": 0, "unreachable": 0, "skipped": 0}], False, False)
+        self.assertIn("unknown host", html_)
+
+
+class ReadableOutput(unittest.TestCase):
+    def event(self, event, res=None, **data):
+        return {"event": event, "counter": 1, "event_data": dict({"task": "Inspect", "host": "host-a", "res": res or {}}, **data)}
+
+    def test_event_mapping(self):
+        for event, data, kind in [
+            ("playbook_on_play_start", {"play": "Fleet"}, "play"), ("playbook_on_task_start", {}, "task"),
+            ("runner_on_ok", {}, "ok"), ("runner_on_ok", {"res": {"changed": True}}, "changed"),
+            ("runner_on_skipped", {}, "skipped"), ("runner_on_failed", {}, "failed"),
+            ("runner_on_unreachable", {}, "unreachable"), ("runner_retry", {"res": {"retries": 3, "attempts": 1}}, "retry"),
+            ("warning", {"warning": "Clock skew"}, "warning"),
+            ("runner_on_ok", {"task_action": "ansible.builtin.debug", "res": {"msg": "The plan"}}, "msg")
+        ]:
+            row, = sp.output_event_lines(self.event(event, **data))
+            self.assertEqual(row["kind"], kind)
+            if kind in ("retry", "warning", "msg"):
+                self.assertIn(row["message"], ("2 retries left", "Clock skew", "The plan"))
+        verbose = dict(self.event("verbose"), stdout="[WARNING]: test warning")
+        self.assertEqual(sp.output_event_lines(verbose)[0]["message"], "test warning")
+        self.assertEqual(sp.output_event_lines(dict(verbose, stdout="variable dump")), [])
+        self.assertEqual([r["kind"] for r in sp.output_event_lines(self.event("runner_on_ok", {"warnings": ["warning"]}))], ["warning", "ok"])
+
+    def test_raw_stdout_transport(self):
+        from unittest.mock import Mock, patch
+        body = "\nPLAY [test] ***\r\n  <file> & café\n"
+        response = io.BytesIO(body.encode("utf-8"))
+        response.getcode = lambda: 200
+        opener = Mock()
+        opener.open.return_value = response
+        client = sp.Aap(sp.Config({"PORTAL_AAP_URL": "https://controller.example.test", "PORTAL_AAP_TOKEN": "test"})).api
+        with patch.object(sp.site_aap, "build_opener", return_value=opener):
+            self.assertEqual(client.call("GET", "jobs/1/stdout/?format=txt", plain_text=True), (200, body))
+        self.assertEqual(opener.open.call_args.args[0].get_header("Accept"), "text/plain")
+
+    def test_failure_preview_more_escaping_and_redaction(self):
+        # 1.131.0: a secret's value is redacted to the end of its line (over-redaction on purpose): the long text on its own line
+        text = """<file> password="private words" API_KEY='private words'\nSECRET=private Token=private\n""" + "x" * 2200
+        for kind in ("runner_on_failed", "runner_on_unreachable"):
+            row, = sp.output_event_lines(self.event(kind, {"msg": text, "stderr": "unused"}))
+            self.assertTrue(row["message"].endswith("…"))
+            self.assertNotIn("\n", row["message"])
+            self.assertEqual(len(row["more"]), 2000)
+            self.assertNotIn("private", repr(row))
+            self.assertNotIn("unused", repr(row))
+            body = sp.output_list([row], True, False)
+            self.assertNotIn("<file>", body)
+            preview, more = body.split("<details")
+            self.assertIn("&lt;file&gt;", preview)
+            self.assertIn("<summary>more</summary><pre>&lt;file&gt;", more)
+            self.assertNotIn("x" * 10, preview)
+            self.assertIn("x" * 10, more)
+        row, = sp.output_event_lines(self.event("runner_on_failed", {"msg": "a" * 161}))
+        self.assertEqual(row["message"], "a" * 159 + "…")
+        for res in ({"stderr": "first\nunused", "stdout": "unused"}, {"stdout": "first\nunused"}):
+            row, = sp.output_event_lines(self.event("runner_on_failed", res))
+            self.assertEqual(row["message"], "first")
+            self.assertNotIn("unused", repr(row))
+
+    def test_censored_and_variable_results(self):
+        for kind in ("runner_on_failed", "runner_on_unreachable", "runner_on_ok", "warning"):
+            for scope in ("event", "event_data", "res", "censored", "loop", "stdout"):
+                event = self.event(kind, {"msg": "private", "warnings": ["private"], "stderr": "private"}, task_action="debug")
+                data = event["event_data"]
+                if scope in ("event", "event_data", "res"):
+                    {"event": event, "event_data": data, "res": data["res"]}[scope]["_ansible_no_log"] = True
+                elif scope == "censored":
+                    data["res"]["censored"] = "no_log"
+                elif scope == "loop":
+                    data["res"]["results"] = [{"_ansible_no_log": True}]
+                else:
+                    event["stdout"] = "the output has been hidden due to no_log"
+                self.assertNotIn("private", repr(sp.output_event_lines(event)), (kind, scope))
+        for data in ({"res": {"hostvars": "private"}}, {"res": {"msg": {"var": "private"}}},
+                     {"task_args": {"var": "msg"}, "res": {"msg": "private"}},
+                     {"res": {"msg": "private", "invocation": {"module_args": {"var": "msg"}}}}):
+            row, = sp.output_event_lines(self.event("runner_on_ok", task_action="debug", vars={"x": "private"}, **data))
+            self.assertEqual((row["kind"], row["message"]), ("ok", ""))
+            self.assertNotIn("private", repr(row))
+
+    def test_per_task_folds_check_recap_and_text_mode(self):
+        lines = []
+        for counter, (kind, task, host) in enumerate([
+            ("playbook_on_task_start", "one", ""), ("runner_on_ok", "one", "a"), ("runner_on_failed", "one", "b"),
+            ("playbook_on_task_start", "two", ""), ("runner_on_ok", "two", "a"), ("runner_on_ok", "one", "c")
+        ]):
+            event = self.event(kind, task="Same name", task_uuid=task, host=host, res={"msg": "Failed here"})
+            lines.extend(sp.output_event_lines(dict(event, counter=counter)))
+        base = dict(ok=2, changed=0, failed=0, unreachable=0, skipped=1)
+        hosts = [dict(base, host="a", changed=1), dict(base, host="b", unreachable=1), dict(base, host="c", failed=1), dict(base, host="d")]
+        job = {"readable": lines, "hosts": hosts, "check_mode": True}
+        cfg = sp.Config({})
+        body = sp.job_output_html(cfg, job, "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertIn('aria-hidden="true">🧪</span> Check', body)
+        self.assertIn('aria-hidden="true">🔄</span> would change', body)
+        self.assertIn("2 ok 1 failed 1 unreachable · 1 would change", re.sub("<[^>]+>", "", body))
+        self.assertEqual(re.findall(r'<th scope="row">(.*?)</th>', body), ["c", "b", "a", "d"])
+        self.assertIn('ok</b> on 2 hosts', body)
+        self.assertIn('ok</b> on 1 host', body)
+        self.assertIn('</details></li><li class="out-failed">', body)
+        self.assertIn("Failed here", body)
+        cfg = sp.Config({"PORTAL_JOB_OUTPUT_EMOJI": "false"})
+        body = sp.job_output_html(cfg, job, "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertIn("[CHECK]", body)
+        self.assertIn("[CHANGED] would change", body)
+        for kind, (emoji, marker, _) in sp.OUTPUT_MARKERS.items():
+            self.assertNotIn(emoji, body)
+            self.assertIn("[%s]" % marker, sp.output_marker(kind, False, False))
+        run = sp.job_output_html(cfg, dict(job, check_mode=False), "/jobs/1", "/jobs/1?output=raw", None)
+        self.assertNotIn("would change", run)
+        self.assertNotIn("[CHECK]", run)
+
+
 class Plain(unittest.TestCase):
     """1.78.0: a running job in plain words - the event lines, the cause classes, what a job has done so far, the "Now" line."""
 
@@ -2316,7 +2503,7 @@ class Found(unittest.TestCase):
         self.assertNotIn("Hunter2", h)                                                              # a password: never
         self.assertNotIn("refreshes every 3 s", h)                                                  # it is over: nothing to refresh
         self.assertIn("<b>fail01.example.mil</b> failed</span>", h)                                 # its chip: a task ran and failed
-        self.assertNotIn("14 minutes off", h)                                                       # never the module's own words
+        self.assertIn("14 minutes off", h)                                                          # the redacted failure preview
         self.assertIn('href="/portal/jobs/%d"' % jid, h)                                            # Refresh without scripts
 
     def test_64_a_running_job_and_the_pane(self):
@@ -2656,6 +2843,37 @@ class DeployPlanPages(unittest.TestCase):
         if launched:
             self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
         return wid, jid
+
+    def test_job_output_on_the_live_and_raw_routes(self):
+        from unittest.mock import patch
+        wid, jid = self._vm_workflow(vm_plan())
+        job_path = "jobs/%d/" % jid
+        url = "/jobs/%d?via=%d" % (jid, wid)
+        fake_aap.STATE["jobs"][jid]["limit"] = "host-a,fail-b"
+        api = self.portal.aap.api
+        original = api.call
+        stdout = "\nTASK [Inspect] ***\n<raw>&\r\n  "
+        def route(method, path, body=None, plain_text=False):
+            if plain_text:
+                self.assertEqual((method, path), ("GET", job_path + "stdout/?format=txt"))
+                return 200, stdout
+            code, data = original(method, path, body)
+            if path == job_path:
+                data = dict(data, job_type="check")
+            return code, data
+        with patch.object(api, "call", side_effect=route):
+            pane = self.get(url + "&pane=1")
+            self.assertIn('aria-hidden="true">🧪</span> Check', pane)
+            self.assertIn('aria-hidden="true">🔄</span> would change', pane)
+            self.assertIn("14 minutes off", pane)
+            self.assertNotIn("Hunter2", pane)
+            self.assertIn("What just happened", pane)
+            self.assertIn("via=%d&amp;output=raw#job-output" % wid, pane)
+            raw = self.get(url + "&output=raw")
+            self.assertIn('<pre class="output-raw"><code>%s</code></pre>' % html.escape(stdout), raw)
+            self.assertIn('href="/portal/jobs/%d?via=%d#job-output">Readable' % (jid, wid), raw)
+            self.assertNotIn("14 minutes off", raw)
+            self.assertEqual(self.request(self.handler, url + "&output=raw", cert(RROE))[0], 404)
 
     def test_read_only_no_touch_job_shows_the_outcome(self):
         plan = dict(vm_plan(), phase="no_touch", no_touch=dict(outcome="built", why=[], workflow_job=None))
@@ -3506,8 +3724,8 @@ class Spin1796(unittest.TestCase):
             def __init__(self, st, done):
                 self.st, self.done = st, done
 
-            def progress(self, jid, cn, via=None):
-                return 200, {"done": self.done, "status": self.st, "now": "" if self.done else "Gathering facts", "hosts_line": "",
+            def job_progress(self, jid, view):
+                return {"done": self.done, "status": self.st, "now": "" if self.done else "Gathering facts", "hosts_line": "",
                              "hosts": [{"host": "web01.example.mil", "state": "running"}, {"host": "web03.example.mil", "state": "done"}],
                              "steps": [{"name": "Recheck", "type": "job", "status": "running", "word": "Running", "note": "", "job": None}], "lines": []}
 
@@ -4048,7 +4266,7 @@ class Look(unittest.TestCase):
 
             def token(self, cn):
                 return "tok"
-        Aap.ready, Aap.resolve, Aap.last_info = "", lambda self, a: {}, lambda self, t: {}
+        Aap.ready, Aap.resolve, Aap.last_info = "", lambda self, a: {}, lambda self, tids, builtins: {}
         cfg = sp.Config({"PORTAL_THEME": "ops"})
         t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
         self.assertEqual(len(re.findall(r'<article class="card tcard', t)), 11)                          # exactly the file's actions
@@ -4340,7 +4558,7 @@ class Home1782(unittest.TestCase):
 
     @staticmethod
     def card(name, title, area, wf=False, status="successful", labels=()):
-        return {"name": name, "title": title, "area": area, "line": "", "wf": wf, "labels": list(labels), "approval": False, "off": "", "dialog": True,
+        return {"name": name, "title": title, "area": area, "icon": "job", "changes_servers": False, "line": "", "wf": wf, "labels": list(labels), "approval": False, "off": "", "dialog": True,
                 "last": {"status": status, "finished": "2026-11-19T06:01:00Z"} if status else {}}
 
     def portal(self, cards, found=None, **env):
@@ -4360,7 +4578,7 @@ class Home1782(unittest.TestCase):
                 c("s1", "STIG - recheck", "STIG"), c("d", "Disk cleanup", "Linux"), c("a", "Alpha tool", "alpha")]
 
     def heads(self, h):
-        return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
+        return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp tint-\w+" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
 
     # 1: by area
     def test_1_the_cards_are_grouped_by_area_in_the_platform_order(self):
@@ -4951,6 +5169,91 @@ class Areas1784(unittest.TestCase):
         shutil.rmtree(d, ignore_errors=True)
 
 
+class CardIcons(unittest.TestCase):
+    def test_verbs_in_priority_order(self):
+        rules = [("cancel", "cancel"), ("reboot", "restart"), ("restore", "restore"), ("clean up", "cleanup"),
+                 ("install", "deploy"), ("patch", "patch"), ("space request", "expand"), ("API test", "connect"),
+                 ("health", "health"), ("log analysis", "troubleshoot"), ("security", "stig"), ("CSR", "cert"),
+                 ("snapshot", "snapshot"), ("backup", "backup"), ("pick lists", "sync"), ("settings", "setup"),
+                 ("incident", "ticket"), ("ACT", "ask"), ("inventory", "report")]
+        for i, (_, icon) in enumerate(rules):
+            # Put the highest-priority match last in the title.
+            name = " / ".join(word for word, _ in reversed(rules[i:]))
+            self.assertEqual(sp.card_icon(name, "Windows"), icon, name)
+        for word in ("Act", "task", "auditd", "reporting"):
+            self.assertEqual(sp.card_icon(word, "Linux"), "linux", word)
+
+    def test_override_and_group_fallback(self):
+        self.assertEqual(sp.Config({}).label_icon, "portal-icon:")
+        self.assertEqual(sp.icon_label(["portal-icon:bogus", "portal-icon:users"], "portal-icon:"), "users")
+        self.assertEqual(sp.card_icon("Restore", "Network", "users"), "users")
+        self.assertEqual(sp.card_icon("Restore", "Network", "changes"), "restore")
+        for area, icon in (("Linux", "linux"), ("Windows", "windows"), ("Active Directory", "users"), ("VMware", "server"),
+                           ("Horizon", "desktop"), ("NetApp", "storage"), ("Network", "network"), ("STIG", "stig"),
+                           ("Certificates", "cert"), ("Tickets & incidents", "ticket"), ("ACT", "ask"), ("Admin", "admin"),
+                           ("Other", "job"), ("Custom group", "job")):
+            self.assertEqual(sp.card_icon("Example", area, "unknown"), icon, area)
+
+    def test_changes_servers_word_lists(self):
+        for word in ("restart", "reboot", "shut down", "cancel", "expand", "space request", "deploy", "install", "patch",
+                     "apply", "approved", "allow", "delete", "clean up", "cleanup", "change", "load", "push", "restore"):
+            self.assertTrue(sp.changes_servers("Example - " + word.upper()), word)
+            for exclusion in ("(dry run)", "- check", "plan", "report", "finder", "nothing is sent"):
+                self.assertFalse(sp.changes_servers(word + " " + exclusion), (word, exclusion))
+        for name in ("grow", "resize", "reload", "changed", "check availability"):
+            self.assertFalse(sp.changes_servers(name), name)
+        self.assertTrue(sp.changes_servers("Change the planters"))
+
+    def test_render_from_aap_template_names_and_labels(self):
+        def row(tid, name, *labels):
+            return {"id": tid, "name": name, "summary_fields": {
+                "labels": {"count": len(labels), "results": [{"name": label} for label in labels]}}}
+
+        rows = [row(1, "Deploy settings finder", "portal", "glyph:unknown", "portal-title:Restart", "portal-area:VMware"),
+                row(2, "Restart", "portal", "glyph:users", "portal-title:Report", "public"),
+                row(3, "Certificate restore", "glyph:snapshot")]
+
+        def route(method, path, body):
+            if path.startswith("job_templates/?role_level"):
+                return page(rows)
+            if path.startswith("job_templates/?id__in"):
+                ids = urllib.parse.parse_qs(path.split("?", 1)[1])["id__in"][0].split(",")
+                return page([r for r in rows if str(r["id"]) in ids])
+            if path.startswith("job_templates/?name="):
+                return page([rows[2]])
+            if path.endswith("/launch/"):
+                return 200, {"ask_variables_on_launch": True}
+            return page([])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            actions = os.path.join(tmp, "actions.json")
+            with open(actions, "w") as fh:
+                json.dump({"actions": {"example": {"title": "Example", "who": ["Example user"],
+                                                   "aap": {"type": "job", "name": "Certificate restore"}}}}, fh)
+            cfg = sp.Config({"PORTAL_ACTIONS": actions, "PORTAL_DATA": tmp, "PORTAL_LABEL_ICON": "glyph:",
+                             "PORTAL_AAP_URL": "https://controller.example.test", "PORTAL_AAP_TOKEN": "placeholder"})
+            portal = sp.Portal(cfg, aap=sp.Aap(cfg, api=StubApi(route)))
+            portal.refresh()
+            self.assertNotIn('data-name="example"', sp.home_page(cfg, portal, "Other user"))
+            h = sp.home_page(cfg, portal, "Example user")
+
+        self.assertEqual(h.count('class="card-sprite"'), 1)
+        symbols = re.findall(r'<symbol id="i-([^"]+)"', h)
+        self.assertEqual(len(symbols), 28)
+        self.assertEqual(set(symbols), set(sp.CARD_ICONS))
+        cards = dict(re.findall(r'<li [^>]*data-name="([^"]+)"[^>]*>(.*?)</li>', h, re.S))
+        for key, icon, title, changes in (("jt_1", "deploy", "Restart", False), ("jt_2", "users", "Report", True),
+                                          ("example", "snapshot", "Example", True)):
+            self.assertIn('href="#i-%s"' % icon, cards[key])
+            self.assertIn("<h3>%s</h3>" % title, cards[key])
+            self.assertEqual("Changes servers" in cards[key], changes)
+            self.assertEqual('href="#i-changes"' in cards[key], changes)
+        self.assertIn('class="grp tint-indigo" data-area="VMware"', h)
+        self.assertIn('<span class="tg">public</span>', h)
+        self.assertNotIn("glyph:", h)
+        self.assertNotRegex(h, r"<style|\sstyle=|<script(?![^>]*\ssrc=)")
+
+
 class OffState1784(unittest.TestCase):
     """1.78.4: what can be started and what cannot look different in every look; the text passes WCAG AA, light and dark."""
 
@@ -4987,7 +5290,7 @@ class OffState1784(unittest.TestCase):
                          "PORTAL_AAP_TOKEN": "x", "PORTAL_LABEL": ""})
         p = sp.Portal(cfg)
         p.aap.ready = ""
-        mk = lambda n, off: {"name": n, "title": "Title " + n, "area": "STIG", "line": "A line", "wf": False, "labels": [], "approval": False, "off": off, "dialog": True, "last": {}}   # noqa: E731
+        mk = lambda n, off: dict(Home1782.card(n, "Title " + n, "STIG", status=""), line="A line", off=off)  # noqa: E731
         p.catalog = lambda cn: [mk("on", ""), mk("off", "the template is not in AAP (Disk - clean up one mount)")]
         h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
         on = re.search(r'<li [^>]*data-name="on".*?</li>', h, re.S).group(0)
@@ -5327,7 +5630,6 @@ class Results1782(unittest.TestCase):
         with open(os.path.join(FILES, "site_portal.py")) as fh:
             src = fh.read()
         self.assertNotIn('<p class="muted-line">Technical output', src)                                                      # it read like an error
-        self.assertIn('    tech = ""', src)
 
 
 

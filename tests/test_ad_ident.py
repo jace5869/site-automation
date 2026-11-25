@@ -49,8 +49,9 @@ class OneDomain(unittest.TestCase):
         portal.adb.write(db, NOW, 77, 12, payload)
         model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW)
         app = portal.sp.AdLive(portal.Site(self).cfg(), lambda *_: None, db=Mock(read=lambda **kw: model))
-        app.read_db()
-        return payload, model, json.loads(app.answer()[1])['db']['model']
+        with patch('time.time', return_value=NOW.replace(tzinfo=datetime.timezone.utc).timestamp()):
+            app.read_db()
+            return payload, model, json.loads(app.answer()[1])['db']['model']
 
     def report(self, dcs, known=None, **kwargs):
         return filters.ad_reader_report(dict(ok=True, domain=DOMAIN, read_at=STAMP, dcs=dcs,
@@ -346,13 +347,21 @@ class Element {
   getAttribute() { return ''; }
   addEventListener() {}
   querySelectorAll() { return []; }
+  querySelector(tag) { return this.children.find(e => e.tag === tag) || null; }
   get textContent() { return this.children.map(x => typeof x === 'object' ? x.textContent : x).join(' '); }
+}
+class DOMParser {
+  parseFromString(html) {
+    const node = new Element('div');
+    node.append(html.replace(/<[^>]*>/g, ' '));
+    return {body: {firstElementChild: node}};
+  }
 }
 const root = new Element('main'), toasts = new Element('aside');
 const document = {getElementById: id => id === 'ad' ? root : toasts, documentElement: new Element('html'),
   createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag), querySelector: () => null};
 const fetch = () => new Promise(() => {}), window = {fetch, addEventListener() {}};
-vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {document, window, fetch, setTimeout() {}, clearTimeout() {}, Date});
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {document, window, DOMParser, fetch, setTimeout() {}, clearTimeout() {}, Date});
 window.adPage.draw(JSON.parse(fs.readFileSync(0, 'utf8')));
 console.log(root.textContent);
 """
@@ -496,11 +505,11 @@ class FableBrowser(unittest.TestCase):
         report = self.report([dc()])
         report['repl']['links'] = [{'frm': 'DC02', 'to': 'DC01', 'failures': 'unknown'}]
         a = self.answer(report)
-        r = self.page([a], self.READ + "r.history=q('#ad section:nth-of-type(4) tbody tr');")
+        r = self.page([a], self.READ + "r.history=q('.adp-runs tbody tr');")
         self.assertIn('Rows not kept:', r['text'])
         self.assertTrue(any('Unknown' in row and 'Rows not kept:' in row for row in r['history']))
         a['db']['model']['hist'][0].update(status='warning', c=0, w=0, why='')
-        r = self.page([a], self.READ + "r.badges=q('#ad section:nth-of-type(4) tbody tr td:nth-child(2)');")
+        r = self.page([a], self.READ + "r.badges=q('.adp-runs tbody tr td:nth-child(2)');")
         self.assertEqual(r['badges'], ['Warning'])
 
     def test_9_overdue_sample_on_304_is_not_live(self):

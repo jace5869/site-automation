@@ -1,7 +1,7 @@
 # Credential type: "Windows file share"
 # The account that reads a Windows file share over SMB from the AAP side (no mount) - Evaluate-STIG's answer files the
 # STIG drift report and the STIG recheck copy to each Linux host before it runs (check_stig_evaluate_answers,
-# docs/STIG_DRIFT.md): Read on the share and the folder is enough, that job never writes there. 1.133.0: also the share
+# docs/STIG_DRIFT.md): Read on the share and the folder is enough, that job never writes there. 1.132.0: also the share
 # Linux - software inventory writes its files to (sw_inventory_share, docs/LINUX_SW_INVENTORY.md): Modify on that folder. The user name as
 # user@YOURDOMAIN.MIL (Kerberos - a FIPS execution environment has no NTLM) or DOMAIN\user.
 inputs:

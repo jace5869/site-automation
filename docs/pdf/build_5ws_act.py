@@ -6,6 +6,7 @@ rollout). Content from the ACT-Linux and ACT-Windows READMEs and the ACT guide.
 
     python3 build_5ws_act.py [output.pdf]
 """
+import os
 import sys
 
 from reportlab.lib.pagesizes import landscape
@@ -13,7 +14,7 @@ from reportlab.lib.pagesizes import landscape
 from sapdf import *  # noqa: F401,F403 - actpdf's fonts, palette, styles, md(), helpers in the site-automation look
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-5Ws-Standalone-Brief.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "ACT-5Ws-Standalone-Brief.pdf")   # 1.131.0: the built guides live in guides/
 
 PW, PH = landscape(letter)
 M = 0.42 * inch

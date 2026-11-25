@@ -2192,7 +2192,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_approver_groups` | `[]` | Readers, approvers and requesters from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_gr… (all of it: the role file) |
 | `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
 | `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
-| `portal_ad_card_match` | `"{edipi}*@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at @mil) |
+| `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything. 1.130.1: exact again - a contractor site sets "{edipi}.ctr@mil"; never a * after {edipi}: it would also match the same person's other accounts (1234567890.adm@mil) |
 | `portal_ad_groups_seconds` | `300` | how often the members are read (60 to 3600); 60 s after a failed read |
 | `portal_ldap_server` | (empty) | a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS |
 | `portal_ldap_domain` | `"{{ ad_reader_domain \| default('') }}"` | the domain's DNS name (its DCs from DNS; the base DN from it) |
@@ -2218,6 +2218,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow step with this label too keeps its own card (a useful report alone) |
 | `portal_area_rules` | `[]` | 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins) |
 | `portal_label_area` | `"portal-area:"` | a label that starts with this puts the card in an area (the rest of the label is its name) |
+| `portal_label_icon` | `"portal-icon:"` | prefix for an optional card icon label, e.g. portal-icon:users (see Card icons in docs/SITE_PORTAL.md) |
 | `portal_approval_required` | `[]` | template names that are marked "approval" without the label |
 | `portal_inventories_max` | `10` | 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason |
 | `portal_limit_max` | `50` | a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500) |
@@ -2230,7 +2231,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_aap_ui` | (empty) | AAP's address for the "Open in AAP" links, as people open it ("" = portal_aap_url) |
 | `portal_aap_timeout` | `30` | seconds an AAP call may take |
 | `portal_trust_host_cas` | `true` | the service trusts what this server trusts (/etc/pki/ca-trust): AAP's certificate |
-| `portal_job_events` | `300` | a job page shows its last this many lines of output (the rest is in AAP) |
+| `portal_job_events` | `300` | recent AAP events to show in readable job output |
+| `portal_job_output_emoji` | `true` | show emoji beside status words in job output (false uses text markers such as [OK]) |
 | `portal_check_jinja` | `true` | read AAP's ALLOW_JINJA_IN_EXTRA_VARS and warn when it is "always" |
 | `portal_own_nginx` | `false` | ---- portal_own_nginx: true - its own nginx with TLS and client certificates, for a server of its own ----------------- |
 | `portal_nginx_image` | `docker.io/library/nginx:stable` | pin the tag your site uses (an enclave: its registry's copy) |
@@ -2276,8 +2278,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_high_minutes` | `15` | ... for this many minutes or longer: warning (shorter spikes stay off the wall) |
 | `portal_wall_maintenance_expected` | `[]` | hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in maintenance: warning |
 | `portal_wall_vm_heartbeat` | `true` | a powered-on VM whose VMware Tools heartbeat is red: critical (false = off) |
-| `portal_wall_site_pattern` | (empty) | the site of a cluster / host / datastore: the regex's first group on its name; "" = a 4-letter, 2-digit prefix (SITA01) |
-| `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); none = the sites as a list |
+| `portal_wall_site_pattern` | `"{{ netmap_site_pattern \| default('', true) }}"` | the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01) |
+| `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approver_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |

@@ -132,9 +132,9 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_ad_card_attribute: userPrincipalName
 
 ## its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match
-## anything (1.130.0: {edipi}*@mil - 1234567890@mil and 1234567890.CTR@mil alike, still ending at
-## @mil)
-# portal_ad_card_match: "{edipi}*@mil"
+## anything. 1.130.1: exact again - a contractor site sets "{edipi}.ctr@mil"; never a * after
+## {edipi}: it would also match the same person's other accounts (1234567890.adm@mil)
+# portal_ad_card_match: "{edipi}@mil"
 
 ## how often the members are read (60 to 3600); 60 s after a failed read
 # portal_ad_groups_seconds: 300
@@ -238,6 +238,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a label that starts with this puts the card in an area (the rest of the label is its name)
 # portal_label_area: "portal-area:"
 
+## prefix for an optional card icon label, e.g. portal-icon:users (see Card icons in
+## docs/SITE_PORTAL.md)
+# portal_label_icon: "portal-icon:"
+
 ## template names that are marked "approval" without the label
 # portal_approval_required: []
 
@@ -298,8 +302,11 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the service trusts what this server trusts (/etc/pki/ca-trust): AAP's certificate
 # portal_trust_host_cas: true
 
-## a job page shows its last this many lines of output (the rest is in AAP)
+## recent AAP events to show in readable job output
 # portal_job_events: 300
+
+## show emoji beside status words in job output (false uses text markers such as [OK])
+# portal_job_output_emoji: true
 
 ## read AAP's ALLOW_JINJA_IN_EXTRA_VARS and warn when it is "always"
 # portal_check_jinja: true
@@ -481,12 +488,13 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a powered-on VM whose VMware Tools heartbeat is red: critical (false = off)
 # portal_wall_vm_heartbeat: true
 
-## the site of a cluster / host / datastore: the regex's first group on its name; "" = a 4-letter,
-## 2-digit prefix (SITA01)
-# portal_wall_site_pattern: ""
+## the site of a cluster / host / datastore: the regex's first group on its name; default the
+## network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01)
+# portal_wall_site_pattern: "{{ netmap_site_pattern | default('', true) }}"
 
 ## the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude,
-## latitude); none = the sites as a list
+## latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the
+## sites as a list
 # portal_wall_site_places: {}
 
 ## Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback
@@ -591,6 +599,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## no success for this long -> Low in the replication matrix (one site link schedule missed; 0 = no
 ## Low)
 # ad_repl_low_hours: 4
+
+## more DCs than this: the matrix is site x site, each cell the worst link (12 at most: what fits
+## 800 px)
+# ad_repl_matrix_max_dcs: 12
 
 ## an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301}
 # ad_site_map: {}

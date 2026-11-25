@@ -84,7 +84,7 @@ def section(title, first):
 
 
 def code(text, label=None):
-    # 1.133.0: a TAB shown as spaces to the next stop of 8 (a PDF font draws none: the shield file's rows ran together)
+    # 1.132.0: a TAB shown as spaces to the next stop of 8 (a PDF font draws none: the shield file's rows ran together)
     t = actpdf.code(text.expandtabs(8) if isinstance(text, str) else text, label)
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.6, RULE), ("ROUNDEDCORNERS", [5, 5, 5, 5])]))
     return t

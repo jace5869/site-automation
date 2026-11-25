@@ -38,6 +38,15 @@ import site_ad_db as adb  # noqa: E402
 JDOE = "CN=DOE.JANE.Q.1234567890,OU=CONTRACTOR,OU=PKI,O=U.S. Government,C=US"
 
 
+def copy_ad_static(dest):
+    """The same shared assets as Site portal - deploy, for the browser tests and demo."""
+    for role, names in (("ad_report", ("admap.css", "admap.js")), ("netmap_report", ("world-land.js", "maplabel.js"))):
+        for name in names:
+            shutil.copy(os.path.join(ROOT, "roles", role, "files", "web", name), dest)
+    for name in ("ad-page.js", "ad-page.css", "portal.css", "portal-theme.js", "portal.js"):
+        shutil.copy(os.path.join(FILES, "static", name), dest)
+
+
 def utc(minutes_ago):
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(time.time() - minutes_ago * 60))
 
@@ -234,6 +243,157 @@ def live(lite, site, **kw):
                   db=sp.AdDb(None, connect=lambda: lite, mark="?") if lite is not None else None)
     a.cfg.ad_swis_why = kw.get("swis_why", "")
     return a
+
+
+class ReplicationPage(unittest.TestCase):
+    """Write the job's rows, then read the same run through the portal's normal reader."""
+    def setUp(self):
+        import datetime as dt
+        self.db = Lite()
+        self.addCleanup(self.db.db.close)
+        self.at = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+        self.dcs = [{"dc": dc, "site": site, "domain": "corp.example.mil", "read": True} for dc, site in
+                    (("DC01", "SITEA"), ("DC02", "SITEB"), ("DC03", "SITEA"), ("DC04", "SITEC"))]
+        self.links = []
+        self.cfg = Site(self).cfg()
+
+    def link(self, src, dst, hours, nc="CN=Configuration", failures=0, error=""):
+        import datetime as dt
+        last = (self.at - dt.timedelta(hours=hours)).isoformat() if hours is not None else ""
+        self.links.append(dict(frm=src, to=dst, nc=nc, nc_dn=nc, last_success=last, failures=failures, error=error))
+
+    def read(self, **opts):
+        self.cfg.netmap_opts = opts
+        repl = {"now": self.at.isoformat(), "dcs": [dict(d, name=d["dc"], read=d["dc"] != "DC04") for d in self.dcs],
+                "links": self.links}
+        problems = [{"dc": "DC02", "object": "DC02", "text": "DC problem <recorded>", "severity": "warning"}]
+        ad = {"dcs": self.dcs, "repl": repl, "problems": problems}
+        adb.write(self.db, self.at, 1, 1, dbf.ad_db_payload(ad, af.ad_live_block(ad, self.dcs)))
+        self.db.commit()
+        reader = sp.AdLive(self.cfg, sp.Log(None), db=sp.AdDb(self.cfg, connect=lambda: self.db, mark="?"))
+        reader.read_db()
+        return reader
+
+    def test_boundaries_and_direction(self):
+        cases = [(4 - 1 / 3600, "ok"), (4, "low"), (6 - 1 / 3600, "low"), (6, "warning"),
+                 (24 - 1 / 3600, "warning"), (24, "critical"), (None, "warning")]
+        for hours, status in cases:
+            with self.subTest(hours=hours):
+                self.links = []
+                self.link("DC01", "DC02", hours)
+                rep = self.read().dbm["replication"]
+                self.assertEqual(rep["ordered"][0]["st"], status)
+                mx = rep["matrix"]
+                self.assertEqual([(g["name"], g["n"]) for g in mx["groups"]], [("SITEA", 2), ("SITEB", 1), ("SITEC", 1)])
+                self.assertEqual([c["name"] for c in mx["cols"]], ["dc01", "dc03", "dc02", "dc04"])
+                cells = mx["rows"][0]["cells"]
+                self.assertEqual([c["st"] for c in cells], ["self", "none", status, "unknown"])
+                self.assertEqual(cells[2]["pair"], ("dc01", "dc02"))
+                self.assertEqual(cells[3]["text"], "?")
+                self.assertEqual(mx["rows"][2]["cells"][0]["st"], "none")
+                if hours is None:
+                    self.assertEqual(cells[2]["text"], "—")
+
+    def test_worst_partition_site_grid_and_map(self):
+        self.link("DC01", "DC02", 1)
+        self.link("DC01", "DC02", 6, nc="CN=Schema")
+        self.link("DC03", "DC02", 24)
+        self.link("DC02", "DC01", 4)
+        self.link("DC01", "DC03", 0.1)
+        rep = self.read(ad_repl_matrix_max_dcs=3, sites={"SITE-A": {"lat": 1, "lon": 2}, "SITEB": {"lat": 3, "lon": 4}}).dbm["replication"]
+        self.assertEqual(rep["matrix"]["mode"], "site")
+        cells = rep["matrix"]["rows"][0]["cells"]
+        self.assertEqual((cells[1]["pair"], cells[1]["text"]), (("dc03", "dc02"), "24h"))
+        self.assertEqual(cells[2]["st"], "unknown")
+        self.assertEqual([(p["src_id"], p["st"], p["ncs"]) for p in rep["ordered"]],
+                         [("dc03", "critical", 1), ("dc01", "warning", 2), ("dc02", "low", 1), ("dc01", "ok", 1)])
+        topology = rep["map"]
+        self.assertEqual([s["p"] for s in topology["sites"]], [[1, 2], [3, 4], None])
+        self.assertEqual([(x["a"], x["b"], x["cls"]) for x in topology["links"]], [("SITEA", "SITEB", "critical")])
+        self.assertEqual(topology["inside"]["SITEA"][0]["cls"], "ok")
+
+    def test_script_free_details_and_escaping(self):
+        nc = 'CN=Schema</th><script>"&</script>'
+        self.link("DC01", "DC02", 0.2)
+        self.link("DC01", "DC02", 6, nc=nc, failures=3, error="1722")
+        self.link("DC03", "DC01", 1, error='<img src=x onerror="x">')
+        reader = self.read()
+        page = sp.ad_page(self.cfg, "reader", {}, reader.initial_matrix())
+        self.assertIn('<table aria-label="Replication matrix">', page)
+        self.assertIn('title="Not replication partners">·', page)
+        self.assertIn('title="Not read">?', page)
+        key = sp.ad_replication.panel_id("dc01", "dc02")
+        self.assertIn('href="#%s"' % key, page)
+        self.assertIn('id="%s"' % key, page)
+        for value in ("cn=configuration", "cn=schema&lt;/th&gt;&lt;script&gt;&quot;&amp;&lt;/script&gt;",
+                      "&lt;img src=x onerror=&quot;x&quot;&gt;", "1722 - the RPC server is unavailable", "<td>3</td>",
+                      "repadmin /showrepl dc02 /verbose", ">Copy</button>"):
+            self.assertIn(value, page)
+        self.assertNotRegex(page, r'<script>|<img src=x| style=')
+        d = next(d for d in reader.dbm["dcs"] if d["dc"] == "dc02")
+        self.assertEqual(d["problem_texts"], ["DC problem <recorded>"])
+        self.assertTrue(all(s["p"] is None for s in reader.dbm["replication"]["map"]["sites"]))
+
+    def neon_r131(self, sql, *args):
+        """1.131.0 (Neon #3-#5): a stored row changed under the portal - then read again"""
+        reader = self.read()
+        self.db.db.execute(sql, args)
+        self.db.db.commit()
+        reader.read_db()
+        return reader
+
+    def test_neon_r131_3_an_empty_or_unknown_link_status_is_grey(self):
+        for status in ("", "info", "bogus"):                     # (the column is NOT NULL; the reader treats None as "" too)
+            with self.subTest(status=status):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_link SET status = ?", status)
+                page = sp.ad_page(self.cfg, "reader", {}, reader.initial_matrix())     # never a KeyError
+                self.assertEqual(reader.dbm["replication"]["ordered"][0]["st"], "unknown")
+                self.assertIn("Not read", page)
+                json.loads(reader.answer()[1])
+
+    def test_neon_r131_4_a_null_partition(self):
+        self.link("DC01", "DC02", 0.1)
+        reader = self.neon_r131("UPDATE ad_link SET nc_dn = '', nc = ''")     # (NOT NULL columns: empty is what can be stored)
+        page = sp.ad_page(self.cfg, "reader", {}, reader.initial_matrix())
+        self.assertIn("unknown partition", page)
+
+    def test_neon_r131_5_no_read_time_is_stale(self):
+        for at in ("", "bad-date"):
+            with self.subTest(at=at):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_run SET read_at = ?", at)
+                fallback = reader.initial_matrix()                                     # never a TypeError
+                self.assertIn("? AD job, time not known", fallback)
+                self.assertNotIn("s-ok", fallback)
+
+    def test_codex_5_zero_or_bad_date_is_old_in_the_api_too(self):
+        for at in ("0000-00-00 00:00:00", "", "bad-date"):
+            with self.subTest(at=at):
+                self.links = []
+                self.link("DC01", "DC02", 0.1)
+                reader = self.neon_r131("UPDATE ad_run SET read_at = ?", at)          # never a ValueError
+                answer = json.loads(reader.answer()[1])["db"]["model"]
+                self.assertTrue(answer["run"]["old"], answer["run"])
+                self.assertNotIn("s-ok", answer["matrix_html"])
+        self.assertIsNone(sp.AdDb._dt("0000-00-00 00:00:00"))
+
+    def test_old_job_never_shows_healthy_cells(self):
+        import datetime as dt
+        self.at -= dt.timedelta(minutes=self.cfg.ad_old_minutes + 1)
+        self.link("DC01", "DC02", 0.1)
+        reader = self.read()
+        fallback = reader.initial_matrix()
+        self.assertIn("? AD job,", fallback)
+        answer = json.loads(reader.answer()[1])["db"]["model"]
+        self.assertTrue(answer["run"]["old"])
+        for markup in (answer["matrix_html"], fallback):
+            self.assertIn('s-unknown" title="Stale">?', markup)
+            self.assertNotIn("s-ok", markup)
+            self.assertNotIn('class="c-ok"', markup)
+            self.assertIn("repadmin /showrepl dc02 /verbose", markup)
 
 
 class Bare(Lite):
@@ -649,7 +809,8 @@ class Routes1012(unittest.TestCase):
     def test_5_the_deploy_ships_the_files(self):
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
             t = fh.read()
-        for n in ("site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "site_report_db.py", "site_ad_ident.py", "static/ad-page.js", "static/ad-page.css"):
+        for n in ("ad_replication.py", "ad_filters.py", "ad_repl_filters.py", "static/admap.js", "static/admap.css",
+                  "site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "site_report_db.py", "site_ad_ident.py", "static/ad-page.js", "static/ad-page.css"):
             self.assertIn("dest: %s}" % n, t)
         for k in ("PORTAL_AD:", "PORTAL_AD_SECONDS:", "PORTAL_AD_OLD_MINUTES:", "PORTAL_AD_TEMPLATE:", "site-portal-reportdb"):
             self.assertIn(k, t)
@@ -658,11 +819,13 @@ class Routes1012(unittest.TestCase):
         # the portal's copy of the readers: site_time beside them, no plugins/ folder, no ansible
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
-        shutil.copy(os.path.join(ROOT, "plugins", "filter", "ad_swis_filters.py"), d)
-        for n in ("site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py", "site_report_db.py", "site_ad_ident.py"):
+        shutil.copy(os.path.join(FILES, "ad_replication.py"), d)
+        for n in ("ad_swis_filters.py", "ad_filters.py", "ad_repl_filters.py"):
+            shutil.copy(os.path.join(ROOT, "plugins", "filter", n), d)
+        for n in ("site_ad_layer.py", "site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py", "site_report_db.py", "site_ad_ident.py"):
             shutil.copy(os.path.join(ROOT, "plugins", "module_utils", n), d)
         out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); sys.modules['ansible'] = None; "
-                              "import ad_swis_filters, site_ad_swis, site_report_db; print('ok')" % d],
+                              "import ad_replication, ad_swis_filters, site_ad_swis, site_report_db; print('ok')" % d],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         self.assertEqual(out.stdout.strip(), "ok", out.stdout)
         with open(os.path.join(FILES, "start.sh")) as fh:
@@ -730,8 +893,7 @@ class Browser1012(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d)
         cfg = Site(self).cfg(PORTAL_THEME=look, PORTAL_MOTION="off" if motion_off else "auto")
         html = sp.ad_page(cfg, "DOE.JANE.Q.1234567890", {}).replace("/portal/static/", "")
-        for n in ("ad-page.js", "ad-page.css", "portal.css", "portal-theme.js"):
-            shutil.copy(os.path.join(FILES, "static", n), d)
+        copy_ad_static(d)
         with open(os.path.join(d, "banner.css"), "w") as fh:
             fh.write("")
         with open(os.path.join(d, "stub.js"), "w") as fh:
@@ -759,12 +921,12 @@ class Browser1012(unittest.TestCase):
         return json.loads(m.group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
 
     READ = ("var q=function(s){return [].map.call(document.querySelectorAll(s),function(x){return x.textContent.trim()})};"
-            "r.h2=q('#ad section.sec > h2');r.tiles=q('.adp-tiles .tile .k');r.tv=q('.adp-tiles .tile .v');r.tnotes=q('.adp-tiles .tile .n');r.notes=q('#ad .note');"
+            "r.h2=Array.from(document.querySelectorAll('#ad section.sec > h2'),h=>h.firstChild.textContent);r.tiles=q('.adp-tiles .tile .k');r.tv=q('.adp-tiles .tile .v');r.tnotes=q('.adp-tiles .tile .n');r.notes=q('#ad .note');"
             "r.live=q('.adp-live .l').join('');r.link=(document.querySelector('.adp-live a')||{}).href||'';"
             "r.dcs=[].map.call(document.querySelectorAll('.adp-dcs tbody tr'),function(tr){return [tr.cells[0].querySelector('b').textContent,tr.className,tr.cells[2].textContent,"
             "tr.cells[3].textContent,tr.querySelectorAll('.adp-trend i').length,tr.querySelectorAll('.adp-trend i.k-critical').length,tr.cells[5].textContent]});"
-            "r.links=q('#ad section:nth-of-type(3) tbody tr');r.bars=document.querySelectorAll('.adp-chart rect.bc').length;"
-            "r.runs=document.querySelectorAll('#ad section:nth-of-type(4) tbody tr').length;"
+            "r.links=q('.adp-list-view tbody tr');r.bars=document.querySelectorAll('.adp-chart rect.bc').length;"
+            "r.runs=document.querySelectorAll('.adp-runs tbody tr').length;"
             "r.toasts=q('.adp-toast b');r.flash=document.querySelectorAll('.adp-flash').length;"
             "r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;")
 
@@ -774,9 +936,8 @@ class Browser1012(unittest.TestCase):
             for w in (1280, 800):
                 r = self.page([a], self.READ, look, w)
                 self.assertNotIn("err", r, (look, w))
-                self.assertEqual(r["h2"][:4], ["At a glance", "Domain controllers3worst first · a square is one run, oldest left",
-                                               "Replication links that need a look1as of " + a["db"]["model"]["run"]["as_of"][11:],
-                                               "DCs with a problem, last 7 daysthe worst run of each 2 hours; the numbers: the runs below"], (look, w))
+                self.assertEqual(r["h2"], ["At a glance", "Replication matrix", "Replication map", "Domain controllers",
+                                           "DCs with a problem, last 7 days"], (look, w))
                 self.assertEqual(len(r["tiles"]), 8)
                 self.assertEqual(r["dcs"][0][:6], ["dc03", "r-critical", "Critical", r["dcs"][0][3], 48, 8], (look, w))
                 self.assertRegex(r["dcs"][0][3], r"^since (\d{4}-\d\d-\d\d )?\d\d:\d\d UTC · 8 runs$")   # just after midnight UTC the runs began yesterday: its date said
@@ -788,8 +949,47 @@ class Browser1012(unittest.TestCase):
                 self.assertEqual(r["notes"], [])
                 self.assertGreaterEqual(r["bars"], 1)
                 self.assertEqual(r["runs"], 8)
-                self.assertRegex(r["links"][0], r"failing, no success since \d{4}-\d\d-\d\d \d\d:\d\d UTC")   # another day: its date said
+                self.assertIn("dc01 → dc03", r["links"][0])
+                self.assertIn("Critical", r["links"][0])
+                self.assertIn("8524", r["links"][0])
                 self.assertEqual(r["side"], 0, (look, w))                    # no sideways scroll
+
+    def test_replication_controls_and_map(self):
+        a = self.answer()
+        a["db"]["model"]["dcs"][0]["problem_texts"] = ["DC check <em>saved text</em>"]
+        js = """
+          const grid = document.querySelector('.adp-grid'), first = grid.querySelector('a');
+          first.click();
+          const panel = document.querySelector('.adp-panel:target');
+          r.command = panel.querySelector('code').textContent;
+          r.copy = !panel.querySelector('.adp-copy').hidden;
+          document.querySelector('label[for=ad-list-view]').click();
+          r.list = document.querySelector('.adp-list-view').offsetWidth > 0 && !grid.offsetWidth;
+          r.map = !!document.querySelector('.adp-map svg .am-l.k-critical');
+          document.querySelector('.adp-map .am-s').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter'}));
+          r.open = !!document.querySelector('.adp-map .am-ring');
+          document.querySelector('.adp-dcs a').click();
+          const dc = document.querySelector('.adp-panel:target');
+          r.dc = dc.textContent; r.hasMarkup = !!dc.querySelector('em');
+          r.chips = document.querySelectorAll('#ad section.sec > h2 .adp-fresh').length;
+        """
+        r = self.page([a], js)
+        self.assertEqual(r["command"], "repadmin /showrepl dc03 /verbose")
+        self.assertTrue(r["copy"] and r["list"] and r["map"] and r["open"], r)
+        self.assertIn("dcdiag: Replications failed", r["dc"])
+        self.assertIn("DC check <em>saved text</em>", r["dc"])
+        self.assertFalse(r["hasMarkup"])
+        self.assertEqual(r["chips"], 5)
+
+    def test_stale_map_and_dc_are_unknown(self):
+        a = self.answer()
+        a["db"]["model"]["run"]["old"] = True
+        js = """r.lines = [...document.querySelectorAll('.am-l')].map(e=>e.getAttribute('class'));
+                r.state = document.querySelector('.adp-dcs tbody tr td:nth-child(3)').textContent;
+                r.grid = document.querySelector('.adp-grid').querySelectorAll('.s-ok').length;"""
+        r = self.page([a], js)
+        self.assertTrue(r["lines"] and all("k-unknown" in c for c in r["lines"]))
+        self.assertEqual((r["state"], r["grid"]), ("?", 0))
 
     def test_2_each_state_said(self):
         r = self.page([self.answer(db=False)], self.READ)
@@ -1205,13 +1405,13 @@ class CodexBBrowser1012(unittest.TestCase):
         db = one_run(mut)
         a = live(db, Site(self))
         a.read_db()
-        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('#ad section:nth-of-type(4) tbody tr td:nth-child(2)')||{}).textContent;")
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('.adp-runs tbody tr td:nth-child(2)')||{}).textContent;")
         self.assertTrue(any(n.startswith("Rows not kept: the AD job could not make") for n in r["notes"]), r["notes"])
         self.assertEqual(r["badge"], "Unknown")
         nodc = one_run(payload_mut=lambda p: p.update(dcs=[], links=[], status="critical"))
         a = live(nodc, Site(self))
         a.read_db()
-        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('#ad section:nth-of-type(4) tbody tr td:nth-child(2)')||{}).textContent;")
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('.adp-runs tbody tr td:nth-child(2)')||{}).textContent;")
         self.assertEqual(r["badge"], "Critical")                         # 0 DCs critical, but the run itself failed
 
 
@@ -1284,7 +1484,7 @@ class CodexCBrowser1012(unittest.TestCase):
         r = self.page([json.loads(a.answer()[1])], self.READ)
         self.assertTrue(any(n.startswith("Replication was not read in full in this run: Replication read in full on 0 of 3") and "The links below were seen" in n
                             for n in r["notes"]), r["notes"])
-        self.assertEqual(len(r["links"]), 1)
+        self.assertEqual(len(r["links"]), 2)  # both observed pairs, including the healthy pair
         self.assertIn("dc01", r["links"][0])
         i = r["tiles"].index("Replication failing")
         self.assertEqual(r["tv"][i], "1 link")
@@ -1297,7 +1497,7 @@ class CodexCBrowser1012(unittest.TestCase):
         one_run(db=db, job=9001)                                       # a good run after it
         a = live(db, Site(self))
         a.read_db()
-        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badges=q('#ad section:nth-of-type(4) tbody tr td:nth-child(2)');")
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badges=q('.adp-runs tbody tr td:nth-child(2)');")
         self.assertEqual(r["badges"][:2], ["OK", "Unknown"])         # newest first: the good run, then the failed one
 
     def test_9_an_answer_that_cannot_be_drawn_is_a_failed_poll(self):

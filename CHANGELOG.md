@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.133.0 — 2026-11-25
+## 1.132.0 — 2026-11-25
 
 **To set up:** run **AAP - set up job templates** with `aap_templates_only: ["Linux - software inventory"]`; for the share,
 attach the **Windows file share** credential and set `sw_inventory_share`; for the email, `report_email_to`.
@@ -23,6 +23,53 @@ Run it with Check, then schedule it nightly at 02:00 with your Limit.
   listed with a reason in plain words; the report goes out even when no host was reached.
 - Tests: `tests/test_sw_inventory.py`; `tests/swinv/run_sw_inventory_test.sh` (UBI 8, 9, 10 over podman, both
   ansible-core versions).
+
+## 1.131.0 — 2026-11-25
+
+**To set up:** run **Site portal - deploy**. Nothing else is needed; the options below are optional. The guides (PDFs) moved
+from `docs/pdf/` to `guides/` at the top of the repository: after applying, delete the old PDFs in `docs/pdf/` (the zip
+cannot remove them).
+
+- **Card icons on the Actions page.** Each card has an icon from what the job does (restart, clean up, deploy, report ...), else
+  from its group; the tile is tinted by group. A **Changes servers** chip (pen) marks jobs whose name says they change
+  something; a plan, check, report, finder or "nothing is sent" never gets it. Optional: the label `portal-icon:<name>` on an
+  AAP template picks its icon (the names: docs/SITE_PORTAL.md, *Card icons*).
+- **Readable job output.** The live job view groups results by task (ok lines folded per task), shows a failed task's reason
+  in one short line (redacted; the rest behind *more*), and lists failed and unreachable hosts first in the recap. Check runs
+  say **would change**. **Raw** shows AAP's output with the same redaction (secrets, Authorization headers, bearer credentials,
+  private keys - on the side of too much). `portal_job_output_emoji: false` = text markers ([OK], [FAILED]).
+- **Active Directory page: the domain report's replication matrix and map.** Source DCs in rows as in the report, the same
+  bands; a cell opens its partitions, error and a copyable `repadmin` command; **Links, worst first** for a list; the
+  replication map placed as on the network map. From the report database - no new rights. Each block shows its age.
+- **Wall Map uses the network map's places.** The wall's Map puts sites where `netmap_sites` puts them (name, else the most
+  specific pattern - the network map's own rule; an entry that is not a place is left out and said once in the log); `portal_wall_site_places` is only needed for a site to go elsewhere (it wins). The site rule defaults to
+  `netmap_site_pattern` when set. The deploy summary ends with `Wall: VMware on|off (why), Storage on|off (why), Map places
+  from netmap_sites: N` - the why names what is missing (for example `VMWARE_HOST empty`, `ontap_clusters empty`).
+- **Wall: why a login gives nothing.** When the vCenter or ONTAP login is in the portal but gives the wall no source (no
+  vCenter address, an empty or unusable cluster list, an entry left out), the portal log says so once (`"collector": "no
+  sources"`) with each reason, and the wall's tile says it instead of "no vCenter login" / "no live ONTAP cluster".
+- **The guides moved:** the built PDFs are in `guides/` at the top of the repository (their sources stay in `docs/pdf/`).
+
+## 1.130.2 — 2026-11-25
+
+**To set up:** apply, then run **Site portal - deploy**. If the portal is unstyled now: `systemctl restart site-portal-app` on the portal host (fixes it at once).
+
+- **After a deploy with the wall's logins the portal lost its own files** (unstyled pages, "Reading the wall...", `PermissionError` in its log): the deploy's one-off container that writes the wall's reset token relabelled the portal's folders for itself (SELinux `:Z`), and the RUNNING portal could no longer read its CSS / JS or write its log until restarted. That container now changes no label (`--security-opt label=disable`, no `:Z`).
+
+## 1.130.1 — 2026-11-25
+
+**To set up:** if your all.yml has `portal_ad_card_match: "{edipi}*@mil"`, change it to your exact form (for example `"{edipi}.ctr@mil"`). Then run **Site portal - deploy** once. (Your existing wall logins are read as they are; the deploy rewrites them.)
+
+- **The card match is exact again.** 1.130.0's default `{edipi}*@mil` also matched the same person's other accounts (for
+  example a privileged `1234567890.adm@mil`) and longer numbers. The default is `{edipi}@mil` again; a site whose
+  accounts carry a suffix sets it exactly: `portal_ad_card_match: "{edipi}.ctr@mil"`.
+- **The wall's VMware and Storage stayed "Not on the wall yet" although both logins were attached.** On ansible-core 2.16
+  the deploy wrote the logins' secrets as Python's dict text (single quotes); the portal read them as JSON, failed, and said
+  "no vCenter login" with nothing in its log. The deploy now writes JSON (after one space, so 2.16 cannot turn it back into
+  a dict), and the portal also reads the older form.
+- **The wall says why a source is not read:** a login secret it cannot read, a vCenter without an address
+  (`portal_wall_vcenters`), a cluster list that is empty, or an entry left out (and why) - in the portal's log
+  (`podman logs site-portal-app | grep '"event": "wall"'`).
 
 ## 1.130.0 — 2026-11-25
 

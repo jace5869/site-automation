@@ -29,7 +29,7 @@ options:
     type: list
     elements: dict
     default: []
-  sheets_file: {description: "1.133.0 - a JSON file with the sheets instead of sheets (large tables: never in the task's arguments).", type: str, default: ''}
+  sheets_file: {description: "1.132.0 - a JSON file with the sheets instead of sheets (large tables: never in the task's arguments).", type: str, default: ''}
   path: {description: "The file to write ('' = a new temporary file).", type: str, default: ''}
   banner: {description: "The classification banner, {on, text, bg, fg} (roles/site_email): each sheet's first row, across the
       table, in its colours; the column names under it. {} = none.", type: dict, default: {}}
@@ -313,7 +313,7 @@ def main():
                                               banner=dict(type="dict", default={})),
                            supports_check_mode=True)
     p = module.params
-    if p["sheets_file"]:            # 1.133.0: the sheets from a file - large rows never in the task's arguments (job events)
+    if p["sheets_file"]:            # 1.132.0: the sheets from a file - large rows never in the task's arguments (job events)
         try:
             with open(p["sheets_file"]) as f:
                 p["sheets"] = json.load(f)

@@ -73,6 +73,11 @@
   function note(kind, text) { return el("div", "note" + (kind ? " " + kind : ""), el("p", "", text)); }
 
   // SolarWinds rows use the NodeID saved with this AD run.
+  const staleJob = a => Boolean(a.down || a.db.stale || a.db.model.run.old);
+  function freshness(a) {
+    const stale = staleJob(a);
+    return el("span", "adp-fresh", (stale ? "? " : "") + "AD job, " + a.db.model.run.age_min + " min ago");
+  }
   const idOf = d => String(d.dc).toLowerCase();
   function swOf(sw) {
     const out = {}, s = sw && sw.section;
@@ -97,7 +102,7 @@
     const swUp = seen.filter(([, v]) => v && v[1] === "ok").length, swNot = dcs.length - swUp - seen.filter(([, v]) => v && /critical|warning/.test(v[1])).length;
     const day = m.hist.filter(h => Date.parse(h.at) >= Date.now() - 864e5).length;
     const t = [
-      tile("Status now", chip(run.status || "ok"), crit.length + " DC" + (crit.length === 1 ? "" : "s") + " critical, " + (warn.length || "none") + " warning"),
+      tile("Status now", staleJob(a) ? chip("unknown", "?") : chip(run.status || "ok"), crit.length + " DC" + (crit.length === 1 ? "" : "s") + " critical, " + (warn.length || "none") + " warning"),
       replOf(run) > 0 && run.coverage !== "DC list not read - coverage unknown" ? tile("DCs read", run.dcs_read + " of " + run.dcs, run.dcs_read === run.dcs ? "every DC answered" : (run.dcs - run.dcs_read) + " did not answer")
               : tile("DCs read", num("none", "critical"), "DC list not read - coverage unknown"),
       tile("DCs with a problem", num(bad.length, bad.length ? (crit.length ? "critical" : "warning") : ""),
@@ -119,6 +124,21 @@
     ];
     return sec("At a glance", null, null, [el("div", "tiles adp-tiles", t)]);
   }
+  function dcPanel(a, d) {
+    const heading = el("h3", "", [d.dc, " ", staleJob(a) ? chip("unknown", "?") : chip(d.now)]);
+    const close = el("a", "adp-close", "×");
+    close.href = "#ad-dcs";
+    close.setAttribute("aria-label", "Close DC details");
+    const fields = [["AD site", d.site], ["Domain", d.domain], ["DNS host", d.dns_host], ["DSA GUID", d.dsa_guid],
+                    ["DC read", d.read ? "Yes" : "No"], ["Replication read in full", d.repl_read ? "Yes" : "No"]];
+    const facts = el("dl", "adp-facts", fields.flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v || "Unknown")]));
+    const problems = [...new Set([d.worst, ...(d.problem_texts || [])].filter(Boolean))];
+    const panel = el("aside", "card adp-panel", [heading, close, freshness(a), facts, el("h4", "", "Problems in this run"),
+      problems.length ? el("ul", "", problems.map(t => el("li", "", t))) : el("p", "muted", "No problem text recorded.")]);
+    panel.id = "ad-dc-" + idOf(d);
+    panel.tabIndex = -1;
+    return panel;
+  }
   function dcTable(a, m) {
     const sws = swOf(a.sw), n = m.times.length;
     const swRank = d => { const s = swFor(sws, d, m); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
@@ -128,7 +148,7 @@
       const why = [d.worst, d.stale_dsa ? "Two NTDS objects for " + d.dc.toUpperCase() + " - stale DSA, metadata cleanup" : ""].filter((x, i, xs) => x && xs.indexOf(x) === i).join("; ") ||
                   (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
       const sample = s && d.node_id != null && a.sw.age != null ? el("div", "muted", (a.sw.stale ? "last known · " : "") + ago(a.sw.age)) : null;
-      const tr = el("tr", d.now !== "ok" ? "r-" + d.now : "");
+      const tr = el("tr", staleJob(a) ? "r-unknown" : d.now !== "ok" ? "r-" + d.now : "");
       tr.dataset.dc = idOf(d);
       const strip = el("span", "adp-trend");
       strip.setAttribute("role", "img");
@@ -136,37 +156,86 @@
       d.trend.forEach((x, k) => { const i = el("i", "k-" + (x || "none")); i.title = (m.times[k] || "") + ": " + (WORD[x] || "no run"); strip.append(i); });
       const since = d.now !== "ok" ? "since " + hhmm(d.since_shown) + " · " + d.runs_since + (d.longer ? "+" : "") + (d.runs_since === 1 && !d.longer ? " run" : " runs")
                                     : d.runs_since >= n ? "OK all " + n + " runs" : "OK since " + hhmm(d.since_shown);
-      tr.append(el("td", "adp-dc", [el("b", "", nameOf(m, d)), why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "Site unknown"),
-                el("td", "nw", chip(d.now, d.worst === "not polled" ? "not polled" : undefined)), el("td", "nw", since), el("td", "", strip),
-                el("td", "nw", [s ? chip(s[1] || "unknown", s[0]) : el("span", "muted", a.sw.on ? "not matched" : "not read"), sample]),
+      const link = el("a", "", el("b", "", nameOf(m, d)));
+      link.href = "#ad-dc-" + encodeURIComponent(idOf(d));
+      tr.append(el("td", "adp-dc", [link, why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "Site unknown"),
+                el("td", "nw", staleJob(a) ? chip("unknown", "?") : chip(d.now, d.worst === "not polled" ? "not polled" : undefined)), el("td", "nw", since), el("td", "", strip),
+                el("td", "nw", [s ? ((a.sw.stale || a.down) && d.node_id != null ? chip("unknown", "? · " + s[0]) : chip(s[1] || "unknown", s[0])) : el("span", "muted", a.sw.on ? "not matched" : "not read"), sample]),
                 el("td", "adp-wide", why || el("span", "muted", "-")));
       return tr;
     });
     const leg = el("p", "adp-leg", [["ok", "OK"], ["warning", "Warning"], ["critical", "Critical"], ["none", "No run"]].map(([k, t]) => el("span", "", [el("i", "k-" + k), t])));
-    return sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
-               [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
+    const section = sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
+               [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg, ...dcs.map(d => dcPanel(a, d))]);
+    section.id = "ad-dcs";
+    return section;
   }
   // the whole population the replication read knows (also DCs AD lists that were not polled); read: in full
   const replOf = run => run.repl_dcs || 0;
   const replRead = run => run.repl_read > 0;
   const replAll = run => replOf(run) > 0 && run.coverage !== "DC list not read - coverage unknown" && run.repl_read >= replOf(run);
   const replWhy = run => run.coverage || (replOf(run) ? "Replication read in full on " + (run.repl_read || 0) + " of " + replOf(run) + " DCs" : "DC list not read - coverage unknown");
-  function linkTable(m) {
-    // what was seen is shown whatever the coverage; the coverage is said beside it
-    const part = !replRead(m.run) ? note("warn", "Replication was not read in full in this run: " + replWhy(m.run) + ". " +
-                                            (m.links.length ? "The links below were seen; the others are not known." : "No link is known - not \"all fine\"."))
-               : replAll(m.run) ? el("p", "muted", replWhy(m.run) + ".") : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
-    if (!replRead(m.run) && !m.links.length) return sec("Replication links that need a look", null, "as of " + hhmm(m.run.as_of), [part]);
-    if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of),
-                                    [part, el("p", "muted", replAll(m.run) ? "None: every replication link succeeded within the matrix's hours." : "None among the DCs whose replication was read.")]);
-    const rows = m.links.map(x => el("tr", RANK[x.now] < 2 ? "r-" + x.now : "", [
-      el("td", "adp-dc", [el("b", "", x.frm), " → ", el("b", "", x.to), el("div", "adp-why", x.nc + (x.error ? " · " + x.error : ""))]),
-      el("td", "nw adp-wide", x.nc), el("td", "nw", chip(x.now)), el("td", "nw adp-wide", x.last_success_shown || "never"),
-      el("td", "nw", (x.failures > 0 ? "failing, no success since " : "late, no success since ") + (hhmm(x.last_success_shown) || "-")),
-      el("td", "num", x.failures || "-"), el("td", "adp-wide", x.error || el("span", "muted", "-"))]));
-    return sec("Replication links that need a look", m.links.length, "as of " + hhmm(m.run.as_of),
-               [part, table([["From → to"], ["Partition", "adp-wide"], ["Now"], ["Last success", "adp-wide"], ["Since"], ["Failures", "num"], ["Error", "adp-wide"]], rows)]);
+  function markStale(body) {
+    body.classList.add("adp-stale");
+    body.querySelectorAll(".adp-state,.adp-none").forEach(e => {
+      e.textContent = "?"; e.className = "adp-state s-unknown"; e.title = "Stale";
+      if (e.parentNode.matches("a")) e.parentNode.setAttribute("aria-label", "Last recorded partitions, stale");
+    });
   }
+  let matrixBody, matrixSource, matrixStale;
+  function matrix(a, m) {
+    const stale = staleJob(a);
+    if (!matrixBody || matrixSource !== m.matrix_html || matrixStale !== stale) {
+      const list = root.querySelector("#ad-list-view:checked");
+      // This fragment is the same server-escaped table served on a script-free page load.
+      matrixBody = new DOMParser().parseFromString(m.matrix_html, "text/html").body.firstElementChild;
+      if (stale) markStale(matrixBody);
+      if (list && matrixBody.querySelector("#ad-list-view")) matrixBody.querySelector("#ad-list-view").checked = true;
+      matrixBody.querySelectorAll(".adp-copy").forEach(b => { b.hidden = false; });
+      matrixSource = m.matrix_html; matrixStale = stale;
+    }
+    const coverage = !replRead(m.run) ? note("warn", "Replication was not read in full in this run: " + replWhy(m.run) + ". " +
+      (m.links.length ? "The links below were seen; the others are not known." : "Only recorded links are shown."))
+      : !replAll(m.run) ? note("warn", replWhy(m.run)) : null;
+    const block = sec("Replication matrix", null, null, [coverage, matrixBody].filter(Boolean));
+    block.id = "ad-replication";
+    return block;
+  }
+
+  let mapBox, mapKey, mountMap, removeMap;
+  function replicationMap(a, m) {
+    const stale = staleJob(a), key = m.run.run_id + "/" + stale;
+    if (key !== mapKey) {
+      if (removeMap) removeMap();
+      removeMap = mountMap = null;
+      const tip = el("div", "am-tip"); tip.hidden = true;
+      mapBox = el("div", "am adp-map", [el("p", "am-lede", "Line colour shows the worst replication between sites. Select a site to see its DCs."),
+                                        el("p", "am-note"), el("div", "am-wrap", tip), el("div", "am-leg")]);
+      if (m.map && m.map.sites.length && window.drawAdMap) {
+        mountMap = () => { removeMap = window.drawAdMap(mapBox, m.map, true, stale); };
+      } else {
+        mapBox = el("p", "muted", m.map && m.map.sites.length ? "Map renderer unavailable." : "No AD site read in this run.");
+      }
+      mapKey = key;
+    }
+    return sec("Replication map", null, null, [mapBox]);
+  }
+  root.querySelectorAll(".adp-copy").forEach(b => { b.hidden = false; });
+  root.addEventListener("click", async e => {
+    const button = e.target.closest(".adp-copy");
+    if (!button) return;
+    const code = button.previousElementSibling;
+    try {
+      await navigator.clipboard.writeText(code.textContent);
+      button.textContent = "Copied";
+    } catch (_) {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const selection = window.getSelection();
+      selection.removeAllRanges(); selection.addRange(range);
+      button.textContent = "Selected for copying";
+    }
+  });
   function windows(hist) {     // the worst run of each 2 hours (the week has ~336 runs: too many columns)
     const out = [], by = {};
     hist.forEach(h => {
@@ -225,7 +294,7 @@
     const leg = el("p", "adp-leg", [el("span", "", [el("i", "k-critical"), "Critical"]), el("span", "", [el("i", "k-warning"), "Warning"])]);
     return sec("DCs with a problem, last 7 days", null, "the worst run of each 2 hours; the numbers: the runs below",
                [m.hist.length ? box : el("p", "muted", "No run in the last 7 days."), leg,
-                table([["Run"], ["Status"], ["DCs critical", "num"], ["DCs warning", "num"], ["DCs read", "num"], ["Job"], ["Reason"]], runs)]);
+                table([["Run"], ["Status"], ["DCs critical", "num"], ["DCs warning", "num"], ["DCs read", "num"], ["Job"], ["Reason"]], runs, "adp-runs")]);
   }
   window.addEventListener("resize", () => { if (chart.redraw) chart.redraw(); });
 
@@ -283,13 +352,16 @@
       else if (db.refreshing) parts.push(note("", "Reading the report database again: this is its answer of " + ago(db.age) + " (nobody had the page open)."));
       if (m.run.old) parts.push(note("warn", "The newest AD run is " + hrs(m.run.age_min) + " old (more than " + a.old_after + " min): the AD job has not run since. " +
                                              "What follows is as of " + m.run.as_of + ", not now."));
-      parts.push(glance(a, m), dcTable(a, m), linkTable(m), chart(m),
+      const blocks = [glance(a, m), matrix(a, m), replicationMap(a, m), dcTable(a, m), chart(m)];
+      blocks.forEach(b => b.querySelector("h2").append(freshness(a)));
+      parts.push(...blocks,
                  el("p", "adp-foot", "From the report database: the AD job's runs (ad_run, ad_dc, ad_link), read every minute while this page is open. " +
                                      "SolarWinds: read by this server every " + Math.round((a.sw.every || 600) / 60) + " min. Read only - nothing here changes AD."));
     }
     if (a.down) parts.unshift(note("bad", "The portal did not answer (" + a.down + "): this is its answer of " + ago(a.since) +
                                           ", not now. Tried again in " + poll + " s."));
     root.replaceChildren(...parts);
+    if (mountMap) { mountMap(); mountMap = null; }
     if (m && m.run && chart.redraw && document.querySelector(".adp-chart")) chart.redraw();   // now: no frame to wait for (a background tab has none)
     said(a, m);
   }
@@ -362,6 +434,15 @@
         last = null;
         try { draw(aged(shown, down)); } catch (_) { /* the last good one could not be drawn again: the next poll tries */ }
         return;
+      }
+      const initial = root.querySelector("#ad-replication");
+      if (initial) {
+        markStale(initial);
+        const stamp = initial.querySelector(".adp-fresh");
+        if (stamp) {
+          const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(stamp.dataset.at)) / 60000));
+          stamp.textContent = "? AD job, " + minutes + " min ago";
+        }
       }
       const n = document.getElementById("ad-off") || el("p", "note bad");
       n.id = "ad-off";

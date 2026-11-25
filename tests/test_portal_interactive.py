@@ -62,9 +62,12 @@ class Interactive(unittest.TestCase):
         self.reset()
         self.open("")
         first = self.c.js("document.querySelector('#agrid .grp:not(.pinned) li[data-name]').dataset.name")
+        tile_color = "getComputedStyle(document.querySelector('li[data-name=\"%s\"] .ico')).color" % first
+        original_color = self.c.js(tile_color)
         self.assertFalse(self.c.js("document.querySelector('#agrid .pinned').hidden === false"))                # nothing pinned: the group is away
         self.c.js("document.querySelector('li[data-name=\"%s\"] .pin').click()" % first)
         self.assertEqual(self.c.js("document.querySelector('#agrid .pinned li[data-name]').dataset.name"), first)
+        self.assertEqual(self.c.js(tile_color), original_color)
         self.assertFalse(self.c.js("document.querySelector('#agrid .pinned').hidden"))
         self.assertEqual(self.c.js("document.querySelector('#agrid .pinned h2 .count').textContent"), "1")
         self.assertEqual(self.c.js("document.querySelector('li[data-name=\"%s\"] .pin').getAttribute('aria-pressed')" % first), "true")
@@ -209,7 +212,7 @@ class Interactive(unittest.TestCase):
         home = get("")
         self.assertNotIn('class="pin"', home)                                                                    # the stars and the Pinned group are the script's
         self.assertNotIn("bdg", home)
-        self.assertGreaterEqual(len(re.findall(r'<section class="grp"', home)), 3)                           # every group, open, with its cards
+        self.assertGreaterEqual(len(re.findall(r'<section class="grp tint-\w+"', home)), 3)                    # every group, open, with its cards
         self.assertIn('data-run', home)
         job = get("jobs/%d" % self.ids["clean"])
         self.assertIn("data-again", job)                                                                         # Run again is a plain link

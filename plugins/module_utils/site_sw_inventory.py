@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""1.133.0: the Linux software inventory (playbooks/linux_sw_inventory.yml, roles/sw_inventory, docs/LINUX_SW_INVENTORY.md)
+"""1.132.0: the Linux software inventory (playbooks/linux_sw_inventory.yml, roles/sw_inventory, docs/LINUX_SW_INVENTORY.md)
 - the parts with no I/O, shared by the module (roles/sw_inventory/library/site_sw_inventory.py) and the report's filter
 (plugins/filter/sw_inventory_filters.py):
 

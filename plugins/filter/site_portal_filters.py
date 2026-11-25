@@ -839,7 +839,54 @@ def site_portal_title_label(label, prefix):
     return t if 0 < len(t) <= TITLE_MAX else ""
 
 
+def _lonlat_ok(v):
+    try:
+        lat, lon = float(v.get("lat")), float(v.get("lon"))
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return False
+    return -90 <= lat <= 90 and -180 <= lon <= 180
+
+
+def site_portal_wall_summary(w):
+    """1.131.0: the deploy summary's wall line - 'Wall: VMware on|off (why), Storage on|off (why), Map places from
+    netmap_sites: N'. w: {wall, vc_on, vc_mode, vc_host, vcenters, vc_user, vc_pass, ontap_on, ontap_mode, clusters,
+    ontap_user, ontap_pass, netmap_sites}. The why of an "off": the first missing piece, as the deploy decides."""
+    w = w if isinstance(w, dict) else {}
+
+    def on(x):
+        return str(x).strip().lower() in ("true", "yes", "on", "1")
+
+    if not on(w.get("wall", True)):
+        return "Wall: off (portal_wall: false)"
+    places = sum(1 for v in (w.get("netmap_sites") or {}).values() if _lonlat_ok(v)) if isinstance(w.get("netmap_sites"), dict) else 0
+    if on(w.get("vc_on")):
+        vc = "VMware on"
+    elif str(w.get("vc_mode", "auto")).strip().lower() in ("false", "no", "off", "0"):
+        vc = "VMware off (portal_wall_vcenter: false)"
+    elif not str(w.get("vc_host") or "").strip() and not w.get("vcenters"):
+        vc = "VMware off (no vCenter credential attached (VMWARE_HOST empty))"
+    elif not str(w.get("vc_user") or "").strip():
+        vc = "VMware off (no vCenter account (VMWARE_USER empty))"
+    elif not w.get("vc_pass"):
+        vc = "VMware off (no vCenter password (VMWARE_PASSWORD empty))"
+    else:
+        vc = "VMware off"
+    if on(w.get("ontap_on")):
+        st = "Storage on"
+    elif str(w.get("ontap_mode", "auto")).strip().lower() in ("false", "no", "off", "0"):
+        st = "Storage off (portal_wall_ontap: false)"
+    elif not w.get("clusters"):
+        st = "Storage off (ontap_clusters empty)"
+    elif not str(w.get("ontap_user") or "").strip():
+        st = "Storage off (no NetApp credential (ONTAP_USERNAME empty))"
+    elif not w.get("ontap_pass"):
+        st = "Storage off (no NetApp password (ONTAP_PASSWORD empty))"
+    else:
+        st = "Storage off"
+    return "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
+
+
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_wall_summary": site_portal_wall_summary, "site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

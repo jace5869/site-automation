@@ -88,6 +88,126 @@ def model(view=None, **kw):
     return M.build(view if view is not None else demo.view(NOW), kw.pop("nm", None), kw.pop("asof", None), kw.pop("opts", demo.OPTS), M.Tracker(), NOW, **kw)
 
 
+class NetmapPlaces131(unittest.TestCase):
+    """1.131.0: the Map takes the network map's netmap_sites when portal_wall_site_places has no entry for a site"""
+
+    def test_mapping(self):
+        o = M.opts_of({"netmap_sites": {"Site A": {"lat": 39.4, "lon": -93.2}, "SITB*": {"lat": 34.9, "lon": -112.8},
+                                        "bad": {"lat": "x"}, "far": {"lat": 120, "lon": 0}},
+                       "site_places": {"sitb02": "DE"}})
+        self.assertEqual(M.place_of("SITE A", o), [-93.2, 39.4])           # by name, any case; {lat, lon} -> [lon, lat]
+        self.assertEqual(M.place_of("SITB01", o), [-112.8, 34.9])          # by pattern, any case
+        self.assertEqual(M.place_of("SITB02", o), "DE")                    # portal_wall_site_places wins
+        self.assertIsNone(M.place_of("BAD", o))
+        self.assertIsNone(M.place_of("FAR", o))
+        self.assertIsNone(M.place_of("SITC01", o))
+        self.assertEqual(M.netmap_places(o), 2)
+        self.assertEqual(M.place_of("SITA01", M.opts_of({})), None)
+        self.assertEqual(M.opts_of({"netmap_sites": "not a mapping"})["netmap_sites"], {})
+
+    def test_most_specific_pattern_and_bad_numbers(self):
+        o = M.opts_of({"netmap_sites": {"*": {"lat": 1, "lon": 2}, "ABC*": {"lat": 3, "lon": 4}, "AB?01": {"lat": 5, "lon": 6},
+                                        "BIG*": {"lat": 10 ** 400, "lon": 0}, "NAN*": {"lat": float("nan"), "lon": 0},
+                                        "INF*": {"lat": "inf", "lon": 0}}})
+        self.assertEqual(M.place_of("ABC02", o), [4.0, 3.0])                # ABC* is more specific than * (the first match)
+        self.assertEqual(M.place_of("ABC01", o), [6.0, 5.0])                # AB?01 more specific than ABC*
+        import site_swis
+        conf = {"*": [1, 2], "ABC*": [3, 4], "AB?01": [5, 6]}
+        for name in ("ABC01", "ABC02", "ZZZ"):                               # the same choice as the network map
+            self.assertEqual(M.place_of(name, o), list(reversed([float(x) for x in site_swis.place(conf, name)])))
+        for s in ("BIG1", "NAN1", "INF1"):
+            self.assertEqual(M.place_of(s, o), [2.0, 1.0])                  # the bad entry left out: the catch-all
+        self.assertEqual(M.netmap_ignored(o), ["BIG*", "INF*", "NAN*"])
+        self.assertIsNone(site_swis._num(10 ** 400))
+        import site_portal_filters as F
+        self.assertIn("Map places from netmap_sites: 3", F.site_portal_wall_summary({"netmap_sites": o["netmap_sites"]}))
+
+    def test_summary_text(self):
+        import site_portal_filters as F
+        base = {"wall": True, "vc_on": False, "vc_mode": "auto", "vc_host": "", "vcenters": [], "vc_user": "", "vc_pass": False,
+                "ontap_on": False, "ontap_mode": "auto", "clusters": [], "ontap_user": "", "ontap_pass": False,
+                "netmap_sites": {"Site A": {"lat": 39.4, "lon": -93.2}, "SITB*": {"lat": 34.9, "lon": -112.8}}}
+        self.assertEqual(F.site_portal_wall_summary(base),
+                         "Wall: VMware off (no vCenter credential attached (VMWARE_HOST empty)), Storage off (ontap_clusters empty), "
+                         "Map places from netmap_sites: 2")
+        self.assertEqual(F.site_portal_wall_summary(dict(base, clusters=["cl01"])).split(", Map")[0].split(", ")[-1],
+                         "Storage off (no NetApp credential (ONTAP_USERNAME empty))")
+        self.assertEqual(F.site_portal_wall_summary(dict(base, vc_on=True, ontap_on=True, netmap_sites={})),
+                         "Wall: VMware on, Storage on, Map places from netmap_sites: 0")
+        self.assertIn("VMware off (portal_wall_vcenter: false)", F.site_portal_wall_summary(dict(base, vc_mode="False")))
+        self.assertEqual(F.site_portal_wall_summary(dict(base, wall=False)), "Wall: off (portal_wall: false)")
+
+
+class NoSources131(unittest.TestCase):
+    """1.131.0 (field): logins in the container but no source from them - logged, and the wall says why, not: no login"""
+
+    def run_with(self, logins):
+        from unittest import mock
+        recs = []
+        log = mock.Mock()
+        log.add.side_effect = recs.append
+        cfg = mock.Mock(wall_opts=M.opts_of({}), wall_auth_retry=900, data=tempfile.mkdtemp(dir=os.environ.get("TMPDIR")), wall_logins=logins,
+                        wall_enclave="", wall_title="NOC")
+        self.addCleanup(shutil.rmtree, cfg.data, True)
+        w = sp.WallLive(cfg, log, None)
+        self.assertIsNone(w.collector)
+        return w, recs
+
+    def test_login_without_addresses(self):
+        w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": []},
+                                 "ontap": {"user": "svc", "password": "pw", "clusters": ["https://"]}})
+        no = [r for r in recs if r.get("collector") == "no sources"]
+        self.assertEqual(len(no), 1, recs)
+        self.assertIn("VMware: vCenter login present but no vCenter address", no[0]["why"])
+        self.assertTrue(any(r.get("state") == "left out" and r.get("source") == "ontap" for r in recs), recs)
+        areas = {a["id"]: a for a in w.model()["areas"]}
+        self.assertEqual(areas["vmware"]["why"], "vCenter login present but no vCenter address: set portal_wall_vcenters")
+        self.assertTrue(areas["storage"]["why"].startswith("ONTAP login present but the cluster list is empty or not usable: "),
+                        areas["storage"]["why"])
+        self.assertNotIn("pw", json.dumps(recs))
+
+    def test_logins_error_is_logged(self):
+        from unittest import mock
+        import wall_live
+        with mock.patch.object(wall_live, "sources_from_config", side_effect=RuntimeError("boom")):
+            w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": ["vc01.corp.example.mil"]}})
+        self.assertTrue(any(r.get("collector") == "no sources" and "boom" in json.dumps(r) for r in recs), recs)
+
+    def test_codex_new1_an_address_with_a_password_never_shows_it(self):
+        w, recs = self.run_with({"ontap": {"user": "svc", "password": "pw", "clusters": ["https://admin:S3cretPw@cluster1.example.mil"]}})
+        self.assertNotIn("S3cretPw", json.dumps(recs))
+        self.assertNotIn("S3cretPw", json.dumps(w.model()))
+        self.assertTrue(any("user or password" in json.dumps(r) for r in recs), recs)
+
+    def test_codex_new5_a_source_error_is_said_as_that_error(self):
+        from unittest import mock
+        import wall_live
+        with mock.patch.object(wall_live, "sources_from_config", side_effect=RuntimeError("boom")):
+            w, recs = self.run_with({"vcenter": {"user": "svc", "password": "pw", "hosts": ["vc01.corp.example.mil"]}})
+        no = [r for r in recs if r.get("collector") == "no sources"]
+        self.assertEqual(len(no), 1, recs)
+        self.assertIn("boom", no[0]["why"])
+        why = {a["id"]: a for a in w.model()["areas"]}["vmware"]["why"]
+        self.assertIn("boom", why)
+        self.assertNotIn("no vCenter address", why)
+
+    def test_bad_places_logged_once(self):
+        from unittest import mock
+        recs = []
+        log = mock.Mock()
+        log.add.side_effect = recs.append
+        cfg = mock.Mock(wall_opts=M.opts_of({"netmap_sites": {"X*": {"lat": 10 ** 400, "lon": 1}}}), wall_auth_retry=900,
+                        data=tempfile.mkdtemp(dir=os.environ.get("TMPDIR")), wall_logins={}, wall_enclave="", wall_title="NOC")
+        self.addCleanup(shutil.rmtree, cfg.data, True)
+        sp.WallLive(cfg, log, None)
+        self.assertEqual([r.get("sites") for r in recs if r.get("map")], [["X*"]])
+
+    def test_no_password_logged_once(self):
+        w, recs = self.run_with({"ontap": {"user": "svc", "password": "", "clusters": ["cl01.corp.example.mil"]}})
+        self.assertEqual(len([r for r in recs if r.get("collector") == "no sources"]), 1, recs)
+        self.assertEqual({a["id"]: a for a in w.model()["areas"]}["storage"]["why"], M.STORAGE_OFF)
+
+
 class Model(unittest.TestCase):
     def ids(self, m, kind):
         return [c["id"] for c in m["conds"] if c["kind"] == kind and c["end"] is None]

@@ -2,7 +2,7 @@
 # The Linux software inventory's read (roles/sw_inventory, docs/LINUX_SW_INVENTORY.md): one run per host, hands-off.
 # rpm -qa as the login account, not root (every installed package, the fields separated by the unit separator, octal
 # 037 - no package field holds it), the OS and the kernel. Nothing is written on the host: no dnf (it writes its own
-# log even cache-only), so the repo column stays empty in 1.133.0. Sent to the host's sh with raw (no Python, no file
+# log even cache-only), so the repo column stays empty in 1.132.0. Sent to the host's sh with raw (no Python, no file
 # staged there). The controller parses it (plugins/module_utils/site_sw_inventory.py parse_read).
 LC_ALL=C
 export LC_ALL
@@ -28,5 +28,5 @@ if [ $rc -ne 0 ]; then
     echo "@@error rpm -qa failed (exit $rc: the rpm database locked or damaged - rpm --rebuilddb, or a timeout)"
     exit 0
 fi
-echo "@@repo_rc 0 none"                     # 1.133.0: no repository lookup (hands-off)
+echo "@@repo_rc 0 none"                     # 1.132.0: no repository lookup (hands-off)
 echo "@@end"

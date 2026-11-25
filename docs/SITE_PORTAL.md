@@ -638,9 +638,9 @@ portal_requester_groups: []                      # the same for who may run the 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
   account never counts. The named lists (`portal_readers`, `portal_approvers`, `portal_requesters`) count as well.
 - **A card and its AD account.** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). By default the portal looks
-  for the AD account whose `userPrincipalName` is `1234567890@mil` or carries a suffix before the `@mil`
-  (`1234567890.CTR@mil`): the default match is `{edipi}*@mil` (1.130.0; it still ends at `@mil` and starts with the
-  card's own EDIPI). Another attribute: `portal_ad_card_attribute` and
+  for the AD account whose `userPrincipalName` is exactly `1234567890@mil` (`{edipi}@mil`). A site whose accounts carry
+  a suffix sets it exactly, e.g. `portal_ad_card_match: "{edipi}.ctr@mil"`. Never put `*` after `{edipi}`: it would also
+  match the same person's other accounts (a privileged `1234567890.adm@mil`) or a longer number (1.130.1). Another attribute: `portal_ad_card_attribute` and
   `portal_ad_card_match` (`{edipi}`, `{cn}`; `*` and `?` match anything). For example
   `portal_ad_card_attribute: altSecurityIdentities` with `portal_ad_card_match: "*CN={cn}"`.
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
@@ -870,6 +870,26 @@ Without scripts, Run is a link to the confirm page. An action that asks for a ho
 **Details** is a panel (a page without scripts) with the description, the type, the labels, what it asks for, the survey's questions
 (names and types only - never a default), its last five runs and Run.
 
+## Card icons
+
+On the Actions page, the portal first checks the AAP template for a `portal-icon:<name>` label. For example,
+`portal-icon:users` selects the group-of-people icon. Set `portal_label_icon` to use a different prefix.
+The portal hides labels with this prefix and skips unknown icon names.
+
+Without a valid override, the first matching rule on the AAP template name chooses the icon, even when the card has a custom title.
+For example, *Cancel a scheduled restart* gets `cancel`, and *Certificate report* gets `cert`. If no rule matches,
+the card uses its group's icon. *Other* and custom groups use `job`. The group also sets the tile tint. Off cards use grey.
+
+| Selectable icons | Names |
+|---|---|
+| Name rules, in priority order | `cancel`, `restart`, `restore`, `cleanup`, `deploy`, `patch`, `expand`, `connect`, `health`, `troubleshoot`, `stig`, `cert`, `snapshot`, `backup`, `sync`, `setup`, `ticket`, `ask`, `report` |
+| Additional group and fallback icons | `linux`, `windows`, `users`, `server`, `desktop`, `storage`, `network`, `admin`, `job` |
+
+The pen beside **Changes servers** follows the template name independently of the icon. It appears for
+`restart`, `reboot`, `shut down`, `cancel`, `expand`, `space request`, `deploy`, `install`, `patch`, `apply`, `approved`,
+`allow`, `delete`, `clean up`, `cleanup`, `change`, `load`, `push` or `restore`. A name containing `(dry run)`,
+`- check`, or the word `plan`, `report` or `finder`, or the words `nothing is sent`, suppresses the chip.
+
 ## Quick ways around
 
 These need scripts and are kept in this browser only; without scripts every page works as before.
@@ -951,7 +971,7 @@ answer returns HTTP 304. Times use `report_time_zone`. A stale or missed read da
 replaces them with a message. The live SolarWinds map below continues with its own refresh interval. See
 [Network map history](NETWORK_MAP.md#history-11110) for the streak and gap rules.
 
-## The Active Directory page (1.101.2)
+## The Active Directory page
 
 The portal's **Active Directory** page (`/portal/ad`) shows the AD health job's runs from the report database
 ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The AD runs for the portal*). The portal draws it from the database. It has
@@ -961,9 +981,25 @@ no static page behind it.
   link to that run's full report on the report website.
 - **At a glance**: the status now, DCs read, DCs with a problem (since when), SolarWinds down or warning, replication
   failing (since when), replication late, the AD job's runs in 24 h, the worst DC of 7 days.
-- **Domain controllers**, worst first: now, since when, its runs of the last 24 h (one square each; every 30 min: 48), SolarWinds now (by domain and name), what is wrong.
-- **Replication links that need a look**: now, the last success, failures, the error.
+- **Replication matrix** uses the domain report’s convention. The source DC is the row and the receiving DC is the
+  column, grouped by AD site. Each cell shows the worst partition’s age at the time of the job. Low starts at 4 h,
+  Warning at 6 h and Critical at 24 h by default. Consecutive failures give at least Warning. A dash means the
+  partition has never replicated, **?** means replication was not read, and **·** marks DCs that are not partners.
+  Select a link with a click or Enter to see each partition’s last success, consecutive failures and recorded error,
+  with a copyable `repadmin /showrepl <DEST> /verbose` command. The matrix and partition details work without JavaScript.
+- **Links, worst first** lists every recorded directional pair. Above `ad_repl_matrix_max_dcs` (default and maximum
+  12), the grid shows source site × destination site. Opening a site cell shows its worst pair.
+- **Replication map** uses the domain report’s map renderer. Lines show the worst replication between two sites.
+  As in the report map, a failing connection is red. Sites use the portal deploy’s `netmap_sites` coordinates and `ad_site_map` aliases. With no positions or a single
+  shared location, sites form a ring. Select a site to inspect replication between its DCs.
+- **Domain controllers** lists each DC worst first with its current status, time in that state, 24-hour run strip,
+  SolarWinds status and worst problem. Open a DC for its saved identity, read coverage and problem texts from that run.
 - **DCs with a problem, last 7 days**: a chart (the worst run of each 2 hours) and the last runs as a table.
+
+Each block shows the age of its source run as **AD job, N min ago**. After `portal_ad_old_minutes` (90 by default),
+current AD states turn grey and show **?**. Partition timestamps and DC history remain available as records of the job.
+The matrix, map and DC details use the existing `ad_run`, `ad_dc` and `ad_link` tables with the read-only report login.
+They need no LDAP connection or additional AD rights.
 
 While someone has the page open, the server reads the database every minute and SolarWinds every `portal_ad_seconds`
 (600). One read serves every viewer. The page asks the server every minute, with an ETag. A DC whose state changes
@@ -1102,6 +1138,9 @@ condition needs the full window again).
     collector; settings the portal cannot read turn the wall off (said in the log), never the portal.
 - An entry of `vmware_vcenters` or `ontap_clusters` that is no host (or no https address) is left out and said once in
   the portal's log; it never stops the portal. `https://vc01.example.mil/sdk`, `vc01:8443` and `[2001:db8::1]` all work.
+- A login that is there but gives no source (no vCenter address, the cluster list empty or every entry left out) is said once
+  in the portal's log (`"event": "wall", "collector": "no sources"`, a reason per area), and the tile says it - for example
+  *vCenter login present but no vCenter address: set portal_wall_vcenters*.
 - **No overlap:** one thread, one source at a time; a cycle starts only after the last one ended.
 - **The page keeps itself honest:** it redraws the moment any source goes LATE or STALE (it never waits for the next
   answer), and when the portal itself does not answer a read it says **Portal not reachable** on top and
@@ -1156,8 +1195,11 @@ in force.
 | `portal_wall_seconds` | 60 | how often vCenter and ONTAP are read | VMware and Storage |
 | `portal_wall_auth_retry_minutes` | 15 | after a refused login, the next try no sooner than this | VMware and Storage |
 
-Map style: `portal_wall_site_places` puts the sites on the map (`{SITA01: DE}` or `{SITA01: [10.4, 51.2]}`); the site of
-a cluster, host or datastore is `portal_wall_site_pattern`'s first group (default: a 4-letter, 2-digit prefix).
+Map style: the sites go where the network map's `netmap_sites` puts them (`{lat, lon}` by site name or a `*`/`?` pattern,
+any case - usually already in all.yml); `portal_wall_site_places` places a site itself and wins (`{SITA01: DE}` or
+`{SITA01: [10.4, 51.2]}`, longitude first). The site of a cluster, host or datastore is `portal_wall_site_pattern`'s first
+group (default: `netmap_site_pattern` when set, else a 4-letter, 2-digit prefix). The deploy's summary ends with one line
+on the wall: `Wall: VMware on|off (why), Storage on|off (why), Map places from netmap_sites: N`.
 
 ### Wall feedback: how to open it and who sees it
 
@@ -1204,6 +1246,24 @@ a host or a step that AAP still lists as running when the job was canceled or fa
 token (the browser never talks to AAP), at most 90 times a minute for one person, and only for jobs the person may see. It never shows
 the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
 latest snapshot, and **Refresh** reloads it.
+
+### Job output
+
+**Readable** follows the job in play and task order. Open **ok on N hosts** to see the hosts for a task.
+Changed, skipped, retrying, warning and debug message lines stay visible. A **Check** banner identifies a job AAP ran
+in Check mode. Its changed results say **would change**. When AAP has published host summaries, **Recap** counts host
+outcomes and lists failed hosts first, then unreachable hosts, with each host’s task counts alongside it.
+
+Failed and unreachable lines show the module message, or the first line of stderr or stdout when the message is absent.
+The preview fits on one line of up to 160 characters. **more** opens up to 2,000 characters. The readable view omits
+variable dumps and censored results and redacts password, secret, token and key assignments before display.
+
+**Raw** opens AAP’s plain-text stdout for the same job, with the same redaction as the readable view (passwords, keys,
+tokens, Authorization headers, bearer credentials and private-key blocks; it errs on redacting too much). Both views work without JavaScript. **Refresh** gets another snapshot.
+`portal_job_events` sets the recent event window for Readable (default `300`). Set `portal_job_output_emoji: false` to
+use text markers such as `[OK]` and `[FAILED]`. With the default `true`, screen readers read the status word beside each emoji.
+
+### Job results
 
 **Results.** A job that ends with an address the portal knows shows it as a button, for example **Open the report →** (the report's page, in a new tab)
 or **Open ticket INC0012345 →**. The known results are `site_report_url` (and the other report page keys), the ticket keys, and a short list
@@ -1353,6 +1413,7 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label` | `portal` | the label that marks a template (`''` = no discovery) |
 | `portal_discover_seconds` | 60 | how long what was found is kept (10 to 3600) |
 | `portal_label_area` | `portal-area:` | the start of an area label |
+| `portal_label_icon` | `portal-icon:` | prefix for a template's optional card icon label |
 | `portal_area_rules` | `[]` | `[{match: "Linux - *", area: Linux}]`: the area of a found template with no area label and no area for its playbook (`*` and `?` only, any case, the first match wins) |
 | `portal_label_approval` | `portal-approval` | the approval label |
 | `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |

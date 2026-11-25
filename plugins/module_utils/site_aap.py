@@ -148,11 +148,11 @@ class Api(object):
         else:
             self.ctx = ssl.create_default_context()
 
-    def call(self, method, path, body=None, base=None):
-        """(HTTP status, JSON answer); status -1 = no answer (the address, a firewall, the certificate)."""
+    def call(self, method, path, body=None, base=None, plain_text=False):
+        """Return the HTTP status and JSON answer (or the body as text for stdout). Status -1 means no usable answer."""
         req = Request(self.conn["host"] + "/" + (self.base if base is None else base) + path, data=json.dumps(body).encode() if body is not None else None)
         req.get_method = lambda: method
-        req.add_header("Accept", "application/json")
+        req.add_header("Accept", "text/plain" if plain_text else "application/json")
         if body is not None:
             req.add_header("Content-Type", "application/json")
         if self.conn["login"] == "token":
@@ -173,6 +173,8 @@ class Api(object):
             timeout = min(self.timeout, deadline.remaining()) if deadline else self.timeout
             with opener.open(req, timeout=timeout) as r:
                 raw, status = r.read(), r.getcode()
+            if plain_text:
+                return status, raw.decode("utf-8", errors="replace")
             try:
                 data = json.loads(raw) if raw else {}
             except ValueError:

@@ -31,7 +31,7 @@
 #       # as it is (EFI, BIOS; else an upper-case one - FAIL - is shown as Fail)
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body. _report_attachments: files the email attaches, [{path, filename}].
-# _report_xlsx_file (1.133.0): the workbook's sheets as a JSON file instead of _report_xlsx - large tables never in the job events.
+# _report_xlsx_file (1.132.0): the workbook's sheets as a JSON file instead of _report_xlsx - large tables never in the job events.
 # The report website hosts them too, with the workbook, beside the run's page (1.79.8, report_web_files) - or
 # _report_files: [{path, filename}], its own list for the website.
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
@@ -326,7 +326,7 @@
 
     - name: Email | the report's tables as a workbook - attached, and on the website (report_email_xlsx, or the report's own _report_xlsx)
       site_xlsx:
-        # 1.133.0: _report_xlsx_file - the sheets as a JSON file (the software inventory's packages: never in the job events)
+        # 1.132.0: _report_xlsx_file - the sheets as a JSON file (the software inventory's packages: never in the job events)
         sheets: "{{ [] if _report_xlsx_file | default('') | length > 0 else (_report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets) }}"
         sheets_file: "{{ _report_xlsx_file | default('') }}"
         banner: "{{ _banner if _banner.on else {} }}"

@@ -1484,7 +1484,7 @@ Four templates make up the VM deploy from a ServiceNow ticket - a change, its ta
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: your clusters, templates, datastores and folders, with the lines to paste |
 
 **Its complete guide is its own document:** [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md), also a PDF -
-`docs/pdf/Site-Automation-VM-Deploy-Guide.pdf`. It has the setup in AAP step by step (the execution
+`guides/Site-Automation-VM-Deploy-Guide.pdf`. It has the setup in AAP step by step (the execution
 environment, the vCenter role and its privileges, the credentials, the job template and its survey, the
 approval workflow, the scheduled pickup, the server's service and its AAP inventory, launching from
 AAP's API), how a run works, what requesters write, where each VM goes (sites, name rules, automatic

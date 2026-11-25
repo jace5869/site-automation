@@ -23,7 +23,7 @@ Every job follows the same rules:
 
 **New to Ansible or AAP? Start with [docs/START_HERE.md](docs/START_HERE.md)**, then follow
 [docs/SETUP_AAP.md](docs/SETUP_AAP.md) step by step. The same guide as one printable PDF:
-[docs/pdf/Site-Automation-Ops-Runbooks-Guide.pdf](docs/pdf/Site-Automation-Ops-Runbooks-Guide.pdf).
+[guides/Site-Automation-Ops-Runbooks-Guide.pdf](guides/Site-Automation-Ops-Runbooks-Guide.pdf).
 
 **Secrets never live in this repository.** They are AAP credentials, injected at run time.
 Read [docs/SECRETS.md](docs/SECRETS.md). The repository holds placeholders only: your inventory goes in
@@ -281,7 +281,7 @@ The guides, in the order a new site needs them: how it works and the setup first
 | [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |
 | [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
 | [docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md) | the service-watch demo |
-| [docs/pdf/](docs/pdf/README.md) | **PDFs** of the guides: the runbooks setup guide, the VM deploy guide, the service-watch demo, the ACT guides and leadership briefs |
+| [guides/](guides/) | **PDFs** of the guides (built by [docs/pdf/](docs/pdf/README.md)): the runbooks setup guide, the VM deploy guide, the service-watch demo, the ACT guides and leadership briefs |
 
 ## Layout
 
@@ -312,7 +312,8 @@ The guides, in the order a new site needs them: how it works and the setup first
 | `scripts/update-act.sh`, `scripts/update-act-windows.sh`, `.ps1` | refresh `vendor/act` and `vendor/act-windows` from a newer release |
 | `scripts/gen_variable_reference.py`, `scripts/gen_template_vars.py` | rewrite `docs/VARIABLES_REFERENCE.md` from the roles' defaults, and `aap/extra_vars/` from what each playbook reads (the tests check both are current) |
 | `tests/` | the unit tests and the end-to-end tests (containers, a simulated vCenter, mocked APIs), the public-repository guard `check_public.py` |
-| `docs/pdf/` | the PDFs and the scripts that build them (`docs/pdf/README.md`) |
+| `guides/` | the PDFs of the guides |
+| `docs/pdf/` | the scripts that build them into `guides/` (`docs/pdf/README.md`) |
 
 ## Leave hosts out of every job
 

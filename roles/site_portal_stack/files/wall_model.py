@@ -13,6 +13,11 @@ import collections
 import fnmatch
 import re
 
+try:
+    import site_swis                       # the network map's own matching (plugins/module_utils): one rule for both maps
+except ImportError:                        # pragma: no cover - the portal image has it
+    site_swis = None
+
 LATE_S = 180                     # amber (LATE) after 3 min
 STALE_S = 600                    # STALE (not current, never green) after 10 min
 KEEP_CLEARED_S = 4 * 3600        # cleared conditions on the Map's timeline
@@ -43,7 +48,7 @@ NOT_ON_WALL = {
 
 DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97.0, "high_pct": 90.0, "high_minutes": 15,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
-            "late": LATE_S, "stale": STALE_S}
+            "netmap_sites": {}, "late": LATE_S, "stale": STALE_S}
 
 
 def opts_of(o):
@@ -121,6 +126,67 @@ def site_rule(pattern):
     except re.error:
         return None
     return rx if rx.groups >= 1 else None
+
+
+def _lonlat(v):
+    """a netmap_sites value {lat, lon} -> [lon, lat] (the wall's order); anything else (not a number, NaN, inf, too big,
+    out of range): None"""
+    try:
+        lat, lon = float(v.get("lat")), float(v.get("lon"))
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+    return [lon, lat] if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def _glob(pattern, name):
+    rx = "^" + re.escape(str(pattern).casefold()).replace(r"\*", ".*").replace(r"\?", ".") + "$"
+    return re.match(rx, str(name).casefold()) is not None
+
+
+def _netmap_place(conf, name):
+    """the network map's own rule (site_swis.place): the site's name first (any case), else the MOST specific pattern"""
+    if site_swis is not None:
+        return site_swis.place(conf, name)
+    for k, v in conf.items():
+        if not re.search(r"[*?]", k) and k.casefold() == str(name).casefold():
+            return v
+    best = None
+    for k, v in conf.items():
+        if re.search(r"[*?]", k) and _glob(k, name):
+            n = len(re.sub(r"[*?]", "", k))
+            if best is None or n > best[0]:
+                best = (n, v)
+    return best[1] if best else None
+
+
+def netmap_ignored(o):
+    """the netmap_sites keys the wall cannot use (lat / lon not a number in range) - logged once by the portal"""
+    nm = o.get("netmap_sites") if isinstance(o.get("netmap_sites"), dict) else {}
+    return sorted(str(k) for k, v in nm.items() if _lonlat(v) is None)
+
+
+def place_of(site, o):
+    """1.131.0: where the Map puts a site - portal_wall_site_places first (its own key, any case), else the network map's
+    netmap_sites ({lat, lon}; a name in any case first, then a pattern with * and ?, as the network map matches), else None"""
+    s = str(site or "")
+    own = o.get("site_places") or {}
+    if s in own:
+        return own[s]
+    for k, v in own.items():
+        if str(k).casefold() == s.casefold():
+            return v
+    nm = o.get("netmap_sites") if isinstance(o.get("netmap_sites"), dict) else {}
+    conf = {}
+    for k, v in nm.items():
+        p = _lonlat(v)
+        if p is not None:                  # an entry that is no place is left out (the network map does the same)
+            conf[re.sub(r"\s+", " ", str(k).strip())] = p
+    return _netmap_place(conf, s)
+
+
+def netmap_places(o):
+    """how many netmap_sites entries the wall can use (valid {lat, lon}) - the deploy summary's count"""
+    return sum(1 for v in (o.get("netmap_sites") or {}).values() if _lonlat(v) is not None)
 
 
 def site_of(rx, *names):
@@ -503,7 +569,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
-def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""):
+def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None):
     """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
     ks = kinds(o)
@@ -545,14 +611,15 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
         inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else [])
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
+        off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
-            x["why"] = STORAGE_OFF
+            x["why"] = off_why.get("storage") or STORAGE_OFF          # 1.131.0: a login there but no cluster: that, not "no login"
         elif a["id"] == "vmware" and not vm["configured"]:
-            x["why"] = "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
+            x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
     return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
             "thresholds": {"ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
-            "sites": [{"id": s, "place": o["site_places"].get(s)} for s in sites]}
+            "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}

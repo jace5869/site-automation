@@ -2,7 +2,7 @@
 
 Every installed RPM package of your RHEL hosts, every night, and what changed since the night before.
 
-The job *Linux - software inventory* (`playbooks/linux_sw_inventory.yml`, 1.133.0) reads each host of its Limit and
+The job *Linux - software inventory* (`playbooks/linux_sw_inventory.yml`, 1.132.0) reads each host of its Limit and
 writes three exports: a **text file per host** (shield), a **CSV** and a **JSON**. They go to a folder, to a Windows
 file share, and with the report email.
 
@@ -38,7 +38,7 @@ Python, no file staged, nothing written on the host. In **Check** nothing runs o
 - Every installed package from `rpm -qa`: name, epoch, version, release, arch, vendor, install time, source RPM.
   Every installed instance is kept (several kernels, `i686` and `x86_64`).
 - The OS (`rhel 9.4`) and the running kernel.
-- The `repo` column stays empty in 1.133.0: dnf writes its own log even reading from its cache, so it is not run.
+- The `repo` column stays empty in 1.132.0: dnf writes its own log even reading from its cache, so it is not run.
 - A read with a row it cannot parse is not used: the host is listed as not read, its last files stay.
 
 ## The exports

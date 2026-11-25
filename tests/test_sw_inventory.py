@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.133.0: the Linux software inventory - plugins/module_utils/site_sw_inventory.py (the read's parsing, rpm's version
+"""1.132.0: the Linux software inventory - plugins/module_utils/site_sw_inventory.py (the read's parsing, rpm's version
 order, what changed, the shield file byte for byte, CSV / JSON, the state file) and
 roles/sw_inventory/library/site_sw_inventory.py (the share copy with a fake smbclient, the email's attachments and their
 size limit, every export on its own, the review's fixes), the catalog entry. tests/swinv/run_sw_inventory_test.sh runs the
@@ -411,7 +411,7 @@ class Module(ModuleBase):
         self.assertEqual(self.state(res, "share")["code"], "SA-SWI-26")
 
 class ReviewFixes(ModuleBase):
-    """1.133.0 review (Codex): a test per finding that still applies."""
+    """1.132.0 review (Codex): a test per finding that still applies."""
 
     def test_05_a_bad_shield_folder_stops_the_shield_files_only(self):
         unc = "\\\\fs01.corp.example.mil\\it\\inventory"
@@ -529,7 +529,7 @@ class ReviewFixes(ModuleBase):
 
 
 class ReviewFixes2(ModuleBase):
-    """1.133.0 review pass 2 (Codex): a test per finding fixed."""
+    """1.132.0 review pass 2 (Codex): a test per finding fixed."""
 
     def test_r2_12_a_failed_zip_keeps_the_csv_and_the_json(self):
         with unittest.mock.patch.object(mod.zipfile, "ZipFile", side_effect=OSError(28, "No space left on device")):
@@ -637,7 +637,7 @@ class ReviewFixes2(ModuleBase):
 
 
 class ReviewFixes3(ModuleBase):
-    """1.133.0 review pass 2, items 1-11 (Codex)."""
+    """1.132.0 review pass 2, items 1-11 (Codex)."""
 
     def test_r3_01_a_refused_share_address_is_never_handed_on_or_shown(self):
         res = mod.run(self.params(share="", share_refused=True))

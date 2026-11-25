@@ -11,13 +11,14 @@ scripts/gen_variable_reference.py's parser) and an example with when to set it (
 """
 import copy
 import re
+import os
 import sys
 
 import build_ops_guide as g
 from sapdf import *  # noqa: F401,F403
 from actpdf import _arrow, _box
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-VM-Deploy-Guide.pdf"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "guides", "Site-Automation-VM-Deploy-Guide.pdf")   # 1.131.0: the built guides live in guides/
 GUIDE = "docs/VM_DEPLOY_GUIDE.md"
 EXAMPLES = "docs/vm_deploy_examples.yml"
 LEVELS = {"standard": ("Standard setup", GREEN), "often": ("Set when needed", TEAL), "rarely": ("Leave as is", MUTED)}

@@ -104,7 +104,7 @@ def pairs(links, site_of, now, o):
         if not a or not b or sa is None or sb is None:
             continue
         ls = utc(ln.get("last_success"))
-        h = (now - ls).total_seconds() / 3600.0 if ls else INF
+        h = (now - ls).total_seconds() / 3600.0 if ls and now is not None else INF     # no read time: as never (1.131.0)
         fail = int(ln.get("failures") or 0) > 0
         if sa != sb:
             k = tuple(sorted([sa, sb]))
