@@ -552,6 +552,7 @@ deploy_vc() {
         REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=9 REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=Test-Only-dbpw-1012 \
         MICROSOFT_AD_LDAP_USERNAME=svc_aap_adreader@corp.example.mil MICROSOFT_AD_LDAP_PASSWORD=Test-Only-ldappw-1120 \
         VMWARE_HOST=vc-none.invalid VMWARE_USER=svc_wall@corp.example.mil VMWARE_PASSWORD=Test-Only-vcpw-1311 \
+        SOLARWINDS_URL=https://swis-none.invalid:17774 SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_PASSWORD=Test-Only-swpw-1380 \
         "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" "$@") > "$work/out-vc.txt" 2>&1
 }
 if deploy_vc && podman secret inspect site-portal-vcenter >/dev/null 2>&1 && grep -q "Wall: VMware on" "$work/out-vc.txt"; then
@@ -571,6 +572,21 @@ done
 if podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null; then
     pass "the wall's collector reads with the new login and says why it could not (a name that does not resolve)"
 else fail "the wall's collector said why it could not read" "$(podman exec site-portal-app grep '"event": "wall"' /data/portal-log.jsonl 2>&1 | tail -5)"; fi
+# 1.138.0: the wall's Fleet & services area - on with the SolarWinds credential (auto): said in the summary, the login secret made,
+# its answer and files served, the reader's failure said in the log (a name that never resolves), the area grey - never green
+fl="$(c "$k/jdoe" get /portal/api/wall/fleet)"; aw="$(c "$k/jdoe" get /portal/api/wall)"; fjs="$(c "$k/jdoe" get /portal/static/wall-fleet.js)"
+for _ in $(seq 1 60); do
+    podman exec site-portal-app grep -q '"source": "solarwinds-fleet", "state": "not read"' /data/portal-log.jsonl 2>/dev/null && break; sleep 2
+    fl="$(c "$k/jdoe" get /portal/api/wall/fleet)"
+done
+if grep -q "Fleet on (by groups)" "$work/out-vc.txt"; then fsum=1; else fsum=0; fi
+if [ "$fsum" = 1 ] && podman secret inspect site-portal-swis >/dev/null 2>&1 && echo "$fl" | jq_ 'd["code"]' | grep -q 200 \
+    && echo "$fl" | jq_ 'd["json"]["feed"]["state"]' | grep -Eq '^(never|error)$' \
+    && echo "$aw" | jq_ '[a["id"] for a in d["json"]["areas"]]' | grep -q fleet \
+    && echo "$fjs" | jq_ 'd["code"]' | grep -q 200 \
+    && podman exec site-portal-app grep -q '"source": "solarwinds-fleet", "state": "not read"' /data/portal-log.jsonl; then
+    pass "Fleet & services (1.138.0): the SolarWinds credential turns it on (summary, login secret), its answer and files served, the reader says why it could not read"
+else fail "Fleet & services" "summary: $(grep -o 'Fleet [a-z]*[^,\"]*' "$work/out-vc.txt" | head -2) | fleet: $(echo "$fl" | head -c 400) | log: $(podman exec site-portal-app grep 'solarwinds-fleet' /data/portal-log.jsonl 2>&1 | tail -2)"; fi
 denied="$(journalctl --user -u site-portal-app --since "-5min" --no-pager 2>/dev/null | grep -c 'PermissionError')"
 if echo "$css" | jq_ 'd["code"]' | grep -q 200 && echo "$css" | grep -q -- '--' && [ "${after:-0}" -gt "${before:-0}" ] && [ "$denied" = 0 ]; then
     pass "after the wall's token step the running portal still serves portal.css and writes its log (the 1.130.2 regression)"
@@ -592,7 +608,8 @@ if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head
             "wall-lights=wall?style=lights" "wall-cockpit=wall?style=cockpit" "wall-map=wall?style=map" \
             "wall-strata=wall?style=strata" "wall-relay=wall?style=relay" "wall-metro=wall?style=metro" \
             "wall-strata-kiosk=wall?style=strata&kiosk=1@1920x1080" "wall-relay-kiosk=wall?style=relay&kiosk=1@1920x1080" "wall-metro-kiosk=wall?style=metro&kiosk=1@1920x1080" \
-            "wall-strata-720=wall?style=strata&kiosk=1@1280x720" "wall-relay-720=wall?style=relay&kiosk=1@1280x720" "wall-metro-720=wall?style=metro&kiosk=1@1280x720") > "$work/shots.txt" 2>&1 \
+            "wall-strata-720=wall?style=strata&kiosk=1@1280x720" "wall-relay-720=wall?style=relay&kiosk=1@1280x720" "wall-metro-720=wall?style=metro&kiosk=1@1280x720" \
+            "wall-fleet-strata=wall?area=fleet&style=strata&kiosk=1@1920x1080" "wall-fleet-cockpit=wall?area=fleet&style=cockpit") > "$work/shots.txt" 2>&1 \
         && (for k in strata metro relay chroma press atlas tower; do grep -q "look-$k-800-light.png.*\"look\": \"$k\"" "$work/shots.txt" || exit 1; done); then
         pass "screenshots: jobs, approvals, the confirm page, home, the seven looks, the six wall styles (1.135.0) - 1280 and 800, light and dark, the room's styles at 1920x1080 and 1280x720 - no script error, no CSP violation, no side scroll ($shots)"
     else fail "screenshots" "$(cat "$work/shots.txt")"; fi
