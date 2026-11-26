@@ -29,6 +29,22 @@
         share_subdir: "{{ sw_inventory_share_subdir | default('', true) }}"
         share_auth: "{{ sw_inventory_share_auth }}"
         share_encrypt: "{{ sw_inventory_share_encrypt | bool }}"
+        # 1.139.0: more destinations, each on its own; the same guard per entry (a user or password in the address:
+        # refused, never handed on); a password goes to the module only (no_log there), never on a command line
+        shares: >-
+          {%- set out = [] -%}
+          {%- for x in sw_inventory_shares | default([], true) -%}
+          {%-   set e = x if x is mapping else {'path': x} -%}
+          {%-   set pth = (e.path | default('', true) | string).strip() -%}
+          {%-   set _ = out.append({'path': '' if pth is search('@') else pth, 'refused': pth is search('@'),
+                                    'subdir': e.subdir | default('', true) | string,
+                                    'user': e.user | default('', true) | string,
+                                    'password': e.password | default('', true) | string,
+                                    'auth': e.auth | default(sw_inventory_share_auth, true) | string,
+                                    'encrypt': (e.encrypt | bool) if e.encrypt is defined and e.encrypt is not none
+                                               else (sw_inventory_share_encrypt | bool)}) -%}
+          {%- endfor -%}
+          {{ out }}
         keep_days: "{{ sw_inventory_keep_days | int }}"
         xlsx_max_rows: "{{ sw_inventory_xlsx_max_rows | int }}"
         email_max_mb: "{{ sw_inventory_email_max_mb | float }}"

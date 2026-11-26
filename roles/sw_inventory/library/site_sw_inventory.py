@@ -9,6 +9,8 @@ SA-SWI code) and the fix, and the others are still written.
   csv, json  sw-inventory-YYYYMMDD-HHMM.csv / .json and sw-inventory-latest.csv / .json in dir
   share      every file above also on a Windows file share over SMB (smbprotocol; the "Windows file share" credential),
              or a folder mounted on the execution node; each file on its own
+  shares     1.139.0: more destinations (sw_inventory_shares), each on its own - one that fails (login, folder, space)
+             never stops the next; sw_inventory_share is the first when set; the same folder twice is copied once
 
 The package lists never come back in the result (AAP keeps every task's result): counts, the report, file names.
 Needs smbprotocol for a share (the all-in-one EE has it)."""
@@ -40,6 +42,14 @@ options:
   share_auth: {description: "negotiate, kerberos or ntlm.", type: str, default: negotiate}
   share_encrypt: {description: SMB 3 encryption always., type: bool, default: false}
   share_port: {description: SMB's port., type: int, default: 445}
+  shares:
+    description:
+      - "1.139.0: more destinations, after share: [{path, subdir, user, password, auth, encrypt, refused}]. user / password
+        empty = the Windows file share credential's (SMB_SHARE_USERNAME / _PASSWORD). The same path and subdir as one
+        before it is left out (copied once)."
+    type: list
+    elements: dict
+    default: []
   keep_days: {description: "The dated files kept, here and on the share (0 = all).", type: int, default: 90}
   xlsx_max_rows: {description: The workbook's Packages sheet at most (0 = all)., type: int, default: 20000}
   email_max_mb: {description: Each email attachment at most (MB)., type: float, default: 10}
@@ -52,7 +62,8 @@ report: {description: "The report (roles/site_email's _report).", type: dict}
 sheets_file: {description: "The workbook's sheets as JSON (roles/site_email's _report_xlsx); '' when it could not be made.", type: str}
 attachments: {description: "[{path, filename, desc}] for the email (each within email_max_mb).", type: list}
 web_files: {description: "[{path, filename, desc}] for the report website (the CSV and the JSON, whatever their size).", type: list}
-outputs: {description: "[{name, state: ok|failed|skipped, where, error, fix, code}].", type: list}
+outputs: {description: "[{name, state: ok|failed|skipped, where, error, fix, code}] - one share each with more than one
+  (share 1, share 2, ...).", type: list}
 failed_outputs: {description: The outputs that failed., type: list}
 lines: {description: What happened, a line each (the job output)., type: list}
 '''
@@ -140,11 +151,13 @@ def why_smb(what, e, auth, port, secret=""):
     if "access_denied" in low or "access is denied" in low:
         return "SA-SWI-22", line, "give the account Modify on the folder (the share and NTFS)"
     if "bad_network_name" in low or "0xc00000cc" in low:
-        return "SA-SWI-23", line, "no such share on that server: the part after the server name in sw_inventory_share"
+        return "SA-SWI-23", line, ("no such share on that server: the part after the server name in sw_inventory_share "
+                                   "(or that sw_inventory_shares entry's path)")
     if "default realm" in low:
         return "SA-SWI-24", line, "write the credential's user name as user@YOURDOMAIN.MIL (the realm in capitals)"
     if "server not found in kerberos database" in low:
-        return "SA-SWI-24", line, "write the server by its full name in sw_inventory_share (\\\\fileserver.yourdomain.mil\\...)"
+        return "SA-SWI-24", line, ("write the server by its full name in sw_inventory_share / sw_inventory_shares "
+                                   "(\\\\fileserver.yourdomain.mil\\...)")
     if "invalid token was supplied" in low and auth == "kerberos":
         return "SA-SWI-24", line, "sw_inventory_share_auth: negotiate"
     if "md4" in low or "unsupported hash" in low:
@@ -156,10 +169,12 @@ def why_smb(what, e, auth, port, secret=""):
 
 
 class SmbFolder(object):
-    """A folder on a Windows file share (smbprotocol; no mount). The login: SMB_SHARE_USERNAME / _PASSWORD (the
-    "Windows file share" credential), else REPORT_WEB_USERNAME / _PASSWORD (the "Report website" credential)."""
+    """A folder on a Windows file share (smbprotocol; no mount). The login: user / password (a sw_inventory_shares
+    entry's own), each empty = SMB_SHARE_USERNAME / _PASSWORD (the "Windows file share" credential), else
+    REPORT_WEB_USERNAME / _PASSWORD (the "Report website" credential). Each folder its own connections (1.139.0): two
+    destinations on one server with two logins never share a session."""
 
-    def __init__(self, dest, auth="negotiate", encrypt=False, port=445, timeout=30):
+    def __init__(self, dest, auth="negotiate", encrypt=False, port=445, timeout=30, user="", password=""):
         self.server, self.root = smb_path(dest)
         self.auth, self.port = auth, port
         try:
@@ -167,9 +182,10 @@ class SmbFolder(object):
         except ImportError:
             raise Fail("SA-SWI-26", "this execution environment has no smbprotocol",
                        "use the all-in-one EE of ee/ (it has smbprotocol), or a mounted folder as sw_inventory_share")
-        self.smb, self.kw = smbclient, {"port": port}
-        user = os.environ.get("SMB_SHARE_USERNAME") or os.environ.get("REPORT_WEB_USERNAME") or ""
-        self.secret = os.environ.get("SMB_SHARE_PASSWORD") or os.environ.get("REPORT_WEB_PASSWORD") or ""
+        self.cache = {}
+        self.smb, self.kw = smbclient, {"port": port, "connection_cache": self.cache}
+        user = user or os.environ.get("SMB_SHARE_USERNAME") or os.environ.get("REPORT_WEB_USERNAME") or ""
+        self.secret = password or os.environ.get("SMB_SHARE_PASSWORD") or os.environ.get("REPORT_WEB_PASSWORD") or ""
         if auth not in ("negotiate", "ntlm", "kerberos"):
             raise Fail("SA-SWI-20", "sw_inventory_share_auth is %s" % auth, "negotiate, kerberos or ntlm")
         if not user and auth != "kerberos":
@@ -177,7 +193,8 @@ class SmbFolder(object):
                        'attach the "Windows file share" credential (user@YOURDOMAIN.MIL and its password) to the template')
         try:
             smbclient.register_session(self.server, username=user or None, password=self.secret or None, port=port,
-                                       encrypt=encrypt or None, auth_protocol=auth, connection_timeout=timeout)
+                                       encrypt=encrypt or None, auth_protocol=auth, connection_timeout=timeout,
+                                       connection_cache=self.cache)
         except Exception as e:                  # noqa: BLE001
             raise Fail(*why_smb("logging in to %s" % self.server, e, auth, port, self.secret))
         try:
@@ -235,7 +252,7 @@ class SmbFolder(object):
 
     def close(self):
         try:
-            self.smb.reset_connection_cache()
+            self.smb.reset_connection_cache(connection_cache=self.cache)
         except Exception:                       # noqa: BLE001
             pass
 
@@ -356,6 +373,68 @@ def prune_dated(target, base, keep_days, now):
     return gone, left
 
 
+REFUSED = ("a user or password in the address (user@server) - not used, not shown",
+           "write only \\\\fileserver.yourdomain.mil\\share\\folder; the login comes from the Windows file share credential "
+           "(or the entry's user and password)")
+
+
+def dest_key(path, subdir):
+    """One destination's identity: \\\\FS01\\it\\inv\\, //fs01/it/inv and smb://fs01/it/inv are one (Windows names have
+    no case); a mounted folder keeps its case."""
+    p = (path or "").strip()
+    m = re.match(r"(?i)^smb:/+(.+)$", p)
+    if m:
+        p = "//" + m.group(1)
+    sub = "/".join(x for x in re.split(r"[\\/]+", (subdir or "").strip()) if x)
+    if p.startswith("\\\\") or p.startswith("//"):
+        return ("smb", "/".join(x for x in re.split(r"[\\/]+", p) if x).lower(), sub.lower())
+    return ("dir", os.path.normpath(p) if p else "", sub)
+
+
+def destinations(p):
+    """Every share destination, in order: sw_inventory_share (share, share_subdir, ...) first when set, then each
+    sw_inventory_shares entry -> ([{name, path, subdir, user, password, auth, encrypt, refused, legacy, what, n}], lines).
+    The same folder as one before it is left out (said in the job output). Names: share when there is one, else
+    share 1, share 2, ..."""
+    raw = []
+    if p.get("share") or p.get("share_refused"):
+        path = str(p.get("share") or "").strip()
+        refused = bool(p.get("share_refused")) or "@" in path
+        raw.append({"path": "" if refused else path, "subdir": str(p.get("share_subdir") or ""),
+                    "user": "", "password": "", "auth": p.get("share_auth") or "negotiate",
+                    "encrypt": bool(p.get("share_encrypt")), "refused": refused, "legacy": True, "what": "sw_inventory_share"})
+    for i, e in enumerate(p.get("shares") or [], 1):
+        e = e if isinstance(e, dict) else {"path": e}
+        path = str(e.get("path") or "").strip()
+        refused = bool(e.get("refused")) or "@" in path
+        raw.append({"path": "" if refused else path, "subdir": str(e.get("subdir") or ""), "user": str(e.get("user") or ""),
+                    "password": str(e.get("password") or ""), "auth": str(e.get("auth") or p.get("share_auth") or "negotiate"),
+                    "encrypt": bool(e.get("encrypt")) if e.get("encrypt") is not None else bool(p.get("share_encrypt")),
+                    "refused": refused, "legacy": False, "what": "sw_inventory_shares entry %d" % i})
+    out, seen, lines = [], set(), []
+    for d in raw:
+        key = None if d["refused"] or not d["path"] else dest_key(d["path"], d["subdir"])
+        if key is not None and key in seen:
+            lines.append("share: %s is the same folder as one before it - copied once" % d["what"])
+            continue
+        if key is not None:
+            seen.add(key)
+        out.append(d)
+    for n, d in enumerate(out, 1):
+        d["n"], d["name"] = n, "share" if len(out) == 1 else "share %d" % n
+    return out, lines
+
+
+def shown(d):
+    """What a destination is called in the report: its folder, never a refused address."""
+    if d["refused"]:
+        return "%s (refused, not shown)" % d["what"]
+    p = d["path"].strip()
+    if not (p.startswith("\\\\") or p.startswith("//") or re.match(r"(?i)^smb:/", p) or os.path.isabs(p)):
+        return "%s (not a folder, not shown)" % d["what"]   # never repeated: it could carry a login
+    return d["path"] + (" (sub folder %s)" % d["subdir"] if d["subdir"] else "")
+
+
 # ---- the run -------------------------------------------------------------------------------------------------------
 
 def read_hosts(work_dir, hosts):
@@ -399,6 +478,18 @@ def email_attachments(files, max_mb):
     return att, notes
 
 
+def scrub(x, secrets):
+    """x with every secret replaced by [redacted], in every string inside it."""
+    if isinstance(x, dict):
+        return dict((k, scrub(v, secrets)) for k, v in x.items())
+    if isinstance(x, list):
+        return [scrub(v, secrets) for v in x]
+    if isinstance(x, str):
+        for sec in secrets:
+            x = x.replace(sec, "[redacted]")
+    return x
+
+
 def run(p, check=False, warn=lambda m: None):
     now = sw.stamp(p["read_at"]) or datetime.datetime.utcnow().replace(microsecond=0)
     outputs = [o for o in (p["outputs"] or []) if o]
@@ -437,19 +528,34 @@ def run(p, check=False, warn=lambda m: None):
             for o in want:
                 said(o, "failed", code=e.code, error=e.what, fix=e.fix)
             file_outs = []
-    if p.get("share_refused") and want:
-        said("share", "failed", code="SA-SWI-20", error="sw_inventory_share has a user or password in it (user@server) - not used, not shown",
-             fix="write only \\\\fileserver.yourdomain.mil\\share\\folder; the login comes from the Windows file share credential")
-    if p["share"] and want:
+    dests, dup_lines = destinations(p)
+    multi = len(dests) > 1
+    res["lines"].extend(dup_lines)
+    shares = []                                 # the destinations open: [(d, folder, sub)], in order
+
+    def dest_said(d, state, **kw):
+        if multi and kw.get("error"):
+            kw["error"] = "%s: %s" % (shown(d), kw["error"])
+        return said(d["name"], state, dest=shown(d), **kw)
+    for d in dests if want else []:            # each destination on its own: one that fails never stops the next
+        if d["refused"]:
+            dest_said(d, "failed", code="SA-SWI-20", error="%s has %s" % (d["what"], REFUSED[0]), fix=REFUSED[1])
+            continue
+        if not d["path"]:
+            dest_said(d, "failed", code="SA-SWI-20", error="%s has no path" % d["what"],
+                      fix="write it as \\\\fileserver.yourdomain.mil\\share\\folder")
+            continue
         try:
-            share_sub = safe_sub(p["share_subdir"], "sw_inventory_share_subdir")
-            if smb_path(p["share"]):
-                share = SmbFolder(p["share"], p["share_auth"], p["share_encrypt"], p["share_port"])
+            sub = safe_sub(d["subdir"], "sw_inventory_share_subdir" if d["legacy"] else d["what"] + " subdir")
+            if smb_path(d["path"]):
+                folder = SmbFolder(d["path"], d["auth"], d["encrypt"], p["share_port"], user=d["user"], password=d["password"])
             else:
-                share = LocalFolder(p["share"], make=False, check=check, what="sw_inventory_share")
+                folder = LocalFolder(d["path"], make=False, check=check, what=d["what"])
         except Fail as e:
-            said("share", "failed", code=e.code, error=e.what, fix=e.fix)
-            share = None
+            dest_said(d, "failed", code=e.code, error=e.what, fix=e.fix)
+            continue
+        shares.append((d, folder, sub))
+    share, share_sub = (shares[0][1], shares[0][2]) if shares else (None, "")
 
     # ---- the baseline: sw-inventory-state.json (dir, else the share) ----
     state_doc, base_from, baseline, damaged, state_ok = None, "", {}, [], True
@@ -457,8 +563,10 @@ def run(p, check=False, warn=lambda m: None):
         raw, src = None, "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
         try:
             raw = local.read(STATE) if local else None
-            if raw is None and share is not None:
-                raw, src = share.read(join(share_sub, STATE)), "sw-inventory-state.json on the share"
+            for d, folder, sub in shares:       # the first destination that has it (an error stops here: never "missing")
+                if raw is not None:
+                    break
+                raw, src = folder.read(join(sub, STATE)), "sw-inventory-state.json on the share" + (" %s" % shown(d) if multi else "")
         except Fail as e:                       # not "missing": never written over, said
             state_ok = False
             said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
@@ -499,7 +607,7 @@ def run(p, check=False, warn=lambda m: None):
     if want and ok and state_ok:                # every host's last list: a host not read this run keeps its own
         files["state"] = [{"rel": STATE, "body": json.dumps(sw.state_merge(state_doc, ok), separators=(",", ":")).encode("utf-8")}]
     kept_here = bool(p["dir"])
-    done_here, done_share = set(), set()       # the files really written, here and on the share (the email says where)
+    done_here = set()                           # the files really written here (the email says where)
     for o in want:
         if o not in file_outs:
             continue
@@ -536,44 +644,46 @@ def run(p, check=False, warn=lambda m: None):
         except Fail as e:
             said("baseline", "failed", code="SA-SWI-33", error=e.what + " - the next run compares with the older list",
                  fix=e.fix)
-    if not kept_here and want and not p["share"]:
+    if not kept_here and want and not dests:
         res["lines"].append("The files are only in the job's own folder (gone after the job): set sw_inventory_share or sw_inventory_dir.")
 
-    # ---- the share: each file on its own ----
-    share_ok = False
-    if share is not None:
+    # ---- the shares: each destination on its own, each file on its own ----
+    done_shares = []                            # [(d, where, the files copied)] (the email says where)
+    for d, folder, sub in shares:
         todo = [f for o in want for f in files[o]] + files["state"]
-        where = share.path(share_sub) if share_sub else share.root
+        where = folder.path(sub) if sub else folder.root
+        done = set()
         if check:
-            said("share", "ok", where="(check mode: logged in, %s is there; %d files to copy)" % (share.root, len(todo)))
+            dest_said(d, "ok", where="(check mode: logged in, %s is there; %d files to copy)" % (folder.root, len(todo)))
         elif todo:
             failed = []
             for f in todo:
                 try:
-                    share.write(join(share_sub, f["rel"]), f["body"])
-                    done_share.add(f["rel"])
+                    folder.write(join(sub, f["rel"]), f["body"])
+                    done.add(f["rel"])
                 except Fail as e:
                     failed.append(e)
-            gone, left = prune_dated(share, share_sub, p["keep_days"], now)
+            gone, left = prune_dated(folder, sub, p["keep_days"], now)
             if left:
-                res["lines"].append("share: %d old dated files could not be deleted: %s" % (len(left), ", ".join(left[:5])))
+                res["lines"].append("%s: %d old dated files could not be deleted: %s" % (d["name"], len(left), ", ".join(left[:5])))
             if failed:
                 for e in failed:                # every one in the job output
-                    res["lines"].append("share: not copied - %s %s" % (e.code, e.what))
+                    res["lines"].append("%s: not copied - %s %s" % (d["name"], e.code, e.what))
                 more = " and %d more (the job output lists them all)" % (len(failed) - 50) if len(failed) > 50 else ""
-                said("share", "failed", code=failed[0].code,
-                     error="%d of %d files not copied to %s - %s%s" % (len(failed), len(todo), where,
-                                                                      "; ".join(e.what for e in failed[:50]), more), fix=failed[0].fix)
+                dest_said(d, "failed", code=failed[0].code,
+                          error="%d of %d files not copied to %s - %s%s" % (len(failed), len(todo), where,
+                                                                           "; ".join(e.what for e in failed[:50]), more), fix=failed[0].fix)
             else:
-                share_ok = True
-                said("share", "ok", where="%d files in %s%s" % (len(todo), where, ("; %d old dated files deleted" % gone) if gone else ""))
-        share.close()
+                dest_said(d, "ok", where="%d files in %s%s" % (len(todo), where, ("; %d old dated files deleted" % gone) if gone else ""))
+        done_shares.append((d, where, done))
+        folder.close()
 
     # ---- the report, the workbook, the email's and the website's files ----
     res["not_read"], res["first_seen"] = bad, first
     view = {"hosts": [{"host": h["host"], "packages": len(h["packages"])} for h in ok], "not_read": bad,
             "outputs": res["outputs"], "changes_by_host": chg, "first_seen": first, "read_at": p["read_at"],
-            "repo_notes": [h["host"] for h in ok if h["repo_note"]], "baseline": base_from, "state_damaged": damaged}
+            "repo_notes": [h["host"] for h in ok if h["repo_note"]], "baseline": base_from, "state_damaged": damaged,
+            "shares": [x for x in res["outputs"] if x.get("dest")] if multi else []}
     res["report"] = sw.report_doc(view, {"top": p["top"]})
     notes = []
     work = p["work_dir"]
@@ -583,15 +693,16 @@ def run(p, check=False, warn=lambda m: None):
         res["sheets_file"] = os.path.join(work, "sheets.json")
     except (Fail, IOError, OSError, ValueError) as e:
         notes.append("The workbook could not be made (%s): the report goes without it." % getattr(e, "what", e))
-    share_where = (share.path(share_sub) if share_sub else share.root) if share is not None else ""
 
     def where_is(rels, it="it is", were="it was"):
-        """Where these files really are, from the writes that worked: the share, else sw_inventory_dir, else nowhere."""
-        if rels and share is not None and all(r in done_share for r in rels):
-            return "%s on the share, %s" % (it, share_where)
+        """Where these files really are, from the writes that worked: the first share that has them all, else
+        sw_inventory_dir, else nowhere."""
+        for _d, where, done in done_shares:
+            if rels and all(r in done for r in rels):
+                return "%s on the share, %s" % (it, where)
         if rels and kept_here and not check and all(r in done_here for r in rels):
             return "%s in %s on the execution node" % (it, p["dir"])
-        if share is None and not p["share"] and not kept_here:
+        if not dests and not kept_here:
             return "%s not kept anywhere else (set sw_inventory_share)" % were
         return "%s not kept anywhere else (its copy failed: see the outputs not written)" % were
     mail = []
@@ -627,6 +738,9 @@ def run(p, check=False, warn=lambda m: None):
                 break
         else:
             res["report"]["sections"].append({"title": "Notes", "lines": notes})
+    secrets = [d["password"] for d in dests if d["password"]]
+    if secrets:                                 # an entry's password never in the result (no_log masks it too)
+        res = scrub(res, secrets)
     res["failed_outputs"] = [x["name"] for x in res["outputs"] if x["state"] == "failed"]
     res["hosts_read"], res["hosts_not_read"] = len(ok), len(bad)
     res["packages"] = sum(len(h["packages"]) for h in ok)
@@ -644,6 +758,13 @@ def main():
                            share_refused=dict(type="bool", default=False),
                            share_auth=dict(type="str", default="negotiate"), share_encrypt=dict(type="bool", default=False),
                            share_port=dict(type="int", default=445), keep_days=dict(type="int", default=90),
+                           shares=dict(type="list", elements="dict", default=[],
+                                       options=dict(path=dict(type="str", default=""), subdir=dict(type="str", default=""),
+                                                    user=dict(type="str", default=""),
+                                                    password=dict(type="str", default="", no_log=True),
+                                                    auth=dict(type="str", default="negotiate"),
+                                                    encrypt=dict(type="bool", default=False),
+                                                    refused=dict(type="bool", default=False))),
                            xlsx_max_rows=dict(type="int", default=20000), email_max_mb=dict(type="float", default=10),
                            top=dict(type="int", default=15)),
         supports_check_mode=True)

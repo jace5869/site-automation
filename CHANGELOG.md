@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.139.0 — 2026-11-26
+
+**To set up:** optional `sw_inventory_shares` for more destinations; nothing to change for one share.
+
+- **Linux - software inventory: more than one Windows file share.** `sw_inventory_shares` is a list of folders the same
+  files are copied to: `path` (needed, single quotes, the folder must be there), and optional `subdir`, `user`,
+  `password` (vault it), `auth`, `encrypt`. An empty `user` / `password` is the **Windows file share** credential's.
+  `sw_inventory_share` keeps working unchanged and is the first destination when set; the same folder twice is copied once.
+- Each destination on its own: one that fails (the login, a folder not there, no space) never stops the next. The job
+  output and the report's new **File shares** table (only with more than one) list each as `share 1`, `share 2`, ... with
+  ok or failed, the `SA-SWI` code and the fix. `sw_inventory_fail_on_output_error` still fails the job at its end.
+- Check logs in to each destination and looks at its folder; nothing is written. A path with a user in it is refused per
+  entry and never shown; a password is `no_log` and never on a command line. Two destinations on one server keep their
+  own logins.
+- Docs: `docs/LINUX_SW_INVENTORY.md` (*More than one share*). Tests: `tests/test_sw_inventory.py` (MoreShares),
+  `tests/swinv/run_sw_inventory_test.sh` (runs 1c, 1d, 3).
+
 ## 1.134.0 — 2026-11-26
 
 **To set up:** in all.yml set who may use the new Admin page - `portal_admin_groups: ["<admins group>"]` and/or
