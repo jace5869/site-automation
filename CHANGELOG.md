@@ -23,8 +23,8 @@ the card lines and access lists of 1.133.0 stay as they are.
 - Every launch checks the template's live name in AAP (a rename between two reads is never launched; a renamed built-in's id
   is looked up again). Self-approval is refused also for a run started in AAP under the approver's own name; an approval AAP
   says nothing about is decided in AAP.
-- The open run default (both run lists empty) counts only for people the view, run and approve lists let in - never for
-  someone who gets in only as an admin or through a template's saved group. A run started from the portal whose record is
+- Getting in only as an admin or through a template's saved group gives exactly that: the Admin page, or that template -
+  never the open run default, an action's `who` list, or the 1.133.0 job visibility. A run started from the portal whose record is
   no longer kept is decided in AAP (who started it is not known). *AAP - set up portal actions* grants Approve only from
   the Admin page's export.
 - Card matching, AD reads and the 1.133.0 names are unchanged.

@@ -2820,11 +2820,12 @@ def _access_rows(cfg):
     doc, error = store.read()
     rows = doc["portal_template_access"]
     here = portal_access.controller_id(cfg.aap_url)
+    good = getattr(store, "good", None)
     if error:
-        good = getattr(store, "good", None)
         return {}, {}, error, (dict(good["portal_template_access"]) if good is not None else None)
     if not rows:
-        return {}, {}, error, {}
+        # Codex 1340 r2 #13: a file gone for a moment still restricts by its last good rows; never read: nothing to restrict
+        return {}, {}, error, (dict(good["portal_template_access"]) if getattr(store, "missing", False) and good is not None else {})
     if doc.get("controller") != here:
         # not dropped yet (no controller address here, or the volume could not be written): none applies, none restricts
         why = "saved for another AAP controller (%s) - dropped when the portal can write its data" % (doc.get("controller") or "not recorded")
@@ -2888,7 +2889,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
     elif isinstance(action.get("who"), list):
         # 1.133.0 (Neon): an action with its own who list - ONLY that list and the template's own run groups, never the
         # general run lists (portal_runners, portal_run_groups)
-        if cn in action["who"]:
+        if cn in action["who"] and cfg.viewer_133(cn):          # Codex 1340 r2 #10: as 1.133.0, only behind its portal entry
             return True
         return bool(not error and row.get("run_groups") and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row["run_groups"]))
     else:
@@ -3832,13 +3833,13 @@ class Portal(object):
         portal_runners). An action no longer listed: its starter and the approvers only. 1.134.0: a record of another AAP
         controller is shown to nobody; a template's saved groups count only on a record stamped with that template's key and
         name (a record from before 1.134.0: the 1.133.0 rule)."""
-        if not rec or not self._ours(rec):
+        if not rec or not self._ours(rec) or not cn:
             return False
-        if cn and (cn == rec.get("user") or cn in self.cfg.approvers):
+        # Codex 1340 r2 #11: the starter and the approvers see it as in 1.133.0 - when the 1.133.0 lists let them in; someone
+        # who gets in only as an admin or by a saved group sees a run only through that run's own template grant
+        if (cn == rec.get("user") or cn in self.cfg.approvers) and self.cfg.viewer_133(cn):
             return True
         a = self.actions.get(rec.get("action"))
-        if not cn:
-            return False
         applied, _stale, err = access_rows(self.cfg)
         if rec.get("controller") is None or not rec.get("template_key"):
             # 1.133.0's rule (the action's who, else the run lists), no saved grant; a damaged access.json: no open default
@@ -4122,6 +4123,7 @@ class Portal(object):
         mine = self.launched()
         out, now = [], time.time()
         ad_status = None
+        portal_user = str(self.aap.user or getattr(self.aap.api, "user", "") or "").strip().casefold()
         for ap in got["rows"]:
             wid = int(ap["summary_fields"]["source_workflow_job"]["id"])
             info = self.wf_info.get(wid) or self.wf_tmp.get(wid) or {}
@@ -4148,7 +4150,11 @@ class Portal(object):
                 # started under (a renamed template's new grant never opens an old run); Codex r4 #8: the action's own Run
                 # access (portal_runners, its who) counts either way, as in 1.133.0
                 same = a is not None and wj.get("name") == a["aap"].get("name")
-                visible = self.may_see(cn, rec) if rec else (a is not None and template_allowed(self.cfg, cn, a, key=key if same else ""))
+                # Codex 1340 r2 #12: a run the portal's own account started whose record is gone is no AAP-started run - its
+                # starter and run grant are not known: only those who may decide it see it
+                portal_started = bool(portal_user) and str(((wj.get("summary_fields") or {}).get("created_by") or {}).get("username") or "").strip().casefold() == portal_user
+                visible = self.may_see(cn, rec) if rec else (not portal_started and a is not None
+                                                             and template_allowed(self.cfg, cn, a, key=key if same else ""))
                 if not visible:
                     continue
             sf = wj.get("summary_fields") or {}
@@ -4172,7 +4178,6 @@ class Portal(object):
                         "deploy_shortlist": info.get("deploy_shortlist") if cn else None,
                         "template_key": key, "permitted": permitted, "can_approve": self._can_approve(ap), "aap_user": aap_user,
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
-        portal_user = str(self.aap.user or getattr(self.aap.api, "user", "") or "").strip().casefold()
         for a in out:
             a["self"] = started_by(a, cn)
             # Codex 1340 #3: started by the portal's own AAP account, its launch record no longer kept - who started it is not
@@ -4317,7 +4322,7 @@ class Portal(object):
         return plan
 
     def change_placement(self, cn, ip, aid, vms, confirmation=None):
-        with self.decision_lock:
+        with self.decision_lock, access_pinned(self.cfg):       # Codex 1340 r2 #15: one read of the grants for both checks
             code, ap = self._decision_approval(cn, ip, aid, "placement")
             if code != 200:
                 return code, ap
@@ -4412,6 +4417,8 @@ class Portal(object):
             return refused("cannot approve this workflow", approve_refusal(self.cfg, cn))
         if ap.get("can_approve") is not True:      # Codex #8: AAP said nothing - refused, never assumed
             return refused("the portal's account has no Approve role on it", "The portal's account has no Approve role on this approval: decide it in AAP.")
+        if ap.get("unknown_starter") and not self.cfg.self_approval:      # Codex 1340 r2 #3: who started it is not known
+            return refused("the run's starter is not known", "This run was started from the portal and its record is no longer kept - approve or deny it in AAP.")
         if started_by(ap, cn) and not self.cfg.self_approval:   # 1.120.0: one person, any of their cards; 1.133.0: started in AAP too
             return refused("self-approval: the person started this run", "You started this run: someone else must approve or deny it (portal_allow_self_approval: false).")
         if decision != "deny":

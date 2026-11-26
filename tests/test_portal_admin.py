@@ -1059,10 +1059,79 @@ class Codex1340(OneController1340):
         self.assertFalse(self.api.writes)
 
 
+class Codex1340R2(Codex1340):
+    """1.134.0: Codex's second gate round - each test fails on the code before its fix"""
+
+    def test_r2_3_a_decision_on_an_unknown_starters_run_is_refused(self):
+        self.aap.user = "example-service"
+        self.portal.wf_info[77]["wj"]["summary_fields"] = {"created_by": {"username": "example-service"}}
+        code, out = self.portal.decide("DECIDER", "192.0.2.1", 7, "approve")
+        self.assertEqual(code, 403, out)
+        self.assertIn("in AAP", out["error"])
+        self.assertFalse(self.api.writes)
+
+    def test_r2_8_a_stamp_with_a_space_is_damage(self):
+        self.cfg.aap_url = self.cfg.access.controller = "https://aap-a.example"
+        self.save("jt_1", confirm_again="on")
+        f = Path(self.cfg.data) / "access.json"
+        doc = json.loads(f.read_text())
+        doc["controller"] = "https://aap example"
+        f.write_text(json.dumps(doc))
+        self.assertTrue(self.cfg.access.read()[1])
+        self.assertIsNone(self.cfg.access.dropped)
+
+    def test_r2_10_a_who_list_counts_behind_the_133_entry_only(self):
+        self.cfg.readers = ["READ"]
+        action = dict(self.portal.actions["example"], who=[ADMIN, "READ"])
+        self.assertFalse(sp.template_allowed(self.cfg, ADMIN, action))           # in only as an admin
+        self.assertTrue(sp.template_allowed(self.cfg, "READ", action))
+
+    def test_r2_11_a_former_runner_in_by_a_saved_group_sees_no_old_run(self):
+        self.cfg.readers = ["READ"]
+        self.save("wf_2", add_run_groups=GROUP)                                  # RUN gets in by this group only
+        self.assertTrue(self.portal.may_use(RUN))
+        self.assertFalse(self.portal.may_see(RUN, {"user": RUN, "action": "example", "job_id": 4244}))
+        self.assertTrue(self.portal.may_see("READ", {"user": "READ", "action": "example", "job_id": 4245}))
+
+    def test_r2_12_a_portal_started_run_without_its_record_is_not_opened_by_a_run_grant(self):
+        self.aap.user = "example-service"
+        self.save("wf_2", add_run_groups=GROUP)
+        self.assertEqual(len(json.loads(self.http("/api/approvals", RUN)[1])["approvals"]), 1)     # AAP-started: as 1.133.0's runners
+        self.portal.wf_info[77]["wj"]["summary_fields"] = {"created_by": {"username": "example-service"}}
+        self.assertEqual(json.loads(self.http("/api/approvals", RUN)[1])["approvals"], [])
+
+    def test_r2_13_a_missing_file_still_asks_once_more(self):
+        self.save("jt_1", confirm_again="on")
+        (Path(self.cfg.data) / "access.json").unlink()
+        code, out, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 409, out)
+        self.assertIn("confirmation", json.loads(out))
+        self.assertFalse(self.api.writes)
+
+    def test_r2_14_missing_at_start_then_damaged_refuses(self):
+        self.assertIsNone(self.cfg.access.good)                                  # no file at start: nothing read whole
+        code, _o, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 201)                                              # no file: nothing restricts (a fresh portal)
+        (Path(self.cfg.data) / "access.json").write_text("{")
+        code, out, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 503, out)
+
+    def test_r2_15_a_placement_reads_the_grants_once(self):
+        vm = self.placement()
+        self.cfg.approvers.append(APPROVE)
+        calls = []
+        real = sp._access_rows
+        with patch.object(sp, "_access_rows", lambda cfg: calls.append(1) or real(cfg)):
+            self.http("/api/approvals/7/placement", APPROVE, body={"vms": [vm]})
+        self.assertEqual(len(calls), 1)
+
+
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(OneController1340, _n, None)            # (only their own tests run there)
 for _n in [n for n in vars(OneController1340) if n.startswith("test_")]:
     setattr(Codex1340, _n, None)
+for _n in [n for n in vars(Codex1340) if n.startswith("test_")]:
+    setattr(Codex1340R2, _n, None)
 
 
 if __name__ == "__main__":

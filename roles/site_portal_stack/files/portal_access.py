@@ -75,7 +75,8 @@ def validate(doc, catalog=None):
         raise ValueError("Expected schema_version 1 and a portal_template_access mapping.")
     # Codex 1340 #8: a controller stamp is "" or an address in its normalized form - anything else is a damaged file
     if "controller" in doc and not (isinstance(doc["controller"], str) and len(doc["controller"]) <= 512
-                                    and (doc["controller"] == "" or controller_id(doc["controller"]) == doc["controller"])):
+                                    and (doc["controller"] == "" or (controller_id(doc["controller"]) == doc["controller"]
+                                         and re.fullmatch(r"https?://(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[0-9]{1,5})?(/[!-~]*)?", doc["controller"])))):
         raise ValueError("Invalid controller.")
     if "saves" in doc and not (type(doc["saves"]) is int and 0 <= doc["saves"] < 2 ** 53):
         raise ValueError("Invalid save counter.")
@@ -199,7 +200,8 @@ class Store:
         self.stamp = object()
         self.doc = empty()
         self.error = ""
-        self.good = None                    # the last document read whole (this controller's): what a damaged file still restricts
+        self.good = None                    # the last document read whole (this controller's): what a damaged or missing file still restricts
+        self.missing = False                # the file is not there (just now)
         self.dropped = None                 # 1.134.0: {"controller": was, "count": n, "at": ...} when grants of another controller were dropped
 
     def read(self, for_write=False):
@@ -256,13 +258,14 @@ class Store:
                     if for_write:
                         raise  # Preserve the pending event until the journal can be written.
                     stamp = object()  # Retry on the next read.
+            self.missing = missing
             if (not error and self.controller and doc["portal_template_access"] and doc.get("controller") != self.controller
                     and not for_write and not getattr(self, "_dropping", False)):
                 return self._drop(doc)
             if stamp != self.stamp:
                 self.doc, self.error, self.stamp = doc, error, stamp
                 # Codex 1340 #6: a file gone for a moment (a restore) never clears what the last good one restricted
-                if not error and doc.get("controller", self.controller) == self.controller and not (missing and self.good is not None):
+                if not error and not missing and doc.get("controller", self.controller) == self.controller:
                     self.good = doc
                 self.groups_changed(doc["portal_template_access"])
             return self.doc, self.error
