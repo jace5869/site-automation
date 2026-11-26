@@ -493,6 +493,7 @@ class Groups(object):
         with self.lock:
             if self.held():
                 return self.last                          # a refused login: no bind at all until the next deploy
+        t0 = time.monotonic()                             # the gate on b22d1f77: the next read counts from this read's START
         r = self.reader.read(self.want)
         refused = not r["ok"] and ("invalidCredentials" in str(r.get("error")) or self.reader.refused)
         if refused:
@@ -509,7 +510,7 @@ class Groups(object):
                 self._held = True
             wait = self.seconds if r["ok"] else 10 ** 9 if self.__dict__.get("_held") else RETRY
             self.next_at = r["at"] + wait
-            self.next_mono = time.monotonic() + wait
+            self.next_mono = t0 + wait                    # (as 1.132.0's r["at"] + wait): a slow read never delays the next one
         if self.on_change and (before is None or before["ok"] != r["ok"] or (not r["ok"] and before.get("error") != r["error"])):
             self.on_change(r)
         return r

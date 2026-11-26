@@ -1330,5 +1330,19 @@ class CardShapeSuffix1330(unittest.TestCase):
             self.assertFalse(G.CARD_CN.fullmatch(cn), cn)
 
 
+class GateR10Start(unittest.TestCase):
+    def test_the_next_read_counts_from_the_start_of_a_slow_read(self):
+        clock = [1000.0]
+        g = G.Groups({"approvers": ["Ops"]}, {"servers": ["dc1.corp.example.mil"], "domain": "corp.example.mil"}, seconds=60)
+
+        def slow(want):
+            clock[0] += 20.0                              # the read takes 20 s
+            return {"ok": True, "at": 1000.0, "server": "dc1", "groups": dict((r, []) for r in G.ROLES)}
+        g.reader.read = slow
+        with patch.object(G.time, "monotonic", lambda: clock[0]):
+            g.refresh()
+        self.assertEqual(g.next_mono, 1060.0)
+
+
 if __name__ == "__main__":
     unittest.main()
