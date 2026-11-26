@@ -31,6 +31,13 @@
 # a job that brings its own evidence, as troubleshoot, is asked for each host): ACT reads the first of them, the others
 # take its answer, said in each one's report. The signature leaves out the numbers, times, addresses and the host's
 # own names (plugins/module_utils/site_signature.py).
+# a mark of this pass, the same on every host of the batch: a host copies only an answer made in this pass, never one an
+# earlier pass left on the first host (that host failed or dropped out this time - Neon r2)
+- name: ACT | this pass
+  ansible.builtin.set_fact:
+    _site_act_pass: "{{ '%x' % (1152921504606846976 | random) }}"
+  run_once: true
+
 - name: ACT | this host's findings as one signature
   ansible.builtin.set_fact:
     _site_act_sig: >-
@@ -83,6 +90,7 @@
   ansible.builtin.set_fact:
     site_act_result:
       level: "{{ _site_act_level }}"
+      pass: "{{ _site_act_pass | default('') }}"
       # a model that lost the thread answers like a chat ("I am ready. What task would you like ...?"):
       # that is no analysis, and whatever it tried to run is not a fix - say so instead of passing it on
       status: "{{ 'no_analysis' if _site_act_chat else act_triage_result.status | default('error') }}"
@@ -103,8 +111,9 @@
   ansible.builtin.set_fact:
     site_act_result: >-
       {{ hostvars[_site_act_group.lead].site_act_result
-         | default({'level': _site_act_level, 'status': 'error', 'applied': [], 'proposed': [],
-                    'summary': 'ACT did not run here: ' ~ _site_act_group.lead ~ ' has the same findings, and its answer was not there.'}) }}
+         if (hostvars[_site_act_group.lead].site_act_result | default({})).pass | default('') == _site_act_pass | default('-')
+         else {'level': _site_act_level, 'status': 'error', 'applied': [], 'proposed': [],
+               'summary': 'ACT did not run here: ' ~ _site_act_group.lead ~ ' has the same findings, and its answer was not there.'} }}
   when: _site_act_key_ok | bool and _site_act_group.lead != inventory_hostname
 
 - name: ACT | the hosts with the same findings, said in the answer

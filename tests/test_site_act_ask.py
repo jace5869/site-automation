@@ -435,7 +435,7 @@ class ReviewRound1(Base):
 
     def test_the_sites_masking_list_reaches_the_engine(self):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "act_ask.yml")).read()
-        self.assertIn("+ (act_triage_pseudo_names | default([]))", t)
+        self.assertIn("+ (act_triage_pseudo_names | default([], true))", t)
 
 
 class ReviewRound1Cache(Base):
@@ -623,6 +623,60 @@ class ReviewRound2(Base):
             A.run_act = orig
         x = r["questions"][0]
         self.assertEqual((x["ran"], x["summary"]), (True, "the cause is the network"))
+
+
+class ReviewRound2Neon(Base):
+    """1.136.0, Neon's second review: a test for each finding fixed."""
+
+    def test_a_password_with_an_at_sign_never_shows(self):
+        self.assertEqual(A._plain_url("https://user:p@ss@gw.example.mil/v1?k=1"), "https://gw.example.mil/v1")
+
+    def test_a_url_with_a_user_and_password_is_not_checked(self):
+        r = self.ask([q("t1")], url="http://u:pw@127.0.0.1:%s/v1" % self.url.split(":")[2].split("/")[0])
+        self.assertIsNone(r["reached"])
+        self.assertEqual(Model.gets, 0)
+        self.assertTrue(r["questions"][0]["ran"])
+        self.assertNotIn("pw@", r["url"])
+
+    def test_act_provider_in_the_settings_is_the_provider_checked_and_keyed(self):
+        env = {"FAKE_PLAN": self.plan, "FAKE_LOG": self.log, "ACT_PROVIDER": "asksage", "ASKSAGE_URL": self.url + "?as=1"}
+        r = self.ask([q("t1")], env=env)
+        self.assertEqual(r["url"], self.url)                                   # asksage's URL (its query not shown)
+        self.assertTrue(r["reached"])
+
+    def test_falsy_values_say_nothing(self):
+        A._cache()
+        for item in ('{"id": "P1", "cause": "", "fix": "", "confidence": 0}', '{"id": "P1", "cause": "", "evidence": [""]}',
+                     '{"id": "P1", "ok": false}'):
+            self.assertFalse(A.complete("BEGIN_ACT_ANALYSIS {\"items\": [%s]} END_ACT_ANALYSIS" % item, [{"id": "P1"}]), item)
+
+    def test_a_null_masking_list_is_no_list(self):
+        t = open(os.path.join(REPO, "roles", "site_act", "tasks", "act_ask.yml")).read()
+        self.assertIn("act_triage_pseudo_names | default([], true)", t)
+
+    def test_ids_keep_their_numbers_and_fapolicyd_its_paths(self):
+        S = A._load("site_signature_n2", "module_utils", "site_signature.py")
+        a = [{"severity": "critical", "check": "stig", "id": "V-257985", "summary": "rule failed"}]
+        b = [{"severity": "critical", "check": "stig", "id": "V-257883", "summary": "rule failed"}]
+        self.assertNotEqual(S.finding_set(a), S.finding_set(b))
+        G = A._load("act_group_filters_n2", "filter", "act_group_filters.py")
+        x = ["Trust file '/etc/fapolicyd/trust.d/app' cannot be read on web01"]
+        y = ["Trust file '/etc/fapolicyd/trust.d/db' cannot be read on web02"]
+        self.assertNotEqual(G.site_text_set(x, ["web01"], True), G.site_text_set(y, ["web02"], True))
+        z = ["Trust file '/etc/fapolicyd/trust.d/app' cannot be read on web02"]
+        self.assertEqual(G.site_text_set(x, ["web01"], True), G.site_text_set(z, ["web02"], True))
+        t = open(os.path.join(REPO, "roles", "fapolicyd", "tasks", "act.yml")).read()
+        self.assertIn("ansible_host | default('')], true))", t)
+
+    def test_a_copy_only_of_this_passs_answer(self):
+        import yaml
+        for rel, mark in (("roles/site_act/tasks/run.yml", "_site_act_pass"), ("roles/fapolicyd/tasks/act.yml", "_fa_act_pass")):
+            with open(os.path.join(REPO, rel)) as f:
+                tasks = yaml.safe_load(f)
+            setter = next(t for t in tasks if mark in (t.get("ansible.builtin.set_fact") or {}))
+            self.assertIs(setter.get("run_once"), True, rel)
+            copy = next(t for t in tasks if "the same" in str(t.get("name", "")) and "hostvars[" in str(t.get("ansible.builtin.set_fact")))
+            self.assertIn(mark, str(copy["ansible.builtin.set_fact"]), rel)
 
 class FakeDB(object):
     """The report database as site_act_cache uses it: the table, schema_version, its rows {key: [kind, pv, model, created,

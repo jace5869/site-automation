@@ -50,7 +50,7 @@
     # and act_triage_pseudo_names, the site's own list, as ACT's role took it (Codex P2)
     names: >-
       {{ [inventory_hostname, inventory_hostname_short, ansible_host | default('')] + (_ea_names | default([]))
-         + (act_triage_pseudo_names | default([])) }}
+         + (act_triage_pseudo_names | default([], true)) }}
     pseudonymize: "{{ act_triage_pseudonymize | default(true) | bool }}"        # as ACT's role did (its default)
     evidence_max: "{{ act_triage_evidence_total_chars | default(1500000) | int }}"   # as ACT's role did (its default)
     concurrency: "{{ site_act_concurrency | int }}"

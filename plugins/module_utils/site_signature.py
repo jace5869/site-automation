@@ -80,6 +80,14 @@ def group(records, text="message", obj="host", examples=3, cap=300, names=None):
 _QUOTED = re.compile(r'"([^"\n]{1,200})"|\'([^\'\n]{1,200})\'')
 
 
+def _names_out(text, names):
+    """A text with only the host's own names taken out (as signature() does first), its numbers and quotes kept."""
+    s = str(text or "")
+    for n in _names(names):
+        s = re.sub(r"(?<![\w.-])%s(?![\w-])" % re.escape(n), HOST, s, flags=re.I)
+    return s.strip().lower()[:200]
+
+
 def _sig_has_name(text, names):
     t = str(text).lower()
     return any(str(n).lower() in t for n in (names or []) if n not in (None, ""))
@@ -101,8 +109,8 @@ def finding_lines(findings, names=None):
             paths = sorted(set(signature(x, names) if _sig_has_name(x, names) else x for x in _PATHS.findall(text)))
             line = signature("[%s] %s: %s" % (str(f.get("severity") or "").upper(), f.get("check") or "", f.get("summary") or ""),
                              names)
-            if f.get("id") not in (None, ""):
-                line += " id=" + signature(str(f.get("id")), names)
+            if f.get("id") not in (None, ""):         # as it is (V-257985 and V-257883 are two rules), the host's names out
+                line += " id=" + _names_out(str(f.get("id")), names)
             if f.get("hint"):
                 line += " hint=" + signature(str(f.get("hint")), names)
             if ports:

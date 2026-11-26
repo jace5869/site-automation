@@ -228,20 +228,29 @@ def complete(summary, items):
         raw = _cache_mods["c"]._analysis(summary) if "c" in _cache_mods else _cache()[0]._analysis(summary)
         if not isinstance(raw, dict):
             return False
-        empty = (None, "", [], {})
         said = set()
         for it in raw.get("items") or []:
-            if isinstance(it, dict) and any(str(x).strip() for f, x in it.items()
-                                            if f not in ("id", "pid", "confidence") and x not in empty):
+            if isinstance(it, dict) and any(_said(x) for f, x in it.items() if f not in ("id", "pid", "confidence")):
                 said.add(_pid(it.get("id") or it.get("pid")))
         for c in raw.get("causes") or []:
-            if isinstance(c, dict) and any(c.get(f) not in empty for f in ("title", "why", "steps", "evidence")):
+            if isinstance(c, dict) and any(_said(c.get(f)) for f in ("title", "why", "steps", "evidence")):
                 said.update(_pid(x) for x in (c.get("patterns") or c.get("items") or []))
         said.update(_pid(x) for x in (raw.get("noise") or []) if not isinstance(x, dict))
         said.update(_pid(x.get("id") or x.get("pattern")) for x in (raw.get("noise") or []) if isinstance(x, dict))
         return bool(r["parsed"]) and asked <= said
     except Exception:
         return False
+
+
+def _said(x):
+    """True when a value says something: a text that is not blank, or a list or dict holding one (0, False, [""] do not)."""
+    if isinstance(x, str):
+        return bool(x.strip())
+    if isinstance(x, (list, tuple)):
+        return any(_said(y) for y in x)
+    if isinstance(x, dict):
+        return any(_said(y) for y in x.values())
+    return False
 
 
 def _pid(v):
@@ -292,7 +301,7 @@ def unreached_reason(url, why):
 def _plain_url(url):
     """The URL as a report shows it: no user, password, query or fragment (a gateway key can ride in them)."""
     u = str(url or "")
-    u = re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@", r"\1", u)
+    u = re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/?#]*@", r"\1", u)          # a password with an @ in it too (Neon r2)
     return re.split(r"[?#]", u, 1)[0]
 
 
@@ -409,7 +418,12 @@ class ActionModule(ActionBase):
         provider = str(a.get("provider") or "genai")
         url = str(a.get("url") or URLS.get(provider, ""))
         model = str(a.get("model") or "")
-        out = {"url": url, "reached": None, "why_not": "", "questions": []}
+        # the provider and URL ACT will use (Neon r2): an ACT_PROVIDER in site_act_env, then that provider's URL setting
+        # (site_act_env, else the execution environment), else its default - for the check and the cache key alike
+        aenv = a.get("env") if isinstance(a.get("env"), dict) else {}
+        eprov = str(aenv.get("ACT_PROVIDER") or provider)
+        url = _effective_url(url if eprov == provider else URLS.get(eprov, url), eprov, aenv)
+        out = {"url": _plain_url(url), "reached": None, "why_not": "", "questions": []}
         rows = []
         for q in questions:
             ids = [str(i.get("id")) if isinstance(i, dict) else str(i) for i in (q.get("items") or [])]
@@ -455,9 +469,7 @@ class ActionModule(ActionBase):
                 # a question's own cache_key (the log analysis: its patterns, not its times) stands for its task and evidence
                 # 1.136.0 (Codex P2): the model as ACT will use it (a model setting in site_act_env wins) and the URL it
                 # asks: another model or deployment never takes this one's answers
-                eprov = str((a.get("env") or {}).get("ACT_PROVIDER") or provider)
-                eff = "%s|%s|%s|cap=%d" % (eprov, _effective_model(model, eprov, a.get("env") or {}),
-                                           _effective_url(url, eprov, a.get("env") or {}), cap)
+                eff = "%s|%s|%s|cap=%d" % (eprov, _effective_model(model, eprov, aenv), url, cap)
                 keys = dict((i, C.key(provider, eff, pv, kind, "", "cache_key:" + _text(questions[i].get("cache_key")))
                              if _text(questions[i].get("cache_key")).strip() else
                              C.key(provider, eff, pv, kind, _text(questions[i].get("task")), piped[i])) for i in todo)
@@ -505,7 +517,10 @@ class ActionModule(ActionBase):
         role_env = {"ACT_NO_BANNER": "1", "ACT_PSEUDONYMIZE": "1" if _bool(a.get("pseudonymize", True)) else "0"}
 
         probe_env = check_env(settings, keep, launcher)
-        if _bool(a.get("check_url", True)) and not proxy_with_password(probe_env):      # the EE's own proxy too (Codex P2)
+        # not through a proxy with a password (the EE's own too), nor to a URL with a user and password in it (urllib
+        # takes neither as the uri module did): ACT is asked, and says itself when it fails (Codex, Neon r2)
+        if (_bool(a.get("check_url", True)) and not proxy_with_password(probe_env)
+                and not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@", url)):
             ok, why = reach(url, str(a.get("ca") or ""), probe_env)
             out["reached"] = ok
             if not ok:

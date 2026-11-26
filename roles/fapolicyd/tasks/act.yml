@@ -28,6 +28,12 @@
 # analysis, said in their report. Compared: fapolicyd's state and each block (what was blocked, by which program, how) -
 # not how often, and without numbers, times, addresses and the host's own names - and the findings ACT is given (a trust file
 # that cannot be read, a trust database too small ...: Codex P2), so a host never takes another's fix.
+# a mark of this pass, the same on every host of the batch: a host copies only an analysis made in this pass (Neon r2)
+- name: Fapolicyd | this pass
+  ansible.builtin.set_fact:
+    _fa_act_pass: "{{ '%x' % (1152921504606846976 | random) }}"
+  run_once: true
+
 - name: Fapolicyd | this host's denials as one signature
   ansible.builtin.set_fact:
     _site_act_sig: >-
@@ -38,7 +44,7 @@
       {%- endfor -%}
       {%- set ls = ls + (_fr | fapolicyd_act_findings(_ff | default({})) | map('string') | map('regex_replace', ' x[0-9]+$', '') | list)
                       + ((_ff | default({})).fixes | default([]) | map('string') | list) -%}
-      {{ (ls | site_text_set([inventory_hostname, inventory_hostname_short, ansible_host | default('')]))
+      {{ (ls | site_text_set([inventory_hostname, inventory_hostname_short, ansible_host | default('')], true))
          if _fa_act_skip | length == 0 and site_act_group | default(true) | bool else '' }}
 
 - name: Fapolicyd | the hosts with the same denials
@@ -70,12 +76,18 @@
     act_triage_fail_in_role: false
     act_triage_write_report: false
 
+- name: Fapolicyd | this pass's analysis is here
+  ansible.builtin.set_fact:
+    _fa_act_done: "{{ _fa_act_pass }}"
+  when: _fa_act_skip | length == 0 and _fa_act_group.lead == inventory_hostname and act_triage_result is defined
+
 - name: Fapolicyd | the analysis of {{ _fa_act_group.lead }} - the same denials
   ansible.builtin.set_fact:
     act_triage_result: >-
       {{ hostvars[_fa_act_group.lead].act_triage_result
-         | default({'status': 'error', 'summary': '', 'stop_reason': 'ACT did not run here: ' ~ _fa_act_group.lead
-                    ~ ' has the same denials, and its analysis was not there.', 'commands': [], 'denied': []}) }}
+         if hostvars[_fa_act_group.lead]._fa_act_done | default('') == _fa_act_pass
+         else {'status': 'error', 'summary': '', 'stop_reason': 'ACT did not run here: ' ~ _fa_act_group.lead
+               ~ ' has the same denials, and its analysis was not there.', 'commands': [], 'denied': []} }}
   when: _fa_act_skip | length == 0 and _fa_act_group.lead != inventory_hostname
 
 - name: Fapolicyd | the hosts with the same denials, said in the analysis
@@ -88,7 +100,7 @@
     _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
   when: >-
     _fa_act_skip | length == 0 and _fa_act_group.same | length > 1 and act_triage_result is defined
-    and act_triage_result.status | default('') != 'error'
+    and act_triage_result.status | default('') != 'error' and act_triage_result.summary | default('') | length > 0
 
 - name: Fapolicyd | this pass's signature is spent (a later pass groups on its own denials)
   ansible.builtin.set_fact:

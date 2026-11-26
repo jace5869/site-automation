@@ -28,8 +28,8 @@ outage review and the STIG answer keys all use it.
 - 1.104.0's rules stay: ACT starts through the `act_triage` launcher (`act_launch.py`). Its environment is an
   allowlist, never the job's other credentials. Only the provider keys in `act_triage_key_env_names` are passed, on
   the launcher's input, never a command line. A `site_act_env` name ACT may not get stops the questions before any is
-  asked; the report names it, never its value. `site_act_env` cannot turn the masking off. A proxy with a user name
-  and password is not checked. With the job's own model time (the outage review), each run is held to twice it and
+  asked; the report names it, never its value. `site_act_env` cannot turn the masking off. A proxy, or a model URL,
+  with a user name and password is not checked. With the job's own model time (the outage review), each run is held to twice it and
   a minute.
 - The check of the way to the model uses ACT's own environment: the job's proxy and `NO_PROXY`.
 - A question that could not be asked gets its own reason. The others keep their answers. An error in the engine is

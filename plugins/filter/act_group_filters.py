@@ -21,10 +21,12 @@ def site_finding_set(findings, names=None):
     return _sig.finding_set(findings, names)
 
 
-def site_text_set(lines, names=None):
+def site_text_set(lines, names=None, exact=False):
     """Lines of text (a job's own reading, as fapolicyd's denials) as one signature, their order and repeats left out
-    ('' for none)."""
-    sigs = sorted(set(_sig.signature(x, names) for x in (lines or []) if str(x or "").strip()))
+    ('' for none). exact: only the host's own names out - the paths, quoted names and numbers stay (fapolicyd: another
+    file or mode is another fix)."""
+    sigs = sorted(set((_sig._names_out(x, names) if exact else _sig.signature(x, names))
+                      for x in (lines or []) if str(x or "").strip()))
     return hashlib.sha256(json.dumps(sigs).encode("utf-8")).hexdigest() if sigs else ""
 
 
