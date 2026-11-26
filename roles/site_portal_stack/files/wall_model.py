@@ -18,6 +18,10 @@ try:
     import site_swis                       # the network map's own matching (plugins/module_utils): one rule for both maps
 except ImportError:                        # pragma: no cover - the portal image has it
     site_swis = None
+try:
+    import wall_fleet                      # 1.138.0: the Fleet & services area's conditions and summary
+except ImportError:                        # pragma: no cover - an older deploy's files: no fleet area
+    wall_fleet = None
 
 LATE_S = 180                     # amber (LATE) after 3 min
 STALE_S = 600                    # STALE (not current, never green) after 10 min
@@ -45,6 +49,13 @@ NOT_ON_WALL = {
     "storage": "EMS informational events, snapshot counts, autosupport.",
     "vmware": "vCenter informational alarms, short spikes (under the sustained window), snapshot age, tools out of date.",
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
+    "fleet": "a node's own alerts (CPU, disk, interfaces), SolarWinds events; a single node down lights its group, never a wall of its own.",
+}
+# 1.138.0: Fleet & services (wall_fleet.py) - on the wall only with portal_wall_fleet (auto: when SolarWinds is configured)
+FLEET_AREA = {"id": "fleet", "name": "Fleet & services", "short": "Fleet", "sub": "SolarWinds", "team": "Service owners"}
+FLEET_KINDS = {
+    "fleetdown": {"area": "fleet", "sev": "crit", "label": "A node of a service group down in SolarWinds (powered off in vCenter: never down)", "grp": "fleet"},
+    "fleetwarn": {"area": "fleet", "sev": "warn", "label": "A node of a service group warning in SolarWinds (packet loss or slow answers)", "grp": "fleet"},
 }
 
 # 1.131.1 (Codex #11): vCenter's default hardware alarm definitions, by whole name (any case) - portal_wall_hw_alarms
@@ -122,9 +133,12 @@ def _n(x):
     return ("%d" % x) if float(x) == int(x) else ("%.1f" % x)
 
 
-def fstate(age, o=None):
-    """a feed's age (s, None = never read) -> ok | late | stale"""
+def fstate(age, o=None, f=None):
+    """a feed's age (s, None = never read) -> ok | late | stale (f: the feed - 1.138.0: its own late / stale when it has them)"""
     late, stale = (o or DEFAULTS)["late"], (o or DEFAULTS)["stale"]
+    if isinstance(f, dict):
+        late = f["late"] if isinstance(f.get("late"), (int, float)) and not isinstance(f.get("late"), bool) else late
+        stale = f["stale"] if isinstance(f.get("stale"), (int, float)) and not isinstance(f.get("stale"), bool) else stale
     if age is None:
         return "stale"
     return "stale" if age > stale else "late" if age > late else "ok"
@@ -751,14 +765,23 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
-def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None):
-    """-> the answer of /api/wall (times: epoch seconds)"""
+def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why=""):
+    """-> the answer of /api/wall (times: epoch seconds). fleet: the Fleet & services area's model (wall_fleet.model) when that
+    area is on (portal_wall_fleet), with fleet_why when it is on but cannot read; None: the area is not on the wall."""
     o = opts_of(opts)
     ks = kinds(o)
+    fleet_on = fleet is not None or bool(fleet_why)
+    if fleet_on:
+        ks.update(FLEET_KINDS)
     vm, c1, f1, ok1 = vmware_part(view, o, now)
     st, c2, f2, ok2 = storage_part(nm, nm_asof, vm, o, now, nm_why, view)
     if not st["configured"]:                   # Storage is not on the wall: none of its conditions (a datastore's fill) either
         c1 = [c for c in c1 if ks[c["kind"]]["area"] != "storage"]
+    if fleet is not None and wall_fleet is not None:
+        c3, ok3 = wall_fleet.conds(fleet, now)
+        f2 = dict(f2, **{"sw:fleet": dict(fleet["feed"])})
+        c2 = c2 + c3
+        ok2 = ok2 + [("sw:fleet", x) for x in ok3]
     fall = dict(f1)
     fall.update(f2)
     for c in c1 + c2:
@@ -766,7 +789,7 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         c.update(area=k["area"], sev=c.get("sev", k["sev"]), end=None)
         c["seen"] = (fall.get(c.get("feed")) or {}).get("asof") or c.get("start")     # when its data was read (a last-known one: last seen)
     # what clears a condition: its object seen OK in a fresh read (its feed's latest read worked, within the stale limit)
-    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= o["stale"]) for k, f in fall.items())
+    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= (f.get("stale") or o["stale"])) for k, f in fall.items())
     ok_ids = set(cid for fk, cid in ok1 + ok2 if cur.get(fk))
     if tracker is not None:
         for src in ((view or {}).get("sources") or {}).values():
@@ -794,26 +817,31 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     feeds.update(f2)
     for f in feeds.values():
         # the state at this answer (the page works the age out itself every second - no age here: the ETag stays until a change)
-        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o)
-    area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run") + sorted(f1)) if st["configured"] else []}
+        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o, f)
+    area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run" and k != "sw:fleet") + sorted(f1)) if st["configured"] else [],
+                  "fleet": ["sw:fleet"] if fleet is not None else []}
     areas = []
-    for a in AREAS:
+    for a in AREAS + ((FLEET_AREA,) if fleet_on else ()):
         x = dict(a)
-        x["on"] = a["id"] in BUILT and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
-        x["built"] = a["id"] in BUILT
+        x["on"] = (a["id"] in BUILT or a["id"] == "fleet") and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
+        x["built"] = a["id"] in BUILT or a["id"] == "fleet"
         x["feeds"] = area_feeds.get(a["id"], [])
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
-        inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else [])
+        inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else
+               ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "fleet" else [])
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
             x["why"] = off_why.get("storage") or STORAGE_OFF          # 1.131.0: a login there but no cluster: that, not "no login"
         elif a["id"] == "vmware" and not vm["configured"]:
             x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
+        elif a["id"] == "fleet" and fleet is None:
+            x["why"] = fleet_why
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
     return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
+            "fleet": wall_fleet.summary(fleet) if fleet is not None and wall_fleet is not None else None,
             "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
@@ -826,11 +854,11 @@ def _feed_fresh(m, k, now):
     f = (m.get("feeds") or {}).get(k)
     if not isinstance(f, dict) or f.get("state") != "ok" or f.get("asof") is None:
         return "stale"
-    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S})
+    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S}, f)
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "fleet" if k.startswith("sw:") else ""
 
 
 def _home_ok(m, k, now, by):
@@ -955,16 +983,25 @@ def summary(m, now):
                 w_ = max(busy, key=lambda x: x["cpu"])
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
+        elif st != "off" and aid == "fleet":
+            fs = m.get("fleet") or {}
+            cn = fs.get("counts") or {}
+            tot = sum(int(v or 0) for v in cn.values())
+            if tot:
+                big, unit = "%d/%d" % (int(cn.get("u") or 0) + int(cn.get("w") or 0), tot), "nodes up"
+                note = "%d down · %d warning · %d off or unmanaged" % (int(cn.get("d") or 0), int(cn.get("w") or 0), int(cn.get("p") or 0) + int(cn.get("m") or 0))
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
         # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
         # own - a vCenter or cluster not answering - stays until the next read says otherwise)
         late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
-        ok_until = (min(asofs) + late_s) if st == "ok" and asofs and len(asofs) == len(feeds) else None
+        fd = m.get("feeds") or {}
+        lims = [float(fd[k]["asof"]) + float(fd[k].get("late") or late_s) for k in feeds if isinstance(fd.get(k), dict) and fd[k].get("asof") is not None]
+        ok_until = min(lims) if st == "ok" and asofs and len(asofs) == len(feeds) else None
         live = []                                  # each current condition: its severity, until when (None: until the next read)
         for c in cur:
-            f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None
-            live.append([c.get("sev"), (float(f["asof"]) + stale_s) if isinstance(f, dict) and f.get("asof") is not None else None])
+            f = fd.get(c.get("feed")) if c.get("feed") else None
+            live.append([c.get("sev"), (float(f["asof"]) + float(f.get("stale") or stale_s)) if isinstance(f, dict) and f.get("asof") is not None else None])
         out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",
                     "ok_until": ok_until, "live": live,
                     "state": st, "crit": n["crit"], "warn": n["warn"], "big": big, "unit": unit, "note": note, "metric": metric,

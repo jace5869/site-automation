@@ -83,6 +83,10 @@ try:
 except ImportError:                     # an older deploy's files: the wall from the report database only
     wall_live = None
 try:
+    import wall_fleet  # noqa: E402  1.138.0: the wall's Fleet & services area (SolarWinds' nodes, SWQL only, vs vCenter)
+except ImportError:                     # an older deploy's files: no fleet area
+    wall_fleet = None
+try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
 except ImportError:                     # an older deploy's files: the named lists only
     site_ad_groups = None
@@ -727,6 +731,20 @@ class Config(object):
         except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
             self.wall, self.wall_logins = False, {}
+            wo = {}
+        # 1.138.0: the wall's Fleet & services area (PORTAL_WALL_FLEET: the deploy's portal_wall_fleet, auto resolved there - on with
+        # a SolarWinds credential) - SolarWinds read with the network map's address and read-only login; its settings in PORTAL_WALL_OPTS
+        self.wall_fleet = self.wall and flag(g("PORTAL_WALL_FLEET", "0"))
+        self.wall_fleet_opts, fleet_bad = (wall_fleet.opts_of(wo if isinstance(wo, dict) else {}) if wall_fleet is not None
+                                           else ({"seconds": 60}, []))
+        self.wall_fleet_notes = fleet_bad
+        self.wall_fleet_why = ("" if not self.wall_fleet else
+                               "the wall's Fleet reader (wall_fleet.py) or SolarWinds' (site_swis.py) is not in the service's files - deploy again"
+                               if wall_fleet is None or site_swis is None else
+                               "no SolarWinds address: a \"SolarWinds (read-only)\" credential on Site portal - deploy (or netmap_solarwinds_url)"
+                               if not self.swis_url else
+                               "no SolarWinds login: a \"SolarWinds (read-only)\" credential on Site portal - deploy"
+                               if not (self.swis_user and self.swis_password) else "")
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -7164,7 +7182,7 @@ def netapp_page(cfg, cn, statics, token=""):
 
 
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
-WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js", "wall-fleet.js", "wall-fleet.css")
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
 LOOKS_STATIC = ("portal-looks.js",)
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
@@ -7241,11 +7259,29 @@ class WallLive(object):
     anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
     someone looks), made into one model by wall_model.build. One answer every viewer shares, with an ETag."""
 
-    def __init__(self, cfg, log, nal=None, collector=None):
+    def __init__(self, cfg, log, nal=None, collector=None, fleet=None):
         self.cfg, self.log, self.nal = cfg, log, nal
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
+        # 1.138.0: Fleet & services - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
+        self.fleet, self.fleet_key, self.fleet_model, self.fleet_since = fleet, None, None, None
+        self.fleet_body, self.fleet_tag = "", ""
+        if getattr(cfg, "wall_fleet", False) is True and wall_fleet is not None:
+            notes = getattr(cfg, "wall_fleet_notes", [])
+            for note in notes if isinstance(notes, list) else []:
+                _safe_add(log, {"event": "wall", "fleet": "setting", "why": note})
+            if self.fleet is None and not cfg.wall_fleet_why:
+                box = {}
+
+                def client():
+                    c = box.get("c")
+                    if c is None or c.url != site_swis.base_url(cfg.swis_url):
+                        c = box["c"] = site_swis.Client(cfg.swis_url, cfg.swis_user, cfg.swis_password, verify=cfg.swis_verify, timeout=cfg.swis_timeout)
+                    return c
+                self.fleet = wall_fleet.Reader(client, cfg.wall_fleet_opts, log=lambda d: _safe_add(log, d), auth_retry=cfg.wall_auth_retry)
+            if self.fleet is not None:
+                self.fleet_since = wall_fleet.Since(os.path.join(cfg.data, "wall-fleet-since.json"), log=lambda d: _safe_add(log, d))
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
         for k in (bad if isinstance(bad, list) else []):
@@ -7281,6 +7317,39 @@ class WallLive(object):
     def viewed(self):
         if self.nal is not None:
             self.nal.viewed()
+        if self.fleet is not None:
+            self.fleet.viewed()
+
+    def fleet_of(self, view, now):
+        """1.138.0: the Fleet area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
+        changed (a 3,000-node join is not made per request). Called inside self.lock."""
+        if self.fleet is None:
+            return None
+        snap = self.fleet.snapshot()
+        vcs = tuple(sorted((k, s.get("at"), s.get("state"), s.get("at") is not None and now - float(s["at"]) <= wall_model.LATE_S)
+                           for k, s in ((view or {}).get("sources") or {}).items() if isinstance(s, dict) and s.get("kind") == "vcenter"))
+        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"), vcs)
+        if key != self.fleet_key or self.fleet_model is None:
+            self.fleet_model = wall_fleet.model(snap, view, self.cfg.wall_fleet_opts, now, since=self.fleet_since)
+            self.fleet_key, self.fleet_body = key, ""
+        return self.fleet_model
+
+    def fleet_answer(self, etag_in=""):
+        """/api/wall/fleet: the area's nodes (compact; static/wall-fleet.js reads it) with an ETag"""
+        with self.lock:
+            now = time.time()
+            view = self.collector.view() if self.collector is not None else None
+            fm = self.fleet_of(view, now)
+            if fm is None:
+                return 404, json.dumps({"error": "The Fleet area is off here: %s." % (self.cfg.wall_fleet_why or "portal_wall_fleet is false")}), ""
+            if not self.fleet_body:
+                body = json.dumps(dict(fm, zone=self.cfg.tz_name or "UTC", title=self.cfg.wall_title, enclave=self.cfg.wall_enclave),
+                                  separators=(",", ":"), ensure_ascii=False, default=str)
+                self.fleet_body = body
+                self.fleet_tag = '"%s"' % hashlib.sha256(re.sub(r'"now":[0-9.]+,', "", body, count=1).encode("utf-8")).hexdigest()[:20]
+            body, tag = self.fleet_body, self.fleet_tag
+        body = re.sub(r'^\{"v":1,"now":[0-9.]+,', '{"v":1,"now":%.3f,' % now, body, count=1)
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
 
     def follow(self):
         """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""
@@ -7312,8 +7381,10 @@ class WallLive(object):
         with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
             now = time.time() if now is None else now      # enters the tracker after a newer one
             view = self.collector.view() if self.collector is not None else None
+            fm = WallLive.fleet_of(self, view, now) if getattr(self, "fleet", None) is not None else None
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
-                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
+                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None), fleet=fm,
+                                    fleet_why=(getattr(self.cfg, "wall_fleet_why", "") if getattr(self.cfg, "wall_fleet", False) is True and fm is None else ""))
 
     def summary(self, now=None):
         """1.135.0: the areas in short (wall_model.summary) - the same rule as the wall: stale is never green"""
@@ -7463,14 +7534,16 @@ def wall_page(cfg, cn, statics, token=""):
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
-            '<script src="%sstatic/wall-styles.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-styles.js?v=%s" defer></script><script src="%sstatic/wall-fleet.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-page.js?v=%s" defer></script>'
             % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
                (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
                ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
-               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"), cfg.path, v("wall-page.js")))
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"), cfg.path, v("wall-fleet.js"), cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
                  head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s"><link rel="stylesheet" href="%sstatic/wall-styles.css?v=%s">'
-                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")))
+                 '<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">'
+                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css"), cfg.path, v("wall-fleet.css")))
 
 
 def make_handler(cfg, portal, static_dir, wall=None):
@@ -7744,6 +7817,16 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
                     return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
+            if path == "/api/wall/fleet":                   # 1.138.0: the Fleet & services area's nodes (static/wall-fleet.js)
+                if not wall:
+                    return self._send(404, {"error": "The wall is off here (portal_wall: false)."})
+                wall.viewed()
+                try:
+                    code, body, etag = wall.fleet_answer((self.headers.get("If-None-Match") or "").strip())
+                except Exception as e:  # pylint: disable=broad-except  - the area says "not reachable", never a stale green
+                    portal.log.add({"event": "wall", "fleet": "not made", "why": clean(str(e), 200)})
+                    return self._send(503, {"error": "The Fleet area's answer could not be made (the portal's log says why)."})
+                return self._send(code, body if code != 304 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path in ("/wall", "/api/wall"):
                 if not wall:
                     return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),

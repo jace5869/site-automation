@@ -273,6 +273,17 @@ portal_wall_maintenance_expected: []                # hosts whose maintenance mo
 portal_wall_vm_heartbeat: true                      # previously running Tools stop or heartbeat turns red on a powered-on workload VM
 portal_wall_site_pattern: "{{ netmap_site_pattern | default('', true) }}"   # the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01)
 portal_wall_site_places: {}                         # the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list
+# 1.138.0: Fleet & services (docs/SITE_PORTAL.md, "Fleet & services") - a wall area (?area=fleet, in every style, in the rotation)
+# with every node SolarWinds watches as one square, up or down, grouped by service, and what vCenter says of the same VM (powered off
+# is never "down"; down in SolarWinds but running in vCenter: "Disagree - likely the network path"). Click a node for its card
+# (Copy text / picture for Teams), tick several and "Share selected to Teams". Read by the portal itself with the network map's
+# "SolarWinds (read-only)" login (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) while the wall is open.
+portal_wall_fleet: auto                             # auto (on with the "SolarWinds (read-only)" credential) | true | false
+portal_wall_fleet_seconds: 60                       # SolarWinds is read every this many seconds while the wall is open (60 to 3600); LATE / STALE stretch with it
+portal_wall_fleet_group_by: groups                  # groups (SolarWinds' groups, a node in each group it is a direct member of) | custom:<a node custom property, e.g. custom:ServiceGroup>
+portal_wall_fleet_groups: []                        # only these groups, in this order (names, any case; [] = every group with a node in it, A to Z); the rest under "Workloads (no group)"
+portal_wall_fleet_vm_match: ["*VMware*"]            # a SolarWinds node whose Vendor or MachineType matches (globs, any case) is a VM: counted "not found in vCenter" when vCenter has none of its name
+portal_wall_fleet_max_nodes: 10000                  # at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK
 # Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk),
 # kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email.
 portal_wall_feedback: true

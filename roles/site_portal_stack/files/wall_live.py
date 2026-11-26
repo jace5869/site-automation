@@ -54,7 +54,8 @@ CLUSTER_PATHS = ("name", "host")
 DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible", "summary.type", "summary.multipleHostAccess", "host", "vm")
 VM_PATHS = ("name", "runtime.host", "runtime.powerState", "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
             "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus",
-            "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type")
+            "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type",
+            "guest.ipAddress", "guest.hostName")     # 1.138.0: the Fleet area's name / IP match with SolarWinds
 SPECS = (("HostSystem", HOST_PATHS), ("ClusterComputeResource", CLUSTER_PATHS), ("Datastore", DS_PATHS), ("VirtualMachine", VM_PATHS))
 
 
@@ -470,7 +471,8 @@ def shape(objs):
                         "name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
                         "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), v.get("summary.runtime.maxCpuUsage")) if on else None,
                         "mem_pct": _pct(v.get("summary.quickStats.guestMemoryUsage"), v.get("summary.config.memorySizeMB")) if on else None,
-                        "heartbeat": v.get("guestHeartbeatStatus") or None})     # not read: unknown
+                        "heartbeat": v.get("guestHeartbeatStatus") or None,      # not read: unknown
+                        "ip": v.get("guest.ipAddress") or "", "guest": v.get("guest.hostName") or ""})
     for lst in (hosts, clusters, dss, vms):
         lst.sort(key=lambda x: x["name"])
     return {"hosts": hosts, "clusters": clusters, "datastores": dss, "vms": vms}

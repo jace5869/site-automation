@@ -94,13 +94,25 @@
     return {id: "vmware", st: st, n: n, m: m, big: of ? up + "/" + of : "–", unit: of ? "hosts up" : "no value read",
             sub: n.crit + n.warn ? A.nowList("vmware").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" : of ? vms + " VMs on " + of + " hosts" : "", busy: busy};
   }
+  // 1.138.0: Fleet & services (static/wall-fleet.js draws the area itself): its tile - nodes up of all, the worst group
+  function fleetInfo() {
+    var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("fleet"), n = A.areaCounts("fleet"), tot = 0;
+    Object.keys(c).forEach(function (k) { tot += +c[k] || 0; });
+    var up = (+c.u || 0) + (+c.w || 0);
+    return {id: "fleet", st: st, n: n, m: null, big: tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: tot ? "nodes up" : "no value read",
+            sub: n.crit + n.warn ? A.nowList("fleet").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
+              tot ? (+c.d || 0) + " down · " + ((+c.p || 0) + (+c.m || 0)) + " off or unmanaged · " + (f.groups || 0) + " groups" : ""};
+  }
+  function fleetOn() { return (W().areas || []).some(function (a) { return a.id === "fleet" && a.built; }); }
   function areas() {
     var out = [];
     if ((W().areas || []).some(function (a) { return a.id === "storage" && a.built; })) out.push(storageInfo());
     if ((W().areas || []).some(function (a) { return a.id === "vmware" && a.built; })) out.push(vmwareInfo());
+    if (fleetOn()) out.push(fleetInfo());
     OFF_AREAS.forEach(function (o) {
       var a = A.areaOf(o[0]);
       if (a && a.built) return;
+      if (o[0] === "network" && fleetOn()) return;     // SolarWinds is on the wall: its tile is Fleet & services
       out.push({id: o[0], st: "off", name: a ? a.name : o[1], sub: (a && a.sub) || o[2], n: {crit: 0, warn: 0}, m: null, big: "", unit: "", off: true});
     });
     out = out.map(function (x) {
@@ -232,6 +244,15 @@
           var st = A.status(["crit", "warn", "ok", "stale"].indexOf(x.st) >= 0 ? x.st : "stale", x.feed);
           return h("span", "hq " + st, [x.n.split(".")[0]], {"data-d": "host:" + x.vc + "|" + x.n, tabindex: "0", role: "button", title: x.n + ": " + sevWord(st)});
         }))]));
+    } else if (a.id === "fleet") {                    // 1.138.0: the worst groups; the whole area one click away
+      var fw = (W().fleet || {}).worst || [], last = a.st === "stale";
+      box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Service groups with a node not up" + (last ? " (last known)" : "")]), h("span", "", ["click for the Fleet & services area"])])].concat(
+        fw.length ? fw.map(function (g) {
+          var st = last ? "stale" : g[1] ? "crit" : "warn";
+          return h("div", "crow " + st, [h("span", "nm", [String(g[0])]), A.word(st, [g[1] ? g[1] + " down" : "", g[2] ? g[2] + " warning" : ""].filter(Boolean).join(" · "))],
+                   {"data-goto": "fleet", tabindex: "0", role: "button", title: "Open Fleet & services"});
+        }) : [h("p", "wx-empty", [last ? "No current data." : "Every group up."])]).concat([
+        h("button", "sx-insp", ["Open Fleet & services →"], {type: "button", "data-goto": "fleet", title: "Every node by service group"})])));
     }
     var side = h("div", "sx-side", [h("b", "", ["Open now - " + a.name])]);
     if (!items.length) side.appendChild(h("p", "wx-empty", [a.st === "ok" ? "Nothing open." : "Nothing current - grey until the source answers."]));

@@ -65,7 +65,10 @@
     ad: [["circle", {cx: 9, cy: 8, r: 3.2}], P("M3 20c.6-3.4 3-5.3 6-5.3s5.4 1.9 6 5.3"), ["circle", {cx: 17, cy: 9, r: 2.4}], P("M16.5 14.2c2.4.2 4 1.8 4.5 4.6")],
     vdi: [["rect", {x: 3, y: 4, width: 18, height: 12, rx: 1.5}], P("M8 20h8M12 16v4"), P("M7.5 10.5l2.5-2.5 2.5 2.5 4-4")],
     tickets: [P("M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 000 4v2a2 2 0 00-2 2H5a2 2 0 00-2-2v-2a2 2 0 000-4z"), P("M9.5 6v12", {"stroke-dasharray": "2 2"})],
-    list: [P("M4 6h16M4 12h16M4 18h10")]
+    list: [P("M4 6h16M4 12h16M4 18h10")],
+    fleet: [["rect", {x: 3, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 3, width: 5, height: 5, rx: 1}],
+            ["rect", {x: 3, y: 9.5, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 9.5, width: 5, height: 5, rx: 1}], ["circle", {cx: 18.5, cy: 12, r: 3}],
+            ["rect", {x: 3, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 16, width: 5, height: 5, rx: 1}]]
   };
   function icon(list, vb, cls) {
     var e = s("svg", {viewBox: vb || "0 0 24 24", "aria-hidden": "true", "class": cls || null});
@@ -146,7 +149,11 @@
   function STALE() { return (W && W.stale) || 600; }
   var FRESH_TITLE = "Amber (LATE) after 3 min, STALE after 10 min. Stale data is never shown green.";
   function ageS(asof) { return asof == null ? null : Math.max(0, Math.round((NOW() - asof) / 1000)); }
-  function fstate(sec) { return sec == null ? "stale" : sec > STALE() ? "stale" : sec > LATE() ? "late" : "ok"; }
+  // 1.138.0: a feed may carry its own limits (the Fleet area's SolarWinds when read less often than every minute)
+  function fstate(sec, f) {
+    var late = f && typeof f.late === "number" ? f.late : LATE(), stale = f && typeof f.stale === "number" ? f.stale : STALE();
+    return sec == null ? "stale" : sec > stale ? "stale" : sec > late ? "late" : "ok";
+  }
   function feed(k) { return (W && W.feeds && W.feeds[k]) || null; }
   function feedFresh(k) {
     if (UNREACH) return "stale";
@@ -154,7 +161,7 @@
     var f = feed(k);
     if (!f) return "stale";                                         // a feed the answer does not have: not current
     if (f.state !== "ok") return "stale";        // only a feed whose latest read worked is current (never, error, refused, paused, missing: not)
-    return fstate(ageS(f.asof));
+    return fstate(ageS(f.asof), f);
   }
   function areaOf(id) { return W.areaById[id]; }
   function areaOn(id) { var a = areaOf(id); return !!(a && a.on); }
@@ -241,7 +248,7 @@
   }
   // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
   // of its feeds is current (one vCenter not read, one host without a state: nothing of VMware is green)
-  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : ""; }
+  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk.indexOf("sw:") === 0 ? "fleet" : ""; }
   function homeOk(fk) {
     var a = homeOf(fk);
     if (!a) return true;
@@ -282,13 +289,13 @@
   }
 
   // ---------------------------------------------------------------- freshness marks
-  function freshTxt(asof) {
+  function freshTxt(asof, f) {
     if (asof == null) return {st: "stale", t: "never read"};
-    var a = ageS(asof), st = UNREACH ? "stale" : fstate(a);
+    var a = ageS(asof), st = UNREACH ? "stale" : fstate(a, f);
     return {st: st, t: "as of " + hms(asof) + " (" + ago(a) + ")"};
   }
   function freshK(fk, cls) {          // the cockpit's mono line: [STALE] as of 14:20:35 (11 min ago)
-    var f = feed(fk), x = freshTxt(f ? f.asof : null);
+    var f = feed(fk), x = freshTxt(f ? f.asof : null, f);
     var e = h("span", (cls || "fresh") + (x.st === "ok" ? "" : " " + x.st), [x.st === "ok" ? null : h("span", "tag", [x.st === "stale" ? "STALE" : "LATE"]), x.t],
               {title: (f ? f.name + (f.why ? " - " + f.why : "") + ". " : "") + FRESH_TITLE});
     e.__fk = fk;
@@ -304,7 +311,7 @@
   function repaintFresh() {
     if (!W) return;
     root.querySelectorAll("[data-fresh]").forEach(function (e) {
-      var f = feed(e.getAttribute("data-fresh")), x = freshTxt(f ? f.asof : null), last = e.lastChild;
+      var f = feed(e.getAttribute("data-fresh")), x = freshTxt(f ? f.asof : null, f), last = e.lastChild;
       if (last && last.nodeType === 3) last.nodeValue = x.t;
     });
     root.querySelectorAll("[data-fresh-area]").forEach(function (e) {
@@ -416,29 +423,39 @@
     de.classList.add("style-" + S.style);
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
-    de.classList.toggle("screen", !!SCREEN[S.style] && S.area !== "watch");
-    if (!SCREEN[S.style] || S.area === "watch") stage.style.height = "";
+    de.classList.toggle("screen", screenOn());
+    de.classList.toggle("area-fleet", S.area === "fleet");
+    if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    RENDER[S.style](stage);
-    if (SCREEN[S.style] && S.area !== "watch") fitScreen();
+    // 1.138.0: Fleet & services - one board for every style (static/wall-fleet.js), in the style's own colours and type
+    if (S.area === "fleet") {
+      if (window.SAWallFleet) window.SAWallFleet.render(API, stage);
+      else stage.appendChild(h("p", "note warn", ["The Fleet area's file (wall-fleet.js) did not load - reload the page."]));
+    } else RENDER[S.style](stage);
+    if (screenOn()) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
       " since " + hms(UNREACH_SINCE) + " - every value below is the last known one and not current. The page keeps trying every " + ((W && W.poll) || 30) + " s."],
       {role: "alert"}), stage.firstChild);
     LASTF = freshSig();
     if (openRef && openRef !== "fb:") openDetail(openRef, true);
     if (QS.get("check") === "1") setTimeout(function () {
-      root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth})); }, 300);
+      var bx = stage.querySelector(".wx");
+      root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth,
+        sh: document.documentElement.scrollHeight, ih: innerHeight, stage: stage.clientHeight, board: bx ? bx.getBoundingClientRect().height : null,
+        btop: bx ? bx.getBoundingClientRect().top : null})); }, 300);
   }
   function setArea(id) { if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview"; S.area = id; S.site = ""; closePops(); closeDetail(); render(); }
+  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Fleet area in every style (1.138.0)
+  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || S.area === "fleet"); }
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
   function setKiosk(on, user) {
     document.body.classList.toggle("kiosk", on);
-    if (SCREEN[S.style]) fitScreen();                    // 1.135.0: the board takes the room the page now leaves
+    if (screenOn()) fitScreen();                         // 1.135.0: the board takes the room the page now leaves
     if (user) { try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* not allowed here */ } }
   }
   var ROT = {on: false, mode: "styles", every: 60, left: 60, resumeAt: 0}, IDLE_RESUME = 20;
@@ -535,8 +552,8 @@
       tip.classList.remove("on");
     });
     var rt;
-    document.addEventListener("fullscreenchange", function () { if (SCREEN[S.style]) fitScreen(); });
-    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map") render(); else if (SCREEN[S.style]) fitScreen(); }, 150); });
+    document.addEventListener("fullscreenchange", function () { if (screenOn()) fitScreen(); });
+    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && S.area !== "fleet") render(); else if (screenOn()) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
     clear(tip);
@@ -665,6 +682,7 @@
     if (c.kind === "aggrfull" || c.kind === "aggrwarn") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Storage › Tiers › " + c.aggr;
     if (c.kind === "sm") return "ONTAP System Manager of " + (c.cluster || "the destination cluster") + " › Protection › Relationships";
     if (c.kind === "node") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Cluster › Overview (nodes, takeover)";
+    if (c.kind === "fleetdown" || c.kind === "fleetwarn") return "SolarWinds › My Dashboards › Groups › " + (c.group || "the group") + " (each node's Node Details); the wall's Fleet & services area";
     return "-";
   }
   function hostBy(vc, n) { var r = null; W.vmware.hosts.forEach(function (x) { if (x.n === n && (!vc || x.vc === vc)) r = x; }); return r; }
@@ -770,7 +788,7 @@
     feed: function (k) {
       var f = feed(k);
       if (!f) return null;
-      var x = freshTxt(f.asof), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
+      var x = freshTxt(f.asof, f), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
       if (!homeOf(k)) st = "off";                        // information only (the report database): never a status, never green
       return {title: f.name, st: st, chips: ["Data source"], fk: k, rows: [
         ["State", f.why || (f.state === "ok" ? "answering" : f.state === "never" ? "not read yet" : f.state || "unknown")],
@@ -1155,6 +1173,7 @@
     b.style.height = (hh / k) + "px";
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
+    if (S.area === "fleet" && window.SAWallFleet) window.SAWallFleet.fitted(k);
   }
   // Share to Teams over the detail card: a snapshot; closing it draws the card again from the latest read
   function openShare(id) {
@@ -1192,6 +1211,7 @@
     level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
     unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
     dsRef: dsRef, cond: function (id) { return BY[id] || null; }, condFeed: condFeed, lastKnown: lastKnown, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
+    src: SRC, test: TEST, frozen: function () { return FREEZE; }, qs: QS, idleResume: IDLE_RESUME, styleName: function () { return STYLE_NAME[S.style]; },
     share: function (id) { if (!BY[id]) return; openDetail("c:" + id); openShare(id); }
   };
   ["strata", "relay", "metro"].forEach(function (st) {

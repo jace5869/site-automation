@@ -849,7 +849,7 @@ def _lonlat_ok(v):
 
 def site_portal_wall_summary(w):
     """1.131.0: the deploy summary's wall line - 'Wall: VMware on|off (why), Storage on|off (why), Map places from
-    netmap_sites: N'. w: {wall, vc_on, vc_mode, vc_host, vcenters, vc_user, vc_pass, ontap_on, ontap_mode, clusters,
+    netmap_sites: N' (1.138.0: ', Fleet on|off (why)' when fleet_on is given). w: {wall, vc_on, vc_mode, vc_host, vcenters, vc_user, vc_pass, ontap_on, ontap_mode, clusters,
     ontap_user, ontap_pass, netmap_sites}. The why of an "off": the first missing piece, as the deploy decides."""
     w = w if isinstance(w, dict) else {}
 
@@ -899,7 +899,20 @@ def site_portal_wall_summary(w):
         st = "Storage off (no NetApp password (ONTAP_PASSWORD empty))"
     else:
         st = "Storage off"
-    return "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
+    out = "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
+    if "fleet_on" not in w:                   # an older caller: the line as before
+        return out
+    if on(w.get("fleet_on")):                 # 1.138.0: Fleet & services (SolarWinds' nodes by service, compared with vCenter)
+        fl = "Fleet on (by %s)" % (str(w.get("fleet_group_by") or "groups").strip() or "groups")
+    elif str(w.get("fleet_mode", "auto")).strip().lower() in ("false", "no", "off", "0"):
+        fl = "Fleet off (portal_wall_fleet: false)"
+    elif not w.get("sw_url"):
+        fl = "Fleet off (no SolarWinds address (SOLARWINDS_URL / netmap_solarwinds_url empty))"
+    elif not w.get("sw_login"):
+        fl = "Fleet off (no SolarWinds credential (SOLARWINDS_USERNAME / _PASSWORD empty))"
+    else:
+        fl = "Fleet off"
+    return out + ", " + fl
 
 
 class FilterModule(object):
