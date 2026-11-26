@@ -16,8 +16,9 @@ from test_report_hover import Cdp  # noqa: E402
 from test_report_fit import _browser  # noqa: E402
 
 
-def shoot(c, url, out, width, dark, settle):
-    c.call("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1, mobile=False)
+def shoot(c, url, out, width, dark, settle, height=0):
+    """height: a screen of that size, shot as it is (1.135.0: the wall's room styles in kiosk); 0: the whole page"""
+    c.call("Emulation.setDeviceMetricsOverride", width=width, height=height or 900, deviceScaleFactor=1, mobile=False)
     c.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "dark" if dark else "light"},
                                                    {"name": "prefers-reduced-motion", "value": "reduce"}])
     c.call("Page.navigate", url=url)
@@ -29,8 +30,13 @@ def shoot(c, url, out, width, dark, settle):
     if not c.js("!!document.querySelector('.appbar') && !document.querySelector('.status.bad, .state.bad')"):
         errs = (errs or []) + ["not the portal's page, or the page says it failed: " + str(c.js("document.title"))]
     wide = c.js("document.documentElement.scrollWidth - document.documentElement.clientWidth")
-    h = int(c.js("Math.ceil(document.documentElement.scrollHeight)") or 900)
-    c.call("Emulation.setDeviceMetricsOverride", width=width, height=max(600, min(h, 6000)), deviceScaleFactor=1, mobile=False)
+    if height:                                     # a screen: nothing may scroll either way
+        tall = c.js("document.documentElement.scrollHeight - document.documentElement.clientHeight")
+        if tall and tall > 0:
+            errs = (errs or []) + ["the screen scrolls down by %spx" % tall]
+    else:
+        h = int(c.js("Math.ceil(document.documentElement.scrollHeight)") or 900)
+        c.call("Emulation.setDeviceMetricsOverride", width=width, height=max(600, min(h, 6000)), deviceScaleFactor=1, mobile=False)
     time.sleep(0.3)
     png = c.call("Page.captureScreenshot", format="png", captureBeyondViewport=False)["data"]
     with open(out, "wb") as fh:
@@ -51,13 +57,18 @@ def main():
             "window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));"
             "addEventListener('securitypolicyviolation',e=>__errs.push('CSP '+e.violatedDirective+' '+e.blockedURI));"))
         for name, path in pages:
-            for width in (1280, 800):
+            sizes = [(1280, 0), (800, 0)]
+            if "@" in path:                                  # 1.135.0: PATH@WxH - one screen size, as it is
+                path, wh = path.rsplit("@", 1)
+                sizes = [tuple(int(x) for x in wh.split("x"))]
+            for width, height in sizes:
                 for dark in (False, True):
-                    f = os.path.join(outdir, "%s-%d-%s.png" % (name, width, "dark" if dark else "light"))
-                    errs, wide = shoot(c, base + path, f, width, dark, 3.5 if name.startswith("job") else 2.0)
+                    f = os.path.join(outdir, "%s-%d%s-%s.png" % (name, width, ("x%d" % height) if height else "", "dark" if dark else "light"))
+                    errs, wide = shoot(c, base + path, f, width, dark, 3.5 if name.startswith(("job", "wall")) else 2.0, height)
+                    look = c.js("document.documentElement.getAttribute('data-skin') || ''")
                     ok = not errs and (wide or 0) <= 0
                     bad += 0 if ok else 1
-                    print(json.dumps({"file": f, "errors": errs, "overflow_px": wide, "ok": ok}))
+                    print(json.dumps({"file": f, "errors": errs, "overflow_px": wide, "look": look, "ok": ok}))
     finally:
         c.close()
     return 1 if bad else 0

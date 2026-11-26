@@ -356,6 +356,16 @@ class H(BaseHTTPRequestHandler):
             more = len(allr) > page * size
             nxt = (BASE + m.group(1) + "/?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
             return self._send(200, {"count": len(allr), "next": nxt, "results": allr[(page - 1) * size:page * size]})
+        if p == "workflow_job_template_nodes/" and os.environ.get("FAKE_AAP_ALL_TEMPLATES") == "1":         # 1.135.0: the approval steps
+            nodes = [{"id": 9000 + t["id"], "workflow_job_template": t["id"], "summary_fields": {"unified_job_template": {"unified_job_type": "workflow_approval"}}}
+                     for t in STATE["templates"]["workflow_job_templates"] if t.get("approval")]
+            return self._send(200, {"count": len(nodes), "next": None, "results": nodes})
+        if m and os.environ.get("FAKE_AAP_ALL_TEMPLATES") == "1" and not q.get("labels__name"):     # 1.135.0 (looks_demo.py): the Admin page's whole list
+            ts = STATE["templates"][m.group(1)]
+            if q.get("role_level") == "approval_role":
+                ts = [t for t in ts if t.get("approval")]
+            allr = [row_of(t) for t in ts]
+            return self._send(200, {"count": len(allr), "next": None, "results": allr})
         ml = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
         if ml:
             t = next((t for t in STATE["templates"][ml.group(1)] if t["id"] == int(ml.group(2))), None)

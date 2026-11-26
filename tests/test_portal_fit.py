@@ -29,14 +29,14 @@ def browser():
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")
 class Fit(unittest.TestCase):
-    def run_look(self, look, port, *flags):
+    def run_look(self, look, port, *flags, skin=""):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         srv = subprocess.Popen([sys.executable, DEMO, look, str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=env)
         try:
             line = srv.stdout.readline()
             self.assertTrue(line.startswith("READY"), line + srv.stderr.read() if srv.poll() is not None else line)
             out = subprocess.run([browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--dump-dom", "--virtual-time-budget=90000"] + list(flags) + [
-                                  "http://127.0.0.1:%d/__fit?w=1280,800" % port], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  "http://127.0.0.1:%d/__fit?w=1280,800%s" % (port, ("&skin=" + skin) if skin else "")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  universal_newlines=True, timeout=400).stdout
             m = re.search(r"FIT(\[.*\])END", out, re.S)
             self.assertTrue(m, "the fit page did not finish: " + out[-300:])
@@ -64,6 +64,18 @@ class Fit(unittest.TestCase):
                     self.assertTrue(m["pbvalue"] is not None, (look, r["theme"]))                       # the bar is there (its stripe is a pseudo-element: the CSS test reads its rules)
                 else:
                     self.assertTrue(r["motion"]["icon"] in ("", "spin"), r["page"])
+
+    def test_every_page_fits_in_every_portal_look(self):
+        """1.135.0: the seven looks (portal_look) over the palette: every page, light and dark, 1280 and 800 px - nothing overflows"""
+        for i, skin in enumerate(("strata", "metro", "relay", "chroma", "press", "atlas", "tower")):
+            rows = self.run_look("atlas", PORT + 10 + i, skin=skin)
+            self.assertEqual(len(rows), 21 * 2 * 2, skin)
+            for r in rows:
+                self.assertEqual(r["skin"], skin, r)
+                self.assertTrue(r["h1"], r)
+                self.assertEqual(r["bad"], [], "%s %s %s %dpx" % (skin, r["page"], r["theme"], r["width"]))
+            self.assertEqual(sorted(set(r["bg"].split()[0] for r in rows if r["theme"] == "dark")), ["dark"], skin)
+            self.assertEqual(sorted(set(r["bg"].split()[0] for r in rows if r["theme"] == "light")), ["light"], skin)
 
     def test_nothing_moves_under_reduced_motion(self):
         rows = self.run_look("ops", PORT + 5, "--force-prefers-reduced-motion")
