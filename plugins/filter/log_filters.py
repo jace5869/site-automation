@@ -526,8 +526,8 @@ def log_cache_key(problems, opts=None):
     # 1.136.0 (Codex P1): the example lines too, their times and dates out - a pattern's signature has its numbers
     # out, so "HTTP 401" and "HTTP 503" are one pattern: the answer about one never stands for the other
     pats = [[p.get("id"), p.get("severity"), _src(p), p.get("signature") or "", sorted(p.get("hosts") or []), _band(p.get("count")),
-             sorted(set(_KEY_TIMES.sub("<t>", str((e or {}).get("message") or "")) for e in (p.get("examples") or [])
-                        if isinstance(e, dict)))]
+             sorted(set((str(e.get("host") or ""), _KEY_TIMES.sub("<t>", str(e.get("message") or "")))
+                        for e in (p.get("examples") or []) if isinstance(e, dict)))]     # each line with its host (Codex r2)
             for p in problems or []]
     return json.dumps({"question": " ".join(str(o.get("question") or "").split()), "what": str(o.get("what") or ""),
                        "extra": " ".join(str(o.get("extra") or "").split()), "patterns": pats}, sort_keys=True)

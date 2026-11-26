@@ -2098,7 +2098,7 @@ ACT is not asked, and the model is not reached at all when every answer is kept.
 3. The job output says `ACT answer cache: N answer(s) from it, N kept for the next runs, N expired deleted.`
 
 The same question means the same evidence, the same prompt, the same provider, model and model URL, and the same job
-kind. The model is the one ACT uses: a model name in `site_act_env` counts. The evidence counts as ACT read it: after it
+kind. They are the ones ACT uses: a provider, model or URL in `site_act_env` or the execution environment counts. The evidence counts as ACT read it: after it
 was cut to its size.
 
 The log analysis compares its patterns instead: each pattern's level, source, signature and hosts, and its count as
@@ -2108,7 +2108,7 @@ a new question.
 
 | | |
 |---|---|
-| What a run keeps | per question, ACT's analysis only: its JSON between the markers, with any password or key it quotes removed. Not ACT's other words |
+| What a run keeps | per question, ACT's analysis only: its JSON between the markers, with any password, key or URL query it quotes removed. Not ACT's other words |
 | What is not kept | an answer the job cannot read, or one that leaves an item out or says nothing about it |
 | The key | a sha256 of the provider, model, model URL, prompt version, job kind, task and evidence. No text of the evidence |
 | How long | `site_act_cache_ttl_days` (7), or per job kind in `site_act_cache_ttl_days_by`. A shorter setting holds for answers kept under a longer one |

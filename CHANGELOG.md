@@ -44,10 +44,11 @@ outage review and the STIG answer keys all use it.
   evidence, prompt, provider, model and job.
 - The log analysis compares its patterns, not its evidence: their level, source, signature, hosts, count band
   (1, 2-9, 10-99 ...) and example lines, not the times. The same log set a day later finds its answer; `HTTP 401` and
-  `HTTP 503` stay two questions. Another model (also one set in `site_act_env`) or model URL is a new question.
+  `HTTP 503` stay two questions. Another provider, model or model URL (also one set in `site_act_env` or the
+  execution environment) or another evidence cap is a new question.
 - When every answer is kept, the model is not reached at all.
 - Only ACT's analysis is kept, between its markers, with any password or key it quotes removed (the repository's
-  redaction). An answer the job cannot read, or one that leaves an item out or says nothing about it, is not kept.
+  redaction, and every URL's query). An answer the job cannot read, or one that leaves an item out or says nothing about it, is not kept.
 - Each answer expires after `site_act_cache_ttl_days`, or the job kind's days in `site_act_cache_ttl_days_by`. Each run
   deletes the expired ones. A shorter setting holds for answers kept under a longer one.
 - The report says *N of M answer(s) from an earlier run (the date UTC; site_act_cache).*

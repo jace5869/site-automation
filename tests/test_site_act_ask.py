@@ -555,6 +555,75 @@ class ReviewRound1Neon(Base):
         t = open(os.path.join(REPO, "roles", "site_act", "tasks", "evidence_batches.yml")).read()
         self.assertIn("map(attribute='cached', default='')", t)
 
+
+class ReviewRound2(Base):
+    """1.136.0, the second review round (Codex): a test for each finding fixed."""
+
+    def test_the_log_key_pairs_each_line_with_its_host(self):
+        LF = A._load("log_filters_for_key_r2", "filter", "log_filters.py")
+        base = {"id": "P1", "severity": "error", "source": "journal", "app": "web", "signature": "GET /api failed: HTTP <n>",
+                "hosts": ["web01", "web02"], "count": 2}
+        a = dict(base, examples=[{"host": "web01", "message": "HTTP 401"}, {"host": "web02", "message": "HTTP 503"}])
+        b = dict(base, examples=[{"host": "web01", "message": "HTTP 503"}, {"host": "web02", "message": "HTTP 401"}])
+        self.assertNotEqual(LF.log_cache_key([a]), LF.log_cache_key([b]))
+
+    def test_a_kept_answer_never_holds_a_url_query(self):
+        C = A._cache()[0]
+        s = C.stored('BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "cause": "c", "evidence": '
+                     '["call https://gateway.example/v1?key=exampleVALUE failed", "gw.example.mil/x?token=t0k"]}]} END_ACT_ANALYSIS')
+        self.assertNotIn("exampleVALUE", s)
+        self.assertNotIn("t0k", s)
+        self.assertIn("https://gateway.example/v1?<removed>", s)
+        self.assertIn('"cause": "c"', C.stored(json.dumps({"answer": 'BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "cause": "c"}]} END_ACT_ANALYSIS'})))
+
+    def test_a_reason_never_holds_a_url_query(self):
+        why = A.unreached_reason("gw.example.mil/v1?key=SECRET", "Request failed: unknown url type: 'gw.example.mil/v1?key=SECRET'")
+        self.assertNotIn("SECRET", why)
+
+    def test_empty_causes_and_confidence_only_items_are_not_complete(self):
+        A._cache()
+        self.assertFalse(A.complete('BEGIN_ACT_ANALYSIS {"causes": [{"patterns": ["P1"]}]} END_ACT_ANALYSIS', [{"id": "P1"}]))
+        self.assertFalse(A.complete('BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "confidence": 80}]} END_ACT_ANALYSIS', [{"id": "P1"}]))
+        self.assertTrue(A.complete('BEGIN_ACT_ANALYSIS {"causes": [{"title": "t", "patterns": ["P1"]}]} END_ACT_ANALYSIS', [{"id": "P1"}]))
+
+    def test_the_effective_url_and_provider(self):
+        self.assertEqual(A._effective_url("u0", "genai", {}, environ={"GENAI_URL": "u-ee"}), "u-ee")
+        self.assertEqual(A._effective_url("u0", "genai", {"GENAI_URL": "u-set"}, environ={"GENAI_URL": "u-ee"}), "u-set")
+        self.assertEqual(A._effective_url("u0", "asksage", {}, environ={"GENAI_URL": "u-ee"}), "u0")
+
+    def test_the_url_fact_is_no_log(self):
+        import yaml
+        with open(os.path.join(REPO, "roles", "site_act", "tasks", "act_ask.yml")) as f:
+            t = next(x for x in yaml.safe_load(f) if "_ea_url" in (x.get("ansible.builtin.set_fact") or {}))
+        self.assertIs(t.get("no_log"), True)
+
+    def test_paths_are_two_groups_and_fapolicyd_counts_are_not(self):
+        S = A._load("site_signature_r2", "module_utils", "site_signature.py")
+        a = [{"severity": "warning", "check": "disk", "summary": "/srv/1 is 95% full"}]
+        b = [{"severity": "warning", "check": "disk", "summary": "/srv/2 is 95% full"}]
+        self.assertNotEqual(S.finding_set(a), S.finding_set(b))
+        t = open(os.path.join(REPO, "roles", "fapolicyd", "tasks", "act.yml")).read()
+        self.assertIn("map('regex_replace', ' x[0-9]+$', '')", t)
+        self.assertIn("(_ff | default({})).fixes", t)
+
+    def test_an_answer_that_came_survives_an_error_on_the_next_try(self):
+        self.set_plan({"t1": ["prose", "answer"]})
+        orig = A.run_act
+        calls = []
+
+        def flaky(*a, **k):
+            calls.append(1)
+            if len(calls) > 1:
+                raise OSError("no more processes")
+            return orig(*a, **k)
+        A.run_act = flaky
+        try:
+            r = self.ask([q("t1")], retry_unreadable=True)
+        finally:
+            A.run_act = orig
+        x = r["questions"][0]
+        self.assertEqual((x["ran"], x["summary"]), (True, "the cause is the network"))
+
 class FakeDB(object):
     """The report database as site_act_cache uses it: the table, schema_version, its rows {key: [kind, pv, model, created,
     expires, answer]}. down: connect raises."""

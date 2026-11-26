@@ -223,13 +223,30 @@ def complete(summary, items):
             if isinstance(i, dict):
                 pid = str(i.get("id") or "").strip().upper()              # as the reader writes them (P7, 7 -> P7)
                 asked.add(("P" + pid) if pid.isdigit() else pid)
-        by_id = r.get("by_id") or {}
-        # 1.136.0 (Codex P2): an item that says nothing ({"id": "P1"}) is no answer - never kept for the next runs
-        said = set(k for k, v in by_id.items() if isinstance(v, dict)
-                   and any(str(x).strip() for f, x in v.items() if f not in ("id", "pid") and x not in (None, "", [], {})))
+        # 1.136.0 (Codex P2): an item or a cause that says nothing ({"id": "P1"}, {"patterns": ["P1"]}, only a confidence)
+        # is no answer - never kept for the next runs. Read from ACT's own JSON, not the reader's filled-in defaults.
+        raw = _cache_mods["c"]._analysis(summary) if "c" in _cache_mods else _cache()[0]._analysis(summary)
+        if not isinstance(raw, dict):
+            return False
+        empty = (None, "", [], {})
+        said = set()
+        for it in raw.get("items") or []:
+            if isinstance(it, dict) and any(str(x).strip() for f, x in it.items()
+                                            if f not in ("id", "pid", "confidence") and x not in empty):
+                said.add(_pid(it.get("id") or it.get("pid")))
+        for c in raw.get("causes") or []:
+            if isinstance(c, dict) and any(c.get(f) not in empty for f in ("title", "why", "steps", "evidence")):
+                said.update(_pid(x) for x in (c.get("patterns") or c.get("items") or []))
+        said.update(_pid(x) for x in (raw.get("noise") or []) if not isinstance(x, dict))
+        said.update(_pid(x.get("id") or x.get("pattern")) for x in (raw.get("noise") or []) if isinstance(x, dict))
         return bool(r["parsed"]) and asked <= said
     except Exception:
         return False
+
+
+def _pid(v):
+    pid = str(v or "").strip().upper()
+    return ("P" + pid) if pid.isdigit() else pid
 
 
 def _now():
@@ -267,6 +284,8 @@ def unreached_reason(url, why):
             if "certificate verify failed" in why.lower() else
             ' Open HTTPS (port 443) from the AAP node to that address, or set a proxy:'
             ' site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}.')
+    why = why.replace(str(url or ""), _plain_url(url)) if url else why
+    why = re.sub(r"\?[^\s'\")>]*", "?<removed>", why)          # never a URL's query (a key) in the report (Codex r2)
     return "This AAP node cannot reach the model at %s (%s).%s" % (_plain_url(url), why, hint)
 
 
@@ -275,6 +294,17 @@ def _plain_url(url):
     u = str(url or "")
     u = re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@", r"\1", u)
     return re.split(r"[?#]", u, 1)[0]
+
+
+def _effective_url(url, provider, env, environ=None):
+    """The URL ACT will ask: the provider's URL setting in site_act_env, else in the job's own environment (the EE),
+    else the one given."""
+    environ = os.environ if environ is None else environ
+    name = {"genai": "GENAI_URL", "asksage": "ASKSAGE_URL", "genai-beta": "GENAI_BETA_URL"}.get(provider, "GENAI_URL")
+    for src in (env if isinstance(env, dict) else {}, environ):
+        if src.get(name) not in (None, ""):
+            return str(src[name])
+    return str(url or "")
 
 
 def _effective_model(model, provider, env):
@@ -425,7 +455,9 @@ class ActionModule(ActionBase):
                 # a question's own cache_key (the log analysis: its patterns, not its times) stands for its task and evidence
                 # 1.136.0 (Codex P2): the model as ACT will use it (a model setting in site_act_env wins) and the URL it
                 # asks: another model or deployment never takes this one's answers
-                eff = "%s|%s" % (_effective_model(model, provider, a.get("env") or {}), url)
+                eprov = str((a.get("env") or {}).get("ACT_PROVIDER") or provider)
+                eff = "%s|%s|%s|cap=%d" % (eprov, _effective_model(model, eprov, a.get("env") or {}),
+                                           _effective_url(url, eprov, a.get("env") or {}), cap)
                 keys = dict((i, C.key(provider, eff, pv, kind, "", "cache_key:" + _text(questions[i].get("cache_key")))
                              if _text(questions[i].get("cache_key")).strip() else
                              C.key(provider, eff, pv, kind, _text(questions[i].get("task")), piped[i])) for i in todo)
@@ -504,6 +536,7 @@ class ActionModule(ActionBase):
 
             def one(i):
                 q, r = questions[i], rows[i]
+                rec = {}
                 try:
                     own = names + [str(n) for n in (q.get("names") or []) if n not in (None, "")]
                     own = [n for n in own if not re.search(r"[,\r\n]", n)]      # one name each, as ACT splits them
@@ -541,6 +574,10 @@ class ActionModule(ActionBase):
                         r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider,
                                                                               _plain_url(url))
                 except Exception as e:  # this question only: the others keep their answers. Its type, never its text
+                    if r["tries"] > 1 and rec.get("status") != "error" and rec.get("summary"):     # an answer came (Codex r2)
+                        r.update(asked=True, ran=True, status=str(rec.get("status") or ""), summary=rec["summary"],
+                                 stop_reason="", model=str(rec.get("model") or model), reason="")
+                        return i
                     r.update(asked=r["tries"] > 0, ran=False, status="error", summary="",
                              stop_reason="%s while asking" % type(e).__name__,
                              reason="ACT could not be asked (%s in site_act_ask)." % type(e).__name__)

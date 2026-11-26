@@ -114,7 +114,7 @@ class Names(unittest.TestCase):
         self.assertNotEqual(SIG.finding_set(f1, ["web01"]), SIG.finding_set(f2, ["web03"]))        # its own name not taken out
         self.assertEqual(SIG.finding_set([], ["web01"]), "")
         self.assertEqual(SIG.finding_lines(f1, ["web01"]),
-                         ["[critical] services: sssd is down on <host>", "[warning] disk: /var on <host> is <n>% full"])
+                         ["[critical] services: sssd is down on <host>", "[warning] disk: /var on <host> is <n>% full paths=[\"/var\"]"])   # 1.136.0: paths stay
 
     def test_group(self):
         recs = [{"host": "b", "message": "denied /usr/bin/x pid 12"}, {"host": "a", "message": "denied /usr/bin/x pid 99"},

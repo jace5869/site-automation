@@ -36,7 +36,8 @@
       {%-   set _ = ls.append((g.kind | default('')) ~ ' ' ~ (g.exe | default('')) ~ ' -> ' ~ (g.path | default('')) ~ ' ('
                               ~ (g.perm | default('')) ~ ')') -%}
       {%- endfor -%}
-      {%- set ls = ls + (_fr | fapolicyd_act_findings(_ff | default({})) | map('string') | list) -%}
+      {%- set ls = ls + (_fr | fapolicyd_act_findings(_ff | default({})) | map('string') | map('regex_replace', ' x[0-9]+$', '') | list)
+                      + ((_ff | default({})).fixes | default([]) | map('string') | list) -%}
       {{ (ls | site_text_set([inventory_hostname, inventory_hostname_short, ansible_host | default('')]))
          if _fa_act_skip | length == 0 and site_act_group | default(true) | bool else '' }}
 

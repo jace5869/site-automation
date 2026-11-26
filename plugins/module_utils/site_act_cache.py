@@ -97,9 +97,25 @@ def _unwrap(text):
             v = json.loads(t)
         except ValueError:
             return text
-        if isinstance(v, dict) and isinstance(v.get("message"), str) and "items" not in v and "causes" not in v:
-            return v["message"]
+        if isinstance(v, dict) and "items" not in v and "causes" not in v:
+            for k in ("message", "answer", "content", "text"):
+                if isinstance(v.get(k), str):
+                    return v[k]
     return text
+
+
+_URL_QUERY = re.compile(r"(?i)\b((?:https?|wss?|ftp)://[^\s\"'<>?#]+|[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?::\d+)?/[^\s\"'<>?#]*)\?[^\s\"'<>]*")
+
+
+def _scrub(value):
+    """A URL's query out of every text (a gateway key rides in ?key=...): what site_redact does not take."""
+    if isinstance(value, dict):
+        return dict((k, _scrub(x)) for k, x in value.items())
+    if isinstance(value, list):
+        return [_scrub(x) for x in value]
+    if isinstance(value, str):
+        return _URL_QUERY.sub(lambda m: m.group(1) + "?<removed>", value)
+    return value
 
 
 def stored(answer):
@@ -108,7 +124,7 @@ def stored(answer):
     v = _analysis(_unwrap(answer))
     if v is None:
         return ""
-    v = _redact_all(v)
+    v = _scrub(_redact_all(v))
     s = "%s\n%s\n%s" % (MARK_BEGIN, json.dumps(v, ensure_ascii=False, sort_keys=True), MARK_END)
     return s if len(s) <= ANSWER_MAX else ""
 

@@ -85,6 +85,7 @@ def _sig_has_name(text, names):
     return any(str(n).lower() in t for n in (names or []) if n not in (None, ""))
 
 
+_PATHS = re.compile(r"(?<![\w:/.])(/[\w.@+-]+(?:/[\w.@+-]+)*/?)")
 _PORTS = re.compile(r"(?i)(?:\bport\s*|(?<=[A-Za-z0-9\]]):)(\d{1,5})\b")
 
 
@@ -97,6 +98,7 @@ def finding_lines(findings, names=None):
             # 1.136.0 (Codex P2): the ports stay (443 and 636 are two services), and the finding's id and its hint (the
             # read-only command ACT is shown): two hosts are one group only when the same things failed the same way
             ports = sorted(set(_PORTS.findall(text)))
+            paths = sorted(set(signature(x, names) if _sig_has_name(x, names) else x for x in _PATHS.findall(text)))
             line = signature("[%s] %s: %s" % (str(f.get("severity") or "").upper(), f.get("check") or "", f.get("summary") or ""),
                              names)
             if f.get("id") not in (None, ""):
@@ -105,6 +107,8 @@ def finding_lines(findings, names=None):
                 line += " hint=" + signature(str(f.get("hint")), names)
             if ports:
                 line += " ports=" + ",".join(ports)
+            if paths:                                  # /srv/1 and /srv/2 are two mounts (Codex r2)
+                line += " paths=" + json.dumps(paths)
             # the quoted names (a unit 'postgresql', a mount "/var") stay too, the host's own names out (Neon P3)
             quoted = sorted(set(signature(a or b, names) if _sig_has_name(a or b, names) else (a or b)
                                 for a, b in _QUOTED.findall(text)))

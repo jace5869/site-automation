@@ -20,6 +20,7 @@
          | default({'genai': 'https://api.genai.mil/v1/chat/completions',
                     'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
                     'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
+  no_log: true                       # 1.104.0 (Codex): a URL or a setting can carry a key or a password
 
 # The task is no_log: its result holds ACT's answers, which quote the evidence. The reports show what they need.
 - name: >-
