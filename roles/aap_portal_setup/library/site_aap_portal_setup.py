@@ -391,7 +391,9 @@ class Setup(Sync):
                         self.note("label", "%s: %s" % (name, want), "create")
                 if uid:
                     roles = ["Execute"]
-                    if api_kind == "workflow_job_templates":
+                    # Codex 1340 #4: Approve only from the Admin page's reviewed export (publish_exact), never on a plain
+                    # portal_publish_templates run - that one grants Execute, as in 1.133.0
+                    if api_kind == "workflow_job_templates" and p.get("publish_exact"):
                         nodes = self.all("workflow_job_template_nodes/?workflow_job_template=%d" % oid)
                         if any(((n.get("summary_fields") or {}).get("unified_job_template") or {}).get("unified_job_type")
                                == "workflow_approval" for n in nodes):

@@ -126,7 +126,11 @@ class WorkflowGrants(unittest.TestCase):
         setup(api, check=True, publish=["Example *"])
         self.assertFalse(api.writes)
         setup(api, publish=["Example *"])
-        self.assertEqual(api.user_roles, {1010, 1011, 1020})
+        self.assertEqual(api.user_roles, {1010, 1020})              # Codex 1340 #4: a plain publish run gives Execute only (1.133.0)
+        api2 = FakeApi(["Example A", "Example B"], kinds={k: "workflow_job_templates" for k in ["Example A", "Example B"]})
+        api2.nodes[101] = api.nodes[101]
+        setup(api2, publish=["Example A", "Example B"], publish_exact=True)        # the Admin page's reviewed export
+        self.assertEqual(api2.user_roles, {1010, 1011, 1020})
 
 
 class Exact1133(unittest.TestCase):

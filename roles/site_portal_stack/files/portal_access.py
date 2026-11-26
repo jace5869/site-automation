@@ -73,7 +73,9 @@ def validate(doc, catalog=None):
     if (not isinstance(doc, dict) or not set(empty()) <= set(doc) <= set(empty()) | OPTIONAL or type(doc["schema_version"]) is not int
             or doc["schema_version"] != 1 or not isinstance(doc["portal_template_access"], dict)):
         raise ValueError("Expected schema_version 1 and a portal_template_access mapping.")
-    if "controller" in doc and not (isinstance(doc["controller"], str) and len(doc["controller"]) <= 512):
+    # Codex 1340 #8: a controller stamp is "" or an address in its normalized form - anything else is a damaged file
+    if "controller" in doc and not (isinstance(doc["controller"], str) and len(doc["controller"]) <= 512
+                                    and (doc["controller"] == "" or controller_id(doc["controller"]) == doc["controller"])):
         raise ValueError("Invalid controller.")
     if "saves" in doc and not (type(doc["saves"]) is int and 0 <= doc["saves"] < 2 ** 53):
         raise ValueError("Invalid save counter.")
@@ -202,7 +204,7 @@ class Store:
 
     def read(self, for_write=False):
         with self.lock:
-            stamp, audit = object(), None
+            stamp, audit, missing = object(), None, False
             try:
                 st = os.lstat(self.path)
                 if not stat.S_ISREG(st.st_mode):
@@ -238,6 +240,7 @@ class Store:
                 error = ""
             except FileNotFoundError:
                 stamp, doc, error = None, empty(), ""
+                missing = True
             except (OSError, ValueError, RecursionError):
                 doc = empty()
                 # Codex r2 #13: the banner says exactly what holds meanwhile
@@ -258,7 +261,8 @@ class Store:
                 return self._drop(doc)
             if stamp != self.stamp:
                 self.doc, self.error, self.stamp = doc, error, stamp
-                if not error and doc.get("controller", self.controller) == self.controller:
+                # Codex 1340 #6: a file gone for a moment (a restore) never clears what the last good one restricted
+                if not error and doc.get("controller", self.controller) == self.controller and not (missing and self.good is not None):
                     self.good = doc
                 self.groups_changed(doc["portal_template_access"])
             return self.doc, self.error

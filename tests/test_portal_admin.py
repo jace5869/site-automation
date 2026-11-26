@@ -998,5 +998,72 @@ class OneController1340(Admin):
         self.assertNotIn("example", self.aap.ids)                               # the next try resolves the name again
 
 
+class Codex1340(OneController1340):
+    """1.134.0: Codex's gate review of this release - each test fails on the code before its fix"""
+
+    def test_2_an_admin_only_card_gets_no_open_run_default(self):
+        self.cfg.readers = ["READ"]
+        self.cfg.requesters.clear()                                              # both run lists empty: the open default
+        action = self.portal.actions["example"]
+        self.assertTrue(self.portal.may_use(ADMIN))                              # an admin may view (the Admin page)
+        self.assertFalse(sp.template_allowed(self.cfg, ADMIN, action))           # ... but runs nothing by the open default
+        self.assertTrue(sp.template_allowed(self.cfg, "READ", action))           # a viewer by the 1.133.0 lists: as 1.133.0
+        self.assertEqual(self.http("/api/actions/example", ADMIN, body={"vars": {"choice": "A"}})[0], 403)
+        self.save("wf_2", add_run_groups=GROUP)                                  # RUN: let in only by a saved group on wf_2
+        self.assertTrue(self.portal.may_use(RUN))
+        self.assertFalse(sp.template_allowed(self.cfg, RUN, action))
+        self.assertFalse(self.api.writes)
+
+    def test_3_a_portal_started_run_without_its_record_is_decided_in_aap(self):
+        self.aap.user = "example-service"
+        self.portal.wf_info[77]["wj"]["summary_fields"] = {"created_by": {"username": "example-service"}}
+        rows = json.loads(self.http("/api/approvals", "DECIDER")[1])["approvals"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["may_decide"], rows[0]["why"]), (False, "unknown"))
+        self.assertIn("approve or deny it in AAP", rows[0]["reason"])
+        self.portal.wf_info[77]["wj"]["summary_fields"] = {"created_by": {"username": "SOMEONE"}}
+        rows = json.loads(self.http("/api/approvals", "DECIDER")[1])["approvals"]
+        self.assertTrue(rows[0]["may_decide"])
+
+    def test_5_any_restricted_alias_of_the_helper_decides(self):
+        vm = self.placement()
+        self.portal.actions["a_helper"] = {"title": "a", "aap": {"type": "job", "name": PLACEMENT}, "vars": {}}
+        self.portal.actions["z_helper"] = {"title": "z", "aap": {"type": "job", "name": PLACEMENT}, "vars": {}, "who": ["ALICE"]}
+        self.cfg.approvers.append(APPROVE)
+        code, out, _ = self.http("/api/approvals/7/placement", APPROVE, body={"vms": [vm]})
+        self.assertEqual(code, 403, out)
+        self.assertFalse(self.api.writes)
+
+    def test_6_a_file_gone_for_a_moment_keeps_the_last_restrictions(self):
+        self.save("jt_1", confirm_again="on")
+        f = Path(self.cfg.data) / "access.json"
+        f.unlink()
+        self.cfg.access.read()                                                   # missing: no saved grant just now
+        f.write_text("{")                                                        # then a damaged file
+        code, out, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 409, out)
+        self.assertIn("confirmation", json.loads(out))
+        self.assertFalse(self.api.writes)
+
+    def test_8_a_malformed_controller_stamp_is_damage_not_another_controller(self):
+        self.cfg.aap_url = self.cfg.access.controller = "https://aap-a.example"
+        self.save("jt_1", confirm_again="on")
+        f = Path(self.cfg.data) / "access.json"
+        doc = json.loads(f.read_text())
+        doc["controller"] = "https://"
+        f.write_text(json.dumps(doc))
+        self.assertTrue(self.cfg.access.read()[1])                               # damaged
+        self.assertIsNone(self.cfg.access.dropped)                               # never "dropped" as another controller's
+        code, out, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 409, out)
+        self.assertFalse(self.api.writes)
+
+
+for _n in [n for n in vars(Admin) if n.startswith("test_")]:
+    setattr(OneController1340, _n, None)            # (only their own tests run there)
+for _n in [n for n in vars(OneController1340) if n.startswith("test_")]:
+    setattr(Codex1340, _n, None)
+
+
 if __name__ == "__main__":
     unittest.main()

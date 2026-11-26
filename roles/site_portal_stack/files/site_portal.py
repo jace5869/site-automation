@@ -751,6 +751,17 @@ class Config(object):
     def readers_restricted(self):
         return bool(self.readers or self.reader_groups)
 
+    def viewer_133(self, cn):
+        """1.134.0 (Codex 1340 #2): whether the 1.133.0 lists alone let this card in (view, run, approve - named or AD).
+        The open run default ("both run lists empty: anyone who may view") counts only for them - never for someone who
+        gets in only as an admin or by a template's saved group."""
+        if not cn:
+            return False
+        if not self.readers_restricted:
+            return True
+        return (list.__contains__(self.readers, cn) or bool(self.ad_groups and self.ad_groups.has("readers", cn))
+                or cn in self.requesters or cn in self.approvers)
+
     # The AD cache and container keep their original keys.
     access_lists = (("view", "readers", "portal_viewers", "portal_view_groups"),
                     ("run", "requesters", "portal_runners", "portal_run_groups"),
@@ -2888,7 +2899,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
         # (access.json), an implicit "any reader" is never a fallback. With portal_run_groups set the run list is never
         # empty (People), so an AD outage never opens it.
         if not error:
-            default = default or rules.may_run(action, cn, cfg.requesters)
+            default = default or (rules.may_run(action, cn, cfg.requesters) and cfg.viewer_133(cn))
     return default or bool(row.get(field) and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row[field]))
 
 
@@ -4161,13 +4172,20 @@ class Portal(object):
                         "deploy_shortlist": info.get("deploy_shortlist") if cn else None,
                         "template_key": key, "permitted": permitted, "can_approve": self._can_approve(ap), "aap_user": aap_user,
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
+        portal_user = str(self.aap.user or getattr(self.aap.api, "user", "") or "").strip().casefold()
         for a in out:
             a["self"] = started_by(a, cn)
+            # Codex 1340 #3: started by the portal's own AAP account, its launch record no longer kept - who started it is not
+            # known, so nobody is cleared of self-approval here: decide it in AAP
+            if not a["self"] and not a["requested_by"] and portal_user and str(a.get("aap_user") or "").strip().casefold() == portal_user:
+                a["self"] = True
+                a["unknown_starter"] = True
             a["may_decide"] = a["permitted"] and not (a["self"] and not self.cfg.self_approval) and a["can_approve"]
             # 1.92.0: why not, in words the person can act on - the setting named
             a["why"] = ("" if a["may_decide"] else "approvers" if not a["permitted"] else
-                        "self" if a["self"] and not self.cfg.self_approval else "role")
+                        ("unknown" if a.get("unknown_starter") else "self") if a["self"] and not self.cfg.self_approval else "role")
             a["reason"] = {"": "", "approvers": APPROVE_REFUSAL,
+                           "unknown": "This run was started from the portal and its record is no longer kept - approve or deny it in AAP.",
                            "self": "You started this run - someone else must approve or deny it (portal_allow_self_approval).",
                            "role": "The portal's account has no Approve role on this workflow - give it Approve in AAP, or decide there."}[a["why"]]
             if a["why"] == "approvers" and self.cfg.ad_groups:
@@ -4348,9 +4366,11 @@ class Portal(object):
             if not extra.keys() <= questions:
                 return None, None, "%s must accept the placement variables at launch." % setting
         body = {"extra_vars": extra}
-        # Codex #7: the helper's own action (its who list, if any) - not a bare title
-        helper = next((a for a in self.actions.values() if a.get("aap") == {"type": "job", "name": name}),
-                      {"title": name, "aap": {"type": "job", "name": name}})
+        # Codex #7: the helper's own action (its who list, if any) - not a bare title; Codex 1340 #5: of every action on that
+        # template, one with a who list decides (never the first alias without one)
+        helpers = [a for a in self.actions.values() if a.get("aap") == {"type": "job", "name": name}]
+        helper = (next((a for a in helpers if isinstance(a.get("who"), list)), None) or next(iter(helpers), None)
+                  or {"title": name, "aap": {"type": "job", "name": name}})
         # Codex r2 #19: as in 1.132.0, an approver of the waiting workflow may save its placement; the helper's Run check
         # applies only when the helper is restricted on its own (its who list, or a saved grant on its template)
         with access_pinned(self.cfg):            # Neon r4 #3: the check and the guard on ONE read of the grants
