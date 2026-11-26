@@ -12,7 +12,7 @@ from site_portal_filters import templating
 
 
 def e(value):
-    return html.escape(str(value), quote=True)
+    return html.escape(str(value).encode("utf-8", "replace").decode(), quote=True)
 
 
 def hidden(name, value):
@@ -34,12 +34,54 @@ def not_current(error, mono, at, every):
     return "Not current - last read %s: %s" % (when(at) if at else "never", reason) if reason else ""
 
 
+def workflow_warnings(templates, nodes):
+    names = {r["id"]: r["name"] for r in templates if isinstance(r, dict) and type(r.get("id")) is int
+             and isinstance(r.get("name"), str) and r["name"].strip()}
+    known_types = {"job", "project_update", "inventory_update", "workflow_job", "workflow_approval", "system_job", "ad_hoc_command"}
+    affected, warnings = set(), []
+    unmatched = False
+    count = 0
+    for node in nodes:
+        parent = None
+        detail = "a node AAP sent without its workflow"
+        if isinstance(node, dict):
+            sf = node.get("summary_fields")
+            ujt = sf.get("unified_job_template") if isinstance(sf, dict) else None
+            kind = ujt.get("unified_job_type") if isinstance(ujt, dict) else None
+            parent = node.get("workflow_job_template")
+            if isinstance(kind, str) and kind in known_types:
+                if kind != "workflow_approval" or (type(parent) is int and parent in names):
+                    continue
+            elif isinstance(parent, str) and len(parent) <= 18 and parent.isdecimal():
+                parent = int(parent)
+            node_id = node.get("id")
+            if type(node_id) is not int:
+                node_id = node.get("unified_job_template")
+            detail = "node %d" % node_id if type(node_id) is int else "a node without an id"
+            if type(parent) is int and parent not in names:
+                detail += " (workflow %d not in the named workflow list)" % parent
+            elif type(parent) is not int:
+                detail += " (its workflow not identified)"
+        matched = type(parent) is int and parent in names
+        if matched:
+            affected.add(parent)
+        else:
+            unmatched = True
+        if count < 20:
+            warnings.append("%s: %s" % (names[parent], detail) if matched else detail)
+        count += 1
+    if count > 20:
+        warnings.append("+%d more" % (count - 20))
+    return affected, unmatched, warnings
+
+
 class Catalog:
     """All templates visible to the account, independently of the filtered launch catalog."""
     def __init__(self, aap, cfg):
         self.aap, self.cfg = aap, cfg
         self.lock = threading.Lock()
         self.rows, self.error, self.at, self.attempt = {}, "", 0, 0
+        self.warnings = []
         self.mono = None                    # director B: when the last whole read was made, by the monotonic clock (its age)
 
     def list(self, path):
@@ -56,22 +98,23 @@ class Catalog:
     def state(self):
         # 1.135.2 (display only): include both clocks in the page's snapshot.
         with self.lock:
-            return self.rows, self.error, self.at, self.mono
+            return self.rows, self.error, self.at, self.mono, self.warnings
 
     def read(self, force=False):
         with self.lock:
             if force or not self.attempt or time.monotonic() - self.attempt >= min(self.cfg.discover_seconds, 900):
                 self.attempt = start = time.monotonic()
                 try:
-                    rows = self.inventory()
+                    rows, warnings = self.inventory()
                 except Exception as exc:  # pylint: disable=broad-except  - an odd AAP answer: said on the page, the last read kept
                     self.error = str(exc) or exc.__class__.__name__
                 else:
+                    self.warnings = warnings
                     self.rows, self.error, self.at, self.mono = rows, "", time.time(), start     # Codex r4 #10: its age from the read's START
             return self.rows, self.error, self.at
 
     def inventory(self):
-        rows = {}
+        rows, warnings = {}, []
         for prefix, kind in (("jt", "job_templates"), ("wf", "workflow_job_templates")):
             templates = self.list(kind + "/?order_by=name")
             if not templates:
@@ -79,7 +122,7 @@ class Catalog:
             ids = lambda rows_: {r["id"] for r in rows_ if isinstance(r, dict) and type(r.get("id")) is int}      # noqa: E731
             execute = ids(self.list(kind + "/?role_level=execute_role"))
             approve, approval = set(), set()
-            unknown_steps = collections.defaultdict(list)  # 1.135.2 (display only): separate from approval detection
+            affected, unmatched = set(), False
             if prefix == "wf":
                 approve = ids(self.list(kind + "/?role_level=approval_role"))
                 nodes = self.list("workflow_job_template_nodes/")
@@ -91,35 +134,7 @@ class Catalog:
                     ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
                     if ujt.get("unified_job_type") == "workflow_approval":
                         approval.add(node["workflow_job_template"])
-                known_types = {"job", "project_update", "inventory_update", "workflow_job", "workflow_approval", "system_job", "ad_hoc_command"}
-                orphans = []                   # 1.135.2 (display only): undescribed steps AAP sent without a usable workflow id
-                for node in nodes:
-                    if not isinstance(node, dict):
-                        orphans.append("a node AAP sent without its workflow")
-                        continue
-                    sf = node.get("summary_fields") if isinstance(node.get("summary_fields"), dict) else {}
-                    ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
-                    job_type = ujt.get("unified_job_type")
-                    known = isinstance(job_type, str) and job_type in known_types
-                    node_id = node.get("id")
-                    if type(node_id) is not int:
-                        node_id = node.get("unified_job_template")
-                    name = "node %d" % node_id if type(node_id) is int else "a node without an id"
-                    parent = node.get("workflow_job_template")
-                    if isinstance(parent, str) and parent.isdecimal() and len(parent) <= 18:
-                        parent = int(parent)            # "2" (any decimal digits) names workflow 2
-                    if type(parent) is not int:
-                        if not known or job_type == "workflow_approval":   # an approval step or an undescribed one of no named workflow
-                            orphans.append(name + " (its workflow not named)")
-                    elif not known:
-                        unknown_steps[parent].append(name)
-                wf_ids = {r["id"] for r in templates if isinstance(r, dict) and type(r.get("id")) is int}
-                for parent in [p_ for p_ in unknown_steps if p_ not in wf_ids]:   # a workflow not in the list: may be any
-                    orphans.extend(n_ + " (workflow %d, not in the list)" % parent for n_ in unknown_steps.pop(parent))
-                for name in orphans:                    # it may belong to any workflow: every workflow is in doubt
-                    for r in templates:
-                        if isinstance(r, dict) and type(r.get("id")) is int:
-                            unknown_steps[r["id"]].append(name)
+                affected, unmatched, warnings = workflow_warnings(templates, nodes)
             for r in templates:
                 # Codex #17: a row AAP sent without a usable id or name is left out (said), never a broken page
                 if not isinstance(r, dict) or type(r.get("id")) is not int or not isinstance(r.get("name"), str) or not r["name"].strip():
@@ -135,8 +150,8 @@ class Catalog:
                              "organization": org if isinstance(org, str) else "",
                              "survey": bool(r.get("survey_enabled")), "execute": tid in execute, "approve": tid in approve,
                              "workflow": prefix == "wf", "approval": tid in approval, "published": self.cfg.label in labels,
-                             "unknown_steps": ", ".join(unknown_steps.get(tid, ()))}
-        return dict(sorted(rows.items(), key=lambda item: (item[1]["name"].casefold(), item[0])))
+                             "unknown_steps": unmatched or tid in affected}
+        return dict(sorted(rows.items(), key=lambda item: (item[1]["name"].casefold(), item[0]))), warnings
 
 
 def initial(row):
@@ -153,7 +168,7 @@ def issues(row, intent):
         problems.append(("Label pending", "The saved visibility differs from the label in AAP."))
     # 1.135.2 (display only): list workflows with unrecognized steps under Needs AAP.
     if row["unknown_steps"]:
-        problems.append(("Approval unknown", "Could not tell whether this workflow has an approval step - check %s in AAP." % row["unknown_steps"]))
+        problems.append(("Approval unknown", "Could not tell whether this workflow has an approval step - see the node warnings above."))
     return problems
 
 
@@ -402,14 +417,13 @@ def render(portal, cn, query, metadata):
     cfg = portal.cfg
     # 1.135.2 (display only): use one catalog snapshot across all tabs.
     portal.admin_catalog.read()
-    rows, error, at, mono = portal.admin_catalog.state()
+    rows, error, at, mono, warnings = portal.admin_catalog.state()
     stale_read = not_current(error, mono, at, min(int(cfg.discover_seconds or 300), 900))
-    unknown = [(row["name"], row["unknown_steps"]) for row in rows.values() if row["unknown_steps"]]
     if error:
         status = '<span class="chip s-critical">Disconnected</span>'
     elif stale_read:
         status = '<span class="chip s-warning">Not current</span>'
-    elif unknown:
+    elif warnings:
         status = '<span class="chip s-warning">Approval unknown</span>'
     else:
         status = '<span class="chip s-ok">Connected</span>'
@@ -438,9 +452,9 @@ def render(portal, cn, query, metadata):
         header += '<p class="note bad">AAP read failed. %s</p>' % e(error)
     elif stale_read:
         header += '<p class="note warn">%s</p>' % e(stale_read)
-    if unknown:
+    if warnings:
         header += '<div class="note warn"><b>Approval unknown</b><ul>%s</ul></div>' % "".join(
-            "<li>%s: %s</li>" % (e(name), e(steps)) for name, steps in unknown[:50])
+            "<li>%s</li>" % e(detail) for detail in warnings)
     # 1.134.0: ONE controller - grants saved for another one were dropped when the portal read them (said, and in Activity)
     dropped = getattr(store_of(cfg), "dropped", None)
     if dropped:
@@ -464,7 +478,7 @@ def render(portal, cn, query, metadata):
     elif tab == "conn":
         facts = [("Seen", len(rows)), ("Job templates", sum(not r["workflow"] for r in rows.values())),
                  ("Workflows", sum(r["workflow"] for r in rows.values())), ("With approval", sum(r["approval"] for r in rows.values())),
-                 ("Approval unknown", len(unknown)),
+                 ("Approval unknown", sum(r["unknown_steps"] for r in rows.values())),
                  ("On the portal", sum(r["published"] for r in rows.values())), ("Execute", sum(r["execute"] for r in rows.values())),
                  ("Approve", sum(r["approval"] and r["approve"] for r in rows.values())),
                  ("Cards off", sum(r["published"] and not r["execute"] for r in rows.values()))]
@@ -484,7 +498,7 @@ def render(portal, cn, query, metadata):
                 '<button name="op" value="preview">Preview changes</button></form>' % fields)
     else:
         body = access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=stale_read,
-                          doubt="Not confirmed - AAP did not describe every workflow step (Approval unknown, above)." if unknown else "") + transfer
+                          doubt="Not confirmed - AAP did not describe every workflow step (Approval unknown, above)." if warnings else "") + transfer
     return header + body
 
 

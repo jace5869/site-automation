@@ -1273,7 +1273,8 @@ class Fix1352(Admin):
         item = self.card(page, "wf_2")
         self.assertNotIn("<b>Ready.</b>", item)
         self.assertNotIn("arow ok", item)
-        self.assertIn("Could not tell whether this workflow has an approval step - check node 42 in AAP.", item)
+        self.assertIn("Could not tell whether this workflow has an approval step - see the node warnings above.", item)
+        self.assertIn("node 42", page)
         return item
 
     def test_failed_read(self):
@@ -1301,7 +1302,7 @@ class Fix1352(Admin):
                 self.api.nodes = [{"workflow_job_template": 2, "unified_job_template": 42, **summary}]
                 rows, error, _ = self.portal.admin_catalog.read(force=True)
                 self.assertFalse(error)
-                self.assertEqual(rows["wf_2"]["unknown_steps"], "node 42")
+                self.assertIs(rows["wf_2"]["unknown_steps"], True)
                 item = self.check_unknown(self.http("/admin?show=needs")[1])
                 self.assertIn('<span class="badge">Approval?</span>', item)
                 self.assertNotIn("Apply with AAP - set up portal actions.", item)
@@ -1311,7 +1312,7 @@ class Fix1352(Admin):
                 self.assertIn('<div class="k">Approval unknown</div><div class="v">1</div>', page)
         self.api.nodes[0]["summary_fields"] = {"unified_job_template": {"unified_job_type": "job"}}
         rows, _, _ = self.portal.admin_catalog.read(force=True)
-        self.assertEqual(rows["wf_2"]["unknown_steps"], "")
+        self.assertIs(rows["wf_2"]["unknown_steps"], False)
 
     def test_string_parent(self):
         self.api.nodes = [{"workflow_job_template": "2", "unified_job_template": 42, "summary_fields": {}}]
@@ -1384,6 +1385,70 @@ class Fix1352(Admin):
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(Fix1352, _n, None)
+
+
+class Gate1352(unittest.TestCase):
+    setUp = Admin.setUp
+    http = Admin.http
+    card = Fix1352.card
+
+    def test_catalog_warning_size(self):
+        cat = self.portal.admin_catalog
+        workflows = [{"id": i, "name": "Workflow %d" % i} for i in range(4096)]
+        nodes = [{"id": i} for i in range(4096)]
+        with patch.object(cat, "list", side_effect=[[], workflows, [], [], nodes]), patch.object(self.aap, "labels_of", return_value=[]):
+            rows, error, _ = cat.read(force=True)
+        self.assertFalse(error)
+        self.assertEqual(len(rows), 4096)
+        flags = [r["unknown_steps"] for r in rows.values()]
+        self.assertTrue(all(flags))
+        row_bytes = sum(len(str(flag).encode()) for flag in flags)
+        self.assertLess(row_bytes, 64 * 1024)
+        warnings = cat.warnings
+        self.assertLess(row_bytes + sum(len(w.encode()) for w in warnings), 64 * 1024)
+        self.assertEqual(len(warnings), 21)
+        self.assertEqual(warnings[-1], "+4076 more")
+        page = self.http("/admin?tab=conn")[1]
+        for warning in warnings:
+            self.assertEqual(page.count("<li>%s</li>" % html.escape(warning)), 1)
+
+    def test_surrogate_in_warning(self):
+        self.api.names[2] = "Release\ud800<&>"
+        self.api.nodes = [{"id": 42, "workflow_job_template": 2}]
+        for path in ("/admin?tab=groups", "/admin"):
+            code, page, _ = self.http(path)
+            self.assertEqual(code, 200)
+            self.assertIn("<li>Release?&lt;&amp;&gt;: node 42</li>", page)
+
+    def check_unmatched_approval(self, parent, nameless=False):
+        self.api.nodes = [{"id": 42, "workflow_job_template": parent, "summary_fields": {
+            "unified_job_template": {"unified_job_type": "workflow_approval"}}}]
+        cat = self.portal.admin_catalog
+        read_list = cat.list
+
+        def listing(path):
+            result = read_list(path)
+            if nameless and path == "workflow_job_templates/?order_by=name":
+                return result + [{"id": parent, "name": " "}]
+            return result
+
+        with patch.object(cat, "list", side_effect=listing):
+            rows, error, _ = cat.read(force=True)
+        self.assertFalse(error)
+        self.assertFalse(rows["wf_2"]["approval"])
+        page = self.http("/admin")[1]
+        self.assertIn("arow warn", self.card(page, "wf_2"))
+        self.assertNotIn("<b>Ready.</b>", page)
+        self.assertIn("node 42", page)
+
+    def test_approval_with_string_parent(self):
+        self.check_unmatched_approval("2")
+
+    def test_approval_with_absent_parent(self):
+        self.check_unmatched_approval(99)
+
+    def test_approval_with_nameless_parent(self):
+        self.check_unmatched_approval(99, nameless=True)
 
 
 if __name__ == "__main__":
