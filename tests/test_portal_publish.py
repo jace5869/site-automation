@@ -32,7 +32,7 @@ class FakeApi(object):
     def __init__(self, names, kinds=None, orgs=None):
         self.rows, self.labels, self.roles, self.user_roles, self.writes = {"job_templates": [], "workflow_job_templates": []}, {}, {}, set(), []
         self.users = [{"id": 20, "username": "svc_x"}]
-        self.access, self.reads = {}, []
+        self.access, self.reads, self.nodes = {}, [], {}
         self.next = 100
         for n in names:
             kind = (kinds or {}).get(n, "job_templates")
@@ -44,6 +44,10 @@ class FakeApi(object):
         p = path.split("?")[0]
         if method == "GET":
             self.reads.append(path)
+            if p == "workflow_job_template_nodes/":
+                from urllib.parse import urlsplit, parse_qs
+                oid = int(parse_qs(urlsplit(path).query)["workflow_job_template"][0])
+                return 200, {"results": self.nodes.get(oid, [])}
             if p == "users/":
                 return 200, {"results": self.users}
             if p == "inventories/":
@@ -62,7 +66,8 @@ class FakeApi(object):
                 return 200, {"count": len(rows), "next": None, "results": rows}
             m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/object_roles/$", p)
             if m:
-                return 200, {"count": 1, "next": None, "results": [{"id": int(m.group(2)) * 10, "name": "Execute"}]}
+                return 200, {"results": [{"id": int(m.group(2)) * 10, "name": "Execute"},
+                                         {"id": int(m.group(2)) * 10 + 1, "name": "Approve"}]}
             m = re.match(r"^users/(\d+)/roles/$", p)
             if m:
                 rows = [{"id": i} for i in sorted(self.user_roles)]
@@ -112,6 +117,39 @@ def say(s):
 
 
 NAMES = ["Site - health linux", "Site - health windows", "site - cleanup", "Other tool", "Weekly report"]
+
+
+class WorkflowGrants(unittest.TestCase):
+    def test_only_published_workflows_with_an_approval_node_get_approve(self):
+        api = FakeApi(["Example A", "Example B"], kinds={k: "workflow_job_templates" for k in ["Example A", "Example B"]})
+        api.nodes[101] = [{"summary_fields": {"unified_job_template": {"unified_job_type": "workflow_approval"}}}]
+        setup(api, check=True, publish=["Example *"])
+        self.assertFalse(api.writes)
+        setup(api, publish=["Example *"])
+        self.assertEqual(api.user_roles, {1010, 1011, 1020})
+
+
+class Exact1133(unittest.TestCase):
+    """1.133.0 (Codex r2 #11): the Admin export's exact mode - one exact name, one object, or nothing changes"""
+
+    def test_a_name_in_another_case_or_kind_stops_it(self):
+        a = FakeApi(["Inventory", "INVENTORY"], kinds={"INVENTORY": "workflow_job_templates"})
+        s = setup(a, publish=["Inventory"], publish_exact=True)
+        self.assertTrue(any("exactly one" in x for x in s.problems), s.problems)
+        self.assertFalse(a.writes)
+        a2 = FakeApi(["Inventory", "Other"])
+        s2 = setup(a2, publish=["Inventory"], publish_exact=True)
+        self.assertFalse(s2.problems, s2.problems)
+        self.assertEqual(a2.labels_of("Inventory"), ["portal"])
+        self.assertEqual(a2.labels_of("Other"), [])
+        s3 = setup(FakeApi(["Inv*", "Inventory"]), publish=["Inv*"], publish_exact=True)    # a * is a character here (Codex #15)
+        self.assertFalse(s3.problems, s3.problems)
+        a4 = FakeApi(["Inventory"])                                               # Codex #11: the reviewed object - kind and id
+        wrong = {"Inventory": {"kind": "workflow_job_templates", "id": a4.rows["job_templates"][0]["id"]}}
+        s4 = setup(a4, publish=["Inventory"], publish_exact=True, publish_ids=wrong)
+        self.assertTrue(any("exported" in x for x in s4.problems), s4.problems)
+        right = {"Inventory": {"kind": "job_templates", "id": a4.rows["job_templates"][0]["id"]}}
+        self.assertFalse(setup(FakeApi(["Inventory"]), publish=["Inventory"], publish_exact=True, publish_ids=right).problems)
 
 
 class Patterns(unittest.TestCase):

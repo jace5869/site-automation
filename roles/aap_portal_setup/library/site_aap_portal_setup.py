@@ -283,6 +283,21 @@ class Setup(Sync):
         found = {}
         for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
             for pat in pats:
+                if p.get("publish_exact"):
+                    # 1.133.0 (Codex r2 #11): the Admin page's export - each name exactly (case too), and exactly one job
+                    # template or workflow with it in the organization; else nothing is changed (never one the admin did not review)
+                    # Codex r2 #15: literal names - no wildcard here; any other object of the same name in another case stops it.
+                    # Codex r1 #11: and it must be the very object the admin reviewed (its kind and id, when the export names them)
+                    same = [(k, r) for k, r in rows if str(r.get("name") or "").casefold() == pat.casefold()]
+                    hit = [(k, r) for k, r in same if r.get("name") == pat]
+                    want = (p.get("publish_ids") or {}).get(pat)
+                    if len(same) != 1 or len(hit) != 1 or (isinstance(want, dict) and (hit[0][0] != want.get("kind") or hit[0][1].get("id") != want.get("id"))):
+                        self.problems.append("%s: %r must name exactly one job template or workflow (any case) here - the one the "
+                                             "Admin page exported (%s); it names %d - nothing was changed" % (
+                                                 label, pat, ("%s %s" % (want.get("kind"), want.get("id"))) if isinstance(want, dict) else "by name", len(same)))
+                        return None
+                    found[(label, pat)] = hit
+                    continue
                 hit = [(k, r) for k, r in rows if self._matches(pat, r.get("name"))]
                 if len(hit) > mx:
                     self.problems.append("%s: %r matches %d templates and workflows, more than portal_publish_max (%d): %s - %s; nothing was changed" % (
@@ -375,7 +390,13 @@ class Setup(Sync):
                         self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"name": want, "organization": int(org)})
                         self.note("label", "%s: %s" % (name, want), "create")
                 if uid:
-                    self.grant(api_kind, oid, name, ["Execute"], uid, kind="publish grant")
+                    roles = ["Execute"]
+                    if api_kind == "workflow_job_templates":
+                        nodes = self.all("workflow_job_template_nodes/?workflow_job_template=%d" % oid)
+                        if any(((n.get("summary_fields") or {}).get("unified_job_template") or {}).get("unified_job_type")
+                               == "workflow_approval" for n in nodes):
+                            roles.append("Approve")
+                    self.grant(api_kind, oid, name, roles, uid, kind="publish grant")
                 elif not p["portal_user"]:
                     self.note("publish grant", "%s: Execute" % name, "skipped", why="portal_setup_portal_user is not set: no role is given")
         for api_kind, row in plan["unpublish"]:
@@ -628,7 +649,7 @@ def main():
                            credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""), portal_auditor=dict(type="bool", default=False),
                            overwrite=dict(type="bool", default=False), schedules=dict(type="list", elements="dict", default=[]),
                            scorecard=dict(type="dict", default={}),
-                           publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
+                           publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""), publish_exact=dict(type="bool", default=False), publish_ids=dict(type="dict", default={}),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
                            never=dict(type="list", elements="str", default=[]),
                            area_label=dict(type="str", default="portal-area:"), alone_label=dict(type="str", default="portal-alone"), publish_max=dict(type="int", default=50),

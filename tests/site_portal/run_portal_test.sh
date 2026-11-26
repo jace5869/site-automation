@@ -387,7 +387,7 @@ r="$(c "$k/jdoe" launch ckl_import '{"stigman_ckl_import_mode": "import and scor
 wf="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
 aid="$(c "$k/appr" get /portal/api/approvals | jq_ '[a["id"] for a in d["json"]["approvals"] if a["workflow_job"] == '"${wf:-0}"'][0]')"
 r="$(c "$k/jdoe" decide "$aid" approve)"
-case "$r" in *'"code": 403'*"You are not an approver (portal_approvers, portal_approve_groups)"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
+case "$r" in *'"code": 403'*"You are not on the list of people who may approve this workflow (portal_approvers, portal_approve_groups)"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
 r="$(c "$k/appr" decide "$aid" approve)"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && grep -q "workflow_approvals/$aid/approve/" "$work/aap/aap.jsonl"; then pass "approve by an approver: AAP got it"
 else fail "approve by an approver" "$r"; fi
@@ -473,7 +473,7 @@ assert ok, "the launch line"
 assert dec == [("APPROVER.ALEX.B.3456789012", "approve"), ("APPROVER.ALEX.B.3456789012", "deny")], dec
 for w in ("not on the action's list", "values", "not from a portal page", "not a listed action", "self-approval"):
     assert any(x.startswith(w) for x in ref), (w, ref)
-assert any(r.get("why") == "not an approver" for r in recs if r["event"] == "refused")
+assert any(r.get("why") == "cannot approve" for r in recs if r["event"] == "refused")
 EOF
 then pass "the log: each launch (person, action, values, job, time), each decision, each refusal"
 else fail "the log lines" "$(tail -8 "$work/log.jsonl")"; fi
@@ -503,7 +503,7 @@ assert [(x["attribute"], x["match"]) for x in m] == [("userPrincipalName", "{edi
 else fail "the card forms in the portal's settings" "$(grep -A8 PORTAL_AD_CARD_MATCHES "$work/etc/settings.json" | head -12)"; fi
 else fail "the AD groups' secret" "leak: $leak; secret: $(podman secret inspect site-portal-ldap >/dev/null 2>&1 && echo there || echo missing); unit: $(grep -c site-portal-ldap "$units/site-portal-app.container"); groups: $(grep -A2 PORTAL_APPROVER_GROUPS "$work/etc/settings.json" | tr -d ' \n')"; fi
 r="$(c "$k/appr" get /portal/approvals)"
-if echo "$r" | grep -q 'AD not read</span><b>Only the named approvers may decide</b>: 1 in <code>portal_approvers</code>' \
+if echo "$r" | grep -q 'AD not read</span><b>Only people on the named list can approve</b>: 1 in <code>portal_approvers</code>' \
     && echo "$r" | grep -q 'AAP-Approvers (AD) is not counted until AD answers' && grep -q '"event": "ad-groups", "ok": false' "$work/log.jsonl"; then
     pass "1.120.0: AD not read - only the named approvers decide, said on the Approvals page and in the log"
 else fail "the AD groups not read, said" "$(echo "$r" | grep -o 'deciders.\{0,300\}' | head -2); $(grep ad-groups "$work/log.jsonl" | head -2)"; fi

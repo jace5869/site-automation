@@ -1074,7 +1074,7 @@ class Portal(unittest.TestCase):
         self.assertTrue(rules.may_run(act, "OPERATOR.SAM.J.2345678901", c.requesters))
         self.assertFalse(rules.may_run(act, "SOMEONE.ELSE.X.9999999999", c.requesters))           # groups set: not anyone
         h = sp.deciders_html(c)
-        self.assertIn("<b>Who may decide:</b> AAP-Approvers (AD), 3 people &middot; 1 named in <code>portal_approvers</code>.", h)
+        self.assertIn("<b>Who can approve:</b> AAP-Approvers (AD), 3 people &middot; 1 named in <code>portal_approvers</code>.", h)
         self.assertIn("disabled accounts never", h)
         self.assertIn("by its number (sAMAccountName, userPrincipalName)", h)
         self.assertNotIn("AD not read", h)
@@ -1124,7 +1124,7 @@ class Portal(unittest.TestCase):
         self.assertIsNone(c.ad_groups)
         import site_portal_filters as rules
         self.assertTrue(rules.may_run({"who": None}, "ANYONE.A.B.1212121212", c.requesters))       # [] = any person with a card, as before
-        self.assertEqual(sp.deciders_html(c), '<div class="note deciders"><b>Who may decide:</b> 1 named in <code>portal_approvers</code>.</div>')
+        self.assertEqual(sp.deciders_html(c), '<div class="note deciders"><b>Who can approve:</b> 1 named in <code>portal_approvers</code>.</div>')
         self.assertNotIn("ANYONE.A.B.1212121212", c.approvers)
 
     def test_5_without_the_reader_closed_and_a_new_card_is_the_same_person(self):
@@ -1296,7 +1296,7 @@ class Review1122(unittest.TestCase):
         import site_portal as sp
         with open(sp.__file__) as fh:
             src = fh.read()
-        self.assertIn('"approver": bool(cn) and cn in self.cfg.approvers}', src)
+        self.assertIn('"approver": bool(cn) and (cn in self.cfg.approvers or self.cfg.template_member(cn, "approve_groups"))}', src)
         with open(os.path.join(REPO, "roles", "site_portal_stack", "files", "static", "portal.js")) as fh:
             js = fh.read()
         self.assertIn('if (typeof r.approver === "boolean") approver = r.approver;', js)

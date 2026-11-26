@@ -693,8 +693,8 @@ class Live(unittest.TestCase):
         self.assertNotIn("s-critical\">" + sp.icon("bad") + "Failed", h)
         # the one who started it is no approver: the plan, the reason by its setting's name, the way to Approvals - no buttons
         h = self.req("/jobs/%d" % wid)
-        self.assertIn("<b>Waiting for an approver</b>", h)
-        self.assertIn("<b>You are not an approver</b> (<code>portal_approvers</code>, <code>portal_approve_groups</code>) - only the approvers decide.", h)
+        self.assertIn("<b>Waiting for approval</b>", h)
+        self.assertIn("<b>You are not on the list of people who may approve this workflow</b> (<code>portal_approvers</code>, <code>portal_approve_groups</code>).", h)
         self.assertIn('<a href="%sapprovals">Approvals</a>' % self.cfg.path, h)
         self.assertNotIn('data-d="approve"', h)
         self.assertIn("What it will change", h)

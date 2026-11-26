@@ -76,6 +76,15 @@ function post(path, data) {
   return call(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Portal-Token": meta("portal-token")},
                      body: JSON.stringify(data || {})});
 }
+async function confirmedPost(path, data) {
+  try {
+    return await post(path, data);
+  } catch (error) {
+    if (!error.body || !error.body.confirmation) throw error;
+    if (!window.confirm(error.message)) throw new Error("Launch cancelled.");
+    return post(path, {...data, confirmation: error.body.confirmation});
+  }
+}
 function facts(dl, pairs) {
   dl.replaceChildren();
   for (const [k, v] of pairs) {
@@ -95,6 +104,10 @@ function actionPage() {
   if (f) initRun(f);
 }
 function initRun(f) {                  // the confirm page's form, or the Run dialog's (the same handler)
+  // 1.133.0 (Codex #12): a form fetched now carries a fresh token - the page's own may be hours old: use the new one
+  const fresh = f.querySelector('input[name="portal-token"]');
+  const tm = document.querySelector('meta[name="portal-token"]');
+  if (fresh && fresh.value && tm) tm.content = fresh.value;
   const go0 = $("go"), jts = qa(f, 'input[name="portal-job-type"]');
   const label = () => { const c = jts.filter((x) => x.checked)[0]; if (go0 && c) go0.textContent = c.value === "check" ? "Launch as Check" : "Launch job"; };
   jts.forEach((x) => x.addEventListener("change", label));
@@ -120,7 +133,7 @@ function initRun(f) {                  // the confirm page's form, or the Run di
       // the Job type: the one picked (a template that asks it at launch), or the Check the address asked of one fixed to Check
       const jt = qa(f, 'input[name="portal-job-type"]:checked')[0] || qa(f, 'input[type="hidden"][name="portal-job-type"]')[0];
       const xp = qa(f, 'input[type="hidden"][name="portal-expand"]')[0];          // opened by Expand...: the server checks its choice
-      const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined, job_type: jt ? jt.value : undefined, expand: xp ? xp.value : undefined});
+      const r = await confirmedPost("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined, job_type: jt ? jt.value : undefined, expand: xp ? xp.value : undefined});
       rememberRunning(r.job_id);
       $("state").textContent = "Started: job " + r.job_id + (r.warning ? ". " + r.warning : "") + ". Opening it…";
       location.assign(r.url);
@@ -566,7 +579,7 @@ function manyPage() {
       const vars = {report_job: tr.dataset.job, finding_id: tr.dataset.fid};
       vars[t.dataset.hv] = tr.dataset.host;
       try {
-        const r = await post("api/actions/" + encodeURIComponent(t.dataset.action), {vars});
+        const r = await confirmedPost("api/actions/" + encodeURIComponent(t.dataset.action), {vars});
         rememberRunning(r.job_id);
         const a = el("a", "", "job " + r.job_id);
         a.href = r.url;
@@ -962,7 +975,7 @@ function placementEditor(card, approval, viewer, save, undo) {
     const controls = panel.querySelectorAll("button:enabled, input:enabled, select:enabled");
     controls.forEach(b => { b.disabled = true; });
     try {
-      const result = await post("api/approvals/" + approval.id + "/placement", {vms: requested});
+      const result = await confirmedPost("api/approvals/" + approval.id + "/placement", {vms: requested});
       clearMarks();
       panel.remove();
       save(result.job);
@@ -1130,7 +1143,7 @@ function planEl(plan) {
 }
 function deployPlanEl(plan) {
   const sources = {ticket: ["s-ok", "From the ticket", "ok"], default: ["s-info", "Default", "skip"],
-                   job: ["s-low", "Chosen by the job", "wait"], approver: ["s-plan", "Changed by the approver", "ok"], stop: ["s-critical", "Stop", "bad"]};
+                   job: ["s-low", "Chosen by the job", "wait"], approver: ["s-plan", "Changed during approval", "ok"], stop: ["s-critical", "Stop", "bad"]};
   const c = plan.counts;
   const details = el("details", "wic"), summary = el("summary"), counts = el("span", "cnt");
   counts.append(el("span", "chip n", c.vms + (c.vms === 1 ? " VM" : " VMs")));
@@ -1138,7 +1151,7 @@ function deployPlanEl(plan) {
     const [cls, label] = sources[key];
     counts.append(el("span", "chip " + cls, c[key] + " " + label.toLowerCase()));
   }
-  if (c.approver) counts.append(el("span", "chip s-plan", c.approver + " changed by the approver"));
+  if (c.approver) counts.append(el("span", "chip s-plan", c.approver + " changed during approval"));
   if (c.warnings) counts.append(el("span", "chip s-warning", c.warnings + (c.warnings === 1 ? " warning" : " warnings")));
   summary.append(chev(), el("span", "t", "What will be built"), counts);
   const body = el("div", "wicp deploy-list");
@@ -1171,11 +1184,12 @@ function deployPlanEl(plan) {
 function whyEl(a) {
   const box = el("div", "dwhy"), t = el("span");
   const code = (x) => el("code", "", x);
-  if (a.why === "approvers") t.append(el("b", "", "You are not an approver"), document.createTextNode(" ("), code("portal_approvers"), document.createTextNode(", "),
-                                      code("portal_approve_groups"), document.createTextNode(") - only the approvers decide."));
-  else if (a.why === "self") t.append(el("b", "", "You started this run"), document.createTextNode(" - another approver decides ("), code("portal_allow_self_approval"), document.createTextNode(")."));
+  if (a.why === "approvers") t.append(el("b", "", "You are not on the list of people who may approve this workflow"), document.createTextNode(" ("), code("portal_approvers"), document.createTextNode(", "),
+                                      code("portal_approve_groups"), document.createTextNode(")."));
+  else if (a.why === "self") t.append(el("b", "", "You started this run"), document.createTextNode(" - someone else must approve or deny it ("), code("portal_allow_self_approval"), document.createTextNode(")."));
   else if (a.why === "role") t.append(el("b", "", "The portal's account has no Approve role on this workflow"), document.createTextNode(" - give it Approve in AAP, or decide there."));
   else t.textContent = a.reason || "Decide it in AAP.";
+  if (a.why === "approvers" && a.ad_status) t.append(" " + a.ad_status);
   box.append(icon("lock"), t);
   return box;
 }

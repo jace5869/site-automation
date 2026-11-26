@@ -43,6 +43,7 @@ import stat
 import sys
 import tempfile
 import threading
+import contextlib
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +51,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 APP = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP)
 import site_portal_filters as rules  # noqa: E402  the actions' loader and rules (the deploy checks with the same)
+import portal_access  # noqa: E402
+import portal_admin  # noqa: E402
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
 import ad_replication  # noqa: E402
 import netmap_history  # noqa: E402
@@ -160,6 +163,25 @@ def names(v):
         except ValueError:
             pass
     return [x.strip() for x in re.split(r"[,\n]", t) if x.strip()]
+
+
+# 1.133.0 (Codex #5): an access list that had an entry, but only blank ones, is "nobody" - never the open default an empty
+# list stands for. The deploy refuses blank entries; this keeps a hand-edited setting closed too. A NUL never comes in a CN.
+NOBODY = "\x00a blank entry: nobody"
+
+
+def had_blank(v):
+    """whether a list setting has an entry that is blank (as names() reads it)"""
+    if isinstance(v, list):
+        return any(not str(x).strip() for x in v)
+    t = str(v or "").strip()
+    if t.startswith("["):
+        try:
+            x = json.loads(t)
+            return isinstance(x, list) and any(not str(i).strip() for i in x)
+        except ValueError:
+            pass
+    return bool(t) and any(not x.strip() for x in re.split(r"[,\n]", t))
 
 
 # ---- 1.129.0: Windows hosts in the picker of a Windows job, and a playbook's own cap of hosts --------------------------------
@@ -437,6 +459,17 @@ def same_person(a, b):
     return bool(person) and person == card_person(b)
 
 
+def started_by(ap, cn):
+    """1.133.0 (Codex #9): whether this card's person started the run waiting for approval - started from the portal
+    (requested_by), or in AAP by an AAP user whose name is this card's CN (or the same person's)"""
+    if not cn:
+        return False
+    if same_person(ap.get("requested_by"), cn):
+        return True
+    user = str(ap.get("aap_user") or "").strip()
+    return bool(user) and (user.casefold() == str(cn).strip().casefold() or same_person(user, cn))
+
+
 class Config(object):
     """The settings: the file PORTAL_SETTINGS names (JSON - the deploy writes it), then the environment over it (the
     secret: PORTAL_AAP_TOKEN)."""
@@ -554,6 +587,8 @@ class Config(object):
         # 1.120.0: approvers and requesters from AD groups (portal_approve_groups, portal_run_groups: names or DNs), read
         # over LDAP with the "LDAP Bind Account" login (the secret site-portal-ldap: JSON {user, password}) every
         # portal_ad_groups_seconds; 1.133.0: a card is ONE AD account, found by the forms in portal_ad_card_matches
+        self.admins = names(g("PORTAL_ADMINS", "[]"))
+        self.admin_groups = names(g("PORTAL_ADMIN_GROUPS", "[]"))
         self.approver_groups = names(g("PORTAL_APPROVER_GROUPS", "[]"))
         self.requester_groups = names(g("PORTAL_REQUESTER_GROUPS", "[]"))
         try:
@@ -585,7 +620,18 @@ class Config(object):
         self.wall_feedback_closed = set(k for k, env in (("groups", "PORTAL_WALL_FEEDBACK_GROUPS"), ("readers", "PORTAL_WALL_FEEDBACK_READERS"))
                                         if self.wall_feedback and _set_but_empty(g(env, "[]")))
         self.wall_test = flag(g("PORTAL_WALL_TEST", "0"))      # the test harness only: ?freeze= is honoured (a still clock for screenshots)
-        groups = {"readers": self.reader_groups, "approvers": self.approver_groups, "requesters": self.requester_groups,
+        # Codex #5: a blank entry in a list that is open when empty (view, run) closes that role: only the others named
+        for named, keys in ((self.readers, ("PORTAL_READERS", "PORTAL_READER_GROUPS")), (self.requesters, ("PORTAL_REQUESTERS", "PORTAL_REQUESTER_GROUPS"))):
+            # Codex r2 new #17: a setting present but null ("None" as text from an older writer) is nobody too, never "anyone"
+            nulled = [k for k in keys if k in e and (e.get(k) is None or str(e.get(k)).strip() in ("None", "null"))]
+            if "PORTAL_READERS" in nulled or "PORTAL_REQUESTERS" in nulled:
+                named[:] = [x for x in named if x not in ("None", "null")]
+            if (nulled or any(had_blank(g(k, "[]")) for k in keys)) and NOBODY not in named:
+                named.append(NOBODY)
+        for named, k in ((self.approvers, "PORTAL_APPROVERS"), (self.admins, "PORTAL_ADMINS")):
+            if k in e and (e.get(k) is None or str(e.get(k)).strip() in ("None", "null")):
+                named[:] = []                     # a null list is nobody - never a person named "None"
+        groups = {"admins": self.admin_groups, "readers": self.reader_groups, "approvers": self.approver_groups, "requesters": self.requester_groups,
                   "wall_feedback": self.wall_feedback_groups, "wall_readers": self.wall_feedback_readers}
         card_why = ""
         try:
@@ -683,22 +729,70 @@ class Config(object):
         self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*\Z", sp) and not raw_sp.startswith("//")
                              and "//" not in sp and ".." not in sp else "/")
 
+    def admin_allowed(self, cn):
+        # 1.133.0 (Neon): only the admin lists - both empty: nobody (never the run + approve lists)
+        if self.admins or self.admin_groups:
+            return bool(cn and (cn in self.admins or self.ad_groups and self.ad_groups.has("admins", cn)))
+        return False
+
+    def template_groups_for(self, cn, field=None):
+        if self.ad_groups and getattr(self, "access", None):
+            entries = access_rows(self)[0].values()          # Codex #4: only grants that apply (a deleted template's: none)
+            for key in ((field,) if field else portal_access.GROUP_FIELDS):
+                names = {group for row in entries for group in row[key]}
+                if names:
+                    for group, attribute in self.ad_groups.group_matches("templates", cn, names):
+                        yield key, group, attribute
+
+    def template_member(self, cn, field=None):
+        return next(self.template_groups_for(cn, field), None) is not None
+
     @property
     def readers_restricted(self):
         return bool(self.readers or self.reader_groups)
 
-    def reader_match(self, cn):
-        """The setting that grants this card access, or an empty string on refusal."""
-        for setting, people in (("portal_viewers", self.readers), ("portal_runners", self.requesters), ("portal_approvers", self.approvers)):
-            if list.__contains__(people, cn):  # named CNs only (People also checks AD)
-                return setting
+    # The AD cache and container keep their original keys.
+    access_lists = (("view", "readers", "portal_viewers", "portal_view_groups"),
+                    ("run", "requesters", "portal_runners", "portal_run_groups"),
+                    ("approve", "approvers", "portal_approvers", "portal_approve_groups"),
+                    ("admin", "admins", "portal_admins", "portal_admin_groups"))
+
+    def access_matches(self, cn):
+        for role, attr, named, _ in self.access_lists:
+            if list.__contains__(getattr(self, attr), cn):  # People.__contains__ also checks AD
+                yield role, named, "", ""
         if self.ad_groups:
-            for role, setting in (("readers", "portal_view_groups"), ("requesters", "portal_run_groups"),
-                                  ("approvers", "portal_approve_groups")):
-                if self.ad_groups.has(role, cn):
-                    return setting
+            for role, attr, _, groups in self.access_lists:
+                for group, attribute in self.ad_groups.group_matches(attr, cn):
+                    yield role, groups, group, attribute
+            for field, group, attribute in self.template_groups_for(cn):
+                yield field.split("_")[0], "template " + field, group, attribute
+
+    def reader_match(self, cn):
+        """The first list granting entry. An empty result means this card cannot view the portal."""
+        for _, setting, _, _ in self.access_matches(cn):
+            return setting
         return "" if self.readers_restricted else "any verified card"
 
+    def access_description(self, cn):
+        grants = ["%s (%s / %s) via %s" % (role, setting, group, attribute) if group else "%s (%s)" % (role, setting)
+                  for role, setting, group, attribute in self.access_matches(cn)]
+        if grants:
+            return " · ".join(grants)
+        return "view (any verified card)" if not self.readers_restricted else "No matching list"
+
+    def ad_read_status(self, cn):
+        last = self.ad_groups.last if self.ad_groups else None
+        if last and self.ad_groups.fresh(last):
+            matched = dict.fromkeys(attr for _, _, _, attr in self.access_matches(cn) if attr)
+            if matched:
+                return "AD read. Card matched via %s." % ", ".join(matched)
+            attrs = self.ad_groups.reader.attributes
+            return "AD read. No card match in %s." % ", ".join(attrs) if attrs else "AD read. No card match rules configured."
+        if last:
+            reason = "The last AD read expired." if last["ok"] else "The last AD read failed."
+            return reason + " Only card names count."
+        return "AD not read. Only card names count."
 
 # ---- who: the client certificate nginx verified (as vmware_ask.py) ---------------------------------------------------
 VERIFY_HEADER = "X-SSL-Client-Verify"      # nginx: $ssl_client_verify (SUCCESS, NONE, FAILED:...)
@@ -799,6 +893,8 @@ class Log(object):
                     before = os.fstat(fh.fileno())
                     fh.write(data)
                     fh.flush()
+                    if rec.get("event") == "access_changed":
+                        os.fsync(fh.fileno())
                     after = os.fstat(fh.fileno())
                 if before.st_size == 0:
                     self.launches.clear()
@@ -2386,7 +2482,7 @@ def approval_summary(v):
 
 
 DEPLOY_SOURCES = {"ticket": ("s-ok", "ok", "From the ticket"), "default": ("s-info", "skip", "Default"),
-                  "approver": ("s-plan", "ok", "Changed by the approver"), "job": ("s-low", "wait", "Chosen by the job"), "stop": ("s-critical", "bad", "Stop")}
+                  "approver": ("s-plan", "ok", "Changed during approval"), "job": ("s-low", "wait", "Chosen by the job"), "stop": ("s-critical", "bad", "Stop")}
 
 
 def deploy_text(value, limit=240):
@@ -2659,6 +2755,156 @@ def multi_host(actions, cfg):
     return actions
 
 
+_ACCESS_PIN = getattr(threading, "local")()      # (one per thread: a decision never sees another thread's read)
+
+
+@contextlib.contextmanager
+def access_pinned(cfg):
+    """director B: one decision, one read of the saved grants (and of AD) - every access_rows() inside sees the same answer"""
+    if getattr(_ACCESS_PIN, "depth", 0):
+        _ACCESS_PIN.depth += 1
+        try:
+            yield
+        finally:
+            _ACCESS_PIN.depth -= 1
+        return
+    groups = getattr(cfg, "ad_groups", None)
+    ad = groups.pinned() if groups is not None and hasattr(groups, "pinned") else contextlib.nullcontext()
+    with ad:
+        _ACCESS_PIN.depth, _ACCESS_PIN.cfg, _ACCESS_PIN.value = 1, cfg, None
+        try:
+            yield
+        finally:
+            _ACCESS_PIN.depth, _ACCESS_PIN.cfg, _ACCESS_PIN.value = 0, None, None
+
+
+def access_rows(cfg):
+    """-> (applied {key: row}, stale {key: why}, error). 1.134.0: the file has ONE controller - grants saved for another
+    one are dropped when the file is read (portal_access.Store); none applies meanwhile. A grant applies only while
+    AAP's template list - read in the background or here when due, its age by the monotonic clock - still has that id under
+    that exact name. Inside access_pinned() one read serves the whole decision."""
+    return _access_state(cfg)[:3]
+
+
+def access_saved(cfg):
+    """1.134.0 (Neon r3 #3, r4 #3): the saved rows as they RESTRICT ({key: row}) - whether they apply just now or not (AAP's
+    template list not current, a renamed template): a "confirm again" or a restricted helper holds anyway. A damaged
+    access.json: the last rows read whole; none read since the portal started: None (not known - launches are refused)."""
+    return _access_state(cfg)[3]
+
+
+def _access_state(cfg):
+    if getattr(_ACCESS_PIN, "depth", 0) and _ACCESS_PIN.cfg is cfg and _ACCESS_PIN.value is not None:
+        return _ACCESS_PIN.value
+    value = _access_rows(cfg)
+    if getattr(_ACCESS_PIN, "depth", 0) and _ACCESS_PIN.cfg is cfg:
+        _ACCESS_PIN.value = value
+    return value
+
+
+def _access_rows(cfg):
+    store = getattr(cfg, "access", None)
+    if not store:
+        return {}, {}, "", {}
+    doc, error = store.read()
+    rows = doc["portal_template_access"]
+    here = portal_access.controller_id(cfg.aap_url)
+    if error:
+        good = getattr(store, "good", None)
+        return {}, {}, error, (dict(good["portal_template_access"]) if good is not None else None)
+    if not rows:
+        return {}, {}, error, {}
+    if doc.get("controller") != here:
+        # not dropped yet (no controller address here, or the volume could not be written): none applies, none restricts
+        why = "saved for another AAP controller (%s) - dropped when the portal can write its data" % (doc.get("controller") or "not recorded")
+        return {}, dict((k, why) for k in rows), error, {}
+    cat = getattr(cfg, "admin_catalog", None)
+    limit = 900                     # Codex r3 #10: never older than 15 minutes, whatever portal_discover_seconds is
+    every = min(int(getattr(cfg, "discover_seconds", 300) or 300), limit)
+    if cat is not None:
+        rows_, err_, mono = cat.snapshot() if hasattr(cat, "snapshot") else (cat.rows, cat.error, getattr(cat, "mono", None))
+        if mono is None or err_ or time.monotonic() - mono >= every:
+            try:
+                cat.read()      # Neon r2 #12: due every portal_discover_seconds (Catalog.read itself throttles to that)
+            except Exception:  # pylint: disable=broad-except
+                pass
+    names_, cat_error, mono = (cat.snapshot() if hasattr(cat, "snapshot") else (cat.rows, cat.error, getattr(cat, "mono", None))) if cat is not None else ({}, "", None)
+    a = (time.monotonic() - mono) if mono is not None else None
+    applied, stale = {}, {}
+    for key, row in rows.items():
+        if a is None:
+            why = "AAP's template list has not been read yet"
+        elif cat_error or a > limit:
+            why = "AAP's template list is not current (%s)" % (cat_error or "last read %d min ago" % (a // 60))
+        elif key not in names_:
+            why = "the template is no longer in AAP"
+        elif names_[key].get("name") != row["template"]:
+            why = "the template is now named %s" % names_[key].get("name")
+        else:
+            applied[key] = row
+            continue
+        stale[key] = why
+    return applied, stale, error, dict(rows)
+
+
+def access_entry(cfg, action, key=None):
+    store = getattr(cfg, "access", None)
+    if not store:
+        return {}, ""
+    applied, _stale, error = access_rows(cfg)
+    if key is None and applied:
+        tid = action.get("tid") or cfg.template_id(action.get("name"))
+        key = ("wf_" if action["aap"]["type"] == "workflow" else "jt_") + str(tid)
+    return applied.get(key, {}), error
+
+
+def template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
+    """Shared by the form, JSON and placement launches, and both workflow decisions. 1.133.0 (Codex #2): every AD check of
+    one decision uses one read of the directory."""
+    if cfg.ad_groups is not None and hasattr(cfg.ad_groups, "pinned"):
+        with cfg.ad_groups.pinned():
+            return _template_allowed(cfg, cn, action, permission, key, entry)
+    return _template_allowed(cfg, cn, action, permission, key, entry)
+
+
+def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
+    row, error = entry if entry is not None else access_entry(cfg, action, key)
+    if not cn:
+        return False
+    if permission == "approve":
+        default = cn in cfg.approvers
+        field = "approve_groups"
+    elif isinstance(action.get("who"), list):
+        # 1.133.0 (Neon): an action with its own who list - ONLY that list and the template's own run groups, never the
+        # general run lists (portal_runners, portal_run_groups)
+        if cn in action["who"]:
+            return True
+        return bool(not error and row.get("run_groups") and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row["run_groups"]))
+    else:
+        default = cn in cfg.requesters
+        field = "run_groups"
+        # A saved group or a confirmation switch cannot remove an existing Run grant (Codex #6: not during an AD outage
+        # either - the open default, both general run lists empty, needs no directory). During a failed policy read
+        # (access.json), an implicit "any reader" is never a fallback. With portal_run_groups set the run list is never
+        # empty (People), so an AD outage never opens it.
+        if not error:
+            default = default or rules.may_run(action, cn, cfg.requesters)
+    return default or bool(row.get(field) and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row[field]))
+
+
+RUN_REFUSAL = "You are not on the list of people who may run actions here (portal_run_groups)."
+APPROVE_REFUSAL = "You are not on the list of people who may approve this workflow (portal_approvers, portal_approve_groups)."
+
+
+def run_refusal(cfg, cn):
+    return (RUN_REFUSAL + " Access — checked portal_runners, portal_run_groups, the template’s run groups "
+            "and the action’s who list. " + cfg.ad_read_status(cn))
+
+
+def approve_refusal(cfg, cn):
+    return APPROVE_REFUSAL + (" " + cfg.ad_read_status(cn) if cfg.ad_groups else "")
+
+
 class Portal(object):
     """What the pages ask for."""
 
@@ -2669,12 +2915,29 @@ class Portal(object):
                           "groups": dict((role, ["%s: %d" % (g["name"], g["count"]) if g["found"] else "%s: %s" % (g["name"], g.get("why") or "not found")
                                                  for g in gs]) for role, gs in (r.get("groups") or {}).items())})
         else:
-            self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_viewers, portal_approvers, portal_runners): " + str(r.get("error") or "")[:300]})
+            self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_viewers, portal_approvers, portal_runners, portal_admins): " + str(r.get("error") or "")[:300]})
 
     def __init__(self, cfg, aap=None, log=None, cache_catalog=True, start_ad=True):
         self.cfg = cfg
         os.makedirs(cfg.data, exist_ok=True)
         self.log = log or Log(os.path.join(cfg.data, "portal-log.jsonl"))
+        self.aap = aap or Aap(cfg)
+        cfg.template_id = self._template_id         # 1.133.0 (Neon r2 #2): a built-in's id resolved where it is asked for
+        if cfg.ad_groups is None and site_ad_groups and cfg.ldap_opts["user"]:
+            cfg.ad_groups = site_ad_groups.Groups({}, cfg.ldap_opts, cfg.card_match, cfg.ad_groups_seconds)
+        if cfg.ad_groups:
+            cfg.ldap_opts["suggest_groups"] = True
+
+        def groups_changed(entries):
+            if cfg.ad_groups:
+                groups = sorted({g for row in entries.values() for field in portal_access.GROUP_FIELDS for g in row[field]})
+                with cfg.ad_groups.lock:
+                    cfg.ad_groups.want = dict(cfg.ad_groups.want, templates=groups)
+
+        cfg.access = portal_access.Store(cfg.data, self.log, groups_changed, controller=cfg.aap_url)
+        cfg.access.read()
+        self.admin_catalog = cfg.admin_catalog = portal_admin.Catalog(self.aap, cfg)
+        cfg.access_rows = lambda: access_rows(cfg)
         if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
             if start_ad:                                  # 1.122.2: never from --aap-check - one bind per deploy, not two
                 cfg.ad_groups.on_change = self._ad_groups_changed
@@ -2701,17 +2964,19 @@ class Portal(object):
         self.found_lock = threading.Lock()
         if problems:
             raise SystemExit("site-portal: the actions file is not right (%s):\n  %s" % (cfg.actions_file, "\n  ".join(problems)))
-        self.aap = aap or Aap(cfg)
         self.key = self._key()
         self.lock = threading.Lock()
         self.decision_lock = threading.Lock()       # serialize the fresh approval check and the AAP write
-        self.placement_jobs = {r["job"]: r for r in self.log.read("placement", limit=0)}
+        here = portal_access.controller_id(cfg.aap_url)
+        ours = lambda r: r.get("controller") in (None, here)          # noqa: E731  (Codex #19: another controller's: never)
+        self.placement_jobs = {r["job"]: r for r in self.log.read("placement", limit=0) if ours(r)}
         self.workflow_placements = collections.defaultdict(list)
         for record in self.placement_jobs.values():
             self.workflow_placements[record["workflow_job"]].append(record)
-        self.placement_results = {r["job"]: r["result"] for r in self.log.read("placement_result", limit=0)}
+        self.placement_results = {r["job"]: r["result"] for r in self.log.read("placement_result", limit=0) if ours(r)}
         self.recent = {}                # CN -> [launch times]
         self.prog = collections.OrderedDict()           # 1.78.0: job id -> Progress (the last 60 jobs followed)
+        self.confirmations = collections.OrderedDict()
         self.reader_refusals = collections.OrderedDict()
         self.polls = {}                 # CN -> [times of its progress calls]
         self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
@@ -2818,13 +3083,15 @@ class Portal(object):
     def token_ok(self, cn, tok):
         try:
             t, mac = str(tok or "").split(".", 1)
+            if not t.isascii() or not t.isdigit() or len(t) > 12:
+                return False
             t = int(t)
         except ValueError:
             return False
         if not 0 <= time.time() - t <= TOKEN_HOURS * 3600:
             return False
         good = hmac.new(self.key, ("%s|%d" % (cn, t)).encode("utf-8"), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(good, mac)
+        return len(mac) == 64 and mac.isascii() and hmac.compare_digest(good, mac)
 
     # -- 1.78.0: the actions found in AAP (kept portal_discover_seconds), added to the built-in ones - which win on a name
     def refresh(self, force=False):
@@ -2884,6 +3151,14 @@ class Portal(object):
             self.actions = merged
             self.restored = False
             self._save_catalog()
+            cat = getattr(self, "admin_catalog", None)  # 1.133.0: the Admin catalog too - the saved grants apply against it (access_rows)
+            if cat is not None and getattr(self.cfg, "access", None) is not None and any(access_rows(self.cfg)[:2]):   # only with saved grants
+                try:
+                    cat.read()
+                except Exception as exc:  # pylint: disable=broad-except  - never stops the discovery
+                    log = getattr(self, "log", None)
+                    if log is not None:
+                        log.add({"event": "admin-catalog", "ok": False, "why": clean(str(exc), 200)})
             return True
         finally:
             self.found_ready = True
@@ -2932,11 +3207,11 @@ class Portal(object):
             if person in self.reader_refusals:
                 return
             self.reader_refusals[person] = now
-        self.log.add({"event": "refused", "why": "not on the portal readers list", "user": cn, "ip": ip, "path": path[:200]})
+        self.log.add({"event": "refused", "why": "not on a list that may view the portal", "user": cn, "ip": ip, "path": path[:200]})
 
     def mine(self, cn):
         """The actions this person may run."""
-        return [a for a in self.actions.values() if rules.may_run(a, cn, self.cfg.requesters)]
+        return [a for a in self.actions.values() if template_allowed(self.cfg, cn, a)]
 
     def state(self, name, a=None):
         """(AAP id or None, why off) - asked once, again while it is off."""
@@ -2956,7 +3231,7 @@ class Portal(object):
         fid = str((sent or {}).get("finding_id") or "")
         if not fid or "finding_id" not in self.actions.get(name, {}).get("vars", {}):
             return None
-        for r in reversed(self.log.read("launch")):
+        for r in reversed([x for x in self.log.read("launch") if self._ours(x)]):
             if r.get("action") != name or str((r.get("values") or {}).get("finding_id") or "") != fid:
                 continue
             code, uj = self.aap.call("GET", "unified_jobs/?id=%d" % int(r["job_id"]))
@@ -3021,7 +3296,7 @@ class Portal(object):
         expand = (lambda items: self.aap.expand(items, inv, os_)) if inv or self.cfg.inventory else None
         return rules.check_values(a, sent, known if inv or self.cfg.inventory else None, expand)
 
-    def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None):
+    def launch(self, cn, ip, name, sent, sig=None, job_type=None, expand=None, confirmation=None):
         """-> (HTTP code, answer). sig: the fingerprint of the template the form was drawn from (a found template): a different one is not started."""
         self.refresh()
         a = self.actions.get(name)
@@ -3032,9 +3307,11 @@ class Portal(object):
             reason = "Change the placement from its waiting workflow approval."
             self.log.add({"event": "placement_refused", "user": cn, "ip": ip, "action": name, "why": reason})
             return 403, {"error": reason}
-        if not rules.may_run(a, cn, self.cfg.requesters):
+        if not a.get("discovered") and access_rows(self.cfg)[0]:
+            self.state(name, a)  # Resolve built-in aliases before checking the template ID.
+        if not template_allowed(self.cfg, cn, a):
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "not on the action's list of people"})
-            return 403, {"error": "You are not on the list of people who may run %s." % a["title"]}
+            return 403, {"error": run_refusal(self.cfg, cn)}
         if (a.get("discovered") and sig != a.get("sig")) or (not a.get("discovered") and sig):          # a form of a found template, and the id now names a local action: not that form
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed since the form was drawn"})
             return 409, {"error": "Not started: this job changed in AAP since the page was opened - open it again from the Actions page."}
@@ -3082,11 +3359,73 @@ class Portal(object):
             values = dict(values, **{REQUIRE_CHECK_VAR: "true"})            # the playbook stops if it runs for real
         key = self.once_key(name, values)
         if key is None:
-            return self._launch(cn, ip, name, a, values, jt)
+            return self._launch(cn, ip, name, a, values, jt, confirmation)
         with self.key_lock(key):    # held from the running check until the launch is in the log: the next one sees it
-            return self._launch(cn, ip, name, a, values, jt)
+            return self._launch(cn, ip, name, a, values, jt, confirmation)
 
-    def _launch(self, cn, ip, name, a, values, job_type=None):
+    def proof(self, purpose, cn, payload, token):
+        return hmac.new(self.key, portal_access.canonical([purpose, cn, payload, token]).encode(), hashlib.sha256).hexdigest()
+
+    def confirm_launch(self, cn, payload, confirmation, title):
+        scope = portal_access.digest([cn, payload])
+        now = time.monotonic()
+        with self.lock:
+            while self.confirmations and next(iter(self.confirmations.values()))["until"] <= now:
+                self.confirmations.popitem(last=False)
+            record = self.confirmations.get(confirmation) if isinstance(confirmation, str) else None
+            if record and record["scope"] == scope:
+                del self.confirmations[confirmation]
+                return None
+            if len(self.confirmations) >= 2048:
+                self.confirmations.popitem(last=False)
+            ticket = secrets.token_urlsafe(32)
+            self.confirmations[ticket] = {"scope": scope, "cn": cn, "until": now + 300}
+        return 409, {"error": "Confirm launch of %s?" % title, "confirmation": ticket}
+
+    def confirmation_form(self, cn, name, ticket, form=None):
+        """Keep a plain form for the second submit. Survey passwords never go back in HTML."""
+        with self.lock:
+            record = self.confirmations.get(ticket)
+            if not record or record["cn"] != cn or record["until"] <= time.monotonic():
+                return None
+            if form is not None:
+                record.update(action=name, form=form)
+            if record.get("action") == name:
+                return record.get("form")
+        return None
+
+    def launch_guard(self, cn, ip, action, key, body, confirmation):
+        with access_pinned(self.cfg):            # Neon r4 #3: one read of the grants for the whole check
+            return self._launch_guard(cn, ip, action, key, body, confirmation)
+
+    def _launch_guard(self, cn, ip, action, key, body, confirmation):
+        saved = access_saved(self.cfg)
+        if saved is None:
+            # 1.134.0 (Neon r3 #3): access.json cannot be read and was not read whole since the portal started - what it
+            # restricts is not known: nothing starts until an admin recovers it
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": key, "why": "access.json cannot be read"})
+            return 503, {"error": "Not started: the portal's access settings (access.json) cannot be read. An admin can recover "
+                                  "them on the Admin page (import a backup)."}
+        entry = access_entry(self.cfg, action, key)
+        if not action.get("discovered") and isinstance(key, str) and re.fullmatch(r"(jt|wf)_[0-9]+", key):
+            # Codex r3 #8, #9: one live name check for every launch: a built-in here, a discovered one in same_template (the
+            # same read it makes) - AAP must still name the template as the action does and as a saved grant on it does
+            kind = "workflow_job_templates" if key.startswith("wf_") else "job_templates"
+            code, data = self.aap.call("GET", "%s/%s/" % (kind, key.split("_", 1)[1]))
+            live = data.get("name") if code == 200 and isinstance(data, dict) else None
+            want = {str((action.get("aap") or {}).get("name") or "")} | ({entry[0]["template"]} if entry[0] else set())
+            if live is None or any(w != live for w in want if w):
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": key, "why": "the template's name in AAP is not the action's or its grant's"})
+                return 409, {"error": "Not started: this template changed in AAP since the page was drawn or its access was saved - open it again, or ask an admin."}
+        if not template_allowed(self.cfg, cn, action, "run", key, entry):
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": key, "why": "cannot run this template"})
+            return 403, {"error": run_refusal(self.cfg, cn)}
+        if entry[0].get("confirm_again") or (saved.get(key) or {}).get("confirm_again"):
+            # (a saved "ask once more" holds also while its grant does not apply just now)
+            return self.confirm_launch(cn, [key, action.get("sig"), body], confirmation, action["title"])
+        return None
+
+    def _launch(self, cn, ip, name, a, values, job_type=None, confirmation=None):
         busy = self.running(name, values)
         if busy:                    # before the hour's count: a run refused as running already uses no slot of it
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "running already: job %s" % busy["job_id"]})
@@ -3101,7 +3440,7 @@ class Portal(object):
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "too many in an hour"})
                 return 429, {"error": "You started %d actions in the last hour (portal_launches_per_hour): wait a little." % len(mine)}
             self.recent[cn] = mine + [t]
-        code, out = self._start(cn, ip, name, a, values, job_type)
+        code, out = self._start(cn, ip, name, a, values, job_type, confirmation)
         if code != 201:             # off, or AAP did not start it: the slot is given back
             self.give_back(cn, t)
         return code, out
@@ -3135,6 +3474,10 @@ class Portal(object):
             return "its labels could not be read completely"
         if self.cfg.label and self.cfg.label not in labels:
             return "its label %s was taken off" % self.cfg.label
+        # Codex r3 #8: the live name must be the action's and a saved grant's on it (discovery may have caught up, the grant not)
+        grant = access_entry(self.cfg, a, ("wf_%d" if a["aap"]["type"] == "workflow" else "jt_%d") % a["tid"])[0]
+        if str(row.get("name") or "") != str(a["aap"].get("name") or "") or (grant and grant.get("template") != row.get("name")):
+            return "changed"
         marked = self.cfg.label_approval in labels or str(row.get("name") or "") in self.cfg.approval_required
         sigf = dict(rules.exec_fields(row), approval_marked=bool(marked))
         if a["aap"]["type"] == "workflow":
@@ -3166,7 +3509,7 @@ class Portal(object):
         detail = "" if why == "changed" else " (%s)" % why
         return 409, {"error": "Not started: this job changed in AAP%s - open it again from the Actions page." % detail}
 
-    def _start(self, cn, ip, name, a, values, job_type=None):
+    def _start(self, cn, ip, name, a, values, job_type=None, confirmation=None):
         if a.get("discovered"):
             why = self.same_template(a)
             if why:
@@ -3205,8 +3548,15 @@ class Portal(object):
             status, row = self.aap.call("GET", "%s/%d/" % (kind, tid))
             if status != 200 or not isinstance(row, dict) or "inventory" not in row:
                 return self._changed_template(cn, ip, name, a, "its inventory could not be read")
-            if tid != a["tid"] or row["inventory"] != raw_inventory:
+            # Codex r4 #8: this read's name too - a rename seen between the two reads is a changed template, never launched
+            if tid != a["tid"] or row["inventory"] != raw_inventory or str(row.get("name") or "") != str(a["aap"].get("name") or ""):
                 return self._changed_template(cn, ip, name, a, "changed")
+        key = ("wf_" if a["aap"]["type"] == "workflow" else "jt_") + str(tid)
+        guard = self.launch_guard(cn, ip, a, key, body, confirmation)
+        if guard:
+            if guard[0] == 409 and "confirmation" not in guard[1] and not a.get("discovered"):
+                self.aap.ids.pop(name, None)    # Codex r4 #6: the id is looked up again on the next try (a renamed template's new one)
+            return guard
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
         if code not in (200, 201):
             self.log.add({"event": "launch_failed", "user": cn, "ip": ip, "action": name, "values": shown_values,
@@ -3223,7 +3573,9 @@ class Portal(object):
             return 409, {"error": "Not started as Check: AAP ignored the Job type (job %d cancelled at once) - %s." % (jid, CHECK_GONE),
                          "job_id": jid}
         rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": shown_values,
-                            "limit": body.get("limit", ""), "job_id": jid, "kind": a["aap"]["type"], "job_type": job_type or "",
+                            "limit": body.get("limit", ""), "template_key": key, "job_id": jid, "kind": a["aap"]["type"], "job_type": job_type or "",
+                            # 1.133.0 (Codex r2 #9): which template this was - by name and controller, not the id alone
+                            "template_name": str(a["aap"].get("name") or ""), "controller": portal_access.controller_id(self.cfg.aap_url),
                             "ignored_fields": sorted(ignored) if ignored else []})
         out = {"job_id": jid, "url": "%sjobs/%d" % (self.cfg.path, jid), "at": rec["at"]}
         if ignored:
@@ -3307,7 +3659,7 @@ class Portal(object):
             for s in raw:
                 approval = s.get("type") == "workflow_approval"
                 word = "Waiting for approval" if approval and s.get("status") in ("pending", "running") else STEP_WORD.get(s.get("status"), "Pending")
-                note = "Must be approved by an approver of the portal" if word == "Waiting for approval" else ""
+                note = "Someone with approve access must approve this step" if word == "Waiting for approval" else ""
                 if deploy_stopped(s.get("deploy_plan")):
                     word = "Stopped"
                 elif s.get("deploy_plan") and s.get("status") == "successful":
@@ -3326,9 +3678,9 @@ class Portal(object):
             n, finished = len(steps), len([s for s in steps if s["word"] in ("Done", "Skipped", "Plan ready")])
             cur = next((s for s in steps if s["word"] not in ("Done", "Skipped", "Plan ready")), None)
             if cur and not done:
-                out["now"] = "Step %d of %d - %s" % (finished + 1, n, "waiting for an approver" if cur["word"] == "Waiting for approval" else cur["name"])
+                out["now"] = "Step %d of %d - %s" % (finished + 1, n, "waiting for approval" if cur["word"] == "Waiting for approval" else cur["name"])
             out["pct"] = pct(finished, n, done) if n else None
-            out["lines"] = [{"k": "wait", "host": "", "text": "waiting for an approver"}] if any(s["word"] == "Waiting for approval" for s in steps) else []
+            out["lines"] = [{"k": "wait", "host": "", "text": "waiting for approval"}] if any(s["word"] == "Waiting for approval" for s in steps) else []
             bad = next((s for s in steps if s["word"] == "Failed"), None)
             out["result_line"] = ("%s failed (step %d of %d)" % (bad["name"], steps.index(bad) + 1, n)) if bad else ""
             out["steps_done"], out["steps_n"] = finished, n
@@ -3395,11 +3747,11 @@ class Portal(object):
     @staticmethod
     def _can_approve(ap):
         """The controller's own word on whether the portal's account may decide this approval: can_approve_or_deny, else user_capabilities.approve;
-        when it says nothing the approval is shown as decidable and AAP's refusal of the decision is reported."""
+        when it says nothing the portal does not decide it (decide it in AAP)."""
         if isinstance(ap.get("can_approve_or_deny"), bool):
             return ap["can_approve_or_deny"]
         cap = ((ap.get("summary_fields") or {}).get("user_capabilities") or {}).get("approve")
-        return cap is not False
+        return cap is True                      # 1.133.0 (Codex #8): no word from AAP - not decidable here (a placement goes to its own launch)
 
     def summary(self, cn):
         """1.78.4, for the badges and toasts of every page: {running, recent: [{id, title, group}] (this person's newest 10), approvals (what this person may decide now),
@@ -3414,7 +3766,7 @@ class Portal(object):
         out = {"running": len([j for j in jobs if j["group"] == "running"]),
                "recent": [{"id": j["id"], "title": j["title"], "group": j["group"], "status": j["status"]} for j in jobs
                           if j["group"] == "running" or j["id"] in set(x["id"] for x in jobs[:10])], "approvals": 0}
-        if cn in self.cfg.approvers:
+        if cn in self.cfg.approvers or self.cfg.template_member(cn, "approve_groups"):
             # 1.92.0: from the approvals every viewer shares (pending(): no AAP call of its own); the ones new to this person make a toast
             code, data = self.approvals(cn)
             mine = [a for a in data.get("approvals", []) if a.get("may_decide")] if code == 200 else []
@@ -3429,19 +3781,64 @@ class Portal(object):
         return out
 
     # -- what was started
+    def _ours(self, rec):
+        """1.134.0: a record of this controller - stamped with it, or written before 1.134.0 (no controller: taken as 1.133.0
+        took it); a record stamped with another controller is never looked up here"""
+        c = rec.get("controller") if isinstance(rec, dict) else "?"
+        return c is None or c == portal_access.controller_id(self.cfg.aap_url)
+
     def launched(self):
-        return {int(r["job_id"]): r for r in self.log.read("launch") if r.get("job_id") is not None}
+        """job id -> its launch record (the last LAUNCH_LIMIT, as 1.133.0) - 1.134.0: a record stamped with another AAP
+        controller is never taken: its job number names another job here"""
+        out = {}
+        for r in self.log.read("launch"):
+            if r.get("job_id") is not None and self._ours(r):
+                try:
+                    out[int(r["job_id"])] = r
+                except (TypeError, ValueError):
+                    continue
+        return out
+
+    def _template_id(self, name):
+        """the AAP id behind an action's name: known, else - for a built-in action - asked of AAP once (state), so every page
+        (home, details, pickers, Run again, the NetApp page, host search) sees its saved grant, not only a launch or the form"""
+        hit = self.aap.ids.get(name)
+        if hit is not None:
+            # Codex r2 #18: a name looked up already (found, or missing) is not asked again from here - the form and the
+            # launch keep their own retry and the missing-workflow backoff
+            return hit[0]
+        a = getattr(self, "builtin", {}).get(name) or (getattr(self, "actions", {}) or {}).get(name)
+        if a is None or a.get("discovered"):
+            return (hit or (None, ""))[0]
+        try:
+            return self.state(name, a)[0]
+        except Exception:  # pylint: disable=broad-except  - AAP not answering: no id, no saved grant (the defaults only)
+            return None
 
     def may_see(self, cn, rec):
         """Whether this person may see a run the portal started (its page, its output, its steps, its approval): the person
         who started it, the approvers (portal_approvers), and the people its action allows (its who, else
-        portal_runners). An action no longer listed: its starter and the approvers only."""
-        if not rec:
+        portal_runners). An action no longer listed: its starter and the approvers only. 1.134.0: a record of another AAP
+        controller is shown to nobody; a template's saved groups count only on a record stamped with that template's key and
+        name (a record from before 1.134.0: the 1.133.0 rule)."""
+        if not rec or not self._ours(rec):
             return False
         if cn and (cn == rec.get("user") or cn in self.cfg.approvers):
             return True
         a = self.actions.get(rec.get("action"))
-        return bool(cn) and a is not None and rules.may_run(a, cn, self.cfg.requesters)
+        if not cn:
+            return False
+        applied, _stale, err = access_rows(self.cfg)
+        if rec.get("controller") is None or not rec.get("template_key"):
+            # 1.133.0's rule (the action's who, else the run lists), no saved grant; a damaged access.json: no open default
+            return a is not None and template_allowed(self.cfg, cn, a, key="", entry=({}, err))
+        # Codex r2 #9: a grant on that key counts for this run only when the run was that template (the same name)
+        row = applied.get(rec["template_key"])
+        entry = ({}, err) if row is not None and rec.get("template_name") != row.get("template") else None
+        if a is not None and template_allowed(self.cfg, cn, a, key=rec["template_key"], entry=entry):
+            return True
+        # Neon r2 #5: a workflow's own approvers see its run even when its action is no longer listed (they can decide it)
+        return template_allowed(self.cfg, cn, a or {}, "approve", rec["template_key"], entry=entry)
 
     def _workflow_record(self, mine, wid):
         if wid in mine:
@@ -3713,6 +4110,7 @@ class Portal(object):
                     wf_ids[tid] = a
         mine = self.launched()
         out, now = [], time.time()
+        ad_status = None
         for ap in got["rows"]:
             wid = int(ap["summary_fields"]["source_workflow_job"]["id"])
             info = self.wf_info.get(wid) or self.wf_tmp.get(wid) or {}
@@ -3722,10 +4120,26 @@ class Portal(object):
             exp = parse_time(ap.get("approval_expiration"))
             if exp is not None and exp < now:                   # timed out since the shared read: AAP will not take a decision on it
                 continue
-            a = wf_ids.get(int(wj.get("workflow_job_template") or 0))
+            # 1.133.0 (Codex r2 #14): AAP's id as an integer only - "unknown" or a JSON true is no id (no template grant, no crash)
+            wtid = wj.get("workflow_job_template")
+            wtid = wtid if type(wtid) is int and wtid > 0 else (int(wtid) if isinstance(wtid, str) and re.fullmatch(r"[0-9]+", wtid) and int(wtid) > 0 else 0)
+            a = wf_ids.get(wtid) if wtid else None
             rec = mine.get(wid) or mine.get(info.get("handoff_from")) or {}
-            if cn and cn not in self.cfg.approvers and not (self.may_see(cn, rec) if rec else (a is not None and rules.may_run(a, cn, self.cfg.requesters))):
-                continue
+            key = "wf_%d" % wtid if wtid else ""
+            row = access_rows(self.cfg)[0].get(key) if key else None
+            if row is not None and row.get("template") != wj.get("name"):
+                # Codex r2 new #13: the waiting run is the workflow as it was named then - a grant on a renamed (another)
+                # template of that id never decides it
+                key = ""
+            permitted = template_allowed(self.cfg, cn, {}, "approve", key)
+            if cn and not permitted:
+                # Codex r3 #17: an AAP-started run counts a saved grant only while the workflow still has the name the run was
+                # started under (a renamed template's new grant never opens an old run); Codex r4 #8: the action's own Run
+                # access (portal_runners, its who) counts either way, as in 1.133.0
+                same = a is not None and wj.get("name") == a["aap"].get("name")
+                visible = self.may_see(cn, rec) if rec else (a is not None and template_allowed(self.cfg, cn, a, key=key if same else ""))
+                if not visible:
+                    continue
             sf = wj.get("summary_fields") or {}
             if rec:
                 started, by = "the portal", rec.get("user") or ""
@@ -3733,6 +4147,7 @@ class Portal(object):
                 started, by = "AAP schedule: %s" % ((sf.get("schedule") or {}).get("name") or "a schedule"), ""
             else:
                 started, by = "AAP: %s" % (((sf.get("created_by") or {}).get("username")) or "a person there"), ""
+            aap_user = "" if rec else str((sf.get("created_by") or {}).get("username") or "")
             left = (exp - now) if exp is not None else None
             plan = info.get("deploy_plan") if cn else None
             if plan and with_placements:
@@ -3744,18 +4159,23 @@ class Portal(object):
                         "time_left": dur_text(left) if left is not None else "", "report": info.get("report") if cn else None,
                         "plan": info.get("plan") if cn else None, "deploy_plan": plan,
                         "deploy_shortlist": info.get("deploy_shortlist") if cn else None,
-                        "can_approve": self._can_approve(ap),
+                        "template_key": key, "permitted": permitted, "can_approve": self._can_approve(ap), "aap_user": aap_user,
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
         for a in out:
-            a["self"] = bool(cn) and same_person(a["requested_by"], cn)
-            a["may_decide"] = cn in self.cfg.approvers and not (a["self"] and not self.cfg.self_approval) and a["can_approve"]
+            a["self"] = started_by(a, cn)
+            a["may_decide"] = a["permitted"] and not (a["self"] and not self.cfg.self_approval) and a["can_approve"]
             # 1.92.0: why not, in words the person can act on - the setting named
-            a["why"] = ("" if a["may_decide"] else "approvers" if cn not in self.cfg.approvers else
+            a["why"] = ("" if a["may_decide"] else "approvers" if not a["permitted"] else
                         "self" if a["self"] and not self.cfg.self_approval else "role")
-            a["reason"] = {"": "", "approvers": "You are not an approver (portal_approvers, portal_approve_groups) - only the approvers decide.",
-                           "self": "You started this run - another approver decides (portal_allow_self_approval).",
+            a["reason"] = {"": "", "approvers": APPROVE_REFUSAL,
+                           "self": "You started this run - someone else must approve or deny it (portal_allow_self_approval).",
                            "role": "The portal's account has no Approve role on this workflow - give it Approve in AAP, or decide there."}[a["why"]]
-        return 200, {"approvals": out, "self_approval": self.cfg.self_approval, "approver": bool(cn) and cn in self.cfg.approvers}
+            if a["why"] == "approvers" and self.cfg.ad_groups:
+                if ad_status is None:
+                    ad_status = self.cfg.ad_read_status(cn)
+                a["ad_status"] = ad_status
+                a["reason"] += " " + ad_status
+        return 200, {"approvals": out, "self_approval": self.cfg.self_approval, "approver": bool(cn) and (cn in self.cfg.approvers or self.cfg.template_member(cn, "approve_groups"))}
 
     def approval_of(self, wid, cn):
         """1.92.0, the job page: the approval workflow job wid waits for, as approvals() gives it to this person, or None."""
@@ -3790,7 +4210,8 @@ class Portal(object):
             if result["done"]:
                 if not ok and not error:
                     result["error"] = "AAP job %d ended %s without a saved placement." % (jid, status)
-                self.log.add({"event": "placement_result", "job": jid, "result": result})
+                self.log.add({"event": "placement_result", "job": jid, "result": result,
+                              "controller": portal_access.controller_id(self.cfg.aap_url)})
                 self.placement_results[jid] = result
             return 200, result
 
@@ -3877,7 +4298,7 @@ class Portal(object):
             counts[kind] = sum(row["kind"] == kind for row in rows)
         return plan
 
-    def change_placement(self, cn, ip, aid, vms):
+    def change_placement(self, cn, ip, aid, vms, confirmation=None):
         with self.decision_lock:
             code, ap = self._decision_approval(cn, ip, aid, "placement")
             if code != 200:
@@ -3889,11 +4310,14 @@ class Portal(object):
                 return 400, {"error": reason}
             extra = {"vm_deploy_ticket": plan["ticket"], "vm_deploy_checked_job": shortlist["job"],
                      "vm_deploy_placement": vms, "vm_deploy_placement_by": cn}
-            jid, error = self._launch_placement(extra)
+            guard, jid, error = self._launch_placement(cn, ip, extra, confirmation)
+            if guard:
+                return guard
             if not jid:
                 self.log.add({"event": "placement_refused", "user": cn, "ip": ip, "approval": aid, "why": error})
                 return 502, {"error": error}
             rec = {"event": "placement", "user": cn, "ip": ip, "approval": aid, "workflow_job": ap["workflow_job"],
+                   "controller": portal_access.controller_id(self.cfg.aap_url),
                    "job": jid, "vms": vms, "checked_job": plan["job"], "digest": plan["digest"]}
             if error:
                 rec["launch_error"] = error
@@ -3903,16 +4327,17 @@ class Portal(object):
                 self.workflow_placements[ap["workflow_job"]].append(rec)
             return 200, {"job": jid}
 
-    def _launch_placement(self, extra):
+    def _launch_placement(self, cn, ip, extra, confirmation):
         name = self.cfg.placement_template
         setting = "portal_vm_deploy_placement_template (%s)" % name
         code, data = self.aap.call("GET", "job_templates/?name=" + urllib.parse.quote(name, safe=""))
         if code != 200:
-            return None, "%s: %s" % (setting, site_aap.error_text(data))
+            return None, None, "%s: %s" % (setting, site_aap.error_text(data))
         matches = [t for t in data.get("results", []) if t.get("name") == name]
         if len(matches) != 1:
-            return None, "%s: AAP must have one visible job template with this name." % setting
+            return None, None, "%s: AAP must have one visible job template with this name." % setting
         template = matches[0]
+        key = "jt_%d" % template["id"]
         path = "job_templates/%d/" % template["id"]
         if template.get("ask_variables_on_launch") is False:
             questions = set()
@@ -3921,13 +4346,27 @@ class Portal(object):
                 if code == 200:
                     questions = {q.get("variable") for q in survey.get("spec", [])}
             if not extra.keys() <= questions:
-                return None, "%s must accept the placement variables at launch." % setting
-        code, data = self.aap.call("POST", path + "launch/", {"extra_vars": extra})
+                return None, None, "%s must accept the placement variables at launch." % setting
+        body = {"extra_vars": extra}
+        # Codex #7: the helper's own action (its who list, if any) - not a bare title
+        helper = next((a for a in self.actions.values() if a.get("aap") == {"type": "job", "name": name}),
+                      {"title": name, "aap": {"type": "job", "name": name}})
+        # Codex r2 #19: as in 1.132.0, an approver of the waiting workflow may save its placement; the helper's Run check
+        # applies only when the helper is restricted on its own (its who list, or a saved grant on its template)
+        with access_pinned(self.cfg):            # Neon r4 #3: the check and the guard on ONE read of the grants
+            saved = access_saved(self.cfg)
+            # Neon r3 #3: a saved row on the helper (applied or not just now), or a damaged access file, counts as restricted
+            row = (saved or {}).get(key) or {}
+            if isinstance(helper.get("who"), list) or saved is None or row.get("run_groups") or row.get("confirm_again"):
+                guard = self.launch_guard(cn, ip, helper, key, body, confirmation)
+                if guard:
+                    return guard, None, ""
+        code, data = self.aap.call("POST", path + "launch/", body)
         jid = data.get("job") or data.get("id")
         if code not in (200, 201, 202) or type(jid) is not int:
-            return None, "%s: check Execute for the portal account. %s" % (setting, site_aap.error_text(data))
+            return None, None, "%s: check Execute for the portal account. %s" % (setting, site_aap.error_text(data))
         # The controller may have changed since the lookup. Keep tracking any job it actually started.
-        return jid, ("%s ignored the placement variables." % setting if data.get("ignored_fields") else "")
+        return None, jid, ("%s ignored the placement variables." % setting if data.get("ignored_fields") else "")
 
     def _decision_approval(self, cn, ip, aid, decision):
         audit = {"event": "placement_refused" if decision == "placement" else "refused", "user": cn, "ip": ip, "approval": aid}
@@ -3938,8 +4377,8 @@ class Portal(object):
             self.log.add(dict(audit, why=reason))
             return code, {"error": message}
 
-        if cn not in self.cfg.approvers:
-            return refused("not an approver", "You are not an approver (portal_approvers, portal_approve_groups).")
+        if cn not in self.cfg.approvers and not self.cfg.template_member(cn, "approve_groups"):
+            return refused("cannot approve", approve_refusal(self.cfg, cn))
         code, listing = self.approvals(cn, fresh=True, with_placements=False)   # 1.92.0 review: never the shared 10 s read for a decision
         if code != 200:
             return code, listing
@@ -3948,11 +4387,13 @@ class Portal(object):
             reason = "Approval %d is not pending any more (decided already, or timed out)." % aid
             if decision == "placement":
                 return refused("approval is no longer pending", reason, 404)
-            return 404, {"error": reason}
-        if not ap.get("can_approve", True):
+            return refused("approval is not pending or visible to this card", reason, 404)
+        if not template_allowed(self.cfg, cn, {}, "approve", ap.get("template_key", "")):
+            return refused("cannot approve this workflow", approve_refusal(self.cfg, cn))
+        if ap.get("can_approve") is not True:      # Codex #8: AAP said nothing - refused, never assumed
             return refused("the portal's account has no Approve role on it", "The portal's account has no Approve role on this approval: decide it in AAP.")
-        if same_person(ap["requested_by"], cn) and not self.cfg.self_approval:   # 1.120.0: one person, any of their cards
-            return refused("self-approval: the person started this run", "You started this run: another approver decides (portal_allow_self_approval: false).")
+        if started_by(ap, cn) and not self.cfg.self_approval:   # 1.120.0: one person, any of their cards; 1.133.0: started in AAP too
+            return refused("self-approval: the person started this run", "You started this run: someone else must approve or deny it (portal_allow_self_approval: false).")
         if decision != "deny":
             states = self._placement_states(ap["workflow_job"])
             block = self._placement_block(states)
@@ -3973,6 +4414,9 @@ class Portal(object):
             return self._post_decision(cn, ip, aid, decision, ap)
 
     def _post_decision(self, cn, ip, aid, decision, ap):
+        if not template_allowed(self.cfg, cn, {}, "approve", ap.get("template_key", "")):
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "no approval grant"})
+            return 403, {"error": approve_refusal(self.cfg, cn)}
         code, data = self.aap.call("POST", "workflow_approvals/%d/%s/" % (aid, decision), {})
         with self.pend_lock:
             self.pend = None                            # 1.92.0 review: taken or not, the next look reads AAP again
@@ -3992,6 +4436,19 @@ class Portal(object):
 # \Z, not $: "$" also matches before a last line end ("12\n" would pass - 1.68.1b)
 STIGMAN_GO = {"c": re.compile(r"^[0-9]{1,12}\Z"), "a": re.compile(r"^[0-9]{1,12}\Z"), "b": re.compile(r"^[A-Za-z0-9_.\- ]{1,255}\Z"),
               "r": re.compile(r"^[A-Za-z0-9_.\-]{1,100}\Z")}
+
+
+def _pin_method(fn):
+    """director B: a Portal decision runs on one read of the saved grants and of AD (access_pinned)"""
+    def run(self, *args, **kw):
+        with access_pinned(self.cfg):
+            return fn(self, *args, **kw)
+    run.__name__, run.__doc__, run.__wrapped__ = fn.__name__, fn.__doc__, fn
+    return run
+
+
+for _m in ("may_use", "mine", "launch_guard", "may_see", "approvals", "_decision_approval"):
+    setattr(Portal, _m, _pin_method(getattr(Portal, _m)))
 
 
 def stigman_target(query):
@@ -4160,6 +4617,12 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
                   + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ())
                   + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ())
                   + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ()))
+    if user and getattr(cfg, "admin_allowed", lambda _: False)(user):
+        nav += '<a href="%sadmin"%s>Admin</a>' % (cfg.path, ' aria-current="page"' if page == "admin" else "")
+    if getattr(cfg, "access", None):
+        error = cfg.access.read()[1]
+        if error:
+            body = '<p class="note bad" role="alert">%s</p>' % esc(error) + body
     meta = '<meta name="portal-token" content="%s">' % esc(token) if token else ""
     meta += '<meta name="portal-base" content="%s">' % esc(cfg.path)
     if data is not None:
@@ -4225,19 +4688,18 @@ def ad_diag_html(d):
 
 def reader_refusal_page(cfg, cn):
     """Only the stylesheets used here need to be reachable before reader authorization."""
-    banner = style = note = ""
+    banner = style = ""
     if cfg.banner["on"]:
         banner = '<div class="banner">%s</div>' % esc(cfg.banner["text"])
         style = '<link rel="stylesheet" href="%sstatic/banner.css">' % esc(cfg.path)
-    if cfg.ad_groups_why or (cfg.ad_groups and not cfg.ad_groups.status("readers")["ok"]):
-        note = ("<p>AD groups have not been read or are unavailable. Only card names listed in "
-                "portal_viewers, portal_runners or portal_approvers may view the portal.</p>")
+    checked = ", ".join("%s (%s, %s)" % (role, named, groups) for role, _, named, groups in cfg.access_lists)
     return ("""<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
 <link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
-<div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
-<p>Card CN: <b>%s</b></p>%s</div>%s</main>%s</body></html>""" %
-            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
+<div class="note bad"><p>You are not on the list of people who may view the portal. Ask %s to add you.</p>
+<p>Card CN: <b>%s</b></p><p><b>Access</b> &mdash; checked %s and template run and approve groups. %s</p></div>%s</main>%s</body></html>""" %
+            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), esc(checked), esc(cfg.ad_read_status(cn)),
+             ad_diag_html(ad_diag(cfg, cn)), banner))
 
 
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
@@ -4416,7 +4878,7 @@ def home_page(cfg, portal, cn, query=None):
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
-            % (strip, why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_runners and each action\'s who say who may run what.</p>'))
+            % (strip, why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
     return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home")
 
 
@@ -4424,7 +4886,7 @@ def details_html(cfg, portal, cn, name):
     """What an action is, for the Details panel (and its page without scripts): its line, type, labels, what it asks for, the survey's questions (names and
     types only - never a default), its last five runs, and Run."""
     a = portal.actions.get(name)
-    if a is None or not rules.may_run(a, cn, cfg.requesters):
+    if a is None or not template_allowed(cfg, cn, a):
         return None
     kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
     tid = a["tid"] if a.get("discovered") else (portal.state(name, a) or (None, ""))[0]
@@ -4438,7 +4900,7 @@ def details_html(cfg, portal, cn, name):
         ("Hosts (1 to %d hosts or groups)" % int(a["vars"][rules.LIMIT_VAR].get("max") or cfg.action_max_hosts)) if rules.LIMIT_VAR in a["vars"] else
         ("Hosts (1 to %d hosts or groups, one job)" % int(next(v for v in a["vars"].values() if v["kind"] == "hosts").get("max") or cfg.action_max_hosts))
         if any(v["kind"] == "hosts" for v in a["vars"].values()) else ("A host of the portal's inventory" if hosts else ""),
-        "An approver decides before it goes on" if a["approval"] and a["aap"]["type"] == "workflow" else "") if t) or "<li>Nothing: it takes no values.</li>"
+        "Someone must approve it before it continues" if a["approval"] and a["aap"]["type"] == "workflow" else "") if t) or "<li>Nothing: it takes no values.</li>"
     # 1.79.6 (Codex): the Details panel is a snapshot - nothing asks for it again - so a running run is drawn still, never turning
     rs = "".join('<li>%s %s%s</li>' % (status_chip(r["status"], live=False), esc(shown(cfg, r["started"]) or ""), (" \u00b7 " + esc(dur_text(r["elapsed"]))) if r.get("elapsed") else "") for r in runs) or '<li class="muted-line">No run yet.</li>'
     line = a.get("summary") or a.get("description") or ""
@@ -4544,7 +5006,9 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     query = dict((k, v) for k, v in query.items() if k not in (NETAPP_JOB_TYPE, NETAPP_EXPAND, REQUIRE_CHECK_VAR))       # never a survey value
     sent = {k: (v if a["vars"].get(k, {}).get("kind") == "multichoice" else v[-1]) for k, v in query.items()
             if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
-    allowed = rules.may_run(a, cn, cfg.requesters)
+    if not a.get("discovered") and access_rows(cfg)[0]:
+        portal.state(name, a)           # Codex #10: resolve a built-in alias first, as the launch does - one answer for both
+    allowed = template_allowed(cfg, cn, a)
     fresh = bool(a.get("discovered")) and not sent               # a form opened empty: no "is required" before the person typed
     a, inventory_error = portal._action_inventory(name, a) if allowed else (a, "")
     values, problems = portal.check(name, sent, a) if allowed and not fresh and not inventory_error else ({}, {})
@@ -4598,7 +5062,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     busy = portal.running(name, values) if allowed else None
     status = []
     if not allowed:
-        status.append('<p class="note bad" role="alert"><b>Not for you.</b> You are not on the list of people who may run this action.</p>')
+        status.append('<p class="note bad" role="alert"><b>Not for you.</b> %s</p>' % esc(run_refusal(cfg, cn)))
     if off:
         status.append('<p class="note bad" role="alert"><b>Off.</b> %s</p>' % esc(off))
     if general:
@@ -4612,7 +5076,7 @@ def action_page(cfg, portal, cn, name, query, embed=False):
     kind = "Workflow" if a["aap"]["type"] == "workflow" else "Job template"
     facts = [("Runs in AAP", "%s %s" % (kind, a["aap"]["name"]), ""),
              ("On", target or ("the hosts the %s chooses" % kind.lower()), " mono" if target else ""),
-             ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No", ""),
+             ("Approval", "Yes - someone must approve it before it continues" if a["approval"] else "No", ""),
              ("Started by" if a.get("started_by") else "Started as", cn, " mono")]
     dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
     can = allowed and not off and not busy and jt_ok
@@ -4785,14 +5249,14 @@ def pick_confirm_many(cfg, portal, cn, name, a, hv, pairs):
     """Several hosts picked: one page that lists the launches; Run starts each as its own job (the same call as one)."""
     rows = []
     for h, job, fid, title in pairs:
-        _v, problems = portal.check(name, {hv: h, "report_job": job, "finding_id": fid}) if rules.may_run(a, cn, cfg.requesters) else ({}, {"": "not for you"})
+        _v, problems = portal.check(name, {hv: h, "report_job": job, "finding_id": fid}) if template_allowed(cfg, cn, a) else ({}, {"": "not for you"})
         bad = "; ".join("%s %s" % (a["vars"][k]["label"] if k in a["vars"] else "", w) for k, w in problems.items())
         rows.append('<tr data-host="%s" data-job="%s" data-fid="%s"%s><td class="mono nw">%s</td><td>%s<div class="sub">job %s</div></td><td class="nw" data-cell="state">%s</td></tr>'
                     % (esc(h), esc(job), esc(fid), ' data-bad="1"' if bad else "", esc(h), esc(title), esc(job),
                        ('<span class="chip s-critical">%s%s</span> %s' % (icon("bad"), "Not started", esc(bad))) if bad else
                        ('<span class="chip s-info">%s%s</span>' % (icon("wait"), "Ready"))))
-    _off = portal.state(name)[1] if rules.may_run(a, cn, cfg.requesters) else "not for you"
-    appr = "Each is held for an approver, and decided on its own." if a["approval"] else "Each starts at once, as its own job."
+    _off = portal.state(name)[1] if template_allowed(cfg, cn, a) else "not for you"
+    appr = "Each run needs a separate approval." if a["approval"] else "Each starts at once, as its own job."
     body = (pick_hero(cfg, a, 3, "%d jobs, one for each host. %s" % (len(pairs), appr)) +
             '<div class="card panel"><h2>What will start</h2><div class="tw"><table id="many" data-action="%s" data-hv="%s"><thead><tr><th>Host</th><th>Finding</th><th>Status</th></tr></thead><tbody>%s</tbody></table></div>'
             '<div class="btns"><button type="button" class="pri" id="go-many"%s>Run %d jobs</button><a class="btn" href="%sactions/%s">Cancel</a>'
@@ -4806,7 +5270,7 @@ def picker_route(cfg, portal, cn, name, query):
     confirm page: it has its values, or the action is not one that picks)."""
     a = portal.actions[name]
     hv = picker_vars(a)
-    if not hv or not rules.may_run(a, cn, cfg.requesters):
+    if not hv or not template_allowed(cfg, cn, a):
         return None
     q = {k: v[-1].strip() for k, v in query.items()}
     if q.get("report_job") or q.get("finding_id"):
@@ -4951,7 +5415,7 @@ def again_link(cfg, portal, cn, j):
     """1.78.4: 'Run again with the same answers' on a finished job: the confirm page of its action with the answers filled in (never a password, nothing that was hidden);
     the person still presses Run there. '' when the action is gone or off, the person may not run it, or it was a step of another job."""
     a = portal.actions.get(j.get("action") or "")
-    if not a or j.get("via") or not rules.may_run(a, cn, cfg.requesters):
+    if not a or j.get("via") or not template_allowed(cfg, cn, a):
         return ""
     q = []
     for k, v in (j.get("values") or {}).items():
@@ -4979,8 +5443,8 @@ def job_results_html(buttons):
 
 CHEV = '<svg class="ic chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 LEVEL_CHIP = {"critical": ("bad", "s-critical", "Critical"), "warning": ("wait", "s-warning", "Warning"), "low": ("skip", "s-low", "Low"), "info": ("skip", "s-info", "Info")}
-WHY_HTML = {"approvers": "<b>You are not an approver</b> (<code>portal_approvers</code>, <code>portal_approve_groups</code>) - only the approvers decide.",
-            "self": "<b>You started this run</b> - another approver decides (<code>portal_allow_self_approval</code>).",
+WHY_HTML = {"approvers": "<b>You are not on the list of people who may approve this workflow</b> (<code>portal_approvers</code>, <code>portal_approve_groups</code>).",
+            "self": "<b>You started this run</b> - someone else must approve or deny it (<code>portal_allow_self_approval</code>).",
             "role": "<b>The portal's account has no Approve role on this workflow</b> - give it Approve in AAP, or decide there."}
 
 
@@ -5026,7 +5490,7 @@ def deploy_table(vm, show_name, may_change=False):
             note = '<div class="deploy-why">%s</div>' % esc(prefix + row["why"])
         hint = ""
         if row["editable"] and may_change:
-            hint = '<small class="placement-hint">approver may change</small>'
+            hint = '<small class="placement-hint">can be changed during approval</small>'
         elif not row["editable"] and row["kind"] != "approver":
             hint = '<small class="as-read">%sas read</small>' % icon("lock")
         rows.append('<tr%s data-field="%s"><th scope="row">%s%s</th><td><b>%s</b><div class="sub">%s</div>%s</td><td>%s</td></tr>' % (
@@ -5079,7 +5543,7 @@ def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visibl
                  ("From the ticket", "%d of %d" % (c["ticket"], c["fields"]), labels("ticket")),
                  ("Defaults", c["default"], labels("default")), ("Chosen by the job", c["job"], labels("job"))]
         if changed:             # a saved placement: its fields are counted too, so the tiles add up to the fields
-            tiles.append(("Changed by the approver", changed, labels("approver")))
+            tiles.append(("Changed during approval", changed, labels("approver")))
         tiles += [("Stops · warnings", "%d · %d" % (c["stops"], c["warnings"]), next(iter(plan["warnings"]), ""))]
         parts.append('<div class="tiles deploy-tiles">%s</div>' % "".join(
             '<div class="tile"><div class="k">%s</div><div class="v">%s</div>%s</div>' %
@@ -5087,7 +5551,7 @@ def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visibl
     parts.extend(deploy_table(vm, len(plan["vms"]) > 1, vm["name"] in editable_vms) for vm in plan["vms"] if vm["rows"])
     if stopped:
         if plan["comment"]:
-            parts.append('<div><h3>Sent to the requester as a comment</h3><blockquote>%s</blockquote></div>' % esc(plan["comment"]))
+            parts.append('<div><h3>Sent to the person who opened the request as a comment</h3><blockquote>%s</blockquote></div>' % esc(plan["comment"]))
         parts.append("<strong>Nothing was built. Run the workflow again: the plan is checked and approved again.</strong>" if refused
                      else "<strong>Approval and build: not reached</strong>")
     else:
@@ -5132,8 +5596,11 @@ def decide_box_html(cfg, a):
                (int(a["id"]), esc(a.get("viewer", "")), esc((vm_plan or {}).get("saved_job")), (' data-pending-job="%d"' % pending_job) if pending_job else "",
                 ' data-approve-blocked="1"' if blocked else "", "".join(buttons), rep))
     else:
+        why = WHY_HTML.get(a.get("why"), esc(a.get("reason", "")))
+        if a.get("ad_status"):
+            why += " " + esc(a["ad_status"])
         act = ('<div class="dwhy">%s<span>%s They decide on <a href="%sapprovals">Approvals</a>.</span></div>%s'
-               % (icon("lock"), WHY_HTML.get(a.get("why"), esc(a.get("reason", ""))), cfg.path, ('<div class="dbtns">%s</div>' % rep) if rep else ""))
+               % (icon("lock"), why, cfg.path, ('<div class="dbtns">%s</div>' % rep) if rep else ""))
     if vm_plan:
         return deploy_card(cfg, vm_plan, left, act, editable_vms)
     plan = plan_html(a.get("plan"))
@@ -5295,7 +5762,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None, raw=False, scope="mine"):
         may_decide = appr and appr.get("may_decide")
         if vm_plan:
             c = vm_plan["counts"]
-            who = "Waiting for your decision" if may_decide else "Waiting for an approver"
+            who = "Waiting for your decision" if may_decide else "Waiting for approval"
             state = ("has %s" % counted(c["warnings"], "warning")) if c["warnings"] else "is ready"
             plan_word = "the plan with the new placement" if vm_plan.get("saved_job") else "the plan"
             msg = "<b>%s</b> - %s for %s on %s %s." % (who, plan_word, counted(c["vms"], "VM"), esc(vm_plan["ticket"]), state)
@@ -5310,7 +5777,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None, raw=False, scope="mine"):
             if may_decide:
                 msg = "<b>Waiting for your decision</b>%s Approve to apply %s, Deny to stop here." % (esc(what), "them" if c.get("changes") else "it")
             else:
-                msg = "<b>Waiting for an approver</b>%s Nothing changes until an approver approves." % esc(what)
+                msg = "<b>Waiting for approval</b>%s Nothing changes until someone approves." % esc(what)
         cls, ik = "wait", "wait"
         if appr:
             decide = decide_box_html(cfg, appr)
@@ -5431,18 +5898,23 @@ def deciders_html(cfg):
     named = len(cfg.approvers.named() if hasattr(cfg.approvers, "named") else cfg.approvers)
     named_t = ("%d named in <code>portal_approvers</code>" % named) if named else ""
     st = cfg.ad_groups.status("approvers") if cfg.ad_groups is not None else None
+    # Codex #20: per-workflow approval groups (the Admin page) count too
+    per_wf = sum(bool(r.get("approve_groups")) for r in access_rows(cfg)[0].values())
+    per_wf_t = ("the approval groups of %d workflow%s (Admin page)" % (per_wf, "" if per_wf == 1 else "s")) if per_wf else ""
     if not st or not st["configured"]:
+        if per_wf and not named and not (cfg.ad_groups_why and cfg.approver_groups):
+            return '<div class="note deciders"><b>Who can approve:</b> %s.</div>' % per_wf_t
         if cfg.ad_groups_why and cfg.approver_groups:
-            return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only the named approvers may decide</b>: %s. %s</div>'
+            return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only people on the named list can approve</b>: %s. %s</div>'
                     % (("%d in <code>portal_approvers</code>" % named) if named else "nobody (<code>portal_approvers</code> is empty)", esc(cfg.ad_groups_why)))
-        return '<div class="note deciders"><b>Who may decide:</b> %s.</div>' % (
+        return '<div class="note deciders"><b>Who can approve:</b> %s.</div>' % (
             named_t or "nobody here (<code>portal_approvers</code> is empty) - AAP's own page still works")
     if st["ok"]:
         parts = []
         for g in st["groups"]:
             parts.append("%s (AD), %s" % (esc(g["name"]), ("%d %s" % (g["count"], "person" if g["count"] == 1 else "people")) if g["found"]
                                          else esc(g.get("why") or "not found in AD")))
-        return ('<div class="note deciders"><b>Who may decide:</b> %s.<p class="muted-line">Read from AD %s, every %d minutes; members of nested groups '
+        return ('<div class="note deciders"><b>Who can approve:</b> %s.<p class="muted-line">Read from AD %s, every %d minutes; members of nested groups '
                 'count, disabled accounts never. A card matches its AD account by its number (%s).</p></div>'
                 % (" &middot; ".join(parts + ([named_t] if named_t else [])), esc(_when(cfg, st["at"])), max(1, cfg.ad_groups_seconds // 60),
                    esc(", ".join(sorted(set(r["attribute"] for r in cfg.ad_groups.reader.matches))) if cfg.ad_groups else "")))
@@ -5456,14 +5928,14 @@ def deciders_html(cfg):
 
 
 def approvals_page(cfg, portal, cn):
-    approver = cn in cfg.approvers
+    approver = cn in cfg.approvers or cfg.template_member(cn, "approve_groups")
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Approvals</h1><p class="lede">Every workflow waiting for a decision that the portal\'s account can see.%s</p></div>'
-            '%s<p>Your reader access comes from <b>%s</b>.</p><p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
+            '%s<p><b>Access</b> &mdash; %s</p><p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
             'your name, the decision and the time.</p><p class="status" id="a-status" aria-live="polite">Asking AAP…</p>'
             '<div id="approvals" data-approver="%s"></div>'
             % ((" You may approve or deny - not a run you started yourself." if not cfg.self_approval else " You may approve or deny.")
-               if approver else " You can see them; only the approvers may decide.",
-               deciders_html(cfg), esc(cfg.reader_match(cn)), "1" if approver else "0"))
+               if approver else " You can view the workflows waiting for approval.",
+               deciders_html(cfg), esc(cfg.access_description(cn)), "1" if approver else "0"))
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
 
@@ -6462,8 +6934,8 @@ class NetappLive(object):
             else:
                 out["why"] = "needs Execute on %s (and the portal label %s on it)" % (tmpl, self.cfg.label or "portal")
             return out
-        if not rules.may_run(a, cn, self.cfg.requesters):
-            out["why"] = "you are not on the list of people who may run %s (portal_runners)" % tmpl
+        if not template_allowed(self.cfg, cn, a):
+            out["why"] = RUN_REFUSAL
             return out
         var = a["vars"].get(q)
         if not var or var.get("kind") != "choice":
@@ -6869,7 +7341,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC:
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + ("admin.css", "admin.js"):
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -6917,12 +7389,30 @@ def make_handler(cfg, portal, static_dir, wall=None):
             if not portal.may_use(user):
                 portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
                 if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
-                    self._send(403, {"error": "You are not on the portal's readers list. Ask %s to add you." % cfg.access_contact,
+                    self._send(403, {"error": "You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
                                      "ad": ad_diag(cfg, user)})
                 else:
                     self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
                 return None
             return user
+
+        def _admin_allowed(self, cn):
+            if cfg.admin_allowed(cn):
+                return True
+            portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/admin", "why": "not a portal admin"})
+            if cfg.admins or cfg.admin_groups:
+                reason = "This page requires admin access. Access — checked portal_admins and portal_admin_groups. %s" % cfg.ad_read_status(cn)
+            else:
+                reason = ("Nobody may open this page yet: portal_admin_groups and portal_admins are both empty. To turn it on, set "
+                          "portal_admin_groups to the AD groups of the portal's administrators (names, DOMAIN\\Group or DNs) - or "
+                          "portal_admins to their card CNs - in all.yml or this host's host_vars, and run Site portal - deploy.")
+            self._send(403, message_page(cfg, "Admin access", reason, cn, kind="bad"), "text/html; charset=utf-8")
+            return False
+
+        def _admin_page(self, cn, body):
+            head = ('<link rel="stylesheet" href="%sstatic/admin.css"><script defer src="%sstatic/admin.js"></script>' %
+                    (esc(cfg.path), esc(cfg.path)))
+            return self._send(200, shell(cfg, "Admin", body, cn, portal.token(cn), page="admin", head=head), "text/html; charset=utf-8")
 
         def _deny(self, why, api):
             if api:
@@ -6936,7 +7426,10 @@ def make_handler(cfg, portal, static_dir, wall=None):
             origin = (self.headers.get("Origin") or "").strip()
             if origin and origin != "null":
                 return bool(host) and bool(re.match(r"^https://[^/?#@\s]+$", origin)) and origin[len("https://"):].lower() == host
-            p = urllib.parse.urlsplit((self.headers.get("Referer") or "").strip())
+            try:
+                p = urllib.parse.urlsplit((self.headers.get("Referer") or "").strip())
+            except ValueError:                  # Codex #18: a malformed Referer (an unclosed [IPv6): not this site, refused normally
+                return False
             return bool(host) and p.scheme == "https" and "@" not in p.netloc and p.netloc.lower() == host
 
         def do_HEAD(self):
@@ -7000,6 +7493,19 @@ def make_handler(cfg, portal, static_dir, wall=None):
             cn = cn or self._who(api)
             if not cn:
                 return None
+            if path == "/admin":
+                if not self._admin_allowed(cn):
+                    return
+                query = dict(urllib.parse.parse_qsl(u.query))
+                def metadata(row):
+                    name, labels = row["name"], row["labels"]
+                    area = next((v[len(cfg.label_area):] for v in labels if cfg.label_area and v.startswith(cfg.label_area)), "Other")
+                    title = cfg.titles.get(name.casefold()) or next((t for t in
+                            (rules.site_portal_title_label(v, cfg.label_title) for v in sorted(labels)) if t), name)
+                    return (title, card_icon(name, area, icon_label(labels, cfg.label_icon)),
+                            described(row["description"]) or {"Does": row["description"] or "No description in AAP."},
+                            changes_servers(name), CARD_GROUPS.get(area, CARD_GROUPS["Other"])[1])
+                return self._admin_page(cn, portal_admin.render(portal, cn, query, metadata))
             # 1.79.9: the report website's files need nothing of AAP - served before the actions are looked at
             if path == "/reports" or path.startswith("/reports/"):
                 return self._report(path[len("/reports"):] or "/")
@@ -7160,7 +7666,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 action = qq.get("action", [""])[-1]
                 if action:
                     a = portal.builtin.get(action)
-                    if not a or not rules.may_run(a, cn, cfg.requesters):
+                    if not a or not template_allowed(cfg, cn, a):
                         return self._send(404, {"error": "No action uses that inventory."})
                     a, why = portal._action_inventory(action, a)
                     if why or not a.get("limit_inv") or str(a["limit_inv"]) != inv:
@@ -7177,7 +7683,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
                 return self._send(200, {"hosts": portal.aap.host_search(qs)})
             if path == "/api/me":
-                return self._send(200, {"user": cn, "approver": cn in cfg.approvers, "reader_match": cfg.reader_match(cn),
+                return self._send(200, {"user": cn, "approver": cn in cfg.approvers or cfg.template_member(cn, "approve_groups"),
+                                        "reader_match": cfg.reader_match(cn),
                                         "actions": [a["name"] for a in portal.mine(cn)]})
             return self._send(404, {"error": "not found"} if api else message_page(cfg, "Not here", "There is nothing at this address.", cn),
                               "application/json" if api else "text/html; charset=utf-8")
@@ -7217,24 +7724,60 @@ def make_handler(cfg, portal, static_dir, wall=None):
                      if parent.endswith("-files") else [])
             return self._send(200, data, ctype, meta + extra, csp=REPORT_CSP, cache="no-cache")
 
-        def _form_post(self, name, cn):
+        def _read_form(self, cn, path, maximum):
             """1.78.0: the confirm page without scripts - the form posts itself (same checks: the token, the origin, every value again)."""
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 n = -1
-            if not self._same_origin() or ctype != "application/x-www-form-urlencoded" or not 0 <= n <= BODY_MAX:
-                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/actions/" + name, "why": "not from a portal page (CSRF check)"})
-                return self._send(403, message_page(cfg, "Not accepted", "Send it from the portal's page: reload the page and try again.", cn, "bad"),
+            if not self._same_origin() or ctype != "application/x-www-form-urlencoded" or not 0 <= n <= maximum:
+                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not from a portal page (CSRF check)"})
+                self._send(403, message_page(cfg, "Not accepted", "Send it from the portal's page: reload the page and try again.", cn, "bad"),
                                   "text/html; charset=utf-8")
+                return None
             try:
                 form = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True, max_num_fields=2000)
             except ValueError:
-                return self._send(400, message_page(cfg, "Not started", "The form has too many entries.", cn, "bad"), "text/html; charset=utf-8")
+                self._send(400, message_page(cfg, "Not started", "The form has too many entries.", cn, "bad"), "text/html; charset=utf-8")
+                return None
             if not portal.token_ok(cn, (form.get("portal-token") or [""])[-1]):
-                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/actions/" + name, "why": "not from a portal page (CSRF check)"})
-                return self._send(403, message_page(cfg, "Not accepted", "The page is too old: reload it and try again.", cn, "bad"), "text/html; charset=utf-8")
+                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not from a portal page (CSRF check)"})
+                self._send(403, message_page(cfg, "Not accepted", "The page is too old: reload it and try again.", cn, "bad"), "text/html; charset=utf-8")
+                return None
+            return form
+
+        def _admin_post(self, cn):
+            if not self._admin_allowed(cn):
+                return
+            form = self._read_form(cn, "/admin", 4 * 1024 * 1024)
+            if form is None:
+                return
+            try:
+                code, body, filename = portal_admin.submit(portal, cn, form, now_iso())
+                if filename:
+                    portal.log.add({"event": "export", "user": cn, "ip": self._ip(), "file": filename})
+                    return self._send(200, body, "text/plain; charset=utf-8", [("Content-Disposition", 'attachment; filename="%s"' % filename)])
+                if code == 303:
+                    location = cfg.path + "admin"
+                    if form.get("op") == ["save"]:
+                        location += "#" + form["id"][-1]
+                    return self._send(303, b"", "text/plain", [("Location", location)])
+                return self._admin_page(cn, body)
+            except ValueError as exc:
+                return self._send(400, message_page(cfg, "Access settings", str(exc), cn, "bad"), "text/html; charset=utf-8")
+            except OSError:
+                return self._send(503, message_page(cfg, "Storage unavailable", "Check the portal data volume and reload the admin page.", cn, "bad"), "text/html; charset=utf-8")
+
+        def _form_post(self, name, cn):
+            form = self._read_form(cn, "/actions/" + name, BODY_MAX)
+            if form is None:
+                return
+            ticket = (form.get("portal-confirmation") or [""])[-1]
+            if ticket:
+                form = portal.confirmation_form(cn, name, ticket)
+                if form is None:
+                    return self._send(409, message_page(cfg, "Confirmation expired", "Reopen the Run form.", cn), "text/html; charset=utf-8")
             portal.refresh()
             a = portal.actions.get(name)
             if not a:
@@ -7251,8 +7794,17 @@ def make_handler(cfg, portal, static_dir, wall=None):
             if xq is not None and a["vars"].get(xq, {}).get("kind") == "choice" and xq not in form:
                 sent[xq] = ""                                          # a blank select is not sent: still an answer, refused below
             kw = dict(expand=xq) if xq is not None else {}
+            if ticket:
+                kw["confirmation"] = ticket
             code, out = (portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], jt, **kw) if jt is not None
                          else portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1], **kw))
+            if out.get("confirmation"):
+                portal.confirmation_form(cn, name, out["confirmation"], form)
+                fields = portal_admin.hidden("portal-token", portal.token(cn))
+                body = ('<section class="card panel"><h1>%s</h1><form method="post">%s%s<button class="pri">Confirm launch</button> '
+                        '<a class="btn" href="%s">Cancel</a></form></section>' %
+                        (esc(out["error"]), fields, portal_admin.hidden("portal-confirmation", out["confirmation"]), esc(cfg.path)))
+                return self._send(200, shell(cfg, "Confirm launch", body, cn), "text/html; charset=utf-8")
             if code == 201:
                 return self._send(303, b"", "text/plain", [("Location", out["url"])])
             return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
@@ -7279,6 +7831,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
             cn = self._who(api=path.startswith("/api/"))
             if not cn:
                 return
+            if path == "/admin":
+                return self._admin_post(cn)
             m_form = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
             if m_form:
                 return self._form_post(m_form.group(1), cn)
@@ -7303,7 +7857,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 return self._send(413, {"error": "Too long."})
             try:
                 body = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError, RecursionError):        # Codex #19: nested too deep is "not JSON" too
                 return self._send(400, {"error": "Not JSON."})
             if not isinstance(body, dict):
                 return self._send(400, {"error": "Not a JSON object."})
@@ -7321,10 +7875,13 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 jt = body.get("job_type")
                 xq = body.get("expand")
                 args = (cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
-                code, out = portal.launch(*(args + ((jt,) if isinstance(jt, str) else ())), **({"expand": xq} if isinstance(xq, str) else {}))
+                options = {"confirmation": body["confirmation"]} if isinstance(body.get("confirmation"), str) else {}
+                if isinstance(xq, str):
+                    options["expand"] = xq
+                code, out = portal.launch(*(args + ((jt,) if isinstance(jt, str) else ())), **options)
                 return self._send(code, out)
             if m_dec.group(2) == "placement":
-                return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) == {"vms"} else None))
+                return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) <= {"vms", "confirmation"} else None, body.get("confirmation")))
             code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2), body.get("plan"))
             return self._send(code, out)
 

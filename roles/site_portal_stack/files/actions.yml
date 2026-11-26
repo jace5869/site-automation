@@ -11,7 +11,7 @@
 #               pattern: the whole value must match). The portal adds portal_requested_by (the person's certificate name).
 #   limit_from  the inventory_host variable that is also the job's Limit
 #   approval    true when the workflow waits for a person (its approval node decides; the page only says so)
-#   who         any, or a list of certificate names; left out = portal_requesters
+#   who         any, or a list of certificate names; left out = portal_runners
 #   kinds       part C: the finding kinds a report offers this action on (a button on each such finding); the action then
 #               takes target, report_job and finding_id, and its playbook reads the finding back (roles/finding_ref)
 #   button      the button's short label on the report (title stays the confirm page's)
@@ -65,7 +65,7 @@ actions:
   # label by portal_ticket_mode - dry_run (the default), live, off (no button).
   disk_cleanup:
     title: Clean up a full filesystem (old files in the tmp folders)
-    summary: Removes old files in the tmp folders of a full filesystem, after an approver agrees.
+    summary: Removes old files in the tmp folders of a full filesystem, after approval.
     area: Linux
     aap: {type: workflow, name: "Disk - clean up (approved)"}       # workflow 49: plan, approval, clean up, recheck
     kinds: [disk_full]
@@ -80,7 +80,7 @@ actions:
 
   service_restart:
     title: Restart a service that is down
-    summary: Restarts a service that is down, after an approver agrees, and checks it came up.
+    summary: Restarts a service that is down, after approval, and checks it came up.
     area: Linux
     aap: {type: workflow, name: "Service - restart"}                # workflow 50: look, approval, restart, status
     kinds: [service_down]
@@ -94,7 +94,7 @@ actions:
 
   fapolicyd_allow:
     title: Let fapolicyd allow this one program
-    summary: Lets fapolicyd allow one program that it denied, after an approver agrees.
+    summary: Lets fapolicyd allow one program that it denied, after approval.
     area: Linux
     aap: {type: workflow, name: "fapolicyd - allow this"}           # workflow 51: check, approval, approved, re-read
     kinds: [fapolicyd_deny]
@@ -140,7 +140,7 @@ actions:
   # ---- 1.67.0 part D: the STIG actions (workflows 46-48; roles/portal_stig, docs/SITE_PORTAL.md "STIG actions")
   stig_recheck_update:
     title: Recheck the rule and update STIG Manager
-    summary: Checks one rule again and updates the result in STIG Manager, after an approver agrees.
+    summary: Checks one rule again and updates the result in STIG Manager, after approval.
     area: STIG
     aap: {type: workflow, name: "STIG - recheck and update STIG Manager"}   # workflow 46
     kinds: [stig_fixed_open]
@@ -154,7 +154,7 @@ actions:
 
   stig_fix_rule:
     title: Fix one STIG rule (ACT proposes, you approve)
-    summary: ACT proposes a fix for one CAT II or III rule on a Linux host. An approver decides.
+    summary: ACT proposes a fix for one CAT II or III rule on a Linux host. Someone must approve the fix.
     area: STIG
     aap: {type: workflow, name: "STIG - fix one rule"}                       # workflow 47
     kinds: [stig_rule_fail]
@@ -169,7 +169,7 @@ actions:
 
   stigman_create_asset:
     title: Create the host's asset in STIG Manager
-    summary: Creates the host's asset in STIG Manager, after an approver agrees.
+    summary: Creates the host's asset in STIG Manager, after approval.
     area: STIG
     aap: {type: workflow, name: "STIG - create the asset in STIG Manager"}  # workflow 48
     kinds: [stig_no_asset]
