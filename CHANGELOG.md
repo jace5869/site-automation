@@ -16,13 +16,15 @@ all.yml - a cheaper, faster model for the per-item first pass. Without it, nothi
 - **An item the job marks critical** (an alarm or a log pattern at level critical) goes to the smart model at once.
 - **The smart model checks the worker once.** A question goes to it, with the same task and evidence, when the worker
   gave no answer, gave one the job cannot read or that leaves an item out, is unsure (a confidence under 50, an
-  `unsure` cross-check verdict, a draft with no code) or calls an item critical. Its answer is final: never back to the
-  worker, never a third time. When it fails, the worker's answer stays, and the report says so.
+  `unsure` cross-check verdict, a draft with no code, a confidence with nothing else) or calls an item critical. The
+  worker is asked once: the smart model is its second try, in the time the worker left. Its answer is final: never back
+  to the worker, never a third time. When it fails or cannot be read, a worker answer that could be read stays, and the
+  report says so.
 - **The smart model writes the verdict** of the log analysis, alarms, capacity and right-sizing reports from the
-  workers' short answers (id, cause, fix, confidence, one quoted line, secrets masked), never the evidence. When it
+  short answers (id, cause, fix, confidence, secrets masked), never the evidence nor a line quoted from it. When it
   cannot be read, each batch keeps its own lines.
-- **One line in each report** (and the job output) says which model answered how many items, how many were re-asked and
-  why. The answer keys say it at the end of their report.
+- **One line in each report** (and the job output) says which model answered how many items (the items each answer
+  really answers), how many were re-asked and why. The answer keys say it at the end of their report.
 - **The answer cache keeps each tier under its own model**: a worker's answer never stands for the smart model's, nor
   the other way round. A run whose answers are all kept reaches no model.
 - **The same rules for both tiers:** the worker only reads the evidence the job collected and runs no command; one

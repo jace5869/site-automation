@@ -451,10 +451,12 @@ How it works:
     with no code;
   - calls an item critical.
 
-  The smart model gets the same task and evidence. Its answer is final, even when it is unsure: nothing goes back to
-  the worker or is asked a third time. When the smart model fails, the worker's answer stays, and the report says so.
-- **The smart model writes the verdict.** It reads only the worker's short answers: for each item its id, cause, fix,
-  confidence and at most one quoted line, with secrets masked. It never reads the evidence. Its verdict is the report's
+  The worker is asked once (`site_act_retries` does not apply to it): the smart model is its second try. The smart
+  model gets the same task and evidence, in the time the worker left of `site_act_timeout`. Its answer is final, even
+  when it is unsure: nothing goes back to the worker or is asked a third time. When the smart model fails, or its
+  answer cannot be read, a worker answer that could be read stays, and the report says so.
+- **The smart model writes the verdict.** It reads only the short answers: for each item its id, cause, fix and
+  confidence, with secrets masked. It never reads the evidence, nor a line an answer quoted from it. Its verdict is the report's
   overall. When it cannot be read, each batch keeps its own lines, and the report says so.
 - **One line in the report** says which model answered how many items: *ACT models (site_act_worker_model): 12 item(s)
   answered by the worker model (...), 3 by the smart model (...); 2 re-asked after the worker (1 critical, 1 unsure). The
