@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.135.2 — 2026-11-26
+## 1.135.1 — 2026-11-26
 
 **To set up:** optional `sw_inventory_shares` for more destinations; nothing to change for one share.
 

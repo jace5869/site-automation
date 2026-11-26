@@ -700,7 +700,7 @@ class ReviewFixes3(ModuleBase):
 
 
 class MoreShares(ModuleBase):
-    """1.135.2: sw_inventory_shares - more destinations, each on its own; sw_inventory_share the first when set."""
+    """1.135.1: sw_inventory_shares - more destinations, each on its own; sw_inventory_share the first when set."""
     U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
     U2 = "\\\\fs02.corp.example.mil\\security\\inventory"
 
@@ -840,7 +840,7 @@ class MoreShares(ModuleBase):
         self.assertEqual(mod.scrub({"a": ["x pw y"], "b": "pw"}, ["pw"]), {"a": ["x [redacted] y"], "b": "[redacted]"})
 
 class MoreSharesReview(ModuleBase):
-    """1.135.2 review (Codex r1): a test per finding."""
+    """1.135.1 review (Codex r1): a test per finding."""
     U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
     U2 = "\\\\fs01.corp.example.mil\\security\\inventory"          # the same server, another share and login
 
@@ -970,7 +970,7 @@ class MoreSharesReview(ModuleBase):
 
 
 class MoreSharesReview2(ModuleBase):
-    """1.135.2 review (Codex r2): a test per finding."""
+    """1.135.1 review (Codex r2): a test per finding."""
     U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
     U2 = "\\\\fs02.corp.example.mil\\security\\inventory"
 
@@ -1076,7 +1076,7 @@ class MoreSharesReview2(ModuleBase):
 
 
 class MoreSharesReview3(ModuleBase):
-    """1.135.2 review (Codex r3): a test per finding."""
+    """1.135.1 review (Codex r3): a test per finding."""
     U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
 
     def test_r3_01_the_handoff_names_no_path_and_the_file_is_private_and_gone(self):

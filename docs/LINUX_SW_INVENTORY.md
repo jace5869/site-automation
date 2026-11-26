@@ -17,7 +17,7 @@ file share, and with the report email.
    sw_inventory_share_subdir: linux
    ```
 
-   More than one share (1.135.2): add them in `sw_inventory_shares` (*More than one share* below). One share: nothing
+   More than one share (1.135.1): add them in `sw_inventory_shares` (*More than one share* below). One share: nothing
    to change.
 3. For the email: `report_email_to`, as for the other reports.
 4. Launch it with Job type **Check** (nothing runs on the hosts; it logs in to the share and looks at its folder, writes nothing),
@@ -112,7 +112,7 @@ nodes (`/mnt/inventory`) works too.
 
 ### More than one share
 
-`sw_inventory_shares` (1.135.2) copies the same files to more folders. Each entry is a folder like
+`sw_inventory_shares` (1.135.1) copies the same files to more folders. Each entry is a folder like
 `sw_inventory_share`; only `path` is needed.
 
 ```yaml
