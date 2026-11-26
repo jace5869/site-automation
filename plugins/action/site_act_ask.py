@@ -461,6 +461,7 @@ def synth_read(summary):
     object ({"message": ...}) unwrapped first."""
     t = answer_text(summary)
     cands = re.findall(r"BEGIN_ACT_ANALYSIS\s*(.*?)\s*END_ACT_ANALYSIS", t, re.S)
+    cands += re.findall(r"```(?:json)?\s*(.*?)```", t, re.S)          # a fenced block (Neon r1)
     i, j = t.find("{"), t.rfind("}")
     if 0 <= i < j:
         cands.append(t[i:j + 1])
@@ -716,7 +717,10 @@ class ActionModule(ActionBase):
         smart = _effective_model(model, eprov, aenv)
         # 1.137.0 (Codex r1): for the tiers, the model ACT would use also when only the execution environment sets it - a
         # worker that is that model is one tier, and the smart questions are keyed with it
-        T = tiers_plan(a.get("tiers"), eprov, smart or str(os.environ.get(MODEL_SETTING.get(eprov, "GENAI_MODEL")) or ""))
+        # (Neon r1): with an ACT_PROVIDER of its own in site_act_env, site_act_model is another provider's - not that one's
+        mname = MODEL_SETTING.get(eprov, "GENAI_MODEL")
+        tsmart = str(aenv.get(mname) or os.environ.get(mname) or (model if eprov == provider else "") or "")
+        T = tiers_plan(a.get("tiers"), eprov, tsmart)
         if T.get("on"):
             smart = T["smart"]
         if T.get("why"):
@@ -794,6 +798,8 @@ class ActionModule(ActionBase):
             if tier == "worker":     # no second try of the worker: the smart model is its second try (Codex r1)
                 j.update(settings=dict(settings, **{mset: T["worker"]}), mdl=T["worker"], fallback=T["worker"], again=False,
                          retries=0)
+            elif tier:
+                j["fallback"] = smart or model
             if tier:
                 row["tier"] = tier
             return j
@@ -948,7 +954,8 @@ class ActionModule(ActionBase):
                         continue
                     e = dict(j["row"], asked=False, ran=False, status="", summary="", stop_reason="", model=model,
                              tries=0, reason="", cached="")
-                    ej = dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j)
+                    # asked once, whatever comes: no second try, not even of an unreadable answer (Neon r1)
+                    ej = dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j, again=False, retries=0)
                     left = full - j.get("spent", 0)
                     if left < min(30, max(1, full // 4)):           # the worker spent the question's time (Codex r1)
                         j["row"]["escalation_failed"] = "no time left for the smart model (site_act_timeout)"
@@ -987,8 +994,8 @@ class ActionModule(ActionBase):
                         for q in questions:
                             qn += [n for n in (q.get("names") or []) if n not in (None, "") and n not in qn]
                         sj = {"i": -1, "n": 2 * len(questions), "row": srow, "task": SYNTH_TASK, "piped": payload(text, cap),
-                              "own": "", "items": [], "qnames": qn, "settings": settings, "mdl": smart, "fallback": model,
-                              "again": False, "store": synth_store}
+                              "own": "", "items": [], "qnames": qn, "settings": settings, "mdl": smart, "fallback": smart or model,
+                              "again": False, "retries": 0, "store": synth_store}
                         if sj["piped"]:
                             wave(lookup([sj]))
                             got = synth_read(srow["summary"]) if srow["ran"] else ""

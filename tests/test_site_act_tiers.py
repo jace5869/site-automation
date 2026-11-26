@@ -653,10 +653,10 @@ class ReviewRound1Codex(unittest.TestCase):
         syn = [c for c in self.rig.calls() if c["task"] == A.SYNTH_TASK][0]["stdin"]
         self.assertNotIn("LOG-LINE", syn)
 
-    def test_at_most_one_worker_call_and_the_smart_models_tries(self):
+    def test_one_worker_call_and_one_smart_call(self):
         self.rig.set_plan({"*": ["fail"]})
         self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], retries=1)
-        self.assertEqual(self.models(), [("smart-model", "t"), ("smart-model", "t"), ("worker-model", "t")])
+        self.assertEqual(self.models(), [("smart-model", "t"), ("worker-model", "t")])      # site_act_retries: neither tier
 
     def test_a_worker_that_spent_the_time_is_not_re_asked(self):
         self.rig.set_plan({"worker-model|t": ["nothing"], "smart-model|t": ["items:P1=90"]})
@@ -750,6 +750,30 @@ class ReviewRound1Codex(unittest.TestCase):
     def test_the_answer_keys_tiers_off_keep_1136s_shape(self):
         with open(os.path.join(REPO, "roles", "site_act", "tasks", "evidence_many.yml")) as fh:
             self.assertIn("combine({'tier': a.tier} if a.tier is defined else {})", fh.read())
+
+
+class ReviewRound1Neon(unittest.TestCase):
+    setUp, tearDown, ask, models = (ReviewRound1Codex.setUp, ReviewRound1Codex.tearDown, ReviewRound1Codex.ask,
+                                    ReviewRound1Codex.models)
+
+    def test_the_smart_model_asked_once_whatever_comes(self):
+        self.rig.set_plan({"worker-model|t": ["items:P1=40"], "smart-model|t": ["prose only"],
+                           "smart-model|" + A.SYNTH_TASK: ["fail"]})
+        self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], retries=1, retry_unreadable=True)
+        self.assertEqual(self.models(), [("smart-model", A.SYNTH_TASK), ("smart-model", "t"), ("worker-model", "t")])
+
+    def test_another_provider_in_the_settings_is_not_site_act_models(self):
+        self.rig.set_plan({"*": ["items:P1=90"]})
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(workers={"genai-beta": "beta-worker"}, synth=False),
+                     env_extra={"ACT_PROVIDER": "genai-beta", "GENAI_BETA_URL": "<url>"})
+        self.assertEqual(r["tiers"]["smart"], "")                          # genai-beta's model is ACT's own default here
+        self.assertIn("ACT's default", r["tiers"]["note"])
+        self.assertEqual(self.rig.calls()[0]["env"]["GENAI_BETA_MODEL"], "beta-worker")
+
+    def test_a_fenced_verdict_is_read(self):
+        self.assertEqual(A.synth_read("Here:\n```json\n{\"overall\": \"fix the disk\"}\n```"), "fix the disk")
+        self.assertEqual(A.synth_read({"message": "BEGIN_ACT_ANALYSIS {\"overall\": \"x\"} END_ACT_ANALYSIS"}), "x")
+        self.assertEqual(A.synth_read("no verdict"), "")
 
 
 def make_golden(engine, path):

@@ -17,8 +17,8 @@ all.yml - a cheaper, faster model for the per-item first pass. Without it, nothi
 - **The smart model checks the worker once.** A question goes to it, with the same task and evidence, when the worker
   gave no answer, gave one the job cannot read or that leaves an item out, is unsure (a confidence under 50, an
   `unsure` cross-check verdict, a draft with no code, a confidence with nothing else) or calls an item critical. The
-  worker is asked once: the smart model is its second try, in the time the worker left. Its answer is final: never back
-  to the worker, never a third time. When it fails or cannot be read, a worker answer that could be read stays, and the
+  worker is asked once: the smart model is its second try, once, in the time the worker left (`site_act_retries` is for
+  questions without tiers). Its answer is final: never back to the worker, never a third time. When it fails or cannot be read, a worker answer that could be read stays, and the
   report says so.
 - **The smart model writes the verdict** of the log analysis, alarms, capacity and right-sizing reports from the
   short answers (id, cause, fix, confidence, secrets masked), never the evidence nor a line quoted from it. When it

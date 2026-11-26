@@ -452,8 +452,8 @@ How it works:
   - calls an item critical.
 
   The worker is asked once (`site_act_retries` does not apply to it): the smart model is its second try. The smart
-  model gets the same task and evidence, in the time the worker left of `site_act_timeout`. Its answer is final, even
-  when it is unsure: nothing goes back to the worker or is asked a third time. When the smart model fails, or its
+  model gets the same task and evidence, once, in the time the worker left of `site_act_timeout`. Its answer is final,
+  even when it is unsure: nothing goes back to the worker or is asked a third time. When the smart model fails, or its
   answer cannot be read, a worker answer that could be read stays, and the report says so.
 - **The smart model writes the verdict.** It reads only the short answers: for each item its id, cause, fix and
   confidence, with secrets masked. It never reads the evidence, nor a line an answer quoted from it. Its verdict is the report's
