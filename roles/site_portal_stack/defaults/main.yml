@@ -75,9 +75,9 @@ portal_allow_self_approval: false                   # true = an approver may app
 # quotes a backslash starts an escape (\U, \x ...) and all.yml no longer loads.
 portal_approve_groups: "{{ portal_approver_groups | default([]) }}"  # was portal_approver_groups. AD groups allowed to approve, e.g. [AAP-Approvers] or a DN.
 portal_run_groups: "{{ portal_requester_groups | default([]) }}"  # was portal_requester_groups. AD groups allowed to run actions (with portal_runners); [] = none.
-portal_ad_card_attribute: userPrincipalName         # legacy attribute. Changing either legacy setting selects just that rule.
-portal_ad_card_match: "{edipi}@mil"                 # legacy pattern. A non-default legacy setting conflicts with an explicit list.
-_portal_legacy_card_rule: "{{ portal_ad_card_attribute != 'userPrincipalName' or portal_ad_card_match != '{edipi}@mil' }}"
+portal_ad_card_attribute: ""                        # 1.132.0's setting. Set (alone or with portal_ad_card_match): exactly ONE rule, this attribute (userPrincipalName when left out). Never with portal_ad_card_matches.
+portal_ad_card_match: ""                            # 1.132.0's setting: the one rule's form ({edipi}@mil when left out). Never with portal_ad_card_matches.
+_portal_legacy_card_rule: "{{ (portal_ad_card_attribute | string | trim | length > 0) or (portal_ad_card_match | string | trim | length > 0) }}"
 _portal_default_card_matches:
   - {attribute: userPrincipalName, match: "{edipi}@mil"}
   - {attribute: sAMAccountName, match: "{edipi}.ctr"}
@@ -87,6 +87,7 @@ _portal_default_card_matches:
 # 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName {edipi}@mil or {edipi}{digits6}@mil
 # (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ or {edipi}.mil ({edipi} = the last ten digits of the card CN).
 # Nothing else; never a * or ?. A card must be exactly one enabled account in the domain whose values name no other EDIPI.
+# All five when neither this nor a 1.132.0 setting (portal_ad_card_attribute / _match) is set.
 portal_ad_card_matches: >-
   {{ undef() if _portal_legacy_card_rule else _portal_default_card_matches }}
 portal_ad_groups_seconds: 300                       # how often the members are read (60 to 3600); 60 s after a failed read

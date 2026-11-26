@@ -654,15 +654,24 @@ portal_run_groups: []                            # the same for who may run the 
   | `sAMAccountName` | `{edipi}.civ` | `1234567890.civ` |
   | `sAMAccountName` | `{edipi}.mil` | the ten digits, then `.mil` |
 
-  All five are on by default. Any other form, attribute (`altSecurityIdentities`, `employeeID` ...), `*` or `?` stops
-  the deploy. The old pair `portal_ad_card_attribute` / `portal_ad_card_match` still works when it is one of the five,
-  and cannot be set together with the list. Values are compared in ASCII lower case only.
+  All five are on when neither the list nor a 1.132.0 setting is set. Any other form, attribute (`altSecurityIdentities`,
+  `employeeID` ...), `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute` /
+  `portal_ad_card_match` still work as they did: set either one (or both) and the portal uses exactly ONE rule - that
+  attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out). It must be one of the
+  five, and cannot be set together with the list. Values are compared in ASCII lower case only.
+- **The card's name.** Only a card whose CN has the shape LAST.FIRST.EDIPI or LAST.FIRST.MIDDLE.EDIPI is looked up in
+  AD. A certificate with two CNs is refused.
 - **One card, one account.** The account is looked up over the whole domain (its root, not `portal_ldap_base`), with
   both `userPrincipalName` and `sAMAccountName` read for every candidate whatever forms the site kept. No group counts
   for the card when: no enabled account matches; more than one does (a separate `.adm` account with a matching value,
-  two 16-digit UPNs); a returned account cannot be fully read (it may be the card's); or the account's values name
+  two 16-digit UPNs); a returned account cannot be fully read - both `userPrincipalName` and `sAMAccountName` must come
+  back (it may be the card's); the search did not end cleanly (every page, to the end); or the account's values name
   another EDIPI under any of the five forms. A group membership counts only for that account's DN and objectGUID.
-  Lookups are kept per person for 5 minutes and dropped at every group read.
+  Lookups are kept per person for 5 minutes and dropped at every group read; a group read that lands during a lookup
+  makes that one answer count for nothing.
+- **One domain only.** The lookup searches the domain of the DC that answers (its `defaultNamingContext`, else
+  `portal_ldap_domain`). Other domains of a forest are never searched: list DCs of the one domain only. The deploy's
+  summary names the base searched.
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
   failed read it tries again in a minute.
 - **AD down: the named lists only.** When AD cannot be read, or before the first read, nobody counts as a group member. Only
@@ -679,8 +688,10 @@ portal_run_groups: []                            # the same for who may run the 
   login, by a group read or a card lookup, the portal binds no more until it is deployed again (1.133.0: also when a
   group read was already under way).
 
-**The login: the "LDAP Bind Account" credential.** Attach it to the portal deploy's job template. Any domain user will do,
-with nothing granted.
+**The login: the "LDAP Bind Account" credential.** Attach it to the portal deploy's job template. A plain domain user
+with nothing granted, that can read EVERY user object in the domain (its `userPrincipalName`, `sAMAccountName`,
+`userAccountControl`, `objectGUID`). A domain user can by default; if your site hides OUs from ordinary users, the
+portal cannot see a second account there and may take a card's account as the only one.
 - **The microsoft.ad pair works as it is.** By default the deploy reads the environment pair `MICROSOFT_AD_LDAP_USERNAME`
   and `MICROSOFT_AD_LDAP_PASSWORD`. The repository's type sets that pair: `aap/credential_types/ldap_bind_account.yml`.
 - **A site's own type with other names.** Name them in `portal_ldap_vars`. Each name is an environment variable or an extra

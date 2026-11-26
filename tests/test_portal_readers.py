@@ -184,7 +184,7 @@ class Readers(unittest.TestCase):
                        PORTAL_READER_GROUPS=[dn("Platform-Leads")], PORTAL_REQUESTER_GROUPS=["AAP-Operators"],
                        PORTAL_APPROVER_GROUPS=["AAP-Approvers"])
         groups = self.cfg.ad_groups
-        roles = {"EXAMPLE.6789012345": "portal_view_groups", "EXAMPLE.2345678901": "portal_run_groups"}
+        roles = {"EXAMPLE.PERSON.6789012345": "portal_view_groups", "EXAMPLE.PERSON.2345678901": "portal_run_groups"}
         for state in ("startup", "fresh", "failed", "expired"):
             with self.subTest(state=state):
                 if state == "fresh":
@@ -202,7 +202,7 @@ class Readers(unittest.TestCase):
                 for cn, setting in roles.items():
                     self.assertEqual(self.request(cn=cn)[0], 200 if state == "fresh" else 403)
                     self.assertEqual(self.cfg.reader_match(cn), setting if state == "fresh" else "")
-                code, page = self.request(cn="EXAMPLE.5678901234")  # disabled even if returned by the DC
+                code, page = self.request(cn="EXAMPLE.PERSON.5678901234")  # disabled even if returned by the DC
                 self.assertEqual(code, 403)
                 self.assertEqual("Only card names" in page, state != "fresh")
 
@@ -211,7 +211,7 @@ class Readers(unittest.TestCase):
         self.assertEqual(self.request()[0], 403)
         self.cfg.ad_groups.reader.opener = opener()
         self.cfg.ad_groups.refresh()
-        for cn, setting in [("EXAMPLE.2345678901", "portal_view_groups"), ("EXAMPLE.6789012345", "portal_approve_groups")]:
+        for cn, setting in [("EXAMPLE.PERSON.2345678901", "portal_view_groups"), ("EXAMPLE.PERSON.6789012345", "portal_approve_groups")]:
             self.assertEqual(self.cfg.reader_match(cn), setting)
             self.assertEqual(self.request(cn=cn)[0], 200)
         self.assertEqual(self.request()[0], 403)

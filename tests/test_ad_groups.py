@@ -32,16 +32,22 @@ def guid(d):
     return hashlib.md5(str(d).lower().encode()).hexdigest()
 
 
-USERS = {dn("Alex Approver", "Users"): {"upn": "3456789012@mil", "uac": 512, "alt": ["X509:<I>CN=DOD ID CA-70<S>CN=APPROVER.ALEX.B.3456789012"]},
-         dn("Jo Lead", "Users"): {"upn": "4567890123@mil", "uac": 512, "alt": []},
-         dn("Old Lead", "Users"): {"upn": "5678901234@mil", "uac": 514, "alt": []},                    # 512 + 2: disabled
-         dn("Deep Member", "Users"): {"upn": "6789012345@mil", "uac": 66048, "alt": []},              # 512 + 65536 (no expiry): enabled
-         dn("Sam Operator", "Users"): {"upn": "2345678901@mil", "uac": 512, "alt": []}}
+USERS = {dn("Alex Approver", "Users"): {"sam": "aapprover", "upn": "3456789012@mil", "uac": 512, "alt": ["X509:<I>CN=DOD ID CA-70<S>CN=APPROVER.ALEX.B.3456789012"]},
+         dn("Jo Lead", "Users"): {"sam": "jlead", "upn": "4567890123@mil", "uac": 512, "alt": []},
+         dn("Old Lead", "Users"): {"sam": "olead", "upn": "5678901234@mil", "uac": 514, "alt": []},                    # 512 + 2: disabled
+         dn("Deep Member", "Users"): {"sam": "dmember", "upn": "6789012345@mil", "uac": 66048, "alt": []},              # 512 + 65536 (no expiry): enabled
+         dn("Sam Operator", "Users"): {"sam": "soperator", "upn": "2345678901@mil", "uac": 512, "alt": []}}
 GROUPS = {dn("AAP-Approvers"): [dn("Alex Approver", "Users"), dn("Platform-Leads")],
           dn("Platform-Leads"): [dn("Jo Lead", "Users"), dn("Old Lead", "Users"), dn("Deep-Team")],
           dn("Deep-Team"): [dn("Deep Member", "Users"), dn("AAP-Approvers")],                        # a loop back: counted once
           dn("AAP-Operators"): [dn("Sam Operator", "Users")]}
 SAM = {"AAP-Approvers": "aap_approvers"}
+
+
+def sam_of(u):
+    """every AD account has a sAMAccountName: the fixture's, else one made from the DN; "sam": None = not returned"""
+    a = USERS[u]
+    return a["sam"] if "sam" in a else "u" + guid(u)[:8]
 
 
 def chain(group, seen=None):
@@ -67,7 +73,8 @@ class FakeConn(object):
 
     def _set(self, entries):
         self.response = [dict(e, type="searchResEntry") for e in entries]
-        self.result = {"result": 0, "description": "success", "controls": {}}
+        # the paging control with its empty cookie: the search is complete (a card lookup checks it)
+        self.result = {"result": 0, "description": "success", "controls": {"1.2.840.113556.1.4.319": {"value": {"size": 0, "cookie": b""}}}}
         return True
 
     def search(self, base, flt, scope, attributes=None, **kw):
@@ -91,8 +98,8 @@ class FakeConn(object):
                     a["userPrincipalName"] = USERS[u]["upn"]
                 if "altSecurityIdentities" in (attributes or []):
                     a["altSecurityIdentities"] = USERS[u]["alt"]
-                if "sAMAccountName" in (attributes or []) and USERS[u].get("sam"):
-                    a["sAMAccountName"] = USERS[u]["sam"]
+                if "sAMAccountName" in (attributes or []) and sam_of(u):
+                    a["sAMAccountName"] = sam_of(u)
                 if "objectGUID" in (attributes or []):
                     a["objectGUID"] = USERS[u].get("guid", guid(u))
                 out.append({"dn": u, "attributes": a})
@@ -109,7 +116,7 @@ class FakeConn(object):
                 if not u.lower().endswith(base.lower()) or (a["uac"] is not None and a["uac"] & 2):
                     continue                              # the search's base (a subtree), and the DC's disabled filter
                 vals = {"userPrincipalName": [a["upn"]], "altSecurityIdentities": list(a.get("alt") or []),
-                        "employeeID": [a.get("employeeID")], "sAMAccountName": [a.get("sam")]}
+                        "employeeID": [a.get("employeeID")], "sAMAccountName": [sam_of(u)]}
                 if any(fnmatch.fnmatchcase(str(v).lower(), unesc(val).lower()) for attr, val in terms for v in vals.get(attr, []) if v):
                     out.append({"dn": u, "attributes": dict(dict({"userAccountControl": a["uac"]} if a["uac"] is not None else {},
                                                                   objectGUID=a.get("guid", guid(u))),
@@ -606,6 +613,149 @@ for _n in [n for n in vars(DirectorC) if n.startswith("test_")]:
     setattr(CodexR4, _n, None)
 
 
+class Codex1330s(DirectorC):
+    """1.133.0: Codex's review of the split release (rel-1330s 6ab8f57a) - each fails before its fix"""
+
+    LOOKUP = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl"
+
+    def test_01_a_sole_partly_read_account_grants_nothing(self):
+        d = dn("Doe", "Staff")
+        g = self.group(d, {"userPrincipalName": ["1111111111@mil"]})
+        with patch.dict(USERS, {d: {"upn": "1111111111@mil", "sam": None, "uac": 512, "alt": []}}):     # its SAM is not returned
+            self.assertFalse(g.has("approvers", "DOE.JANE.Q.1111111111"))
+            self.assertIn("state is not known", g.account("DOE.JANE.Q.1111111111")[1])
+
+    def test_02_10_the_rules_as_set(self):
+        import site_portal as sp
+        one = [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}]
+        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "userPrincipalName", "PORTAL_AD_CARD_MATCH": "{edipi}@mil"}), one)
+        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_MATCH": "{edipi}@mil"}), one)
+        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "sAMAccountName", "PORTAL_AD_CARD_MATCH": "{edipi}.ctr"}),
+                         [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}])
+        self.assertIsNone(sp.card_rules_of({}))                                     # nothing set: the five
+        for bad in ("null", "", "[", None, "{}", {"a": 1}, 7):
+            self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_MATCHES": bad}), "unreadable", bad)
+        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_MATCHES": "[]"}), [])
+        # a 1.132.0 settings file (the default pair): the plain UPN only - a .ctr-only account is no match
+        c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_BASE": BASE,
+                       "PORTAL_AD_CARD_ATTRIBUTE": "userPrincipalName", "PORTAL_AD_CARD_MATCH": "{edipi}@mil"})
+        self.assertEqual(c.ad_groups.reader.matches, one)
+        # null at runtime: no card is matched in AD (named lists only), said - never the five
+        c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_BASE": BASE,
+                       "PORTAL_AD_CARD_MATCHES": "null"})
+        self.assertIsNone(c.ad_groups)
+        self.assertIn("card rules are not usable", c.ad_groups_why)
+
+    def test_03_a_request_answers_with_the_newest_decision(self):
+        d, dup = dn("Doe", "Staff"), dn("Dup", "Admins")
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        cn = "DOE.JANE.Q.1234567890"
+        real = g.reader.accounts
+        state = {"n": 0}
+
+        def first_slow(c, base, card):
+            out = real(c, base, card)                   # the first request sees one account ...
+            if state["n"] == 0:
+                state["n"] = 1
+                with patch.dict(USERS, {dup: {"upn": "q@example.invalid", "sam": "1234567890.ctr", "uac": 512, "alt": []}}):
+                    self.assertIsNone(g.account(cn)[0])  # ... a second request meanwhile sees two and stores "no"
+            return out
+        g.reader.accounts = first_slow
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            self.assertIsNone(g.account(cn)[0])           # the first request answers with that newer "no"
+
+    def test_04_a_group_read_during_the_lookup_decides(self):
+        import time as _t
+        d = dn("Doe", "Staff")
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        real = g.reader.accounts
+
+        def read_lands(c, base, card):
+            out = real(c, base, card)
+            g.reader.read = lambda want: {"ok": True, "at": _t.time(), "error": "", "server": "", "groups": {"approvers": [
+                {"name": "Portal-Admins", "found": True, "count": 0, "keys": []}]}}          # Jane is no longer a member
+            g.refresh()
+            return out
+        g.reader.accounts = read_lands
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))
+
+    def test_05_one_dn_two_guids_is_two_accounts(self):
+        d = dn("Doe", "Staff")
+        test = self
+
+        class TwoGuids(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = FakeConn.search(self, base, flt, scope, attributes, **kw)
+                if flt.startswith(test.LOOKUP) and "(|" in flt:
+                    self.response.append(dict(self.response[0], attributes=dict(self.response[0]["attributes"], objectGUID="e" * 32)))
+                return ok
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        g.reader.opener = opener(TwoGuids())
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))
+            self.assertIn("more than one", g.account("DOE.JANE.Q.1234567890")[1])
+
+    def test_06_a_paged_search_without_its_end_marker_fails(self):
+        d = dn("Doe", "Staff")
+        test = self
+
+        class NoEnd(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = FakeConn.search(self, base, flt, scope, attributes, **kw)
+                if flt.startswith(test.LOOKUP) and "(|" in flt:
+                    self.result = dict(self.result, controls={})
+                return ok
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        g.reader.opener = opener(NoEnd())
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))
+            self.assertIn("could not be looked up", g.account("DOE.JANE.Q.1234567890")[1])
+
+    def test_08_no_base_guessed_from_a_dc_name(self):
+        r = G.Reader({"servers": [{"fqdn": "dc01.child.corp.example.mil"}]}, opener())
+
+        class NoRoot(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                self.response, self.result = [], {"result": 1, "description": "operationsError"}
+                return False
+        self.assertEqual(r.root(NoRoot()), "")
+        self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).root(NoRoot()), BASE)
+
+    def test_09_only_a_card_shaped_cn_is_looked_up(self):
+        import site_portal as sp
+        for ok in ("DOE.JANE.Q.1234567890", "DOE.JANE.1234567890", "O'NEIL-SMITH.ANN MARIE.Q.1234567890"):
+            self.assertTrue(G.card_cn(ok), ok)
+        for bad in ("1234567890", "EXAMPLE.1234567890", "A.B.C.D.1234567890", "DOE.JANE.Q.12345678901", "DOE..Q.1234567890"):
+            self.assertFalse(G.card_cn(bad), bad)
+        d = dn("Doe", "Staff")
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        tries = []
+        g.reader.opener = lambda _o: (tries.append(1), (FakeConn(), "dc01", ""))[1]
+        self.assertIsNone(g.account("1234567890")[0])
+        self.assertEqual(tries, [])                                            # no lookup at all
+        h = {"X-SSL-Client-Verify": "SUCCESS", "X-SSL-Client-S-DN": "CN=DOE.JANE.Q.1234567890,CN=ROE.RICH.A.2222222222,O=Example"}
+        self.assertIsNone(sp.who(h)[0])
+
+    def test_12_a_refusal_holds_even_when_the_marker_is_scrubbed(self):
+        calls = []
+
+        def refused(*a, **kw):
+            calls.append(1)
+            return None, None, "the bind was refused: invalidCredentials"
+        r = G.Reader({"servers": [{"fqdn": "dc01.corp.example.mil"}, {"fqdn": "dc02.corp.example.mil"}], "user": "u",
+                      "password": "Credentials"})
+        with patch.object(G.sl, "connect", refused):
+            self.assertIsNone(r.open()[0])
+            self.assertIsNone(r.open()[0])
+        self.assertEqual(calls, [1])                                           # one bind, never the next DC, never again
+        self.assertTrue(r.refused)
+
+
+for _n in [n for n in vars(DirectorC) if n.startswith("test_")]:
+    setattr(Codex1330s, _n, None)
+
+
 class Review1120(unittest.TestCase):
     """The review's findings (Codex): an ambiguous name, a match that names nobody, a partial read, a stale read, a member
     without userAccountControl, a URI as server, a wrong password on every DC, a new card of the same person."""
@@ -783,8 +933,8 @@ class Portal(unittest.TestCase):
     def test_default_card_formats_and_diagnostics(self):
         cn = "EXAMPLE.PERSON.A.1234567890"
         for upn, sam, matched in [
-            ("1234567890@mil", None, "userPrincipalName"),
-            ("1234567890197005@MIL", None, "userPrincipalName"),
+            ("1234567890@mil", "aperson", "userPrincipalName"),
+            ("1234567890197005@MIL", "aperson", "userPrincipalName"),
             ("person@example.invalid", "1234567890.CTR", "sAMAccountName"),
             ("1234567890.ctr@mil", "aperson", None),                  # the UPN .ctr form is not a default any more
             ("1234567890.ctr@mil.example", "1234567890.adm", None),
@@ -1016,9 +1166,8 @@ class CardMatchDefault(unittest.TestCase):
         import re as _re
         d = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "roles", "site_portal_stack", "defaults", "main.yml"),
                  encoding="utf-8").read()
-        m = _re.search(r'^portal_ad_card_match: "([^"]+)"', d, _re.M)
-        self.assertEqual(m.group(1), "{edipi}@mil")
-        pat = G.card_pattern("DOE.JANE.Q.1234567890", m.group(1))
+        self.assertRegex(d, r'(?m)^portal_ad_card_match: ""')            # 1.133.0: unset - set, it is the ONE rule
+        pat = G.card_pattern("DOE.JANE.Q.1234567890", "{edipi}@mil")      # the one rule's form when left out
         for ok in ("1234567890@mil",):
             self.assertTrue(pat.fullmatch(ok), ok)
         for bad in ("9876543210@mil", "1234567890.adm@mil", "12345678901@mil", "1234567890.ctr@mil", "1234567890.ctr@mil.example", "x1234567890@mil", "1234567890@mil\n"):

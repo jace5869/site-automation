@@ -29,14 +29,15 @@
           - not _portal_legacy_card_rule or portal_ad_card_matches is undefined
           - _portal_legacy_card_rule or (portal_ad_card_matches is sequence and portal_ad_card_matches is not string and portal_ad_card_matches is not mapping)
         fail_msg: >-
-          portal_ad_card_matches must be a list and cannot be used with a non-default
-          portal_ad_card_attribute or portal_ad_card_match.
+          portal_ad_card_matches must be a list and cannot be used with
+          portal_ad_card_attribute or portal_ad_card_match (1.132.0's settings: one rule) - use one or the other.
         quiet: true
 
     - name: Preflight | select the AD card match rules
       ansible.builtin.set_fact:
         _portal_ad_card_matches: >-
-          {{ [{'attribute': portal_ad_card_attribute, 'match': portal_ad_card_match}] if _portal_legacy_card_rule else portal_ad_card_matches }}
+          {{ [{'attribute': portal_ad_card_attribute | default('', true) | string | trim or 'userPrincipalName',
+               'match': portal_ad_card_match | default('', true) | string | trim or '{edipi}@mil'}] if _portal_legacy_card_rule else portal_ad_card_matches }}
 
     - name: Preflight | every AD card match identifies the person
       ansible.builtin.assert:
@@ -55,8 +56,8 @@
           - item.match is not search('[*?]')
         fail_msg: >-
           portal_ad_card_matches: "{{ item.match }}" ({{ item.attribute }}) has a * or ?: it
-          would match other accounts of the same person or other people - list the exact suffixes (for example
-          {edipi}@mil, {edipi}.ctr@mil). Nothing was changed.
+          would match other accounts of the same person or other people - list the exact forms (for example
+          userPrincipalName {edipi}@mil, sAMAccountName {edipi}.ctr). Nothing was changed.
         quiet: true
       loop: "{{ _portal_ad_card_matches }}"
       loop_control:
@@ -394,6 +395,8 @@
       - portal_wall_feedback_readers is sequence and portal_wall_feedback_readers is not string
       - portal_wall_feedback_groups | map('string') | map('trim') | select('equalto', '') | list | length == 0
       - portal_wall_feedback_readers | map('string') | map('trim') | select('equalto', '') | list | length == 0
+      - portal_wall_feedback_groups | reject('string') | list | length == 0      # 1.133.0: false / null entries too
+      - portal_wall_feedback_readers | reject('string') | list | length == 0
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0)
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_host | length > 0 or portal_wall_vcenters | default([], true) | length > 0)
       - not (_portal_wall_ontap | bool) or (portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0 and portal_wall_ontap_clusters | length > 0)
@@ -1550,8 +1553,14 @@
          + (['The logo: ' ~ ('on (' ~ _portal_logo_dest ~ ')' if _logo == 'on' else (_logo | default('not shown', true)))] if _portal_logo_dest | length > 0 else [])
          + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
               | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.'])
-         + [_wall_line] }}
+         + [_wall_line] + ([_card_line] if _portal_ldap_on | bool else []) }}
     _acts: "{{ _portal_aap.actions | default({}) }}"
+    # 1.133.0 (Codex #7, #8): where a card's account is looked up, and what the bind account must be able to read
+    _card_line: >-
+      {{ 'AD card lookups: the forms ' ~ (_portal_ad_card_matches | map(attribute='match') | join(', ') or 'none (no card is matched in AD)')
+         ~ '; searched under ' ~ ((portal_ldap_domain | default('', true) | trim | length > 0)
+            | ternary((portal_ldap_domain | trim).split('.') | map('regex_replace', '^', 'DC=') | join(','), 'the answering DC''s domain root'))
+         ~ ' (the DC''s defaultNamingContext first). One domain only; the LDAP Bind Account must be able to read every user object in it.' }}
     # 1.131.0: the wall's on/off and why, and how many network-map places the Map uses (no secret: only whether one is set)
     _wall_line: >-
       {{ {'wall': portal_wall | bool, 'vc_on': _portal_wall_vc | bool, 'vc_mode': portal_wall_vcenter | string,

@@ -3,22 +3,28 @@
 ## 1.133.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. Nothing to change unless your site uses a card form other than the five
-below (the deploy then stops and says so) or sets an old and a new access name to different lists.
+below (the deploy then stops and says so), sets an old and a new access name to different lists, or writes an access
+list as one name instead of a list (`portal_runners: [DOE.JANE.Q.1234567890]`, not without the brackets). The LDAP Bind
+Account must be able to read every user object in the domain (a domain user can by default).
 
 - **A card is one AD account, by five forms only** (`portal_ad_card_matches`): `userPrincipalName` `{edipi}@mil` or
   `{edipi}{digits6}@mil` (16 digits), `sAMAccountName` `{edipi}.ctr`, `.civ` or `.mil`. All five by default; a site
-  keeps a subset. Any other form, attribute, `*` or `?` stops the deploy. The old `portal_ad_card_attribute` /
-  `portal_ad_card_match` pair still works when it is one of the five.
+  keeps a subset. Any other form, attribute, `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute`
+  / `portal_ad_card_match` work as before: either one set is exactly ONE rule (the other at its 1.132.0 default), and
+  cannot be set with the list. A settings value the portal cannot read means no card is matched in AD (said in the log).
 - **No doubt counts.** The account is looked up over the whole domain with `userPrincipalName` and `sAMAccountName`
-  read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches, a
-  returned account cannot be fully read, or the account's values name another EDIPI. A membership counts only for that
+  read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches (one
+  DN with two objectGUIDs is two), a returned account lacks either attribute, the paged search did not end cleanly, a
+  group read lands during the lookup, or the account's values name another EDIPI. A newer lookup's answer always wins.
+  Only a CN shaped LAST.FIRST[.MIDDLE].EDIPI is looked up; a certificate with two CNs is refused. One domain only: the
+  deploy's summary names the base searched. A membership counts only for that
   account's DN and objectGUID (AD's binary and text forms of one GUID compare equal). After a refused LDAP login the portal binds no more until the next deploy, even when a
   group read was already under way.
 - **Plain access names:** `portal_viewers`, `portal_view_groups`, `portal_runners`, `portal_run_groups`,
   `portal_approve_groups` (were `portal_readers`, `portal_reader_groups`, `portal_requesters`,
   `portal_requester_groups`, `portal_approver_groups`; the old names still work). The portal's messages use the new names.
 - **Deploy refusals:** an old and a new name set to different lists; a blank entry, `false` or `null` in any access
-  list (approvers and runners too).
+  list (approvers, runners and the wall's feedback lists too).
 - Records, approvals and job visibility are unchanged.
 - Tests: `tests/test_ad_groups.py`, `tests/test_portal_access_settings.py`, `tests/test_portal_readers.py`; the portal
   e2e checks the card forms reach the portal.

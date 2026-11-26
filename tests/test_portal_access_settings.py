@@ -68,11 +68,31 @@ class DeployAccess(unittest.TestCase):
             "pattern_only": {"portal_ad_card_match": "{edipi}{digits6}@mil", "expected_rules": [defaults[4]]},
             "legacy": {"portal_ad_card_attribute": "sAMAccountName", "portal_ad_card_match": "{edipi}.ctr", "expected_rules": custom},
             "custom": {"portal_ad_card_matches": custom, "expected_rules": custom},
-            "legacy_defaults": {"portal_ad_card_attribute": "userPrincipalName", "portal_ad_card_match": "{edipi}@mil",
-                                "portal_ad_card_matches": custom, "expected_rules": custom},
             "empty": {"portal_ad_card_matches": [], "expected_rules": []},
+            # Codex 1.133.0 #2: either 1.132.0 setting alone is ONE rule, the other at its 1.132.0 default - never the five
+            "match_only_default": {"portal_ad_card_match": "{edipi}@mil", "expected_rules": [defaults[0]]},
+            "attribute_only_default": {"portal_ad_card_attribute": "userPrincipalName", "expected_rules": [defaults[0]]},
+            "attribute_only_sam": {"portal_ad_card_attribute": "sAMAccountName", "portal_ad_card_match": "{edipi}.civ",
+                                   "expected_rules": [defaults[2]]},
+            "both_defaults": {"portal_ad_card_attribute": "userPrincipalName", "portal_ad_card_match": "{edipi}@mil",
+                              "expected_rules": [defaults[0]]},
         })
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_codex_1330s_2_a_132_setting_with_the_list_stops_deploy(self):
+        run = self.deploy({"legacy_defaults": {"portal_ad_card_attribute": "userPrincipalName", "portal_ad_card_match": "{edipi}@mil",
+                                               "portal_ad_card_matches": [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}]},
+                           "match_default": {"portal_ad_card_match": "{edipi}@mil", "portal_ad_card_matches": []}})
+        self.assertNotEqual(run.returncode, 0)
+        for host in ("legacy_defaults", "match_default"):
+            self.assertRegex(run.stdout, rf"fatal: \[{host}\].*portal_ad_card_matches.*portal_ad_card_attribute or portal_ad_card_match")
+
+    def test_codex_1330s_16_false_or_null_in_the_wall_lists_stops_deploy(self):
+        tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        that = next(t for t in tasks if "portal_wall_feedback_groups is sequence and portal_wall_feedback_groups is not string"
+                    in (t.get("ansible.builtin.assert") or {}).get("that", []))["ansible.builtin.assert"]["that"]
+        self.assertIn("portal_wall_feedback_groups | reject('string') | list | length == 0", that)
+        self.assertIn("portal_wall_feedback_readers | reject('string') | list | length == 0", that)
 
     def test_conflicting_card_rules_and_unsafe_patterns_stop_deploy(self):
         run = self.deploy({
@@ -109,7 +129,7 @@ class DeployAccess(unittest.TestCase):
         })
         self.assertNotEqual(run.returncode, 0)
         for host in ("edipi_star", "cn_q", "legacy_star", "before", "piv_star", "dot_star"):
-            self.assertRegex(run.stdout, rf"failed: \[{host}\].*would match other accounts of the same person or other people - list the exact suffixes")
+            self.assertRegex(run.stdout, rf"failed: \[{host}\].*would match other accounts of the same person or other people - list the exact forms \(for example userPrincipalName \{{edipi\}}@mil, sAMAccountName \{{edipi\}}.ctr\)")
         for host in ("alt", "legacy_alt", "employee_id", "not_a_form", "adm", "sam_only"):     # the five forms only
             self.assertRegex(run.stdout, rf"failed: \[{host}\].*is not a card\s+form")
         self.assertNotRegex(run.stdout, r"(failed|fatal): \[(subset|piv)\]")

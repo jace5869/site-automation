@@ -1,7 +1,7 @@
 # Credential type: "LDAP Bind Account"
 # 1.120.0: a plain domain account the site portal reads its AD groups with (portal_view_groups, portal_approve_groups, portal_run_groups:
-# docs/SITE_PORTAL.md, "Approvers from AD groups") - read-only, nothing granted: any domain user may read group members
-# and the users' userPrincipalName. The user as AD takes it: a UPN (svc_aap_adreader@corp.example.mil), DOMAIN\user or a DN.
+# docs/SITE_PORTAL.md, "Approvers from AD groups") - read-only, nothing granted; it must be able to read every user
+# object in the domain (userPrincipalName, sAMAccountName, userAccountControl, objectGUID) - a domain user can by default. The user as AD takes it: a UPN (svc_aap_adreader@corp.example.mil), DOMAIN\user or a DN.
 # The injector sets microsoft.ad's own environment pair, so the microsoft.ad modules and lookups take it as it is too. A
 # site that has its own type already: keep it, and point portal_ldap_vars at its injector's names (Credential Types > the
 # type > Injector configuration). The password reaches the job only through its environment, never a command line or an

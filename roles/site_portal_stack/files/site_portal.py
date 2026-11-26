@@ -572,16 +572,9 @@ class Config(object):
                           "ports": {"ldaps": int(g("PORTAL_LDAP_LDAPS_PORT", "636")), "ldap": int(g("PORTAL_LDAP_PORT", "389"))},
                           "starttls": flag(g("PORTAL_LDAP_STARTTLS", "0")), "validate": flag(g("PORTAL_LDAP_VERIFY", "1")),
                           "ca_file": e.get("SSL_CERT_FILE", ""), "timeout": max(2, min(60, int(g("PORTAL_LDAP_TIMEOUT", "5")))),
-                          "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
-        # 1.133.0: the closed list of five card forms (the deploy writes PORTAL_AD_CARD_MATCHES); a settings file from an
-        # older deploy has the one attribute / match pair, taken when it is one of the five forms
-        try:
-            cm = g("PORTAL_AD_CARD_MATCHES", "")
-            cm = json.loads(cm) if isinstance(cm, str) and cm.strip() else (None if cm in ("", None) else cm)
-            self.ldap_opts["matches"] = cm if cm is None or isinstance(cm, list) else "unreadable"     # not a list: no group counts
-        except ValueError:
-            self.ldap_opts["matches"] = "unreadable"
-        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
+                          "attribute": "userPrincipalName"}
+        self.ldap_opts["matches"] = card_rules_of(e)
+        self.card_match = "{edipi}@mil"
         self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
         # 1.130.0: the wall's Feedback - on/off, who sees and may use the button ([] = everyone who may open the wall), who may read
         # the list ([] = the approvers); the same LDAP read as the approvers' groups
@@ -734,6 +727,25 @@ def dn_parts(dn):
     return parts
 
 
+def card_rules_of(e):
+    """1.133.0: the card forms from the settings. PORTAL_AD_CARD_MATCHES (the deploy writes it) is taken as it is; set but
+    not a list (null, empty, not JSON - Codex 1.133.0 #10): "unreadable", so no card is matched in AD (said in the log),
+    never the five defaults. Not set (a settings file from 1.132.0 or before): its one attribute / match pair is the ONE
+    rule, each at its 1.132.0 default when left out, exactly as 1.132.0 matched (Codex 1.133.0 #2). Neither: the five."""
+    if "PORTAL_AD_CARD_MATCHES" in e:
+        cm = e.get("PORTAL_AD_CARD_MATCHES")
+        if isinstance(cm, str):
+            try:
+                cm = json.loads(cm)
+            except ValueError:
+                cm = None
+        return cm if isinstance(cm, list) else "unreadable"
+    attr, match = e.get("PORTAL_AD_CARD_ATTRIBUTE"), e.get("PORTAL_AD_CARD_MATCH")
+    if attr not in (None, "") or match not in (None, ""):
+        return [{"attribute": str(attr or "userPrincipalName").strip(), "match": str(match or "{edipi}@mil").strip()}]
+    return None
+
+
 def who(headers):
     """The request's person -> (user, subject), or (None, why): user is the subject's CN (a CAC's LAST.FIRST.MI.EDIPI)."""
     verify = (headers.get(VERIFY_HEADER) or "").strip()
@@ -744,6 +756,8 @@ def who(headers):
     cn = [v for k, v in dn_parts(dn) if k == "CN"]
     if not dn or not cn or not cn[0]:
         return None, "The client certificate has no subject name (CN)."
+    if len(cn) > 1:                                       # Codex 1.133.0 #9: a card names one person - never the first of two
+        return None, "The client certificate names more than one subject name (CN)."
     if rules.templating(cn[0]) or len(cn[0]) > 200:
         return None, "The client certificate's name (CN) holds characters the portal does not accept."
     return cn[0], dn
