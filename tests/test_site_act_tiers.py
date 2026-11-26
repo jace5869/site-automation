@@ -69,6 +69,10 @@ def pairs(s):
         i, _, c = x.partition("=")
         out.append((i, int(c) if c not in ("", "none") else None))
     return out
+if step.startswith("sleep:"):
+    import time
+    time.sleep(float(step.split(":")[1]))
+    step = "items:P1=90"
 if step == "fail":
     rec.update(status="error", stop_reason="HTTP 500 from the model")
 elif step.startswith("items:"):
@@ -375,8 +379,8 @@ class Tiers(unittest.TestCase):
                       {"items": _items("P3"), "evidence": "e3", "task": "f"}, {"items": _items("P4"), "evidence": "e4", "task": "c"},
                       {"items": _items("P5"), "evidence": "e5", "task": "n"}], retries=1)
         calls = self.by_model()
-        # the worker: each once, a failed one once more (site_act_retries), an unreadable one never again (the smart model reads it)
-        self.assertEqual(calls["worker-model"], ["c", "f", "f", "n", "p", "u"])
+        # the worker: each once - never a second try (Codex r1): the smart model is its second try
+        self.assertEqual(calls["worker-model"], ["c", "f", "n", "p", "u"])
         # the smart model: each once - an unsure smart answer is final (no loop) - and the verdict
         self.assertEqual(calls["smart-model"], sorted(["u", "p", "f", "c", "n", A.SYNTH_TASK]))
         self.assertEqual([q["tier"] for q in r["questions"]], ["escalated"] * 5)
@@ -403,7 +407,7 @@ class Tiers(unittest.TestCase):
         self.assertTrue(q0["ran"])
         self.assertEqual((q0["tier"], q0["model"]), ("worker", "worker-model"))
         self.assertIn("HTTP 500", q0["escalation_failed"])
-        self.assertIn("1 item(s) keep the worker's answer: the smart model gave none.", r["tiers"]["note"])
+        self.assertIn("1 item(s) keep the worker's answer: the smart model's answer did not come or could not be read.", r["tiers"]["note"])
 
     def test_both_fail_says_the_smart_models_reason(self):
         self.rig.set_plan({"*": ["fail"]})
@@ -608,6 +612,144 @@ class Wiring(unittest.TestCase):
         for p in (("roles", "servicenow_war", "tasks", "main.yml"), ("roles", "vmware_vm", "tasks", "outage_act.yml")):
             self.assertNotIn("_eb_tiers", self.read(*p))
         self.assertNotIn("_ask_tiers", self.read("roles", "site_act", "tasks", "evidence_analysis.yml"))
+
+
+class ReviewRound1Codex(unittest.TestCase):
+    def setUp(self):
+        self.rig = Rig(A, Server.url())
+
+    def tearDown(self):
+        self.rig.close()
+
+    def ask(self, questions, **kw):
+        kw.setdefault("tiers", tiers())
+        return self.rig.ask(questions, **kw)
+
+    def models(self):
+        return sorted((c["model"], c["task"]) for c in self.rig.calls())
+
+    def test_a_verdicts_failure_never_shows_a_key(self):
+        self.rig.set_plan({"worker-model|t": ["items:P1=90"], "smart-model|" + A.SYNTH_TASK: ["fail"]})
+        A_run = A.run_act
+        def run_act(*a, **k):
+            rec = A_run(*a, **k)
+            if rec.get("status") == "error":
+                rec["stop_reason"] = "HTTP 401 from https://gw.example.mil/v1?key=SECRET-123 password=hunter2"
+            return rec
+        A.run_act = run_act
+        try:
+            r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], retries=0)
+        finally:
+            A.run_act = A_run
+        self.assertIn("could not be written", r["tiers"]["note"])
+        self.assertNotIn("SECRET-123", json.dumps(r["tiers"]))
+        self.assertNotIn("hunter2", json.dumps(r["tiers"]))
+
+    def test_the_verdict_reads_no_quoted_line(self):
+        self.rig.set_plan({"worker-model|t": ["BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"P1\", \"cause\": \"c\", \"fix\": \"f\", "
+                                              "\"evidence\": \"LOG-LINE-ONE\\nLOG-LINE-TWO\", \"confidence\": 90}]} END_ACT_ANALYSIS"],
+                           "smart-model|" + A.SYNTH_TASK: ["overall:v"]})
+        self.ask([{"items": _items("P1"), "evidence": "LOG-LINE-ONE\nLOG-LINE-TWO", "task": "t"}])
+        syn = [c for c in self.rig.calls() if c["task"] == A.SYNTH_TASK][0]["stdin"]
+        self.assertNotIn("LOG-LINE", syn)
+
+    def test_at_most_one_worker_call_and_the_smart_models_tries(self):
+        self.rig.set_plan({"*": ["fail"]})
+        self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], retries=1)
+        self.assertEqual(self.models(), [("smart-model", "t"), ("smart-model", "t"), ("worker-model", "t")])
+
+    def test_a_worker_that_spent_the_time_is_not_re_asked(self):
+        self.rig.set_plan({"worker-model|t": ["nothing"], "smart-model|t": ["items:P1=90"]})
+        A_run = A.run_act
+        def run_act(*a, **k):
+            rec = A_run(*a, **k)
+            rec.update(status="error", summary="", _timed_out=True, stop_reason="ACT ran out of time")
+            return rec
+        t0 = A.time.time
+        A.run_act = run_act
+        clock = [1000.0]
+        A.time.time = lambda: clock[0]
+        def run_slow(*a, **k):
+            clock[0] += 40                                   # the worker's run takes the question's whole time
+            return run_act(*a, **k)
+        A.run_act = run_slow
+        try:
+            r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], timeout=40, retries=0)
+        finally:
+            A.run_act, A.time.time = A_run, t0
+        self.assertEqual([c["model"] for c in self.rig.calls()], ["worker-model"])
+        self.assertIn("no time left", r["questions"][0]["escalation_failed"])
+
+    def test_a_cached_smart_answer_holds_when_the_model_cannot_be_reached(self):
+        qs = [{"items": _items("P1"), "evidence": "e1", "task": "a"}]
+        self.rig.set_plan({"worker-model|a": ["items:P1=30"], "smart-model|a": ["items:P1=95"]})
+        self.ask(copy.deepcopy(qs), tiers=tiers(synth=False), cache=self.rig.cache())
+        self.rig.set_plan({"*": ["items:P2=90"]})
+        reach = A.reach
+        A.reach = lambda *a, **k: (False, "Request failed: connection refused")     # the same URL (in the key), not reached
+        try:
+            r = self.ask(copy.deepcopy(qs) + [{"items": _items("P2"), "evidence": "e2", "task": "b"}], tiers=tiers(synth=False),
+                         cache=self.rig.cache())
+        finally:
+            A.reach = reach
+        self.assertEqual(self.rig.calls(), [])
+        q0 = r["questions"][0]
+        self.assertEqual((q0["tier"], q0["model"]), ("escalated", "smart-model"))
+        self.assertIn("by smart-model", q0["summary"])
+        self.assertIn("cannot reach the model", r["questions"][1]["reason"])
+
+    def test_a_worker_that_acts_own_default_already_is_one_tier(self):
+        os.environ["GENAI_BETA_MODEL"] = "worker-model"
+        try:
+            r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], provider="genai-beta", model="",
+                         tiers=tiers(workers={"genai-beta": "worker-model"}),
+                         env_extra={"GENAI_MODEL": None, "GENAI_BETA_URL": "<url>"})
+        finally:
+            del os.environ["GENAI_BETA_MODEL"]
+        self.assertEqual(r["tiers"]["on"], False)
+        self.assertIn("is the smart model", r["tiers"]["why"])
+
+    def test_an_unreadable_smart_answer_never_replaces_a_readable_worker_one(self):
+        self.rig.set_plan({"worker-model|t": ["items:P1=40"], "smart-model|t": ["just words"]})
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False), retries=0)
+        q0 = r["questions"][0]
+        self.assertEqual((q0["tier"], q0["model"]), ("worker", "worker-model"))
+        self.assertIn("could not be read", q0["escalation_failed"])
+        self.assertEqual(r["tiers"]["items"]["worker"], 1)
+
+    def test_the_counts_are_the_items_answered(self):
+        self.rig.set_plan({"smart-model|t": ["items:P1=90"]})
+        r = self.ask([{"items": _items("P1", "P2", severity="critical"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        self.assertEqual(r["tiers"]["items"], {"worker": 0, "smart": 1, "escalated": 0, "none": 1})
+        self.assertIn("1 item(s) not answered.", r["tiers"]["note"])
+
+    def test_a_confidence_alone_is_no_answer(self):
+        self.rig.set_plan({"worker-model|t": ["BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"P1\", \"confidence\": 90}]} END_ACT_ANALYSIS"],
+                           "smart-model|t": ["items:P1=90"]})
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        self.assertEqual((r["questions"][0]["tier"], r["questions"][0]["escalated"]), ("escalated", "unreadable"))
+
+    def test_a_malformed_answer_leaves_the_others(self):
+        self.rig.set_plan({"worker-model|a": ["BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"P1\", \"cause\": \"c\", \"confidence\": 90}], "
+                                              "\"causes\": \"disk\"} END_ACT_ANALYSIS"],
+                           "worker-model|b": ["items:P2=90"], "smart-model|a": ["items:P1=90"]})
+        r = self.ask([{"items": _items("P1"), "evidence": "e1", "task": "a"}, {"items": _items("P2"), "evidence": "e2", "task": "b"}],
+                     tiers=tiers(synth=False))
+        self.assertTrue(all(q["ran"] for q in r["questions"]))
+        self.assertEqual(r["questions"][1]["tier"], "worker")
+
+    def test_reply_objects_unwrapped(self):
+        inner = ("BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"P1\", \"cause\": \"c\", \"fix\": \"f\", \"confidence\": 95, "
+                 "\"critical\": true}]} END_ACT_ANALYSIS")
+        self.rig.set_plan({"worker-model|t": [json.dumps({"summary": inner})], "smart-model|t": ["items:P1=90"],
+                           "smart-model|" + A.SYNTH_TASK: [json.dumps({"message": "BEGIN_ACT_ANALYSIS {\"overall\": \"wrapped verdict\"} END_ACT_ANALYSIS"})]})
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}, {"items": _items("P2"), "evidence": "e2", "task": "u"}])
+        self.assertEqual(r["questions"][0]["escalated"], "critical")
+        self.assertEqual(r["tiers"]["synth"]["overall"], "wrapped verdict")
+
+    def test_the_answer_keys_tiers_off_keep_1136s_shape(self):
+        with open(os.path.join(REPO, "roles", "site_act", "tasks", "evidence_many.yml")) as fh:
+            self.assertIn("combine({'tier': a.tier} if a.tier is defined else {})", fh.read())
 
 
 def make_golden(engine, path):

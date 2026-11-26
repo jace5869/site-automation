@@ -53,8 +53,9 @@
       {%- set out = {} -%}
       {%- for q in _em_questions | default([]) -%}
       {%-   set a = _ea_ask.questions[loop.index0] -%}
+      {#- 1.137.0: tier only with model tiers - without them, each answer as 1.136.0's (Codex r1) -#}
       {%-   set _ = out.update({q.key: {'ran': a.ran | bool, 'raw': a.summary | act_answer_text, 'reason': a.reason,
-                                        'model': a.model, 'tier': a.tier | default('')}}) -%}
+                                        'model': a.model} | combine({'tier': a.tier} if a.tier is defined else {})}) -%}
       {%- endfor -%}
       {{ out }}
     _ea_why_not: "{{ _ea_ask.why_not }}"

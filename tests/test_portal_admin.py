@@ -905,7 +905,8 @@ class CodexR133(Admin):
         self.assertIn("must that person also be allowed to run it", guide)
         ref = (root / "docs" / "VARIABLES_REFERENCE.md").read_text()
         self.assertNotIn("Each action can also grant access through who", ref)          # Neon r2 #7
-        log = (root / "CHANGELOG.md").read_text().split("## 1.133.0")[0]
+        # 1.134.0's own section (1.136.0's, merged above it, does say "To set up: nothing.")
+        log = (root / "CHANGELOG.md").read_text().split("## 1.134.0")[1].split("## 1.133.0")[0]
         self.assertNotIn("To set up: nothing", log)
         self.assertIn("portal_admin_groups", log)                                     # 1.134.0: who may use the Admin page
         self.assertIn("Site portal - deploy", log)

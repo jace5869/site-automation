@@ -344,34 +344,71 @@ def judge(form, row, items, sure=SURE):
     s = row.get("summary")
     try:
         if form == "verdict":
-            v = _reader("cross", ("filter", "stig_answer_cross_filters.py"), "stig_answer_cross_act_answer")(_text(s))
+            v = _reader("cross", ("filter", "stig_answer_cross_filters.py"), "stig_answer_cross_act_answer")(answer_text(s))
             return "" if v.get("verdict") else "unsure"
         if form == "code":
-            t = _text(s)
+            t = answer_text(s)
             ok = (_reader("keys", ("filter", "stig_answer_filters.py"), "stig_answer_act_code")(t)
                   or _reader("keys", ("filter", "stig_answer_filters.py"), "stig_answer_act_needs")(t))
             return "" if ok else "unreadable"
         r = _parser()(s, items)
+        if not r.get("parsed"):
+            return "unreadable"
+        asked = [_pid(i.get("id")) for i in items if isinstance(i, dict)]
+        # the analysis as the reader finds it, a reply object ({"summary": ...}, {"message": ...}) unwrapped (Codex r1)
+        raw = _cache()[0]._analysis(answer_text(s))
+        if isinstance(raw, dict):
+            for x in _list(raw.get("items")) + _list(raw.get("causes")):
+                if isinstance(x, dict) and any(_crit(x.get(f)) for f in ("critical", "severity", "level")):
+                    return "critical"
+        by = r.get("by_id") or {}
+        for pid in asked:
+            rec = by.get(pid)
+            if not isinstance(rec, dict):
+                return "unreadable"         # an item left out
+            if rec.get("noise"):
+                continue
+            if not (str(rec.get("cause") or "").strip() or str(rec.get("fix") or "").strip()):
+                return "unreadable"         # a confidence alone says nothing (Codex r1)
+            if rec.get("confidence") is None or rec["confidence"] < sure:
+                return "unsure"
+        return ""
+    except Exception:                   # an answer of a shape no reader expects: not the worker's to settle
+        return "unreadable"
+
+
+def _list(v):
+    return v if isinstance(v, list) else []
+
+
+def answer_text(v):
+    """ACT's answer as the jobs' reader takes it (act_answer_text: a reply object unwrapped), as text."""
+    try:
+        return _text(_reader("alarm", ("filter", "vmware_alarm_filters.py"), "act_answer_text")(v))
     except Exception:
-        return "unreadable"
-    if not r.get("parsed"):
-        return "unreadable"
-    asked = [_pid(i.get("id")) for i in items if isinstance(i, dict)]
-    raw = _cache()[0]._analysis(_cache()[0]._unwrap(_text(s)))
-    if isinstance(raw, dict):
-        for x in (raw.get("items") or []) + (raw.get("causes") or []):
-            if isinstance(x, dict) and any(_crit(x.get(f)) for f in ("critical", "severity", "level")):
-                return "critical"
-    by = r.get("by_id") or {}
-    for pid in asked:
-        rec = by.get(pid)
-        if not isinstance(rec, dict):
-            return "unreadable"         # an item left out
-        if rec.get("noise"):
-            continue
-        if rec.get("confidence") is None or rec["confidence"] < sure:
-            return "unsure"
-    return ""
+        return _text(v)
+
+
+def safe(v, n=300):
+    """A reason as the report may show it: redacted (site_redact), no URL's query (a gateway key), cut."""
+    try:
+        C = _cache()[0]
+        t = C._scrub(C._redact_all(_text(v)))
+    except Exception:
+        t = _text(v)
+    return _cut(re.sub(r"\?[^\s'\")>]*", "?<removed>", t), n)
+
+
+def answered(row, items, form):
+    """The items a question's answer really answers: for an analysis, the ones it says something about; else all."""
+    ids = [str(x) for x in (row.get("ids") or [])]
+    if form != "analysis" or not row.get("ran"):
+        return len(ids) if row.get("ran") else 0
+    try:
+        by = _parser()(row.get("summary"), items).get("by_id") or {}
+    except Exception:
+        return 0
+    return sum(1 for i in ids if _pid(i) in by)
 
 
 def _cut(v, n):
@@ -381,8 +418,8 @@ def _cut(v, n):
 
 def synth_evidence(done):
     """What the smart model reads for the verdict: per item of the answered questions ([(row, items)]) its id, who answered,
-    the cause, the fix, how sure, and at most one cut line it quoted - never the evidence itself. Redacted (site_redact,
-    every URL's query) as a kept answer. '' when there is nothing."""
+    the cause, the fix and how sure - never the evidence, nor a line the answer quoted from it (Codex r1). Redacted
+    (site_redact, every URL's query) as a kept answer. '' when there is nothing."""
     C = _cache()[0]
     lines = []
     for row, items in done:
@@ -411,9 +448,6 @@ def synth_evidence(done):
             for k in ("estimate", "recommendation"):
                 if rec.get(k):
                     parts.append("%s: %s" % (k, _cut(rec[k], 200)))
-            ev = str(rec.get("evidence") or "").strip().splitlines()
-            if ev:
-                parts.append("quoted: " + _cut(ev[0], 160))
             lines.append(" ".join(parts))
     if not lines:
         return ""
@@ -423,8 +457,9 @@ def synth_evidence(done):
 
 
 def synth_read(summary):
-    """The smart model's verdict: the JSON's overall between the markers (or the last {...}) - '' when none."""
-    t = _text(summary)
+    """The smart model's verdict: the JSON's overall between the markers (or the last {...}) - '' when none. A reply
+    object ({"message": ...}) unwrapped first."""
+    t = answer_text(summary)
     cands = re.findall(r"BEGIN_ACT_ANALYSIS\s*(.*?)\s*END_ACT_ANALYSIS", t, re.S)
     i, j = t.find("{"), t.rfind("}")
     if 0 <= i < j:
@@ -450,7 +485,7 @@ def synth_store(summary):
                                                     sort_keys=True), C.MARK_END)
 
 
-def tiers_summary(T, rows, todo, syn):
+def tiers_summary(T, rows, todo, syn, questions=()):
     """The result's tiers: the models, the items each answered (worker, smart at once, escalated: re-asked after the
     worker), why they were re-asked, the verdict - and the report's line (note)."""
     n = {"worker": 0, "smart": 0, "escalated": 0, "none": 0}
@@ -458,10 +493,11 @@ def tiers_summary(T, rows, todo, syn):
     for i in todo:
         r = rows[i]
         k = len(r.get("ids") or [])
-        if not r.get("ran"):
-            n["none"] += k
-        else:
-            n[r.get("tier") if r.get("tier") in n else "smart"] += k
+        items = [x for x in ((questions[i].get("items") if i < len(questions) else None) or []) if isinstance(x, dict)]
+        got = answered(r, items, T["form"])     # the items its answer says something about (Codex r1)
+        n["none"] += k - got
+        if got:
+            n[r.get("tier") if r.get("tier") in n else "smart"] += got
         if r.get("escalated"):
             why[r["escalated"]] = why.get(r["escalated"], 0) + k
         if r.get("escalation_failed"):
@@ -474,11 +510,11 @@ def tiers_summary(T, rows, todo, syn):
     if n["none"]:
         note += " %d item(s) not answered." % n["none"]
     if failed:
-        note += " %d item(s) keep the worker's answer: the smart model gave none." % failed
+        note += " %d item(s) keep the worker's answer: the smart model's answer did not come or could not be read." % failed
     if syn.get("ran"):
         note += " The overall verdict: the smart model, from the answers."
     elif syn.get("asked") or syn.get("reason"):
-        note += " The overall verdict could not be written (%s): each batch's own." % _cut(syn.get("reason"), 160)
+        note += " The overall verdict could not be written (%s): each batch's own." % safe(syn.get("reason"), 160)
     return {"on": True, "worker": T["worker"], "smart": T["smart"], "form": T["form"], "items": n, "escalated_why": why,
             "escalation_failed": failed, "synth": syn, "note": note}
 
@@ -678,7 +714,11 @@ class ActionModule(ActionBase):
 
         # 1.137.0: model tiers (site_act_worker_model; tiers_plan): {} when off - then everything below is 1.136.0's
         smart = _effective_model(model, eprov, aenv)
-        T = tiers_plan(a.get("tiers"), eprov, smart)
+        # 1.137.0 (Codex r1): for the tiers, the model ACT would use also when only the execution environment sets it - a
+        # worker that is that model is one tier, and the smart questions are keyed with it
+        T = tiers_plan(a.get("tiers"), eprov, smart or str(os.environ.get(MODEL_SETTING.get(eprov, "GENAI_MODEL")) or ""))
+        if T.get("on"):
+            smart = T["smart"]
         if T.get("why"):
             out["tiers"] = {"on": False, "why": T["why"]}
         T = T if T.get("on") else {}
@@ -751,8 +791,9 @@ class ActionModule(ActionBase):
             j = {"i": i, "n": n, "row": row, "task": _text(q.get("task")), "piped": piped[i], "own": _text(q.get("cache_key")),
                  "items": [x for x in (q.get("items") or []) if isinstance(x, dict)], "qnames": q.get("names") or [],
                  "settings": settings, "mdl": smart, "fallback": model, "again": again_unreadable}
-            if tier == "worker":
-                j.update(settings=dict(settings, **{mset: T["worker"]}), mdl=T["worker"], fallback=T["worker"], again=False)
+            if tier == "worker":     # no second try of the worker: the smart model is its second try (Codex r1)
+                j.update(settings=dict(settings, **{mset: T["worker"]}), mdl=T["worker"], fallback=T["worker"], again=False,
+                         retries=0)
             if tier:
                 row["tier"] = tier
             return j
@@ -814,7 +855,10 @@ class ActionModule(ActionBase):
             return ""
 
         def one(j):
-            r, timeout, retries = j["row"], ready["timeout"], ready["retries"]
+            r, timeout, retries = j["row"], ready["timeout"], j.get("retries", ready["retries"])
+            # 1.137.0 (Codex r1): a question re-asked of the smart model has only the time its worker left
+            timeout = min(timeout, int(j["budget"])) if "budget" in j else timeout
+            begun = time.time()
             rec = {}
             try:
                 own = names + [str(n) for n in j["qnames"] if n not in (None, "")]
@@ -849,6 +893,7 @@ class ActionModule(ActionBase):
                 r["stop_reason"] = str(rec.get("stop_reason") or "")
                 r["model"] = str(rec.get("model") or j["fallback"])
                 r["ran"] = r["status"] != "error" and bool(r["summary"])
+                j["spent"] = time.time() - begun
                 if not r["ran"]:
                     r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider,
                                                                           _plain_url(url))
@@ -860,6 +905,7 @@ class ActionModule(ActionBase):
                 r.update(asked=r["tries"] > 0, ran=False, status="error", summary="",
                          stop_reason="%s while asking" % type(e).__name__,
                          reason="ACT could not be asked (%s in site_act_ask)." % type(e).__name__)
+            j["spent"] = time.time() - begun
             return j
 
         def wave(jobs):
@@ -888,28 +934,47 @@ class ActionModule(ActionBase):
             if wave(pending) and not T:
                 return out
             syn = {"asked": False, "ran": False, "overall": "", "reason": "", "model": "", "cached": ""}
-            if T and not ready.get("why"):
+            if T:
                 # the second wave: each worker answer that is no answer, unreadable, unsure or says critical (judge) - its
                 # question asked once more, of the smart model, with the same task and evidence; the smart answer is
                 # final, whatever it says (never back to the worker, never a third time)
                 esc = []
+                full = max(1, int(a.get("timeout") or 1200))
                 for j in first:
                     if j["row"].get("tier") != "worker":
                         continue
                     j["why"] = judge(T["form"], j["row"], j["items"], T["sure"])
-                    if j["why"]:
-                        e = dict(j["row"], asked=False, ran=False, status="", summary="", stop_reason="", model=model,
-                                 tries=0, reason="", cached="")
-                        esc.append(dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j))
+                    if not j["why"]:
+                        continue
+                    e = dict(j["row"], asked=False, ran=False, status="", summary="", stop_reason="", model=model,
+                             tries=0, reason="", cached="")
+                    ej = dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j)
+                    left = full - j.get("spent", 0)
+                    if left < min(30, max(1, full // 4)):           # the worker spent the question's time (Codex r1)
+                        j["row"]["escalation_failed"] = "no time left for the smart model (site_act_timeout)"
+                        continue
+                    if j.get("spent"):
+                        ej["budget"] = left
+                    esc.append(ej)
                 wave(lookup(esc))
                 for e in esc:
-                    w, r = e["worker"], e["worker"]["row"]
-                    if e["row"]["ran"]:
-                        r.update(e["row"], tier="escalated", escalated=w["why"])
+                    w, r, s = e["worker"], e["worker"]["row"], e["row"]
+                    tried = bool(s["asked"] or s["cached"])
+                    # the smart model's answer stands when it can be read, or when the worker's could not either (Codex r1)
+                    good = s["ran"] and (judge(T["form"], s, w["items"], 0) not in ("no answer", "unreadable")
+                                         or w["why"] in ("no answer", "unreadable"))
+                    if good:
+                        r.update(s, tier="escalated", escalated=w["why"])
+                    elif not tried:     # nothing could be asked (the model not reached ...): not re-asked
+                        if r["ran"]:
+                            r.update(escalation_failed=safe(s["reason"] or "the smart model could not be asked"))
+                        else:
+                            r.update(reason=s["reason"] or r["reason"])
                     elif r["ran"]:      # the worker's answer stays, said
-                        r.update(escalated=w["why"], escalation_failed=e["row"]["reason"] or "the smart model gave no answer")
+                        r.update(escalated=w["why"], escalation_failed=safe((s["reason"] if not s["ran"] else "")
+                                                                            or "the smart model's answer could not be read"))
                     else:               # neither answered: the smart model's reason
-                        r.update(escalated=w["why"], reason=e["row"]["reason"] or r["reason"])
+                        r.update(escalated=w["why"], reason=s["reason"] or r["reason"])
                 # the third: the smart model reads the answers (never the evidence) and writes the cross-item verdict
                 done = [(rows[i], [x for x in (questions[i].get("items") or []) if isinstance(x, dict)]) for i in todo if rows[i]["ran"]]
                 if (T["form"] == "analysis" and T["synth"] and done
@@ -928,9 +993,9 @@ class ActionModule(ActionBase):
                             wave(lookup([sj]))
                             got = synth_read(srow["summary"]) if srow["ran"] else ""
                             syn.update(asked=srow["asked"], ran=bool(got), overall=got, model=srow["model"], cached=srow["cached"],
-                                       reason="" if got else (srow["reason"] or "the smart model's summary could not be read"))
+                                       reason="" if got else safe(srow["reason"] or "the smart model's summary could not be read"))
             if T:
-                out["tiers"] = tiers_summary(T, rows, todo, syn)
+                out["tiers"] = tiers_summary(T, rows, todo, syn, questions)
         finally:
             if ready.get("work"):
                 shutil.rmtree(ready["work"], ignore_errors=True)
