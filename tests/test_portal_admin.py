@@ -1138,6 +1138,57 @@ class Codex1340R2(Codex1340):
         self.assertEqual(code, 409, out)
         self.assertFalse(self.api.writes)
 
+    def test_r3_3_12_a_run_older_than_the_window_keeps_its_starter(self):
+        self.cfg.approvers.clear()
+        self.cfg.requesters.append(RUN)
+        here = access.controller_id(self.cfg.aap_url)
+        self.portal.log.add({"event": "launch", "user": APPROVE, "action": "flow", "job_id": 77, "controller": here,
+                             "template_key": "wf_2", "template_name": FLOW})
+        for j in range(3):                                                      # later launches push it out of the window
+            self.portal.log.add({"event": "launch", "user": "OTHER", "action": "example", "job_id": 900 + j})
+        self.save("wf_2", add_approve_groups=APP_GROUP, add_run_groups=GROUP)
+        self.aap.user = "example-service-new"                                    # the portal's AAP account changed since
+        self.portal.wf_info[77]["wj"]["summary_fields"] = {"created_by": {"username": "example-service-old"}}
+        with patch.object(self.portal, "launched", lambda: {}):                  # out of the last LAUNCH_LIMIT
+            rows = json.loads(self.http("/api/approvals", APPROVE)[1])["approvals"]
+            self.assertEqual((rows[0]["may_decide"], rows[0]["why"]), (False, "self"))         # #3: still her own run
+            code, out = self.portal.decide(APPROVE, "192.0.2.1", 7, "approve")
+            self.assertEqual(code, 403, out)
+            self.assertFalse(self.api.writes)
+
+    def test_r3_8_a_stamp_with_an_empty_label_is_damage(self):
+        self.cfg.aap_url = self.cfg.access.controller = "https://aap-a.example"
+        self.save("jt_1", confirm_again="on")
+        f = Path(self.cfg.data) / "access.json"
+        doc = json.loads(f.read_text())
+        doc["controller"] = "https://aap..example"
+        f.write_text(json.dumps(doc))
+        self.assertTrue(self.cfg.access.read()[1])
+        self.assertIsNone(self.cfg.access.dropped)
+
+    def test_r3_13_the_missing_flag_is_the_same_reads(self):
+        import threading
+        self.save("jt_1", confirm_again="on")
+        store = self.cfg.access
+        f = Path(self.cfg.data) / "access.json"
+        text = f.read_text()
+        f.unlink()
+        orig = store.read
+
+        def read(for_write=False):
+            out = orig(for_write)
+            if store.missing:                                                   # another request reads the file restored for a moment
+                f.write_text(text)
+                t = threading.Thread(target=orig)
+                t.start()
+                t.join(0.3)
+                f.unlink()
+            return out
+        store.read = read
+        code, out, _ = self.http("/api/actions/example", "DEFAULT", body={"vars": {"choice": "A"}})
+        self.assertEqual(code, 409, out)
+        self.assertFalse(self.api.writes)
+
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(OneController1340, _n, None)            # (only their own tests run there)

@@ -76,7 +76,7 @@ def validate(doc, catalog=None):
     # Codex 1340 #8: a controller stamp is "" or an address in its normalized form - anything else is a damaged file
     if "controller" in doc and not (isinstance(doc["controller"], str) and len(doc["controller"]) <= 512
                                     and (doc["controller"] == "" or (controller_id(doc["controller"]) == doc["controller"]
-                                         and re.fullmatch(r"https?://(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[0-9]{1,5})?(/[!-~]*)?", doc["controller"])))):
+                                         and re.fullmatch(r"https?://(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)(:[0-9]{1,5})?(/[!-~]*)?", doc["controller"])))):
         raise ValueError("Invalid controller.")
     if "saves" in doc and not (type(doc["saves"]) is int and 0 <= doc["saves"] < 2 ** 53):
         raise ValueError("Invalid save counter.")
@@ -269,6 +269,12 @@ class Store:
                     self.good = doc
                 self.groups_changed(doc["portal_template_access"])
             return self.doc, self.error
+
+    def snapshot(self):
+        """(doc, error, missing, good) from ONE read, under the lock (Codex 1340 r3 #13: never a flag of another read)"""
+        with self.lock:
+            doc, error = self.read()
+            return doc, error, self.missing, self.good
 
     def _drop(self, old):
         """1.134.0: the portal reads another AAP controller than the grants were saved for - template ids and names there

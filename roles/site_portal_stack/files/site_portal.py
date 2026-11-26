@@ -951,6 +951,33 @@ class Log(object):
                 self.stamp = None
                 return []
 
+    def find_launches(self, job_ids, keep):
+        """1.134.0 (Codex 1340 r3 #3, #12): {job id: its launch record} for these job ids, from the whole log (records older
+        than the last LAUNCH_LIMIT too) - streamed, only the matches kept; keep(record) says whether a record counts"""
+        out = {}
+        if not self.path or not job_ids:
+            return out
+        with self.lock:
+            try:
+                with open(self.path, "rb") as fh:
+                    for line in fh:
+                        if b'"launch"' not in line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(record, dict) and record.get("event") == "launch" and keep(record):
+                            try:
+                                jid = int(record.get("job_id"))
+                            except (TypeError, ValueError):
+                                continue
+                            if jid in job_ids:
+                                out[jid] = record
+            except FileNotFoundError:
+                pass
+        return out
+
 
 # ---- AAP --------------------------------------------------------------------------------------------------------------
 def backoff(fails, cap):
@@ -2817,15 +2844,14 @@ def _access_rows(cfg):
     store = getattr(cfg, "access", None)
     if not store:
         return {}, {}, "", {}
-    doc, error = store.read()
+    doc, error, missing, good = store.snapshot() if hasattr(store, "snapshot") else (*store.read(), False, getattr(store, "good", None))
     rows = doc["portal_template_access"]
     here = portal_access.controller_id(cfg.aap_url)
-    good = getattr(store, "good", None)
     if error:
         return {}, {}, error, (dict(good["portal_template_access"]) if good is not None else None)
     if not rows:
         # Codex 1340 r2 #13: a file gone for a moment still restricts by its last good rows; never read: nothing to restrict
-        return {}, {}, error, (dict(good["portal_template_access"]) if getattr(store, "missing", False) and good is not None else {})
+        return {}, {}, error, (dict(good["portal_template_access"]) if missing and good is not None else {})
     if doc.get("controller") != here:
         # not dropped yet (no controller address here, or the volume could not be written): none applies, none restricts
         why = "saved for another AAP controller (%s) - dropped when the portal can write its data" % (doc.get("controller") or "not recorded")
@@ -3800,6 +3826,21 @@ class Portal(object):
         c = rec.get("controller") if isinstance(rec, dict) else "?"
         return c is None or c == portal_access.controller_id(self.cfg.aap_url)
 
+    def _older_launches(self, ids):
+        """Codex 1340 r3 #3, #12: the launch records of pending runs that fell out of launched()'s window - from the whole
+        log, each id asked again at most once a minute"""
+        now = time.monotonic()
+        with self.lock:
+            cache = self.__dict__.setdefault("_older", {})
+            if len(cache) > 2000:
+                cache.clear()
+            want = {i for i in ids if not (i in cache and 0 <= now - cache[i][0] < 60)}
+        found = self.log.find_launches(want, self._ours) if want else {}
+        with self.lock:
+            for i in want:
+                cache[i] = (now, found.get(i))
+            return dict((i, cache[i][1]) for i in ids if i in cache and cache[i][1])
+
     def launched(self):
         """job id -> its launch record (the last LAUNCH_LIMIT, as 1.133.0) - 1.134.0: a record stamped with another AAP
         controller is never taken: its job number names another job here"""
@@ -4122,6 +4163,16 @@ class Portal(object):
                 if tid:
                     wf_ids[tid] = a
         mine = self.launched()
+        need = set()
+        for ap in got["rows"]:
+            try:
+                wid = int(ap["summary_fields"]["source_workflow_job"]["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            hand = (self.wf_info.get(wid) or self.wf_tmp.get(wid) or {}).get("handoff_from")
+            need |= {x for x in (wid, hand) if isinstance(x, int) and x not in mine}
+        if need:
+            mine = {**self._older_launches(need), **mine}
         out, now = [], time.time()
         ad_status = None
         portal_user = str(self.aap.user or getattr(self.aap.api, "user", "") or "").strip().casefold()
