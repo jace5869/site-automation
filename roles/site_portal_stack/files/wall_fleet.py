@@ -261,14 +261,14 @@ class Reader(object):
             groups, gwhy, gat, gtried = self.st["groups"], self.st["groups_why"], self.st["groups_at"], self.st["groups_tried"]
         if not prop and (gtried is None or now - gtried >= GROUPS_EVERY):
             gtried = now                        # an attempt, good or not: the next one GROUPS_EVERY s later (never each minute)
-            with self.lock:
-                self.st["groups_tried"] = gtried               # kept even when the node read below fails
             try:
                 groups, gwhy, gat = read_groups(client, o), "", now
             except Exception as e:  # pylint: disable=broad-except  - the nodes still read; the groups said not read
                 if getattr(e, "kind", "") == "auth":
                     raise
                 gwhy = "the groups were not read: %s" % _txt(e, 200) + (" - the last read's groups are shown" if groups else "")
+            with self.lock:                     # the attempt and what it gave, together - kept even when the node read fails
+                self.st.update(groups=groups, groups_why=gwhy, groups_at=gat, groups_tried=gtried)
         rows, cut, notes = read_nodes(client, o, prop, self.refused)
         done = self.clock()
         with self.lock:
@@ -294,14 +294,14 @@ class Since(object):
 
     def __init__(self, path=None, log=None):
         self.path, self.log = path, log or (lambda d: None)
-        self.d, self.last = {}, None
+        self.d, self.last = {}, {}
         if path:
             try:
                 with open(path, encoding="utf-8") as fh:
                     f = json.load(fh)
                 d = f.get("d") if isinstance(f, dict) else None
                 if isinstance(d, dict):
-                    self.last = f.get("at") if isinstance(f.get("at"), (int, float)) else None
+                    self.last = dict((str(k), float(v)) for k, v in f["at"].items() if isinstance(v, (int, float))) if isinstance(f.get("at"), dict) else {}
                     self.d = dict((str(k), v) for k, v in d.items()
                                   if isinstance(v, list) and len(v) == 3 and isinstance(v[0], str) and isinstance(v[1], (int, float)))
             except FileNotFoundError:
@@ -309,25 +309,34 @@ class Since(object):
             except (OSError, ValueError) as e:
                 self.log({"event": "wall", "fleet": "since file not read", "why": _txt(e, 200)})
 
-    def update(self, codes, at, whole=True):
+    def update(self, codes, at, whole=True, gaps=None):
         """codes: {key: code} or {key: (code, when it was read)} -> {key: (since, exact)}. at: the read's time for a key without
         its own. whole: True (every key), False (none) or a set of key prefixes ("sw:", "vc:") whose reads cover every node -
         only a key of those is forgotten when not in this read (a cut read, an unread vCenter keep theirs)."""
         prefixes = ("",) if whole is True else tuple(whole or ())
         out, new = {}, dict((k, v) for k, v in self.d.items() if not any(k.startswith(p) for p in prefixes))
         changed = False
-        gap = self.last is not None and at is not None and float(at) - float(self.last) > self.GAP
+        # each source (the key's prefix) has its own last update: a change seen after a longer silence than its own limit
+        # (a portal stopped, a vCenter not read for an hour) is not exact
+        gaps = gaps or {}
+        last = self.last if isinstance(self.last, dict) else {}
+        gap = {}
         for k, c in codes.items():
             c, t = (c if isinstance(c, tuple) else (c, at))
+            t = float(t if t is not None else at)
+            src = k.split(":", 1)[0]
+            if src not in gap:
+                gap[src] = src in last and t - float(last[src]) > max(self.GAP, gaps.get(src, 0))
             old = self.d.get(k)
             if old and old[0] == c:
                 new[k] = old
             else:
-                new[k] = [c, float(t if t is not None else at), bool(old) and not gap]
+                new[k] = [c, t, bool(old) and not gap[src]]
                 changed = True
             out[k] = (new[k][1], new[k][2])
-        if at is not None:
-            self.last = max(float(at), float(self.last or 0))
+            last[src] = max(t, float(last.get(src) or 0))
+        self.last = last
+        gap = any(gap.values())
         if changed or len(new) != len(self.d) or gap:
             self.d = new
             self._save()
@@ -400,7 +409,7 @@ def vcenter_vms(view, now, late=LATE_S):
             if v.get("template") is not False and v.get("power") != "poweredOn":
                 continue                        # its template flag not read and not running: maybe a template - left out
             ips = v.get("ip")
-            ips = [str(x).strip() for x in (ips if isinstance(ips, list) else [ips]) if x]
+            ips = [_txt(x, 45) for x in (ips if isinstance(ips, list) else [ips]) if x]
             vms.append({"vc": len(vcs) - 1, "current": bool(cur), "name": _txt(v.get("name"), 120), "host": _txt(v.get("host"), 120),
                         "power": v.get("power"), "heartbeat": v.get("heartbeat"), "tools": v.get("tools"), "tools_version": v.get("tools_version"),
                         "tools_seen": v.get("tools_seen"), "ip": ips, "guest": "" if _generic(v.get("guest")) else _txt(v.get("guest"), 120),
@@ -435,7 +444,7 @@ def match(nodes, vms):
             by.setdefault(key, []).append(i)
         for f in v["_full"]:
             byfull.setdefault(f, []).append(i)
-    out = {}
+    out, crowded = {}, set()
     MAXC = 50                                   # more VMs than this of one short name: ambiguous at once (no pair-by-pair work)
 
     def pair(nn, vn):
@@ -450,11 +459,16 @@ def match(nodes, vms):
         nnames = [x for x in (n["name"], n["dns"]) if x]
         nfull = set(x for x in (_full(y) for y in nnames) if x)
         nip = _ip(n["ip"])
-        allc = set(i for f in nfull for i in byfull.get(f, ())) | set(i for key in set(x for x in (short(y) for y in nnames) if x) for i in by.get(key, ()))
+        allc = set(i for f in nfull for i in byfull.get(f, ()))
+        if not any(not (nip and vms[i]["_ips"] and nip not in vms[i]["_ips"]) for i in allc):    # no exact name left after the IP
+            keys = set(x for x in (short(y) for y in nnames) if x)
+            big = [k for k in keys if len(by.get(k, ())) > MAXC]
+            if big:                             # a name thousands of VMs share: none of them compared, none "vCenter only"
+                out[ni] = (None, "ambiguous: %d VMs named %s in vCenter" % (len(by[big[0]]), big[0]), [])
+                crowded.update(big)
+                continue
+            allc |= set(i for k in keys for i in by.get(k, ()))
         if not allc:
-            continue
-        if len(allc) > MAXC:
-            out[ni] = (None, "ambiguous: %d VMs named %s in vCenter" % (len(allc), short(n["name"]) or n["name"]), sorted(allc)[:MAXC])
             continue
         # another machine: both have an IP and they differ - filtered before the tiers, so a conflicting exact name never hides
         # a short-name VM with the node's own IP
@@ -488,6 +502,7 @@ def match(nodes, vms):
         for ni in nis:
             if len(byip) != 1 or ni != byip[0]:
                 out[ni] = (None, "ambiguous: %d SolarWinds nodes fit one VM in vCenter (%s) - not compared" % (len(nis), vms[vi]["name"]), [vi])
+    out[None] = crowded                         # the short names too many VMs share (the caller leaves them out of "vCenter only")
     return out
 
 
@@ -593,6 +608,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     sw_whole = rows is not None and not out["incomplete"] and feed["state"] == "ok" and at is not None and now - float(at) <= sw_late
     poll_stale = o["poll_stale_minutes"] * 60
     pairs = match(nodes, vms) if vms else {}
+    crowded = pairs.pop(None, set())
     used_vm = set()
     rx = o["vm_match"]
     codes = {}
@@ -633,6 +649,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             if not v["current"]:
                 flags += "s"                    # that vCenter's read is not current: shown, never compared
             elif c == DOWN and v["power"] in ("poweredOff", "suspended"):
+                flags = flags.replace("o", "")  # vCenter, current, says off: SolarWinds' poll age no longer matters
                 c, why = OFF, "%s in vCenter (SolarWinds: down)" % ("powered off" if v["power"] == "poweredOff" else "suspended")
                 out["cmp"]["off_in_vc"] += 1
             elif c == DOWN and v["power"] == "poweredOn" and v["heartbeat"] == "green":
@@ -654,7 +671,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     # ---- vCenter only: VMs SolarWinds does not watch (their status from vCenter; not current there: grey on the page)
     vco = []
     for i, v in enumerate(vms if sw_whole else []):
-        if i in used_vm:
+        if i in used_vm or (crowded and (short(v["name"]) in crowded or short(v["guest"]) in crowded)):
             continue
         p, hb = v["power"], v["heartbeat"]
         if p in ("poweredOff", "suspended"):
@@ -678,7 +695,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     built.extend(vco)
     # ---- since: when each left its last code (the tracker, each source by its own read's time), only for what is not up
     whole = (("sw:",) if sw_whole else ()) + (("vc:",) if sw_whole and out["cmp"]["vc_read"] else ())
-    sn = (since.update(codes, at, whole=whole) if since is not None and at else {})
+    sn = (since.update(codes, at, whole=whole, gaps={"sw": sw_stale, "vc": STALE_S}) if since is not None and at else {})
     for row in built:
         key = ("sw:" + row[13]) if "v" not in row[12] else row[13]
         s = sn.get(key)
@@ -691,6 +708,10 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         if "v" not in r[12]:                    # SolarWinds' nodes only: the vCenter-only VMs are the VMware area's (counted in cmp)
             cnt[UNKNOWN if r[3] == UP and "o" in r[12] else r[3]] += 1      # an old poll's "up" is not counted up
     out["counts"] = cnt
+    old = sum(1 for r in built if "o" in r[12] and "v" not in r[12])
+    if old:
+        out["incomplete"].append("%d node%s SolarWinds itself has not polled for %d min or more (portal_wall_fleet_poll_stale_minutes)" %
+                                 (old, "" if old == 1 else "s", o["poll_stale_minutes"]))
     out["complete"] = not out["incomplete"]
     return out
 

@@ -84,8 +84,16 @@
     var a = fr(F.feed.asof, F.feed.state, F.late, F.stale), b = A.feed("sw:fleet") ? A.feedFresh("sw:fleet") : a, r = {ok: 0, late: 1, stale: 2};
     return r[b] > r[a] ? b : a;
   }
-  function vcFreshI(i) { var v = F && F.vcs[i]; return v ? fr(v[1], v[2], (W() && W().late) || 180, (W() && W().stale) || 600) : "stale"; }
-  function fresh(n) { return n.vconly ? (n.flags.indexOf("s") >= 0 ? "stale" : vcFreshI(n.vci)) : swFresh(); }
+  var RK = {ok: 0, late: 1, stale: 2};
+  function worse(a, b) { return RK[b] > RK[a] ? b : a; }
+  function vcFreshI(i) {                // the worse of this answer's read of that vCenter and the wall's newer word on it
+    var v = F && F.vcs[i];
+    if (!v) return "stale";
+    var a = fr(v[1], v[2], (W() && W().late) || 180, (W() && W().stale) || 600);
+    return A.feed("vc:" + v[0]) ? worse(a, A.feedFresh("vc:" + v[0])) : a;
+  }
+  // a vCenter-only VM: its vCenter's read, and SolarWinds' (that it is not in SolarWinds is only known from a current read)
+  function fresh(n) { return n.vconly ? (n.flags.indexOf("s") >= 0 ? "stale" : worse(vcFreshI(n.vci), swFresh())) : swFresh(); }
   var SIGC = {t: 0, k: "", v: ""};
   function sig() {                     // what every node's drawn state depends on, worked out at most every 200 ms
     var t = Date.now(), k = VER + "|" + FAIL + "|" + (A.unreach() ? 1 : 0);
@@ -158,9 +166,11 @@
     try { day = new Intl.DateTimeFormat("en-GB", {timeZone: z, day: "2-digit", month: "short"}).format(new Date(NOW())); } catch (e) { day = ""; }
     var base = location.origin + A.src.replace(/api\/wall$/, "wall") + "?area=fleet";
     var src = one ? srcOf(one) : null, vco = L.some(function (n) { return n.vconly; }), sw = L.some(function (n) { return !n.vconly; });
-    var notCur = L.filter(function (n) { return fresh(n) !== "ok"; });
+    var notCur = L.filter(function (n) { var s = shown(n); return fresh(n) !== "ok" || s === "lastdown" || s === "lastwarn" || s === "unk"; });
     var stale = !notCur.length ? "" : notCur.some(function (n) { return !n.vconly; }) && swFresh() !== "ok" ? staleText() :
-      notCur.some(function (n) { return n.vconly; }) ? "vCenter " + notCur.filter(function (n) { return n.vconly; })[0].vc + " not current - the last known state" :
+      notCur.some(function (n) { return n.vconly && fresh(n) !== "ok"; }) ? "vCenter " + notCur.filter(function (n) { return n.vconly; })[0].vc + " not current - the last known state" :
+      notCur.some(function (n) { return n.flags.indexOf("o") >= 0; }) ? "SolarWinds itself has not polled some of these lately - their state is not current" :
+      F.incomplete.length ? "the read is not whole: " + F.incomplete[0] :
       "a source of these is not current - the last known state";
     return {site: w.enclave || "", stamp: hm(NOW()), day: day, zone: A.zoneName(),
             src: one ? src.name + (one.vconly ? "" : " every " + F.seconds + " s · vCenter compared") : (sw ? "SolarWinds every " + F.seconds + " s" : "") + (sw && vco ? " · " : "") + (vco ? "vCenter (VMs not in SolarWinds)" : ""),
@@ -226,6 +236,7 @@
   function fitted(k) { LAY.k = k || 1; if (A && A.S.area === "fleet") soon(drawGrid); }
 
   function refresh() {
+    LASTSIG = A ? sig() : "";
     if (!B || !A || !W()) return;
     var w = W();
     clear(P.logo);
@@ -400,7 +411,8 @@
         h("span", "", [s === "down" || s === "lastdown" ? "down" : s === "off" ? (n.c === "m" ? "unmanaged" : "off") : n.c === "w" ? (n.loss ? n.loss + "% loss" : n.rt != null ? n.rt + " ms" : "warn") : n.rt != null ? n.rt + " ms" : s === "unk" ? "?" : "up"])],
         {"data-k": n.key, tabindex: "0", role: "button", title: n.name + ": click for its card"}));
     });
-    if (ns.length > show.length) P.chips.appendChild(h("div", "chip rest", [h("b", "", ["+" + (ns.length - show.length) + " more" + (c.down + c.warn > show.length ? "" : " up")])]));
+    var rest = ns.slice(show.length), allUp = rest.every(function (n) { return shown(n) === "up"; });
+    if (rest.length) P.chips.appendChild(h("div", "chip rest", [h("b", "", ["+" + rest.length + " more" + (allUp ? " up" : "")])]));
   }
   function spotCue(idx, n) {
     var moving = !frozen() && !OV && SPOT.pausedUntil <= Date.now() && n > 1;
@@ -427,7 +439,7 @@
   // ---------------------------------------------------------------- the grid (canvas)
   var COLC = {k: "", v: null};
   function colours() {
-    var de = document.documentElement, key = de.className + "|" + (de.getAttribute("data-theme") || "") + "|" + (matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    var de = document.documentElement, key = de.className + "|" + (de.getAttribute("data-theme") || "") + "|" + (window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : "");
     if (COLC.k === key && COLC.v) return COLC.v;
     var cs = {}, pr = P.probe;
     ["--fl-up", "--fl-warn", "--fl-crit", "--fl-grey", "--fl-accent", "--wx-ink", "--wx-mute", "--fl-label-ink", "--wx-panel", "--fl-notch"].forEach(function (t) {
@@ -486,7 +498,7 @@
         x.font = "500 12px " + C.mono; x.fillStyle = C["--wx-mute"];
         x.fillText(fit(x, KIND[g.kind] || "", L.colW * 0.5 - tw - 30), x0 + tw + 10, y + 14);
         x.fillStyle = c.down ? C["--fl-crit"] : c.warn ? C["--fl-warn"] : C["--wx-mute"]; x.textAlign = "right";
-        x.fillText(c.n.toLocaleString("en") + " nodes" + (c.n > g.nodes.length ? " (" + (c.n - g.nodes.length) + " drawn in another group)" : "") + (c.down ? " · " + c.down + " down" : "") + (c.warn ? " · " + c.warn + " warn" : ""), x0 + L.colW, y + 14);
+        x.fillText(fit(x, c.n.toLocaleString("en") + " nodes" + (c.n > g.nodes.length ? " (" + (c.n - g.nodes.length) + " drawn in another group)" : "") + (c.down ? " · " + c.down + " down" : "") + (c.warn ? " · " + c.warn + " warn" : ""), L.colW * 0.48), x0 + L.colW, y + 14);
         x.textAlign = "left";
         var top = y + 22;
         LAY.blocks.push({g: g, x: x0, y: y, top: top, w: L.colW, per: L.per, rows: b.rows});
@@ -580,7 +592,8 @@
       ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
       n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
       ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (n.flags.indexOf("s") >= 0 ? " · not current - not compared" : "") :
-        n.flags.indexOf("a") >= 0 ? "more than one VM of this name - not compared (the IP did not settle it)" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
+        n.flags.indexOf("a") >= 0 ? "more than one VM (or SolarWinds node) of this name - not compared (the IP did not settle it)" :
+        n.flags.indexOf("c") >= 0 ? "a VM of this name in vCenter is another machine (another domain or IP) - not compared" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
       n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.ago(n.polled).replace(" ago", "") + " before the read" : "")],
       ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
       ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]]) : null;
@@ -614,7 +627,7 @@
       var sel = now.filter(function (n) { return SEL[n.key]; });
       openCard(sel.length ? sel : now, "bulk");
     });
-    selB.addEventListener("click", function () { L.forEach(function (n) { SEL[n.key] = 1; }); box.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = true; }); notUp(); drawGrid(); });
+    selB.addEventListener("click", function () { L.forEach(function (n) { if (F.by[n.key]) SEL[n.key] = 1; }); box.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = true; }); notUp(); drawGrid(); });
     P.ov.appendChild(h("div", "fl-card list", [h("h2", "", [h("span", "nm", [title]), h("small", "", [L.length + " node" + (L.length === 1 ? "" : "s")]), x]),
       note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, h("span", "fl-click", ["click a row for its card · tick to share several"])]), box], {role: "dialog", "aria-modal": "true", "aria-label": title}));
     P.ov.classList.add("on");
@@ -634,7 +647,7 @@
         var ck = cb.getAttribute("data-k"), inList = P.evs.contains(cb);
         if (cb.checked) SEL[ck] = 1; else delete SEL[ck];
         if (inList) { notUp(); var again = P.evs.querySelector('input[data-k="' + (window.CSS && CSS.escape ? CSS.escape(ck) : ck) + '"]'); if (again) again.focus(); }
-        else { P.selc.textContent = Object.keys(SEL).length + " selected"; }
+        else notUp();                    // ticked in the full list: the panel's boxes and count follow
         drawGrid(); e.stopPropagation(); return;
       }
       var k = t.closest("[data-k]");

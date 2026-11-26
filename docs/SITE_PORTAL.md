@@ -1279,7 +1279,8 @@ on the portal's data volume through a restart).
   and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
   nodes; the vCenter-only VMs are counted in the panel.
 - A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_fleet_poll_stale_minutes` (15) is not
-  current: grey, never green, and never a recovery.
+  current: grey, never green, never a recovery, and the read is not whole (said) - unless a current vCenter has its VM
+  powered off. A short name more than 50 VMs share is compared with none of them, and none is listed *vCenter only*.
 - A node whose status SolarWinds does not know, or a row without a NodeID, makes the read not whole (grey, said) - as does a
   node with no last poll time when this Orion gives one.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds

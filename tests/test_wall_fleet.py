@@ -428,6 +428,49 @@ class Review2(unittest.TestCase):
         self.assertEqual(fm["cmp"]["ambiguous"], 3000)
 
 
+class Review2Neon(unittest.TestCase):
+    """review round 2 (Neon): an old poll is not whole (a powered-off VM drops it), the group attempt kept with its outcome, a
+    crowded name keeps its VMs out of "vCenter only", each source's own gap"""
+
+    def setUp(self):
+        self.now = time.time()
+
+    def test_old_polls_are_not_whole(self):
+        r = sw_row(1, "A1")
+        r["LastSync"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now - 7200))
+        fm = wf.model(snap([r], now=self.now, age=0), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+        r2 = dict(r, Status=2, Caption="VMOFF", DNS="")
+        fm = wf.model(snap([r2], now=self.now, age=0), view([vm("VMOFF", power="poweredOff", hb=None)], self.now), OPTS, self.now)
+        self.assertEqual((fm["nodes"][0][3], "o" in fm["nodes"][0][12], fm["complete"]), ("p", False, True))
+
+    def test_group_attempt_with_its_outcome(self):
+        class Fails(FakeClient):
+            def paged(self2, swql, *a, **k):
+                if "Orion.Nodes" in swql:
+                    raise site_swis.SwisError("no answer in time", "timeout")
+                return FakeClient.paged(self2, swql, *a, **k)
+        c = Fails([], {"list": [{"ContainerID": 1, "Name": "G", "Status": 1}], "members": []})
+        r = wf.Reader(lambda: c, OPTS, clock=lambda: 1000.0)
+        with self.assertRaises(site_swis.SwisError):
+            r.read_once()
+        sn = r.snapshot()
+        self.assertEqual((sn["groups_tried"], bool(sn["groups"])), (1000.0, True))     # the groups it read are kept with the attempt
+
+    def test_a_crowded_name(self):
+        rows = [sw_row(1, "APP", dns="", ip="")]
+        vms = [vm("APP", mid="vm-%d" % i) for i in range(80)] + [vm("OTHER")]
+        fm = wf.model(snap(rows, now=self.now), view(vms, self.now), OPTS, self.now)
+        self.assertEqual([r[1] for r in fm["nodes"] if "v" in r[12]], ["OTHER"])
+
+    def test_each_sources_own_gap(self):
+        s = wf.Since()
+        s.update({"sw:1": ("u", 0.0), "vc:a:1": ("u", 0.0)}, 0.0)
+        for t in range(60, 4000, 60):
+            s.update({"sw:1": ("u", float(t))}, float(t), whole=("sw:",))
+        self.assertEqual(s.update({"vc:a:1": ("d", 4000.0)}, 4000.0, whole=())["vc:a:1"], (4000.0, False))   # vCenter silent an hour
+
+
 class StaleNeverGreen(unittest.TestCase):
     """the area through the wall's own model (wall_model.build / summary): green only when SolarWinds is current, the read whole
     and nothing down"""
