@@ -1269,8 +1269,8 @@ on the portal's data volume through a restart).
 
 - The status is SolarWinds' own (Up, Warning, Down; Unmanaged grey; anything else grey "unknown").
 - **Powered off is never down:** down in SolarWinds and powered off (or suspended) in vCenter shows *Powered off*, grey -
-  only while that vCenter's read is current. With vCenter late or not read, the node stays down (never turned grey by old
-  data) and its card says vCenter was not compared.
+  only while that vCenter's read is current. If it expires on screen, the node shows *last known down* until the next
+  fleet answer evaluates the SolarWinds status again.
 - A node and a VM are the same when an FQDN of each is the same (SolarWinds' caption or DNS name, vCenter's VM name or guest
   host name); when one side has no FQDN at all, when their short names match in any case - but never when both have an IP
   and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
@@ -1278,11 +1278,11 @@ on the portal's data volume through a restart).
   and in the panel); two SolarWinds nodes that fit one VM likewise. A guest name like `localhost` is never a match. Templates
   and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
   nodes; the vCenter-only VMs are counted in the panel.
-- A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_monitor_poll_stale_minutes` (15) is not
-  current: grey, never green, never a recovery, and the read is not whole (said) - unless a current vCenter has its VM
-  powered off. A short name more than 50 VMs share is compared with none of them, and none is listed *vCenter only*.
-- A node whose status SolarWinds does not know, or a row without a NodeID, makes the read not whole (grey, said) - as does a
-  node with no last poll time when this Orion gives one.
+- A monitored node needs a readable `LastSync` within `portal_wall_monitor_poll_stale_minutes` (15) of the wall clock and
+  at most 120 seconds in the future. An old poll can be overridden for a powered-off VM only while its vCenter read is current.
+  A short name or FQDN shared by more than 50 candidate VMs is ambiguous and none of those candidates is listed *vCenter only*.
+- A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
+  a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
   square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
   `portal_wall_monitor_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only

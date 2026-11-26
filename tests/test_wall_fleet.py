@@ -390,8 +390,8 @@ class Review2(unittest.TestCase):
         self.assertIn("o", fm["nodes"][0][12])
         self.assertEqual(fm["counts"]["u"], 0)
         s2 = snap([dict(r)], now=self.now)
-        s2["notes"] = ["the last poll time (LastSync): not read (HTTP 400)"]  # an Orion without the column: not held against it
-        self.assertNotIn("o", wf.model(s2, None, OPTS, self.now)["nodes"][0][12])
+        s2["notes"] = ["the last poll time (LastSync): not read (HTTP 400)"]
+        self.assertIn("o", wf.model(s2, None, OPTS, self.now)["nodes"][0][12])
 
     def test_cached_members_after_a_failed_refresh(self):
         g = {"list": [[1, "G", 1]], "members": {"1": [1]}, "cut": False}
@@ -692,6 +692,186 @@ class LiveSwql(unittest.TestCase):
         with self.assertRaises(site_swis.SwisError) as e:
             bad.read_once()
         self.assertEqual(e.exception.kind, "auth")
+
+
+# Run the production board in a VM with an in-memory DOM and a controllable wall clock.
+# Attach the scenario inside the closure so the shipped board needs no test-only API.
+GATE_JS = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const [dir, input, scenario] = process.argv.slice(1);
+const data = JSON.parse(input);
+let clock = data.now * 1000;
+function el(tag, cls, children) {
+  return {cls, children: (children || []).filter(x => x != null),
+    get firstChild() { return this.children[0]; }, get lastChild() { return this.children.at(-1); },
+    appendChild(x) { this.children.push(x); }, removeChild() { this.children.shift(); },
+    classList: {add(){}, remove(){}, toggle(){}}, addEventListener(){}};
+}
+const api = {h: el, NOW: () => clock, W: () => ({}), feed: () => null, unreach: () => false,
+  styleName: () => "", zoneName: () => "UTC", hm: String, hms: String, ago: String, word: (s, w) => w,
+  nowList: () => [], src: "/api/wall"};
+const env = {window: {}, document: {getElementById: () => null}, location: {origin: "https://portal.example.mil"},
+  setInterval(){}, requestAnimationFrame(){}, assert, api, data, el,
+  advance(s) { clock += s * 1000; }, Date: class extends Date { static now() { return clock; } }};
+vm.createContext(env);
+function script(name, setup) {
+  const code = fs.readFileSync(dir + "/" + name, "utf8");
+  vm.runInContext(code.replace(/\}\)\(\);\s*$/, () => setup + "\n})();"), env);
+}
+script("wall-share.js", "");
+env.window.SAWallShare.nodes.panel = (rows, ctx) => {
+  env.panel = {rows, ctx, text: env.window.SAWallShare.nodes.text(rows, ctx)};
+  return el();
+};
+script("wall-styles.js", "A = api; window.stage = st => stageOf({id:'monitor', st, name:'Ops monitor'});");
+script("wall-fleet.js", `
+  A = api; F = adapt(data); B = {};
+  P = {ov: el(), svc: el(), logo: el(), small: el(), site: el(), clock: el("", "", [{}, {}])};
+  // The surrounding board panels do not participate in the dialog's lifecycle.
+  srcs = pills = banner = notUp = compare = spotlight = footer = () => {};
+  const card = () => JSON.stringify(P.ov.children);
+  ` + scenario);
+"""
+
+
+class Gate(unittest.TestCase):
+    def setUp(self):
+        self.now = int(time.time())
+        self.groups = {"list": [[1, "Service", 1]], "members": {"1": [1], "2": [1]}}
+        self.rows = [sw_row(1, "APP"), sw_row(2, "DB")]
+
+    def js(self, fm, scenario):
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        result = subprocess.run(["node", "-e", GATE_JS, os.path.join(FILES, "static"), json.dumps(fm), scenario],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def live(self, sn):
+        from types import SimpleNamespace
+        from site_portal import WallLive
+        obj = WallLive.__new__(WallLive)
+        obj.fleet = SimpleNamespace(snapshot=lambda: sn)
+        obj.cfg = SimpleNamespace(wall_fleet_opts=OPTS)
+        obj.fleet_since = obj.fleet_key = obj.fleet_model = None
+        return obj
+
+    def test_gate_1_missing_group_member(self):
+        fm = wf.model(snap(self.rows[:1], self.groups, self.now), None, OPTS, self.now)
+        self.assertIn("1 group members not in the node read", fm["incomplete"])
+        self.assertFalse(wf.conds(fm, self.now)[1])
+        self.js(fm, 'const c = gState(F.groups[0]); assert.equal(c.n, 2); assert.equal(c.st, "stale");')
+
+    def test_gate_2_unreadable_lastsync(self):
+        for status in (1, 2, 3):
+            for value, notes in ((None, []), ("invalid", []), (self.rows[0]["LastSync"], ["LastSync refused"])):
+                sn = snap([dict(self.rows[0], Status=status, LastSync=value)], now=self.now)
+                fm = wf.model(dict(sn, notes=notes), None, OPTS, self.now)
+                self.assertIn("o", fm["nodes"][0][12])
+                self.assertFalse(fm["complete"])
+                self.assertEqual(fm["counts"]["u"], 0)
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_gate_3_poll_deadline_on_wall_clock(self):
+        poll = self.now - 890
+        row = dict(self.rows[0], LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(poll)))
+        sn = snap([row], now=self.now, age=0)
+        live = self.live(sn)
+        fm = live.fleet_of(None, self.now)
+        self.assertEqual((fm["nodes"][0][15], fm["row"][15], fm["poll_stale"]), (poll, "polled_at", 900))
+        self.js(fm, 'assert.equal(shown(F.nodes[0]), "up"); advance(11); assert.equal(shown(F.nodes[0]), "unk");')
+        self.assertFalse(live.fleet_of(None, self.now + 30)["complete"])
+        for offset in (120, 121):
+            row["LastSync"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now + offset))
+            fm = wf.model(sn, None, OPTS, self.now)
+            self.assertEqual("o" in fm["nodes"][0][12], offset > 120)
+        row["LastSync"] = time.strftime("%Y-%m-%dT%H:%M:%S.500Z", time.gmtime(self.now + 120))
+        self.assertFalse(wf.model(sn, None, OPTS, self.now)["complete"])
+
+    def test_gate_4_vcenter_override_expires(self):
+        self.rows[1]["Status"] = 2
+        sn = snap(self.rows, self.groups, self.now)
+        vc = view([vm("DB", power="poweredOff")], self.now, age=180)
+        live = self.live(sn)
+        fm = live.fleet_of(vc, self.now)
+        self.assertIn("f", by_name(fm)["DB"][12])
+        self.js(fm, """
+          const db = F.by["2"];
+          assert.equal(shown(db), "off"); advance(1);
+          assert.equal(shown(db), "lastdown"); assert.equal(gState(F.groups[0]).st, "stale");
+        """)
+        self.assertEqual(by_name(live.fleet_of(vc, self.now + 1))["DB"][3], "d")
+
+    def test_gate_5_refresh_open_card_and_bulk(self):
+        fm = wf.model(snap(self.rows, self.groups, self.now), None, OPTS, self.now)
+        self.js(fm, """
+          openCard([F.by["1"]]); assert.equal(panel.rows[0].sev, "ok");
+          data.feed.state = "error"; F = adapt(data); refresh();
+          assert.equal(panel.rows[0].sev, "stale"); assert(panel.ctx.stale);
+          assert(panel.text.startsWith("[UNKNOWN]")); assert(card().includes("tag stale"));
+          openCard(F.nodes, "bulk");
+          data.nodes.shift(); data.nodes[0][3] = "w"; data.feed.state = "ok"; F = adapt(data); refresh();
+          assert.equal(OV.kind, "bulk"); assert.equal(panel.rows.length, 1);
+          assert.equal(panel.rows[0].name, "DB"); assert.equal(panel.rows[0].sev, "warn");
+          data.nodes = []; F = adapt(data); refresh(); assert.equal(OV, null); assert.equal(card(), "[]");
+        """)
+
+    def test_gate_6_status_words_and_unmonitored_service(self):
+        for sn in (snap(self.rows, self.groups, self.now, state="error"), snap(self.rows, self.groups, self.now, cut=True)):
+            fm = wf.model(sn, None, OPTS, self.now)
+            area, _ = StaleNeverGreen().area(fm, self.now)
+            self.assertEqual((area["state"], area["big"], area["unit"]), ("stale", "–", "no current data"))
+            self.js(fm, """
+              openCard([F.nodes[0]]); assert(panel.text.startsWith("[UNKNOWN]")); assert(panel.ctx.stale);
+              assert(card().includes('"tag stale","children":["UNKNOWN"]'));
+              assert(card().includes('"cls":"stale","children":["unknown'));
+            """)
+        rows = [dict(self.rows[0], UnManaged=True), dict(self.rows[1], Status=2)]
+        fm = wf.model(snap(rows, self.groups, self.now), view([vm("DB", power="poweredOff")], self.now), OPTS, self.now)
+        self.assertFalse(wf.conds(fm, self.now)[1])
+        only_off = wf.model(snap(rows[1:], now=self.now), view([vm("DB", power="poweredOff")], self.now), OPTS, self.now)
+        self.assertFalse(wf.conds(only_off, self.now)[1])
+        self.assertEqual(StaleNeverGreen().area(fm, self.now)[0]["state"], "stale")
+        self.js(fm, """
+          services(); assert.equal(gState(F.groups[0]).st, "off");
+          assert(JSON.stringify(P.svc).includes("no monitored nodes"));
+          assert(JSON.stringify(window.stage("ok")).includes("No service group with a node down or warning."));
+          assert(JSON.stringify(window.stage("stale")).includes("No current data."));
+        """)
+
+    def test_gate_7_group_read_invalidates_cache(self):
+        sn = snap(self.rows, self.groups, self.now)
+        live = self.live(sn)
+        fm = live.fleet_of(None, self.now)
+        self.assertTrue(fm["complete"])
+        for key, value in (("groups_why", "groups refused"), ("groups_tried", self.now), ("groups_at", self.now)):
+            sn[key] = value
+            updated = live.fleet_of(None, self.now)
+            self.assertIsNot(updated, fm, key)
+            self.assertFalse(updated["complete"])
+            fm = updated
+
+    def test_gate_8_crowded_exact_name(self):
+        import tracemalloc
+        name = "app.corp.example.mil"
+        rows = [sw_row(i, name, dns=name, ip="") for i in range(10000)]
+        sn = snap(rows, now=self.now)
+        vc = view([vm(name, mid=str(i)) for i in range(10000)], self.now)
+        # Fail cheaply on implementations that keep all candidates per node.
+        vms, _ = wf.vcenter_vms(view([vm(name) for _ in range(64)], self.now), self.now, wf.LATE_S)
+        pairs = wf.match([{"name": name, "dns": name, "ip": ""}], vms)
+        self.assertFalse(pairs[0][2])
+        tracemalloc.start()
+        try:
+            start = time.monotonic()
+            fm = wf.model(sn, vc, OPTS, self.now)
+            elapsed = time.monotonic() - start
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual((fm["cmp"]["ambiguous"], fm["cmp"]["vc_only"]), (10000, 0))
+        self.assertLess(elapsed, 10)
+        self.assertLess(peak, 150_000_000)
 
 
 NODE_JS = r"""

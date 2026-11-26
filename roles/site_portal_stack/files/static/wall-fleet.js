@@ -45,8 +45,12 @@
     var by = Object.create(null);
     nodes.forEach(function (n) { by[n.key] = n; });
     var f = a.feed || {};
+    var pollStale = +a.poll_stale || 900;
+    // Only a crossed poll deadline needs to invalidate the node and group caches between reads.
+    var deadlines = nodes.filter(function (n) { return !n.vconly && n.polled != null && (n.c === "u" || n.c === "w"); })
+      .map(function (n) { return (n.polled + pollStale) * 1000; }).sort(function (a, b) { return a - b; });
     VER++;
-    return {groups: groups, nodes: nodes, by: by, cmp: a.cmp || {}, counts: a.counts || {}, vcs: vcs, incomplete: arr(a.incomplete), notes: arr(a.notes),
+    return {pollStale: pollStale, deadlines: deadlines, expired: 0, groups: groups, nodes: nodes, by: by, cmp: a.cmp || {}, counts: a.counts || {}, vcs: vcs, incomplete: arr(a.incomplete), notes: arr(a.notes),
             seconds: a.seconds || 60, feed: f, zone: a.zone || "UTC", title: a.title || "", enclave: a.enclave || "", group_by: a.group_by || "groups",
             vmRule: (a.cmp || {}).vm_rule || "", late: +a.late || 180, stale: +a.stale || 600};
   }
@@ -98,7 +102,12 @@
   function sig() {                     // what every node's drawn state depends on, worked out at most every 200 ms
     var t = Date.now(), k = VER + "|" + FAIL + "|" + (A.unreach() ? 1 : 0);
     if (SIGC.k === k && t - SIGC.t < 200) return SIGC.v;
-    var x = [k, swFresh()];
+    if (F) {
+      var now = NOW();
+      while (F.expired < F.deadlines.length && F.deadlines[F.expired] < now) F.expired++;
+      while (F.expired && F.deadlines[F.expired - 1] >= now) F.expired--;
+    }
+    var x = [k, swFresh(), F && F.expired];
     (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); });
     SIGC = {t: t, k: k, v: x.join(",")};
     return SIGC.v;
@@ -114,6 +123,8 @@
   }
   function shown0(n) {
     var f = fresh(n), old = n.flags.indexOf("o") >= 0, whole = !F.incomplete.length || n.vconly;
+    if (!n.vconly && (n.polled == null || NOW() / 1000 - n.polled > F.pollStale || n.polled > NOW() / 1000 + 120)) old = true;
+    if (n.flags.indexOf("f") >= 0 && vcFreshI(n.vci) !== "ok") return "lastdown";
     if (n.c === "d") return f === "stale" ? "lastdown" : "down";                    // red beats grey: an old poll's down stays down
     if (n.c === "w") return f === "stale" || old ? "lastwarn" : "warn";
     if (n.c === "p" || n.c === "m") return "off";
@@ -121,6 +132,10 @@
     return "unk";
   }
   var RANK = {down: 0, warn: 1, lastdown: 2, lastwarn: 3, unk: 4, off: 5, up: 6};
+  function statusWord(n, s) {
+    if (s === "off") return n.c === "m" ? "UNMANAGED" : "OFF";
+    return {up: "UP", unk: "UNKNOWN", down: "DOWN", warn: "WARN", lastdown: "LAST KNOWN DOWN", lastwarn: "LAST KNOWN WARN"}[s];
+  }
   function sevOf(s) { return s === "down" ? "crit" : s === "warn" ? "warn" : s === "up" ? "ok" : s === "off" ? "off" : "stale"; }
   // a group's state from every member (a node in two groups counts in both), kept until the data or a source's freshness changes
   function gState(g) {
@@ -141,9 +156,10 @@
     var s = shown(n), d = n.since ? A.dur(NOW() - n.since) : "";
     var since = n.since ? " (since " + hm(n.since) + (n.exact ? "" : " or earlier") + ")" : " (since not known yet)";
     var plus = n.exact ? "" : "+";
+    if (s === "lastdown" && n.c === "p") return "last known down in SolarWinds · vCenter power state not current";
     if (n.c === "d") return (s === "lastdown" ? "last known down" : "down") + (d ? (n.exact ? " " : " at least ") + d : "") + since;
     if (n.c === "w") return (n.why || "warning") + (d ? " (" + d + (n.exact ? "" : "+") + ", since " + hm(n.since) + (n.exact ? "" : " or earlier") + ")" : "");
-    if (n.c === "u") return s === "up" ? "up" + (n.rt != null ? " · " + n.rt + " ms" : "") : "up when last read - not current";
+    if (n.c === "u") return s === "up" ? "up" + (n.rt != null ? " · " + n.rt + " ms" : "") : "unknown - no current data";
     return n.why || ST_WORD[n.c].toLowerCase();
   }
   function agoS(asof) { return asof == null ? "never read" : A.ago(age(asof)); }
@@ -158,8 +174,8 @@
   function srcOf(n) { return n.vconly ? {name: "vCenter " + n.vc, asof: (F.vcs[n.vci] || [])[1]} : {name: "SolarWinds", asof: F.feed.asof}; }
   function share(n) {
     var s = shown(n);
-    return {st: ST_WORD[n.c], sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, phrase: phrase(n), loss: n.loss, vc: n.vm, host: n.host,
-            said: n.why || (n.said ? "SolarWinds: " + n.said : ""), up: s === "up" || s === "off"};
+    return {st: statusWord(n, s), sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, phrase: phrase(n), loss: n.loss, vc: n.vm, host: n.host,
+            said: s === "lastdown" && n.c === "p" ? phrase(n) : n.why || (n.said ? "SolarWinds: " + n.said : ""), up: s === "up" || s === "off"};
   }
   function ctx(L) {
     var w = W(), z = F.zone || "UTC", day = "", one = L.length === 1 ? L[0] : null;
@@ -236,6 +252,7 @@
   function fitted(k) { LAY.k = k || 1; if (A && A.S.area === "monitor") soon(drawGrid); }
 
   function refresh() {
+    SIGC.k = "";
     LASTSIG = A ? sig() : "";
     if (!B || !A || !W()) return;
     var w = W();
@@ -254,6 +271,11 @@
       return;
     }
     pills(); banner(); services(); notUp(); compare(); spotlight(); footer();
+    if (OV && OV.kind !== "list") {
+      var current = OV.keys.map(function (k) { return F.by[k]; }).filter(Boolean);
+      if (current.length) openCard(current, OV.kind);
+      else closeOv();
+    }
     soon(drawGrid);
   }
   function srcs() {
@@ -319,10 +341,10 @@
     }
     P.svc.classList.toggle("two", list.length > 8);
     list.forEach(function (g) {
-      var c = gState(g), word = c.down ? c.down + " down" : c.warn ? c.warn + " warn" : c.st === "stale" ? "not current" : c.st === "off" ? "off / unmanaged" : c.off ? "rest off" : "all up";
+      var c = gState(g), word = c.down ? c.down + " down" : c.warn ? c.warn + " warn" : c.st === "stale" ? "not current" : c.st === "off" ? "no monitored nodes" : c.off ? "rest off" : "all up";
       P.svc.appendChild(h("div", "sv " + c.st + (SPOT.g === g.i ? " on" : ""), [h("b", "", [g.name]),
         h("span", "ln", [A.word(c.st === "ok" ? "ok" : c.st, word), h("small", "", [c.up + "/" + c.n + " up"])])],
-        {"data-g": String(g.i), tabindex: "0", role: "button", title: g.name + ": put it in the Spotlight" + (g.sw ? " · SolarWinds says " + ST_WORD[g.sw].toLowerCase() : "")}));
+        {"data-g": String(g.i), tabindex: "0", role: "button", title: g.name + ": put it in the Spotlight" + (g.sw && swFresh() === "ok" && !F.incomplete.length ? " · SolarWinds says " + ST_WORD[g.sw].toLowerCase() : "")}));
     });
     if (gs.length > list.length) P.svc.appendChild(h("div", "sv more", [h("b", "", ["+" + (gs.length - list.length) + " more groups"]), h("span", "", ["all in the grid below"])]));
   }
@@ -333,8 +355,8 @@
   function row(n, cls) {
     var s = shown(n), cb = h("input", "", null, {type: "checkbox", "data-k": n.key, "aria-label": "select " + n.name, checked: !!SEL[n.key]});
     return h("div", "ev " + sevOf(s) + (cls ? " " + cls : ""), [
-      h("span", "s", [ST_WORD[n.c]]), h("span", "n", [cb, h("b", "", [n.name])]), h("span", "a", [n.since ? A.dur(NOW() - n.since) + (n.exact ? "" : "+") : ""]),
-      h("span", "d", [[svcOf(n), n.ip || "no IP", n.why || ST_WORD[n.c].toLowerCase(), n.since ? "since " + hm(n.since) : ""].filter(Boolean).join(" · ")])],
+      h("span", "s", [statusWord(n, s)]), h("span", "n", [cb, h("b", "", [n.name])]), h("span", "a", [n.since ? A.dur(NOW() - n.since) + (n.exact ? "" : "+") : ""]),
+      h("span", "d", [[svcOf(n), n.ip || "no IP", phrase(n)].filter(Boolean).join(" · ")])],
       {"data-k": n.key, tabindex: "0", role: "button", title: n.name + ": click for its card"});
   }
   function notUp() {
@@ -347,7 +369,7 @@
       var cn = counts();
       P.evs.appendChild(h("p", "wx-empty", [swFresh() !== "ok" || F.incomplete.length ? "No current, whole read - nothing can be said up or down here." :
         cn.unk ? "Nothing down or warning in the current read - " + cn.unk + " without current data (grey)." :
-        "Every node SolarWinds watches is up, or off on purpose."]));
+        !cn.up ? "No monitored nodes." : "Every node SolarWinds watches is up, or off on purpose."]));
       P.more.hidden = true;
       P.evs.__n = 0;
       return;
@@ -368,6 +390,7 @@
     P.more.hidden = n <= shownN;
     P.more.textContent = "+" + (n - shownN) + " more · open the full list";
   }
+  function currentOverride(n) { return n.flags.indexOf("f") >= 0 && shown(n) === "off"; }
   function compare() {
     var c = F.cmp;
     clear(P.cmp);
@@ -379,12 +402,13 @@
                ref && real ? {"data-cmp": ref, tabindex: "0", role: "button", title: "The list of these nodes"} : null);
     };
     var curVc = F.vcs.every(function (v, i) { return vcFreshI(i) === "ok"; }), swOk = swFresh() === "ok";
+    var poweredOff = curVc ? c.off_in_vc : F.nodes.filter(currentOverride).length;
     var vco = c.vc_only == null || !swOk ? null : c.vc_only, nf = c.vc_read && curVc ? c.not_in_vc || 0 : null;
     add(P.cmp, [
       line(vco == null ? "–" : vco, "", "VMs in vCenter, not monitored in SolarWinds", vco == null ? "not counted: SolarWinds' read is not whole and current" : "in the grid as \"vCenter only\", with vCenter's status (heartbeat)", "v"),
       line(nf == null ? "–" : nf, "warn", "SolarWinds VMs not found in vCenter", nf != null ? "decommissioned? still polled · a VM by its Vendor or MachineType (" + F.vmRule + ")" : "not counted: not every vCenter's read is current", "n"),
       line(c.disagree || 0, "crit", "Disagree: SolarWinds down, vCenter running with heartbeat", (c.disagree_names || []).slice(0, 3).join(", ") + (c.disagree ? " - likely the network path, not the VM" : "none"), "g"),
-      line(c.off_in_vc || 0, "", "SolarWinds down, powered off in vCenter", "shown as Powered off (grey), never down", "p"),
+      line(poweredOff || 0, "", "SolarWinds down, powered off in vCenter", "shown as Powered off (grey), never down", "p"),
       c.ambiguous ? line(c.ambiguous, "warn", "Not compared: two VMs of one name", "the IP did not settle which - see each node's card", "a") : null,
       curVc ? null : h("p", "wx-empty", ["A vCenter is not current: its VMs are not compared (never turned from down to Powered off) until it is read again."])]);
   }
@@ -572,9 +596,9 @@
     var one = L.length === 1 && kind !== "bulk", n = L[0], s = shown(n);
     var x = h("button", "x", ["×"], {type: "button", title: "Close (Esc)", "aria-label": "Close"});
     x.addEventListener("click", closeOv);
-    var head = one ? h("h2", "", [h("span", "tag " + sevOf(s), [ST_WORD[n.c]]), h("span", "nm", [n.name]), h("small", "", [svcOf(n)]), x]) :
+    var head = one ? h("h2", "", [h("span", "tag " + sevOf(s), [statusWord(n, s)]), h("span", "nm", [n.name]), h("small", "", [svcOf(n)]), x]) :
       h("h2", "", [h("span", "nm", ["Share " + L.length + " node" + (L.length === 1 ? "" : "s") + " to Teams"]),
-        h("small", "", [L.filter(function (m) { return m.c === "d"; }).length + " down · " + L.filter(function (m) { return m.c === "w"; }).length + " warning"]), x]);
+        h("small", "", [L.filter(function (m) { return shown(m) === "down"; }).length + " down · " + L.filter(function (m) { return shown(m) === "warn"; }).length + " warning"]), x]);
     var extra = [];
     if (one) {
       var as = h("button", "", [SEL[n.key] ? "Remove from selection" : "Add to selection"], {type: "button", title: "Tick it in the Not up list (to share several at once)"});
@@ -588,13 +612,13 @@
     var body = one ? kv([
       ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
       ["IP", n.ip || "none known", "mono"],
-      ["Status", (s === "up" ? "up" : ST_WORD[n.c].toLowerCase()) + (n.why ? " · " + n.why : "") + (fr === "stale" ? " · NOT CURRENT (last known)" : fr === "late" ? " · LATE" : ""), sevOf(s)],
+      ["Status", statusWord(n, s).toLowerCase() + (n.why && !(s === "lastdown" && n.c === "p") ? " · " + n.why : "") + (fr === "stale" ? " · NOT CURRENT (last known)" : fr === "late" ? " · LATE" : ""), sevOf(s)],
       ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
       n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
-      ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (n.flags.indexOf("s") >= 0 ? " · not current - not compared" : "") :
+      ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (vcFreshI(n.vci) !== "ok" ? " · not current - not compared" : "") :
         n.flags.indexOf("a") >= 0 ? "more than one VM (or SolarWinds node) of this name - not compared (the IP did not settle it)" :
         n.flags.indexOf("c") >= 0 ? "a VM of this name in vCenter is another machine (another domain or IP) - not compared" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
-      n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.ago(n.polled).replace(" ago", "") + " before the read" : "")],
+      n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.hms(n.polled * 1000) : "")],
       ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
       ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]]) : null;
     var card = h("div", "fl-card" + (one ? "" : " bulk"), [head, body ? h("div", "fl-cb", [body]) : null, sh], {role: "dialog", "aria-modal": "true", "aria-label": one ? n.name : "Share to Teams"});
@@ -656,7 +680,7 @@
       if (g) { SPOT.g = +g.getAttribute("data-g"); SPOT.left = DWELL; SPOT.pausedUntil = Date.now() + 60000; services(); spotlight(); drawGrid(); return; }
       var cm = t.closest("[data-cmp]");
       if (cm) {
-        var w = cm.getAttribute("data-cmp"), L = F.nodes.filter(function (n) { return w === "v" ? n.vconly : w === "p" ? n.c === "p" && n.why.indexOf("SolarWinds: down") >= 0 : n.flags.indexOf(w) >= 0; });
+        var w = cm.getAttribute("data-cmp"), L = F.nodes.filter(function (n) { return w === "v" ? n.vconly : w === "p" ? currentOverride(n) : n.flags.indexOf(w) >= 0; });
         openList({v: "VMs in vCenter, not in SolarWinds", n: "SolarWinds VMs not found in vCenter", g: "Disagree: SolarWinds down, vCenter running", p: "SolarWinds down, powered off in vCenter", a: "Not compared: two VMs of one name"}[w], L,
                  w === "n" ? "A node is a VM by its Vendor or MachineType (" + F.vmRule + "); not found by name (any case, short name or FQDN) in any vCenter." : "");
         return;

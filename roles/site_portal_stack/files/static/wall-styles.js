@@ -99,7 +99,7 @@
     var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("monitor"), n = A.areaCounts("monitor"), tot = 0;
     Object.keys(c).forEach(function (k) { tot += +c[k] || 0; });
     var up = +c.u || 0;
-    return {id: "monitor", st: st, n: n, m: null, big: tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: tot ? "nodes up" : "no value read",
+    return {id: "monitor", st: st, n: n, m: null, big: st !== "stale" && tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: st === "stale" ? "no current data" : tot ? "nodes up" : "no value read",
             sub: n.crit + n.warn ? A.nowList("monitor").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
               tot ? (+c.d || 0) + " down · " + ((+c.p || 0) + (+c.m || 0)) + " off or unmanaged · " + (f.groups || 0) + " groups" : ""};
   }
@@ -251,7 +251,7 @@
           var st = last ? "stale" : g[1] ? "crit" : "warn";
           return h("div", "crow " + st, [h("span", "nm", [String(g[0])]), A.word(st, [g[1] ? g[1] + " down" : "", g[2] ? g[2] + " warning" : ""].filter(Boolean).join(" · "))],
                    {"data-goto": "monitor", tabindex: "0", role: "button", title: "Open Ops monitor"});
-        }) : [h("p", "wx-empty", [last ? "No current data." : "Every group up."])]).concat([
+        }) : [h("p", "wx-empty", [a.st === "ok" ? "No service group with a node down or warning." : "No current data."])]).concat([
         h("button", "sx-insp", ["Open Ops monitor →"], {type: "button", "data-goto": "monitor", title: "Every node by service group"})])));
     }
     var side = h("div", "sx-side", [h("b", "", ["Open now - " + a.name])]);

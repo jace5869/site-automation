@@ -829,6 +829,8 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
         inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else
                ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "monitor" else [])
+        if a["id"] == "monitor" and fleet and not inc and not any(fleet["counts"][c] for c in ("u", "w", "d", "x")):
+            inc = ["no monitored nodes"]
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
@@ -987,7 +989,9 @@ def summary(m, now):
             fs = m.get("fleet") or {}
             cn = fs.get("counts") or {}
             tot = sum(int(v or 0) for v in cn.values())
-            if tot:
+            if st == "stale":
+                big, unit = "–", "no current data"
+            elif tot:
                 big, unit = "%d/%d" % (int(cn.get("u") or 0), tot), "nodes up"
                 note = "%d down · %d warning · %d off or unmanaged" % (int(cn.get("d") or 0), int(cn.get("w") or 0), int(cn.get("p") or 0) + int(cn.get("m") or 0))
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]

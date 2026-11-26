@@ -7321,8 +7321,7 @@ class WallLive(object):
             self.fleet.viewed()
 
     def fleet_of(self, view, now):
-        """1.136.0: the Ops monitor area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
-        changed (a 3,000-node join is not made per request). Called inside self.lock."""
+        """Cache the join under self.lock until a source changes or poll ages need checking (every 30 s)."""
         if self.fleet is None:
             return None
         snap = self.fleet.snapshot()
@@ -7330,7 +7329,8 @@ class WallLive(object):
                            for k, s in ((view or {}).get("sources") or {}).items() if isinstance(s, dict) and s.get("kind") == "vcenter"))
         late = wall_fleet.limits(self.cfg.wall_fleet_opts.get("seconds", 60))[0]
         sw_late = snap.get("at") is not None and now - float(snap["at"]) > late      # absence is said only while SolarWinds is current
-        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"), vcs, sw_late)
+        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"),
+               snap.get("groups_why"), snap.get("groups_at"), snap.get("groups_tried"), vcs, sw_late, int(now // 30))
         if key != self.fleet_key or self.fleet_model is None:
             self.fleet_model = wall_fleet.model(snap, view, self.cfg.wall_fleet_opts, now, since=self.fleet_since)
             self.fleet_key, self.fleet_body = key, ""
