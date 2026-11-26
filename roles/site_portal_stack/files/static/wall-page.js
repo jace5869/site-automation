@@ -501,7 +501,7 @@
     });
     stage.addEventListener("keydown", function (e) {
       if (e.key !== "Enter" && e.key !== " ") return;
-      if (e.target.closest("button,a")) return;          // a real button or link (Share to Teams in a row) does its own click
+      if (e.target.closest("button,a[href]")) return;    // a real button or link (Share to Teams in a row) does its own click
       var d = e.target.closest("[data-d]"), g = e.target.closest("[data-goto]");
       if (d) { e.preventDefault(); openDetail(d.getAttribute("data-d")); } else if (g) { e.preventDefault(); setArea(g.getAttribute("data-goto")); }
     });
@@ -510,7 +510,7 @@
       var d = e.target.closest("[data-d]");
       if (d) { e.preventDefault(); openDetail(d.getAttribute("data-d")); return; }
       var sh = e.target.closest("[data-share]");
-      if (sh && BY[sh.getAttribute("data-share")]) { window.SAWallShare.open(card, shareOf(BY[sh.getAttribute("data-share")])); return; }
+      if (sh && BY[sh.getAttribute("data-share")]) { openShare(sh.getAttribute("data-share")); return; }
       var fb = e.target.closest("[data-fb]");
       if (fb) { var t = card.querySelector("h2"); openFeedback((t ? t.textContent : "") + " (" + fb.getAttribute("data-fb") + ")", fb.getAttribute("data-fb-area") || "general"); return; }
       if (e.target.closest(".x")) closeDetail();
@@ -1156,6 +1156,13 @@
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
   }
+  // Share to Teams over the detail card: a snapshot; closing it draws the card again from the latest read
+  function openShare(id) {
+    if (!window.SAWallShare || !BY[id]) return;
+    window.SAWallShare.open(card, shareOf(BY[id]), function () { if (openRef) openDetail(openRef, true); });
+  }
+  // a condition with no feed of its own (a vCenter or a cluster not answering): its source is that vCenter or cluster
+  function condFeed(c) { return c.feed || (c.vc ? "vc:" + c.vc : c.kind === "node" && String(c.id).indexOf("node:") === 0 ? "ontap:" + String(c.id).slice(5) : ""); }
   function shareOf(c) {
     var cleared = c.end != null;
     // what a Teams post says about one condition: from the model only (escaped by static/wall-share.js), the limits from the settings
@@ -1163,16 +1170,17 @@
       c.kind === "cpu" || c.kind === "mem" ? [thr("high")[0], null] : c.kind === "sm" && c.lag_h != null ? thr("snapmirror_lag_hours") : null;
     var hot = null;
     if (c.kind === "cpu" || c.kind === "mem") (W.vmware.hot || []).forEach(function (x) { if (x.cond === c.id) hot = x; });
-    var f = feed(c.feed || (c.vc ? "vc:" + c.vc : "")), stale = !cleared && condStale(c);
-    var seen = c.last_known && c.seen ? c.seen : null;     // a last-known condition: when it was last seen, not the feed's newer read
+    var f = feed(condFeed(c)), stale = !cleared && condStale(c);
+    // a last-known or cleared condition: its own last observation, never the feed's newer read that did not see it
+    var seen = (c.last_known || cleared) && c.seen ? c.seen : null;
     return {sev: cleared ? "cleared" : stale ? "stale" : c.sev, area: aShort(c.area), title: c.t, obj: c.obj || "", since: c.start ? when(c.start) : "",
             until: cleared ? when(c.end) : "", age: c.start ? dur((cleared ? c.end : NOW()) - c.start) : "",
-            lastSeen: seen ? hms(seen) + " (" + ago(ageS(seen)) + ")" : "",
+            lastSeen: c.last_known && seen ? when(seen) + " (" + ago(ageS(seen)) + ")" : "", strict: c.kind === "sm",
             site: [W.title, W.enclave, c.site].filter(Boolean).join(" · "),
             v: c.v != null ? c.v : c.kind === "sm" && c.lag_h != null ? c.lag_h : null, unit: c.kind === "sm" ? " h" : "%",
             warn: t ? t[0] : null, crit: t ? t[1] : null, max: c.kind === "sm" && t ? Math.max(t[1] * 1.3, (c.lag_h || 0) * 1.1) : 100,
             series: hot && Array.isArray(hot.spark) ? hot.spark : null, seriesLab: hot ? "last hour, per minute" : "",
-            src: f ? f.name : (c.feed || "the wall's read"), asof: seen ? hms(seen) : f && f.asof ? hms(f.asof) : "never", asofAge: seen ? ago(ageS(seen)) : f && f.asof ? ago(ageS(f.asof)) : "",
+            src: f ? f.name : (c.feed || "the wall's read"), asof: seen ? when(seen) : f && f.asof ? when(f.asof) : "never", asofAge: seen ? ago(ageS(seen)) : f && f.asof ? ago(ageS(f.asof)) : "",
             check: verify(c), link: location.origin + SRC.replace(/api\/wall$/, "wall") + "?area=" + encodeURIComponent(c.area) + "&open=" + encodeURIComponent("c:" + c.id),
             stamp: hms(NOW()), zone: zoneName()};
   }
@@ -1183,8 +1191,8 @@
     overallState: overallState, openConds: openConds, condStale: condStale, nowList: nowList, feed: feed, feedFresh: feedFresh, status: status,
     level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
     unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
-    dsRef: dsRef, cond: function (id) { return BY[id] || null; }, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
-    share: function (id) { if (!BY[id]) return; openDetail("c:" + id); if (window.SAWallShare) window.SAWallShare.open(card, shareOf(BY[id])); }
+    dsRef: dsRef, cond: function (id) { return BY[id] || null; }, condFeed: condFeed, lastKnown: lastKnown, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
+    share: function (id) { if (!BY[id]) return; openDetail("c:" + id); openShare(id); }
   };
   ["strata", "relay", "metro"].forEach(function (st) {
     RENDER[st] = function (r) {

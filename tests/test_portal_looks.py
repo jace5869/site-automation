@@ -235,6 +235,21 @@ class Summary(unittest.TestCase):
         self.assertEqual((met["obj"], met["state"]), ("DS-A", "crit"))
         self.assertTrue(met.get("forced"))
 
+    def test_each_state_carries_until_when_it_holds(self):
+        """review r2 (Codex 1, Neon 1): OK holds until the oldest source passes LATE; each current condition until its own
+        source passes STALE - one with no feed of its own (a vCenter not answering) until the next read; never cleared by an
+        unrelated old source"""
+        now = time.time()
+        a = self.by(M.summary(answer(now, vc_age=20, ontap_age=50), now))
+        self.assertAlmostEqual(a["storage"]["ok_until"], now - 50 + 180, places=3)
+        self.assertAlmostEqual(a["storage"]["metric"]["asof"], now - 50, places=3)
+        conds = [{"id": "vc:vc2", "kind": "vc", "area": "vmware", "sev": "crit", "t": "vCenter vc2 login failed", "feed": "", "end": None, "start": now},
+                 {"id": "h", "area": "vmware", "sev": "warn", "t": "host high", "feed": "vc:vc1.example.mil", "end": None, "start": now}]
+        a = self.by(M.summary(answer(now, conds=conds), now))
+        self.assertEqual(a["vmware"]["state"], "crit")
+        self.assertIsNone(a["vmware"]["ok_until"])
+        self.assertEqual(sorted((x[0], x[1] is None) for x in a["vmware"]["live"]), [("crit", True), ("warn", False)])
+
     def test_the_endpoint(self):
         class FakeWall(object):
             cfg = type("C", (), {"tz_name": "Europe/Berlin"})()
@@ -289,6 +304,8 @@ class ShareText(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), ["91% · 6 pts over warn 85 · crit at 97", "98% · 1 pt over crit 97", "60.7% · 29.3 pts below high 90",
                                                 "30 h · 6 h over warn 24 · crit at 72"])
+        r = self.run_js("process.stdout.write(window.SAWallShare.words({v: 72, warn: 24, crit: 72, unit: ' h', strict: true}));")  # the wall's rule: over, not at
+        self.assertEqual(r.stdout, "72 h · 48 h over warn 24 · crit at 72")
 
 
 if __name__ == "__main__":

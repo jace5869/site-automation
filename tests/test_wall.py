@@ -1293,7 +1293,8 @@ class Browser(unittest.TestCase):
         import test_netapp_live as T
         cfg = T.cfg_for(tmp, PORTAL_WALL_TEST="1")
         html = sp.wall_page(cfg, JDOE_CN, {}).replace("/portal/static/", "")
-        for n in ("wall-page.js", "wall-page.css", "wall-land.js", "portal.css", "portal-theme.js", "portal.js"):
+        for n in ("wall-page.js", "wall-page.css", "wall-land.js", "portal.css", "portal-theme.js", "portal.js",
+                  "wall-styles.js", "wall-styles.css", "wall-share.js", "portal-looks.css"):          # 1.135.0: the room's styles too
             shutil.copy(os.path.join(FILES, "static", n), d)
         open(os.path.join(d, "banner.css"), "w").close()
         with open(os.path.join(d, "ans.js"), "w") as fh:
@@ -1400,6 +1401,7 @@ window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
  (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
  T.set(JSON.parse(JSON.stringify(a)));
  ['lights','cockpit','map','strata','relay','metro'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
+   if(['strata','relay','metro'].indexOf(st)>=0&&!document.querySelector('.wx-'+st))bad.push(i+' '+st+'/'+ar+': the board was not drawn');
    add(i+' '+x.cut+' '+st+'/'+ar,T.greens(),st==='map')})});
  T.view('cockpit','overview');
  R.forEach(function(r){T.open(r);add(i+' '+x.cut+' card '+r,T.greens(),false)});

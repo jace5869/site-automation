@@ -1151,11 +1151,14 @@ Every condition's detail card, in every style, has **Share to Teams…**:
 - **Copy picture** puts a PNG alert card on the clipboard, drawn from the wall's data (not a screen grab): the severity,
   the object, the value against its warn / crit bar, the last hour when the wall has it (sustained high), the source and
   its age, where to check.
-- **Copy both** puts the text and the picture on together; **Save picture** downloads the PNG when the browser keeps
-  pictures off the clipboard. Each says what happened ("Text copied - in Teams press Ctrl+V", or what to do when the
+- **Copy both** puts the text and the picture on together (Teams may paste only one of them - then **Copy picture** and
+  paste again); **Save picture** downloads the PNG when the browser keeps pictures off the clipboard. Each says what happened ("Text copied - in Teams press Ctrl+V", or what to do when the
   browser blocked it).
 
 In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTPS address (it has one).
+
+Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
+no longer in the latest read, they say when it was last seen.
 
 ### Make a screen the ops wall (1.135.0)
 
@@ -1175,7 +1178,9 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
    address names none. Run **Site portal - deploy**.
 4. **Who the screen signs in as:** an operator signs in with their card at the start of a shift; the wall needs view
    access (`portal_viewers` / `portal_view_groups`).
-5. **What it shows:** rotation pauses on a key and starts again after 20 s idle; Esc leaves kiosk mode.
+5. **What it shows:** each board says whether it rotates and how often; rotation pauses on a key and starts again after
+   20 s idle. In kiosk mode the wall's controls (Rotate, Exit kiosk) appear when the mouse is over the top right corner or
+   a key moves the focus there; Esc leaves kiosk mode.
 
 ### The preview banner (portal_wall_preview)
 

@@ -9,7 +9,7 @@
   if (!sec || !window.fetch) return;
   var SRC = sec.getAttribute("data-src"), WALL = sec.getAttribute("data-wall"), TITLE = sec.getAttribute("data-title") || "Ops center";
   var de = document.documentElement, NS = "http://www.w3.org/2000/svg";
-  var D = null, SKEW = 0, FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
+  var D = null, D0 = null, SKEW = 0, FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
   var EVERY = 8;                                  // seconds: the spotlight's step and a Metro tile's turn
 
   function h(tag, cls, kids, at) {
@@ -212,23 +212,42 @@
     return h("p", "ops-say", parts);
   }
 
-  // the server's state as of its answer, aged on this page's clock: OK turns grey once its oldest source passes LATE, and every
-  // value is "not current" once it passes STALE - between two reads, in a background tab, after a sleep
+  // the server's state as of its answer, aged on this page's clock (the wall's rule between two reads, in a background tab, after a
+  // sleep): OK turns grey when its oldest source passes LATE (ok_until); a condition stops counting when its own source passes STALE
+  // (live: [severity, until]); a value with a limit the same, by its own source; the whole answer is not current once it is older
+  // than STALE. Worked out from the answer as it came (D0), so a state never comes back.
   function aged() {
-    var late = (D.late || 180) * 1000, stale = (D.stale || 600) * 1000;
-    D.areas.forEach(function (a) {
-      if (a.state === "off") return;
-      var age = a.asof ? now() - a.asof * 1000 : Infinity;
-      if ((a.state === "ok" && age > late) || age > stale) {
-        if (a.state !== "stale") { a.state = "stale"; a.why = a.why || "its oldest source was read " + ago(a.asof * 1000) + " ago (LATE after " + Math.round(late / 60000) + " min)"; }
-        a.crit = 0; a.warn = 0;
+    var t = now(), stale = (D.stale || 600) * 1000, late = (D.late || 180) * 1000, old = D.now && t - D.now * 1000 > stale;
+    D.areas = D0.areas.map(function (a0) {
+      var a = JSON.parse(JSON.stringify(a0));
+      if (a.state === "off") return a;
+      if (a.metric) {
+        var ma = a.metric.asof ? t - a.metric.asof * 1000 : Infinity;
+        if (old || (a.metric.state === "ok" && ma > late) || ma > stale) a.metric.state = "stale";
       }
-      if (a.metric && a.metric.state !== "stale" && ((a.metric.state === "ok" && age > late) || age > stale)) a.metric.state = "stale";
+      if (old) { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the wall's answer is older than " + Math.round(stale / 60000) + " min"; return a; }
+      if (a.state === "ok" && (a.ok_until == null || t > a.ok_until * 1000)) {
+        a.state = "stale"; a.why = a.why || "a source of this area passed LATE (" + Math.round(late / 60000) + " min) since the page read it";
+      }
+      if (a.state === "crit" || a.state === "warn") {
+        var n = {crit: 0, warn: 0};
+        (a.live || []).forEach(function (x) { if ((x[1] == null || t <= x[1] * 1000) && n[x[0]] != null) n[x[0]]++; });
+        a.crit = n.crit; a.warn = n.warn;
+        if (!n.crit && !n.warn) { a.state = "stale"; a.worst = []; a.why = "its open conditions' sources passed STALE (" + Math.round(stale / 60000) + " min) - last known, not current"; }
+        else a.state = n.crit ? "crit" : "warn";
+      }
+      return a;
     });
   }
+  function sig() { return D ? D.areas.map(function (a) { return a.id + a.state + a.crit + a.warn + (a.metric ? a.metric.state : ""); }).join(",") : ""; }
+  var LASTSIG = "";
   function render() {
     if (!D) return;
     aged();
+    LASTSIG = sig();
+    // a redraw keeps the keyboard where it was: the same area's same control
+    var fa = document.activeElement && sec.contains(document.activeElement) ? document.activeElement : null;
+    var fid = fa && fa.closest("[data-id]") ? fa.closest("[data-id]").getAttribute("data-id") : "", fsp = fa ? fa.getAttribute("data-sp") : null;
     var lk = skin(), keep = sec.querySelector(".ops-h");
     clear(sec);
     var hint = lk === "strata" ? "spotlight steps every " + EVERY + " s · click an area for its wall"
@@ -248,10 +267,15 @@
     sec.appendChild(h("p", "ops-foot", ["Grey = no current data, never green: LATE after " + Math.round((D.late || 180) / 60) + " min, not current after " + Math.round((D.stale || 600) / 60) +
       " min. The same rule and limits as the wall (portal_wall_datastore_warn / _crit, portal_wall_aggr_warn / _crit, portal_wall_high_pct)."]));
     sec.hidden = false;
+    if (fa) {
+      var back = fsp ? sec.querySelector('button[data-sp="' + fsp + '"]') : fid ? sec.querySelector('.ot[data-id="' + fid + '"] a') : null;
+      if (back) back.focus();
+    }
   }
   function failed(msg) {
     FAIL++;
     if (D) {                                     // a later read failed: every value grey, said - never a stale green, no lamp lit
+      D = D0 = JSON.parse(JSON.stringify(D0));
       D.areas.forEach(function (a) { if (a.state !== "off") { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the portal could not read the wall (" + msg + ")"; if (a.metric) a.metric.state = "stale"; } });
       render();
       return;
@@ -265,7 +289,8 @@
   function load() {
     var mine = ++SEQ;
     fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
-      if (r.status === 404) { D = null; sec.hidden = true; return null; }      // the wall is off here: nothing kept to show again
+      if (mine !== SEQ) return null;                                         // an older read that answered late: dropped
+      if (r.status === 404) { D = D0 = null; sec.hidden = true; return null; }  // the wall is off here: nothing kept to show again
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }).then(function (a) {
@@ -273,7 +298,8 @@
       if (!Array.isArray(a.areas)) throw new Error("no areas in the answer");
       FAIL = 0;
       if (a.now) SKEW = a.now * 1000 - Date.now();
-      D = a;
+      D0 = a;
+      D = JSON.parse(JSON.stringify(a));
       render();
     }).catch(function (e) { if (mine === SEQ) failed(e && e.message ? e.message : "no answer"); });
   }
@@ -297,9 +323,10 @@
     tick++;
     if (tick % 60 === 0) load();
     if (!D || document.hidden) return;
-    if (tick % 15 === 0 && (skin() !== "strata" || !moves())) { render(); return; }      // ages on the page's clock (Strata redraws with its stage)
+    var before = LASTSIG; aged();
+    if (sig() !== before) { render(); return; }                               // a state passed LATE / STALE: drawn at once
     var lk = skin();
-    if (lk === "strata" && moves() && PAUSE <= now()) {
+    if (lk === "strata" && moves() && PAUSE <= now() && spotList().length > 1) {
       SPOT_LEFT--;
       if (SPOT_LEFT <= 0) { SPOT_LEFT = EVERY; SPOT++; render(); return; }
       var st = sec.querySelector(".sp-step span");

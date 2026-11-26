@@ -865,8 +865,9 @@ def _metric(label, obj, v, warn, crit, unit, feed, m, now, by):
     if not isinstance(v, (int, float)) or isinstance(v, bool):
         return None
     st = "crit" if crit is not None and v >= crit else "warn" if warn is not None and v >= warn else "ok"
+    f = (m.get("feeds") or {}).get(feed) if feed else None
     return {"label": label, "obj": obj, "v": round(float(v), 1), "warn": warn, "crit": crit, "unit": unit, "feed": feed,
-            "state": _status(m, st, feed, now, by)}
+            "state": _status(m, st, feed, now, by), "asof": f.get("asof") if isinstance(f, dict) else None}
 
 
 def summary(m, now):
@@ -955,7 +956,17 @@ def summary(m, now):
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
+        # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest
+        # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
+        # own - a vCenter or cluster not answering - stays until the next read says otherwise)
+        late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
+        ok_until = (min(asofs) + late_s) if st == "ok" and asofs and len(asofs) == len(feeds) else None
+        live = []                                  # each current condition: its severity, until when (None: until the next read)
+        for c in cur:
+            f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None
+            live.append([c.get("sev"), (float(f["asof"]) + stale_s) if isinstance(f, dict) and f.get("asof") is not None else None])
         out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",
+                    "ok_until": ok_until, "live": live,
                     "state": st, "crit": n["crit"], "warn": n["warn"], "big": big, "unit": unit, "note": note, "metric": metric,
                     "worst": [{"t": c.get("t"), "sev": c.get("sev"), "start": c.get("start")} for c in worst],
                     "asof": min(asofs) if asofs else None, "why": why})

@@ -154,9 +154,10 @@
     board.appendChild(h("header", "sx-hd", [logo(), h("div", "sx-t", [h("small", "", ["Strata · ops wall" + (focus() ? " · " + focusName() : "")]), h("b", "", [w.title || "Ops center"])]),
       w.enclave ? h("span", "sx-chip", [h("small", "", ["Enclave"]), " " + w.enclave]) : null, sum, h("div", "sx-time", [clock()])]));
     var top = now.filter(function (i) { return i.type === "cond" && i.sev === "crit"; })[0] || now.filter(function (i) { return i.type === "cond"; })[0];
+    if (top) board.classList.add("ban");
     if (top) board.appendChild(h("div", "sx-ban " + top.sev, [A.word(top.sev, sevWord(top.sev).toUpperCase()), h("b", "", [A.aShort(top.area) + " · " + top.t]),
       h("span", "", ["Since " + A.when(top.since) + " (" + A.dur(A.NOW() - top.since) + ")" + (top.sub ? " · " + top.sub : "")]),
-      srcLine(top.c.feed || (top.c.vc ? "vc:" + top.c.vc : "")), h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + top.id, title: "Open its detail card (and Share to Teams)"})]));
+      srcLine(A.condFeed(top.c)), h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + top.id, title: "Open its detail card (and Share to Teams)"})]));
     var left = h("div", "sx-left"), tiles = h("div", "sx-tiles");
     var spotList = list.filter(function (a) { return a.st !== "off"; }).sort(function (a, b) { return (RANK[b.st] - RANK[a.st]) || ((b.n.crit + b.n.warn) - (a.n.crit + a.n.warn)); });
     if (focus() !== SPOT.focus) {               // the area chosen (?area=, the menu, rotate areas) goes on stage once; a click may move it
@@ -181,7 +182,7 @@
     // the threshold watch: every value with a limit the wall reads, against its limit - worst first
     var watch = h("div", "sx-watch", [h("div", "wh", [h("b", "", ["Threshold watch - value vs limit"]), h("span", "", ["click a row for its detail card"])])]);
     var rows = capRows(3), vm = list.filter(function (a) { return a.id === "vmware"; })[0];
-    if (vm && vm.m && focus() !== "vmware") rows.push({label: vm.m.obj, sub: "cluster CPU", v: vm.m.v, w: vm.m.w, c: null, st: vm.m.st, ref: vm.m.ref});
+    if (vm && vm.m && !focus()) rows.push({label: vm.m.obj, sub: "cluster CPU", v: vm.m.v, w: vm.m.w, c: null, st: vm.m.st, ref: vm.m.ref});
     rows.slice(0, 4).forEach(function (m) {
       watch.appendChild(h("div", "wr " + m.st, [A.word(m.st, sevWord(m.st)), h("span", "nm", [h("b", "", [m.label]), " " + m.sub]), bar(m), h("span", "wsay", [said(m)])],
         {"data-d": m.ref, tabindex: "0", role: "button"}));
@@ -192,14 +193,14 @@
     var right = h("div", "sx-stage" + (spot ? " " + spot.st : ""));
     var tabs = h("div", "sx-tabs", spotList.map(function (a, i) {
       return h("button", "tb " + a.st + (spot && spot.id === a.id ? " on" : ""), [A.word(a.st, String(i + 1) + " " + (A.aShort(a.id) || a.name))], {type: "button", "data-spot": a.id});
-    }).concat([h("span", "cd", [spotList.length > 1 ? (SPOT.pausedUntil > Date.now() ? "paused 60 s after a click" : moves() && !frozen() ? "next in " + SPOT.left + " s" : "use ‹ ›") + " · problems first" : "problems first"]),
+    }).concat([h("span", "cd", [spotList.length > 1 ? (focus() ? "showing " + focusName() + " - ‹ › to step" : SPOT.pausedUntil > Date.now() ? "paused 60 s after a click" : moves() && !frozen() ? "next in " + SPOT.left + " s" : "use ‹ ›") + " · problems first" : "problems first"]),
       h("button", "sb", ["‹"], {type: "button", "data-step": "-1", title: "The area before"}), h("button", "sb", ["›"], {type: "button", "data-step": "1", title: "The next area"})]));
     right.appendChild(tabs);
     if (spot) right.appendChild(stageOf(spot)); else right.appendChild(nothingOn());
     board.appendChild(h("div", "sx-body", [left, right]));
     var feeds = Object.keys(w.feeds || {}).filter(function (k) { return k !== "netapp-run"; });
     board.appendChild(h("footer", "sx-ft", feeds.map(function (k) { var x = fresh(k), e = h("span", "fd " + x.st, [h("i"), h("span", "", [x.name + " · "]), x.t], {"data-d": "feed:" + k, tabindex: "0", role: "button"}); e.setAttribute("data-fresh", k); return e; }).concat([
-      h("span", "rot", [rotCue()]),
+      h("span", "rot rotcue", [rotCue()]),
       h("span", "lg", ["Key: ", A.word("crit", "Crit"), A.word("warn", "Warn / late > " + Math.round((w.late || 180) / 60) + " min"), h("span", "lgk", ["✓ OK = every source current"]), A.word("stale", "Not current > " + Math.round((w.stale || 600) / 60) + " min")])])));
     r.appendChild(board);
     board.addEventListener("click", function (e) {
@@ -224,7 +225,7 @@
       var w = W(), hosts = (w.vmware.hosts || []);
       var hot = (w.vmware.hot || []).slice(0, 4), hp = A.thr("high")[0];
       if (hot.length) box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Sustained high - the last hour against the " + hp + " % line"]), h("span", "", [A.thr("high")[1] + " min or longer counts"])])].concat(
-        hot.map(function (x) { return h("div", "hrow", [h("span", "nm", [x.n, h("small", "", [x.k + " · " + x.m])]), spark(x.spark, hp, (x.cond && A.cond(x.cond) && A.condStale(A.cond(x.cond))) || A.status("warn", A.vcFeed()) !== "warn" ? "stale" : "warn"), h("span", "v", [num(x.v) + "% · " + pts(x.v - hp, "%") + " over high " + hp])],
+        hot.map(function (x) { return h("div", "hrow", [h("span", "nm", [x.n, h("small", "", [x.k + " · " + x.m])]), spark(x.spark, hp, (x.cond && A.cond(x.cond) && A.condStale(A.cond(x.cond))) || A.status("warn", x.cond && A.cond(x.cond) ? A.condFeed(A.cond(x.cond)) : A.vcFeed()) !== "warn" ? "stale" : "warn"), h("span", "v", [num(x.v) + "% · " + pts(x.v - hp, "%") + " over high " + hp])],
           x.cond ? {"data-d": "c:" + x.cond, tabindex: "0", role: "button"} : null); }))));
       box.appendChild(h("div", "sx-fleet", [h("div", "ch", [h("b", "", ["Hosts (" + hosts.length + ")"]), h("span", "", ["each square a host · click for its card"])]),
         h("div", "fg", hosts.slice(0, 96).map(function (x) {
@@ -257,6 +258,7 @@
     board.appendChild(h("header", "rx-hd", [logo(), h("div", "rx-t", [h("b", "", [w.title || "Ops center"]), h("small", "", [[w.enclave, focusName()].filter(Boolean).join(" / ")])]),
       h("div", "rx-time", [clock(), h("small", "wx-day", [dayTxt()])])]));
     var crit = now.filter(function (i) { return i.type === "cond" && i.sev === "crit"; })[0];
+    if (crit) board.classList.add("ban");
     if (crit) board.appendChild(h("div", "rx-alarm", [A.lamp("crit", "big"), h("div", "", [h("small", "", ["Critical alarm · " + A.aShort(crit.area)]), h("b", "", [crit.t])]),
       h("div", "o", [h("b", "", [crit.sub || ""]), h("span", "", ["Since " + A.when(crit.since) + " (" + A.dur(A.NOW() - crit.since) + ")"])]),
       h("button", "rx-go", ["View detail →"], {type: "button", "data-d": "c:" + crit.id})]));
@@ -266,7 +268,7 @@
       bays.appendChild(h("div", "rx-bay " + a.st, [
         h("div", "bh", [aIcon(a.id), h("b", "", [a.name]), h("small", "", ["B-0" + (i + 1)])]),
         h("div", "plate " + a.st, [A.word(a.st, sevWord(a.st).toUpperCase()), h("span", "ticks", [n ? (n > 9 ? "9+" : String(n)) + " open" : ""])]),
-        h("p", "bs", [a.off ? "No live source yet - grey, never a guess" : a.n.crit + a.n.warn ? countTxt(a.n) : a.st === "stale" ? "Last known: no wall condition - data not current" : a.big ? a.big + " " + a.unit : ""]),
+        h("p", "bs", [a.off ? "No live source yet - grey, never a guess" : a.n.crit + a.n.warn ? countTxt(a.n) : a.st === "stale" ? lastTxt(a.id) : a.big ? a.big + " " + a.unit : ""]),
         a.off ? h("div", "bf", ["Not on the wall yet" + (a.sub ? " · " + a.sub : "")]) : h("div", "bf", [srcLine(null, a.id)])
       ], a.off ? null : {"data-goto": a.id, tabindex: "0", role: "button", title: "Show " + a.name + " on the wall (this style)"}));
     });
@@ -291,10 +293,12 @@
     board.appendChild(h("section", "rx-capw", [h("div", "sh", [h("b", "", ["Capacity watch"]), h("span", "", ["value against its warn / crit limit"])]), cap]));
     var feeds = Object.keys(w.feeds || {}).filter(function (k) { return k !== "netapp-run"; }), cur = feeds.filter(function (k) { return A.feedFresh(k) === "ok"; }).length;
     board.appendChild(h("footer", "rx-ft", [h("span", "", [cur + " of " + feeds.length + " sources current"]),
-      h("span", "", [rotCue() + (A.ROT.on ? "" : " - the Rotate button or R")]),
+      h("span", "rotcue", [rotCue()]),
       h("span", "", ["Grey = no current data, never green"])]));
     r.appendChild(board);
   }
+  // a stale area's last-known open conditions (kept until a read sees them recover), never "none" while one is kept
+  function lastTxt(id) { var n = A.lastKnown(id), k = n.crit + n.warn; return k ? "Last known: " + countTxt(n) + " - data not current" : "Last known: no wall condition - data not current"; }
   function countTxt(n) { return [n.crit ? n.crit + " critical" : "", n.warn ? n.warn + " warning" : ""].filter(Boolean).join(" · "); }
 
   // ================================================================ METRO
@@ -307,7 +311,8 @@
         h("span", "o", [A.word(c.ok ? "ok" : "off", c.ok + " OK")]), c.stale ? h("span", "s", [A.word("stale", c.stale + " NOT CURRENT")]) : null]),
       h("div", "src", feeds.slice(0, 3).map(function (k) { var f = A.feed(k), st = A.feedFresh(k), age = f && f.asof ? A.ago(A.ageS(f.asof)).replace(" ago", "") : "never";
         st = feedSt(k);
-        return h("span", st, [h("i"), (f ? f.name.replace(/^(vCenter|ONTAP) /, "$1 ").split(".")[0] : k) + " " + (st === "ok" ? age : st === "late" ? "LATE " + age : "NOT CURRENT")], {"data-d": "feed:" + k, tabindex: "0", role: "button"}); })),
+        return h("span", st, [h("i"), (f ? f.name.replace(/^(vCenter|ONTAP) /, "$1 ").split(".")[0] : k) + " ", h("b", "age", [st === "ok" ? age : st === "late" ? "LATE " + age : "NOT CURRENT"])],
+          {"data-d": "feed:" + k, "data-age": k, tabindex: "0", role: "button"}); })),
       clock()]));
     var grid = h("section", "mx-grid");
     var sorted = list.slice().sort(function (a, b) { return RANK[b.st] - RANK[a.st]; });
@@ -348,7 +353,7 @@
     var cap = h("section", "mx-cap", [h("h3", "", ["Capacity"])]);
     capRows(6).forEach(function (m) { cap.appendChild(h("div", "bb " + m.st, [h("div", "lab", [h("span", "", [m.label]), h("b", "", [num(m.v) + "%"])]), bar(m, "sm")], {"data-d": m.ref, tabindex: "0", role: "button"})); });
     board.appendChild(cap);
-    board.appendChild(h("div", "mx-pv", [(moves() ? "Tiles turn over every " + FLIP_EVERY + " s to their worst items · " : "Hover a tile to see its worst items · ") + "a tile shows its area · a row opens its detail card · Share to Teams copies text and a picture · " + rotCue()]));
+    board.appendChild(h("div", "mx-pv", [(moves() ? "Tiles turn over every " + FLIP_EVERY + " s to their worst items · " : "Hover a tile to see its worst items · ") + "a tile shows its area · a row opens its detail card · Share to Teams copies text and a picture · ", h("span", "rotcue", [rotCue()])]));
     r.appendChild(board);
     board.addEventListener("click", function (e) {
       var b = e.target.closest("[data-share-now]");
@@ -360,8 +365,19 @@
   setInterval(function () {
     if (!A || !W() || document.hidden) return;
     var de = document.documentElement;
-    if (!frozen()) document.querySelectorAll(".wx .wx-clock>b").forEach(function (c) { c.textContent = A.hms(A.NOW()); });     // the board's own clock ticks
-    if (de.classList.contains("style-strata") && moves() && !frozen() && (SPOT.n || 0) > 1 && SPOT.pausedUntil <= Date.now()) {
+    if (!frozen()) {                             // the board's own clock, date, source ages and rotation cue tick with the page
+      document.querySelectorAll(".wx .wx-clock>b").forEach(function (c) { c.textContent = A.hms(A.NOW()); });
+      document.querySelectorAll(".wx .wx-day").forEach(function (c) { c.textContent = dayTxt(); });
+      document.querySelectorAll(".wx .rotcue").forEach(function (c) { c.textContent = rotCue(); });
+      document.querySelectorAll(".wx [data-age]").forEach(function (e) {
+        var k = e.getAttribute("data-age"), f = A.feed(k), st = feedSt(k), age = f && f.asof ? A.ago(A.ageS(f.asof)).replace(" ago", "") : "never", b = e.querySelector(".age");
+        e.className = st;
+        if (b) b.textContent = st === "ok" ? age : st === "late" ? "LATE " + age : "NOT CURRENT";
+      });
+    }
+    // the spotlight steps on its own only over the whole board (an area chosen stays on stage), never on What the wall watches
+    if (de.classList.contains("style-strata") && moves() && !frozen() && !focus() && A.S.area !== "watch" && document.querySelector(".wx-strata")
+        && (SPOT.n || 0) > 1 && SPOT.pausedUntil <= Date.now()) {
       SPOT.left--;
       var cd = document.querySelector(".sx-tabs .cd");
       if (SPOT.left <= 0) {
@@ -370,7 +386,7 @@
         if (stage && !document.querySelector("#dsBack.on")) A.render();
       } else if (cd) cd.textContent = "next in " + SPOT.left + " s · problems first";
     }
-    if (de.classList.contains("style-metro") && moves()) {
+    if (de.classList.contains("style-metro") && moves() && !frozen()) {
       FLIP++;
       if (FLIP % FLIP_EVERY) return;
       var ts = document.querySelectorAll(".wx-metro .mx-grid .t");

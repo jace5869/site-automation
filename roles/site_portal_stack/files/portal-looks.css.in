@@ -152,6 +152,7 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 :root[data-skin="metro"] .ftiles .ft:nth-child(2){background:#5b41c4}
 :root[data-skin="metro"] .ftiles .ft:nth-child(3){background:#127a50}
 :root[data-skin="metro"] .ftiles .ft.bad{background:#b2431b}
+:root[data-skin="metro"] .ftiles .ft .v,:root[data-skin="metro"] .ftiles .ft.bad .v{color:#fff}
 :root[data-skin="metro"] .ft[aria-current="true"]{outline:3px solid var(--ink);outline-offset:-3px}
 :root[data-skin="metro"] .tcard:not(.off){border:0;border-radius:2px;box-shadow:var(--shadow)}
 :root[data-skin="metro"] .tcard .ico{border-radius:0;background:var(--metro-tile,#0f6f94);color:#fff;border:0}

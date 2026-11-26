@@ -16,8 +16,9 @@
     if (a.v == null || a.warn == null) return "";
     var u = a.unit === "%" ? "%" : a.unit, d = function (x) { x = Math.round(Math.abs(x) * 10) / 10; return x + (a.unit === "%" ? (x === 1 ? " pt" : " pts") : a.unit); };
     var lim = a.crit == null ? "high " + n1(a.warn) : "warn " + n1(a.warn);
-    if (a.crit != null && a.v >= a.crit) return n1(a.v) + u + " · " + d(a.v - a.crit) + " over crit " + n1(a.crit);
-    if (a.v >= a.warn) return n1(a.v) + u + " · " + d(a.v - a.warn) + " over " + lim + (a.crit != null ? " · crit at " + n1(a.crit) : "");
+    var over = function (v, lim) { return a.strict ? v > lim : v >= lim; };     // SnapMirror lag: over its limit, as the wall's rule
+    if (a.crit != null && over(a.v, a.crit)) return n1(a.v) + u + " · " + d(a.v - a.crit) + " over crit " + n1(a.crit);
+    if (over(a.v, a.warn)) return n1(a.v) + u + " · " + d(a.v - a.warn) + " over " + lim + (a.crit != null ? " · crit at " + n1(a.crit) : "");
     return n1(a.v) + u + " · " + d(a.warn - a.v) + " below " + lim;
   }
   function lines(a) {
@@ -105,7 +106,7 @@
       wrap(x, a.obj || "", L + 22, top + 66, R - L - 24, 30, 4);
     }
     x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono;
-    x.fillText(fit(x, "Source " + a.src + " · as of " + a.asof, W - 80), L, H - 52);
+    x.fillText(fit(x, "Source " + a.src + " · as of " + a.asof + (a.asofAge ? " (" + a.asofAge + ")" : ""), W - 80), L, H - 52);
     x.fillText(fit(x, "Check: " + a.check, W - 80), L, H - 28);
     return cv;
   }
@@ -131,7 +132,7 @@
     (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
-  function open(card, a) {
+  function open(card, a, onClose) {
     var old = card.querySelector(".share");
     if (old) old.parentNode.removeChild(old);
     var say = el("p", "shd", [""], {role: "status", "aria-live": "polite"});
@@ -186,7 +187,7 @@
         say.textContent = "Picture saved - drag it from your downloads into the Teams chat.";
       } catch (e) { say.textContent = "The picture could not be saved here - right-click the picture and save it."; }
     }, "Download the picture (when the browser keeps pictures off the clipboard)");
-    var close = b("Close", "", function () { panel.parentNode.removeChild(panel); }, "Back to the detail card");
+    var close = b("Close", "", function () { panel.parentNode.removeChild(panel); if (onClose) onClose(); }, "Back to the detail card (drawn again from the latest read)");
     var panel = el("section", "share", [
       el("h3", "", ["Share to Teams", el("small", "", [" " + a.title + " · " + a.area])]),
       el("div", "shg", [
