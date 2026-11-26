@@ -212,7 +212,7 @@ rm -f "$work/act/fake-act-models.log"
 run "model tiers: the worker drafts, a draft with no code goes to the smart model once" ok -e "$all6" \
     -e '{"site_act_models": {"genai": "smart-ak"}, "site_act_worker_models": {"genai": "worker-ak"}}' -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" "V-257985 ACT draft: RHEL 9 must not permit direct logons" \
-    "Drafts: ACT models (site_act_worker_model): 1 item(s) answered by the worker model (worker-ak), 1 by the smart model (smart-ak), 1 of them re-asked after the worker (1 unreadable)." \
+    "Drafts: ACT models (site_act_worker_model): 1 item(s) answered by the worker model (worker-ak), 1 by the smart model (smart-ak); 1 re-asked after the worker (1 unreadable)." \
     "the read-only check refused the draft ACT wrote: it runs iex"
 w="$(grep -c '"worker-ak"' "$work/act/fake-act-models.log" 2>/dev/null)"; s="$(grep -c '"smart-ak"' "$work/act/fake-act-models.log" 2>/dev/null)"
 [ "$w" = 2 ] && [ "$s" = 1 ] && echo "ok   - ...the worker drafted 2 rules, the smart model 1 (the one with no code)" \

@@ -383,7 +383,7 @@ class Tiers(unittest.TestCase):
         self.assertEqual([q["escalated"] for q in r["questions"]], ["unsure", "unreadable", "no answer", "critical", "unsure"])
         self.assertEqual(r["tiers"]["items"]["escalated"], 5)
         self.assertEqual(r["tiers"]["escalated_why"], {"unsure": 2, "unreadable": 1, "no answer": 1, "critical": 1})
-        self.assertIn("5 of them re-asked after the worker (1 critical, 1 no answer, 1 unreadable, 2 unsure)", r["tiers"]["note"])
+        self.assertIn("0 item(s) answered by the worker model (worker-model), 5 by the smart model (smart-model); 5 re-asked after the worker (1 critical, 1 no answer, 1 unreadable, 2 unsure).", r["tiers"]["note"])
         self.assertIn("by smart-model", r["questions"][0]["summary"])
 
     def test_an_item_the_job_marks_critical_goes_to_the_smart_model_at_once(self):
@@ -413,6 +413,8 @@ class Tiers(unittest.TestCase):
         self.assertIn("ACT failed: HTTP 500", q0["reason"])
         self.assertFalse(r["tiers"]["synth"]["asked"])                     # nothing answered: no verdict asked
         self.assertEqual(r["tiers"]["items"]["none"], 1)
+        self.assertNotIn("keep the worker's answer", r["tiers"]["note"])
+        self.assertIn("1 item(s) not answered.", r["tiers"]["note"])
 
     def test_the_verdict_never_reads_the_evidence_and_is_redacted(self):
         self.rig.set_plan({"worker-model|t": ["BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"P1\", \"cause\": \"bad login\", "
@@ -502,6 +504,8 @@ class Tiers(unittest.TestCase):
         self.assertEqual(self.rig.calls(), [])
         self.assertIn("VMWARE_PASSWORD", r["why_not"])
         self.assertEqual(r["tiers"]["items"]["none"], 1)
+        self.assertEqual(r["tiers"]["escalated_why"], {})                  # nothing re-asked: nothing could be asked
+        self.assertIn("VMWARE_PASSWORD", r["questions"][0]["reason"])
 
 
 class TiersCache(unittest.TestCase):

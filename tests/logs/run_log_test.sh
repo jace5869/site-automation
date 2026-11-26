@@ -215,7 +215,7 @@ rm -f "$work/act/fake-act-models.log"
 run "model tiers: the worker reads the batches, the smart model the critical and unsure ones, and writes the verdict" ok \
     -e "$mail" -e "$actvars" -e log_analysis_act_batch=2 \
     -e '{"site_act_models": {"genai": "smart-e2e"}, "site_act_worker_models": {"genai": "worker-e2e"}}' \
-    -- "answered by the worker model (worker-e2e)" "by the smart model (smart-e2e)" "re-asked after the worker (2 unsure)" \
+    -- "answered by the worker model (worker-e2e)" "by the smart model (smart-e2e)" "; 2 re-asked after the worker (2 unsure)." \
        "The overall verdict: the smart model, from the answers." "SMART VERDICT: restart the JVM first." "smart cause 1" "smart cause 3"
 if "$py" - "$work/act/fake-act-models.log" > "$work/tiers.txt" <<'EOPY'
 import json, re, sys

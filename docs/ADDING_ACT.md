@@ -457,8 +457,8 @@ How it works:
   confidence and at most one quoted line, with secrets masked. It never reads the evidence. Its verdict is the report's
   overall. When it cannot be read, each batch keeps its own lines, and the report says so.
 - **One line in the report** says which model answered how many items: *ACT models (site_act_worker_model): 12 item(s)
-  answered by the worker model (...), 3 by the smart model (...), 2 of them re-asked after the worker (1 critical, 1
-  unsure). The overall verdict: the smart model, from the answers.*
+  answered by the worker model (...), 3 by the smart model (...); 2 re-asked after the worker (1 critical, 1 unsure). The
+  overall verdict: the smart model, from the answers.*
 - **The answer cache** (`site_act_cache`) keeps each tier's answers under its own model. A worker's answer never
   stands for the smart model's, or the other way round. A run where every answer is kept reaches no model at all.
 

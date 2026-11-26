@@ -466,13 +466,13 @@ def tiers_summary(T, rows, todo, syn):
             why[r["escalated"]] = why.get(r["escalated"], 0) + k
         if r.get("escalation_failed"):
             failed += k
-    asked = n["smart"] + n["escalated"]
     note = "ACT models (site_act_worker_model): %d item(s) answered by the worker model (%s), %d by the smart model (%s)" % (
-        n["worker"], T["worker"], asked, T["smart"] or "ACT's default")
-    if n["escalated"] or why:
-        note += ", %d of them re-asked after the worker (%s)" % (
-            n["escalated"], ", ".join("%d %s" % (v, k) for k, v in sorted(why.items())))
+        n["worker"], T["worker"], n["smart"] + n["escalated"], T["smart"] or "ACT's default")
+    if why:
+        note += "; %d re-asked after the worker (%s)" % (sum(why.values()), ", ".join("%d %s" % (v, k) for k, v in sorted(why.items())))
     note += "."
+    if n["none"]:
+        note += " %d item(s) not answered." % n["none"]
     if failed:
         note += " %d item(s) keep the worker's answer: the smart model gave none." % failed
     if syn.get("ran"):
@@ -887,7 +887,8 @@ class ActionModule(ActionBase):
         try:
             if wave(pending) and not T:
                 return out
-            if T:
+            syn = {"asked": False, "ran": False, "overall": "", "reason": "", "model": "", "cached": ""}
+            if T and not ready.get("why"):
                 # the second wave: each worker answer that is no answer, unreadable, unsure or says critical (judge) - its
                 # question asked once more, of the smart model, with the same task and evidence; the smart answer is
                 # final, whatever it says (never back to the worker, never a third time)
@@ -905,12 +906,11 @@ class ActionModule(ActionBase):
                     w, r = e["worker"], e["worker"]["row"]
                     if e["row"]["ran"]:
                         r.update(e["row"], tier="escalated", escalated=w["why"])
-                    else:
+                    elif r["ran"]:      # the worker's answer stays, said
                         r.update(escalated=w["why"], escalation_failed=e["row"]["reason"] or "the smart model gave no answer")
-                        if not r["ran"]:
-                            r.update(reason=e["row"]["reason"] or r["reason"])
+                    else:               # neither answered: the smart model's reason
+                        r.update(escalated=w["why"], reason=e["row"]["reason"] or r["reason"])
                 # the third: the smart model reads the answers (never the evidence) and writes the cross-item verdict
-                syn = {"asked": False, "ran": False, "overall": "", "reason": "", "model": "", "cached": ""}
                 done = [(rows[i], [x for x in (questions[i].get("items") or []) if isinstance(x, dict)]) for i in todo if rows[i]["ran"]]
                 if (T["form"] == "analysis" and T["synth"] and done
                         and (len(done) > 1 or any(r.get("tier") == "worker" for r, _ in done))):
@@ -929,6 +929,7 @@ class ActionModule(ActionBase):
                             got = synth_read(srow["summary"]) if srow["ran"] else ""
                             syn.update(asked=srow["asked"], ran=bool(got), overall=got, model=srow["model"], cached=srow["cached"],
                                        reason="" if got else (srow["reason"] or "the smart model's summary could not be read"))
+            if T:
                 out["tiers"] = tiers_summary(T, rows, todo, syn)
         finally:
             if ready.get("work"):
