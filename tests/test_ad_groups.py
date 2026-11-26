@@ -726,7 +726,7 @@ class Codex1330s(DirectorC):
         import site_portal as sp
         for ok in ("DOE.JANE.Q.1234567890", "DOE.JANE.1234567890", "O'NEIL-SMITH.ANN MARIE.Q.1234567890"):
             self.assertTrue(G.card_cn(ok), ok)
-        for bad in ("1234567890", "EXAMPLE.1234567890", "A.B.C.D.1234567890", "DOE.JANE.Q.12345678901", "DOE..Q.1234567890"):
+        for bad in ("1234567890", "EXAMPLE.1234567890", "A.B.C.D.E.F.1234567890", "DOE.JANE.Q.12345678901", "DOE..Q.1234567890"):
             self.assertFalse(G.card_cn(bad), bad)
         d = dn("Doe", "Staff")
         g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
@@ -1214,6 +1214,14 @@ class CardMatchDefault(unittest.TestCase):
             self.assertTrue(pat.fullmatch(ok), ok)
         for bad in ("9876543210@mil", "1234567890.adm@mil", "12345678901@mil", "1234567890.ctr@mil", "1234567890.ctr@mil.example", "x1234567890@mil", "1234567890@mil\n"):
             self.assertFalse(pat.fullmatch(bad), bad)
+
+class CardShapeSuffix1330(unittest.TestCase):
+    def test_a_generation_part_keeps_the_lookup(self):
+        for cn in ("DOE.JOHN.1234567890", "DOE.JOHN.ALLEN.1234567890", "DOE.JOHN.ALLEN.JR.1234567890", "DE LA CRUZ.ANA.III.1234567890"):
+            self.assertTrue(G.CARD_CN.fullmatch(cn), cn)
+        for cn in ("1234567890", "DOE.1234567890", "DOE.JOHN.1234567890X", "DOE.JOHN.A.B.C.D.1234567890", "DOE.JOHN.12345678901"):
+            self.assertFalse(G.CARD_CN.fullmatch(cn), cn)
+
 
 if __name__ == "__main__":
     unittest.main()

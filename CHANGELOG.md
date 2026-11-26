@@ -16,7 +16,7 @@ Account must be able to read every user object in the domain (a domain user can 
   read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches (one
   DN with two objectGUIDs is two), a returned account lacks either attribute, the paged search did not end cleanly, a
   group read lands during the lookup, or the account's values name another EDIPI. A newer lookup's answer always wins.
-  Only a CN shaped LAST.FIRST[.MIDDLE].EDIPI is looked up; a certificate with two CNs is refused. One domain only: the
+  Only a CN shaped LAST.FIRST[.MIDDLE][.JR].EDIPI is looked up; a certificate with two CNs is refused. One domain only: the
   deploy's summary names the base searched. A membership counts only for that
   account's DN and objectGUID (AD's binary and text forms of one GUID compare equal). After a refused LDAP login the portal binds no more until the next deploy, even when a
   group read was already under way.

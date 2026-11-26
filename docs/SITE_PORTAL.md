@@ -659,7 +659,7 @@ portal_run_groups: []                            # the same for who may run the 
   `portal_ad_card_match` still work as they did: set either one (or both) and the portal uses exactly ONE rule - that
   attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out). It must be one of the
   five, and cannot be set together with the list. Values are compared in ASCII lower case only.
-- **The card's name.** Only a card whose CN has the shape LAST.FIRST.EDIPI or LAST.FIRST.MIDDLE.EDIPI is looked up in
+- **The card's name.** Only a card whose CN has the shape LAST.FIRST.EDIPI with up to three more name parts between (a middle name, a generation such as JR) is looked up in
   AD. A certificate with two CNs is refused.
 - **One card, one account.** The account is looked up over the whole domain (its root, not `portal_ldap_base`), with
   both `userPrincipalName` and `sAMAccountName` read for every candidate whatever forms the site kept. No group counts

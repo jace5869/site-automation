@@ -105,7 +105,8 @@ def edipi(cn):
     return m.group(1) if m else ""
 
 
-CARD_CN = re.compile(r"[A-Za-z][A-Za-z' -]*\.[A-Za-z][A-Za-z' -]*(?:\.[A-Za-z][A-Za-z' -]*)?\.[0-9]{10}", re.ASCII)
+# 1.133.0: LAST.FIRST then up to three more name parts (middle, a generation such as JR or III) and the 10-digit EDIPI
+CARD_CN = re.compile(r"[A-Za-z][A-Za-z' -]*\.[A-Za-z][A-Za-z' -]*(?:\.[A-Za-z][A-Za-z' -]*){0,3}\.[0-9]{10}", re.ASCII)
 
 
 def card_cn(cn):
