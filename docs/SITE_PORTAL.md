@@ -1271,15 +1271,17 @@ on the portal's data volume through a restart).
 - **Powered off is never down:** down in SolarWinds and powered off (or suspended) in vCenter shows *Powered off*, grey -
   only while that vCenter's read is current. With vCenter late or not read, the node stays down (never turned grey by old
   data) and its card says vCenter was not compared.
-- A node and a VM are the same when an FQDN of each is the same, else when the short names match in any case (SolarWinds'
-  caption or DNS name, vCenter's VM name or guest host name) - but never when both have an FQDN in different domains, or
-  both an IP and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
+- A node and a VM are the same when an FQDN of each is the same (SolarWinds' caption or DNS name, vCenter's VM name or guest
+  host name); when one side has no FQDN at all, when their short names match in any case - but never when both have an IP
+  and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
   never greys a production node down). Two VMs that still fit are told apart by the IP, else not compared (said on the card
   and in the panel); two SolarWinds nodes that fit one VM likewise. A guest name like `localhost` is never a match. Templates
   and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
   nodes; the vCenter-only VMs are counted in the panel.
 - A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_fleet_poll_stale_minutes` (15) is not
   current: grey, never green, and never a recovery.
+- A node whose status SolarWinds does not know, or a row without a NodeID, makes the read not whole (grey, said) - as does a
+  node with no last poll time when this Orion gives one.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
   square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
   `portal_wall_fleet_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only

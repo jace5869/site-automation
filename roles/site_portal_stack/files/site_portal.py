@@ -7328,7 +7328,9 @@ class WallLive(object):
         snap = self.fleet.snapshot()
         vcs = tuple(sorted((k, s.get("at"), s.get("state"), s.get("at") is not None and now - float(s["at"]) <= wall_model.LATE_S)
                            for k, s in ((view or {}).get("sources") or {}).items() if isinstance(s, dict) and s.get("kind") == "vcenter"))
-        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"), vcs)
+        late = wall_fleet.limits(self.cfg.wall_fleet_opts.get("seconds", 60))[0]
+        sw_late = snap.get("at") is not None and now - float(snap["at"]) > late      # absence is said only while SolarWinds is current
+        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"), vcs, sw_late)
         if key != self.fleet_key or self.fleet_model is None:
             self.fleet_model = wall_fleet.model(snap, view, self.cfg.wall_fleet_opts, now, since=self.fleet_since)
             self.fleet_key, self.fleet_body = key, ""

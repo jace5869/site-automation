@@ -40,7 +40,7 @@
     var s = SEV[a.sev] || SEV.stale, L = lines(a);
     var head = '<b style="color:' + s.c + '">' + esc(s.w) + "</b> · " + esc(a.area) + " - <b>" + esc(a.title) + "</b>";
     return "<p>" + head + L.slice(1).map(function (l) { return "<br>" + esc(l[0]); }).join("") +
-      '<br><a href="' + esc(a.link) + '">Open on the wall</a></p>';
+      '<br><a href="' + esc(safeLink(a.link)) + '">Open on the wall</a></p>';
   }
   // ---- the picture: 1000 x 520 (drawn at 2x), dark, the severity strip, the value against its limits, the trend when there is one
   function picture(a) {
@@ -253,6 +253,7 @@
     var one = L.length === 1 ? L[0] : null;
     return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (one && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
       (one && one.vc ? "<p>vCenter: " + esc(one.vc) + (one.host ? " · host " + esc(one.host) : "") + "</p>" : "") +
+      (one ? "<p>Source: " + esc(ctx.src) + " · as of " + esc(ctx.asof || ctx.stamp) + "</p>" : "") +
       (L.length > TEXT_MAX ? "<p>+" + (L.length - TEXT_MAX) + " more on the wall</p>" : "") +
       (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
       '<p><a href="' + esc(safeLink(ctx.link)) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";
@@ -270,7 +271,7 @@
     x.font = "600 16px " + mono; x.fillStyle = "#9aa3ae"; x.textAlign = "right";
     x.fillText(fit(x, (ctx.site ? ctx.site + " · " : "") + ctx.day + " " + ctx.stamp + " " + ctx.zone, 360), Wd - 30, 50);
     x.textAlign = "left"; x.fillStyle = "#c9d0d8"; x.font = "500 18px " + sans;
-    x.fillText(fit(x, one ? (L[0].svc || "no group") + " · " + (L[0].ip || "no IP") : "from SolarWinds · grouped by service" + (ctx.stale ? " · NOT CURRENT" : ""), Wd - 72), 36, 82);
+    x.fillText(fit(x, one ? (L[0].svc || "no group") + " · " + (L[0].ip || "no IP") : "from " + ctx.src + " · grouped by service" + (ctx.stale ? " · NOT CURRENT" : ""), Wd - 72), 36, 82);
     if (one) {
       var n = L[0], s = NSEV[n.sev] || NSEV.stale;
       x.fillStyle = s.c; x.fillRect(36, 110, 6, 112);

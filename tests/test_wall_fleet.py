@@ -358,6 +358,76 @@ class Review1Neon(unittest.TestCase):
 NOGROUPS_Q = {"list": [], "members": []}
 
 
+class Review2(unittest.TestCase):
+    """review round 2 (Codex): one pair of names for an identity, the IP before the tiers, unknown and odd rows not whole, a
+    missing poll time, cached members after a failed refresh, each source's history kept, a group attempt kept, many VMs of a name"""
+
+    def setUp(self):
+        self.now = time.time()
+
+    def test_identity_from_one_pair_of_names(self):
+        rows = [sw_row(1, "app.prod.example.mil", dns="alias.shared.example.mil", ip="", status=2)]
+        v = vm("app.test.example.mil", guest="other.shared.example.mil", power="poweredOff", hb=None)
+        fm = wf.model(snap(rows, now=self.now), view([v], self.now), OPTS, self.now)
+        self.assertEqual(by_name(fm)["app.prod.example.mil"][3], "d")       # "app" from one alias, "shared" from another: no match
+
+    def test_ip_conflict_never_hides_a_short_name_vm(self):
+        rows = [sw_row(1, "db1.corp.example.mil", dns="", ip="192.0.2.7", status=2)]
+        vms = [vm("db1.corp.example.mil", ip="192.0.2.99", power="poweredOff", hb=None), vm("DB1", ip="192.0.2.7", power="poweredOff", hb=None)]
+        fm = wf.model(snap(rows, now=self.now), view(vms, self.now), OPTS, self.now)
+        self.assertEqual(by_name(fm)["db1.corp.example.mil"][3], "p")       # the VM with its own IP
+
+    def test_unknown_and_odd_rows_are_not_whole(self):
+        fm = wf.model(snap([sw_row(1, "A1", status=0)], now=self.now), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+        fm = wf.model(snap([sw_row(1, "A1"), {"Caption": "no id"}], now=self.now), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+
+    def test_a_missing_poll_time_is_not_current(self):
+        r = sw_row(1, "A1")
+        r["LastSync"] = None
+        fm = wf.model(snap([r], now=self.now), None, OPTS, self.now)
+        self.assertIn("o", fm["nodes"][0][12])
+        self.assertEqual(fm["counts"]["u"], 0)
+        s2 = snap([dict(r)], now=self.now)
+        s2["notes"] = ["the last poll time (LastSync): not read (HTTP 400)"]  # an Orion without the column: not held against it
+        self.assertNotIn("o", wf.model(s2, None, OPTS, self.now)["nodes"][0][12])
+
+    def test_cached_members_after_a_failed_refresh(self):
+        g = {"list": [[1, "G", 1]], "members": {"1": [1]}, "cut": False}
+        fm = wf.model(dict(snap([sw_row(1, "A1")], g, self.now), groups_why="the groups were not read: HTTP 400 - the last read's groups are shown"), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+        self.assertNotIn("fleet:down:G", wf.conds(fm, self.now)[1])
+
+    def test_each_sources_history_kept(self):
+        s = wf.Since()
+        s.update({"sw:1": ("d", 100.0), "vc:a:1": ("d", 100.0)}, 100.0)
+        s.update({"sw:1": ("d", 160.0)}, 160.0, whole=("sw:",))             # a whole SolarWinds read, vCenter not read
+        self.assertIn("vc:a:1", s.d)
+        s.update({"sw:2": ("u", 220.0)}, 220.0, whole=("sw:",))
+        self.assertNotIn("sw:1", s.d)
+
+    def test_a_group_attempt_is_kept_when_the_node_read_fails(self):
+        class Fails(FakeClient):
+            def paged(self2, swql, *a, **k):
+                if "Orion.Nodes" in swql:
+                    raise site_swis.SwisError("no answer in time", "timeout")
+                return FakeClient.paged(self2, swql, *a, **k)
+        c = Fails([], {"list": [], "members": []})
+        r = wf.Reader(lambda: c, OPTS, clock=lambda: 1000.0)
+        with self.assertRaises(site_swis.SwisError):
+            r.read_once()
+        self.assertEqual(r.snapshot()["groups_tried"], 1000.0)
+
+    def test_many_vms_of_one_name_are_fast(self):
+        rows = [sw_row(i, "APP", dns="", ip="") for i in range(1, 3001)]
+        vms = [vm("APP", mid="vm-%d" % i) for i in range(3000)]
+        t = time.time()
+        fm = wf.model(snap(rows, now=self.now), view(vms, self.now), OPTS, self.now)
+        self.assertLess(time.time() - t, 2.0)
+        self.assertEqual(fm["cmp"]["ambiguous"], 3000)
+
+
 class StaleNeverGreen(unittest.TestCase):
     """the area through the wall's own model (wall_model.build / summary): green only when SolarWinds is current, the read whole
     and nothing down"""
