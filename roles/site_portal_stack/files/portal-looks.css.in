@@ -277,7 +277,7 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
   :root[data-skin="press"] .ot-face>.olc,:root[data-skin="press"] .ot-why{grid-column:1/-1}:root[data-skin="press"] .ot-cue{justify-self:start}}
 
 /* ================================================================ atlas: Contour Atlas */
-:root[data-skin="atlas"] main{max-width:1760px}
+:root[data-skin="atlas"] body:not([data-page="wall"]) main{max-width:1760px}
 :root[data-skin="atlas"] h1{font-weight:800;letter-spacing:-.025em}
 :root[data-skin="atlas"] .home .mark{border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink)}
 :root[data-skin="atlas"] .nav a[aria-current="page"]{border-radius:999px}
@@ -307,14 +307,14 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
 /* ================================================================ tower: Timing Tower */
 :root[data-skin="tower"] h1,:root[data-skin="tower"] .grp>h2,:root[data-skin="tower"] .ops-h{text-transform:uppercase;font-style:italic;letter-spacing:.01em}
 :root[data-skin="tower"] .appbar{border-bottom:3px solid var(--accent)}
-:root[data-skin="tower"] .home .mark{border-radius:2px;transform:skewX(-10deg);background:var(--accent);color:#fff}
-:root[data-skin="tower"] .nav a[aria-current="page"]{background:var(--accent);color:#fff;border-radius:2px}
+:root[data-skin="tower"] .home .mark{border-radius:2px;transform:skewX(-10deg);background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="tower"] .nav a[aria-current="page"]{background:var(--accent);color:var(--accent-ink);border-radius:2px}
 :root[data-skin="tower"] .card{border-radius:3px}
 :root[data-skin="tower"] .ft{border-radius:2px;border-left:5px solid var(--accent)}
 :root[data-skin="tower"] .ft .v{font-family:var(--mono)}
 :root[data-skin="tower"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;border-left:4px solid var(--area,var(--accent));box-shadow:var(--shadow)}
 :root[data-skin="tower"] .tcard .ico{border-radius:2px;background:var(--area,var(--accent));color:var(--bg);border:0}
-:root[data-skin="tower"] .tcard:not(.off) .btn.pri{border-radius:2px;background:var(--accent);border-color:var(--accent);color:#fff;font-style:italic;text-transform:uppercase}
+:root[data-skin="tower"] .tcard:not(.off) .btn.pri{border-radius:2px;background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-style:italic;text-transform:uppercase}
 :root[data-skin="tower"] .btn,:root[data-skin="tower"] button,:root[data-skin="tower"] .chip,:root[data-skin="tower"] .ow{border-radius:2px}
 /* the ranking: worst first, its position, the gap to its limit */
 :root[data-skin="tower"] .ops-tiles{display:flex;flex-direction:column;gap:4px}

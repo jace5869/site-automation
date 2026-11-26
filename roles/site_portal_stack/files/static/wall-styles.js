@@ -59,11 +59,17 @@
   }
 
   // ---------------------------------------------------------------- the data each style draws (only what the wall's model has)
-  function fresh(fk) { var f = A.feed(fk), x = A.freshTxt(f ? f.asof : null); return {st: x.st, t: (f ? f.name : "no source") + " · " + x.t}; }
+  // a source's state by the wall's own rule: LATE by its age, else green only when status("ok") says so (read OK, current, its
+  // area whole) - a failed login 20 s after a good read is not current, never green
+  function feedSt(fk) { var fr = A.feedFresh(fk); return fr === "stale" ? "stale" : fr === "late" ? "late" : A.status("ok", fk) === "ok" ? "ok" : "stale"; }
+  function fresh(fk) { var f = A.feed(fk), x = A.freshTxt(f ? f.asof : null); return {st: feedSt(fk), name: f ? f.name : "no source", t: x.t}; }
+  // the age text is the line's last text node, marked for wall-page.js's repaint every second (data-fresh / data-fresh-area)
   function srcLine(fk, areaId) {
     var x = areaId ? A.freshTxt(A.areaAsof(areaId)) : fresh(fk), st = areaId ? A.areaFresh(areaId) : x.st;
-    var name = areaId ? (A.areaOf(areaId) || {}).sub || "" : "";
-    return h("div", "wx-src " + st, [st === "ok" ? null : h("b", "tag", [st === "stale" ? "NOT CURRENT" : "LATE"]), (name ? name + " · " : "") + x.t]);
+    var name = areaId ? (A.areaOf(areaId) || {}).sub || "" : x.name;
+    var e = h("div", "wx-src " + st, [st === "ok" ? null : h("b", "tag", [st === "stale" ? "NOT CURRENT" : "LATE"]), name ? h("span", "", [name + " · "]) : null, x.t]);
+    e.setAttribute(areaId ? "data-fresh-area" : "data-fresh", areaId || fk || "");
+    return e;
   }
   function storageInfo() {
     var w = W(), st = A.areaState("storage"), n = A.areaCounts("storage"), t = A.thr("aggr"), td = A.thr("ds");
@@ -75,7 +81,7 @@
     var nodes = Array.isArray(w.storage.nodes) && w.storage.nodes.length === 2 ? w.storage.nodes : null;
     return {id: "storage", st: st, n: n, m: m, big: m ? num(m.v) + "%" : "–", unit: m ? m.obj + " used" : "no value read",
             sub: n.crit + n.warn ? A.nowList("storage").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
-              nodes ? nodes[0] + " of " + nodes[1] + " storage nodes up" : "", ag: ag, ds: ds};
+              nodes && nodes[1] > 0 ? nodes[0] + " of " + nodes[1] + " storage nodes up" : "", ag: ag, ds: ds};
   }
   function vmwareInfo() {
     var w = W(), st = A.areaState("vmware"), n = A.areaCounts("vmware"), hp = A.thr("high")[0];
@@ -86,7 +92,7 @@
                            ref: "cl:" + busy[0].vc + "|" + busy[0].n + "|cpu", fk: busy[0].feed} : null;
     var vms = 0; (w.vmware.hosts || []).forEach(function (x) { vms += +x.nvms || 0; });
     return {id: "vmware", st: st, n: n, m: m, big: of ? up + "/" + of : "–", unit: of ? "hosts up" : "no value read",
-            sub: n.crit + n.warn ? A.nowList("vmware").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" : vms + " VMs on " + of + " hosts", busy: busy};
+            sub: n.crit + n.warn ? A.nowList("vmware").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" : of ? vms + " VMs on " + of + " hosts" : "", busy: busy};
   }
   function areas() {
     var out = [];
@@ -97,15 +103,20 @@
       if (a && a.built) return;
       out.push({id: o[0], st: "off", name: a ? a.name : o[1], sub: (a && a.sub) || o[2], n: {crit: 0, warn: 0}, m: null, big: "", unit: "", off: true});
     });
-    out.forEach(function (x) { if (!x.name) x.name = (A.areaOf(x.id) || {}).name || x.id; x.on = A.areaOn(x.id); if (!x.on && !x.off) x.st = "off"; });
+    out = out.map(function (x) {
+      if (x.off || A.areaOn(x.id)) return x;
+      var a = A.areaOf(x.id) || {};                 // built but no source set (no vCenter / ONTAP here): grey, "Not on the wall yet"
+      return {id: x.id, st: "off", name: a.name || x.id, sub: a.sub || "", n: {crit: 0, warn: 0}, m: null, big: "", unit: "", off: true};
+    });
+    out.forEach(function (x) { if (!x.name) x.name = (A.areaOf(x.id) || {}).name || x.id; x.on = A.areaOn(x.id); });
     return out;
   }
   var RANK = {crit: 4, warn: 3, stale: 2, ok: 1, off: 0};
   function counts(list) { var c = {crit: 0, warn: 0, ok: 0, stale: 0}; list.forEach(function (a) { if (c[a.st] != null) c[a.st]++; }); return c; }
   // the capacity rows: aggregates and datastores, fullest first, each against its own limits
-  function capRows(max) {
+  function capRows(max, areaId) {
     var w = W(), t = A.thr("aggr"), td = A.thr("ds"), rows = [];
-    if (focus() === "vmware") {                    // the VMware area: each cluster's CPU and memory against the high line
+    if ((areaId || focus()) === "vmware") {                    // the VMware area: each cluster's CPU and memory against the high line
       var hp = A.thr("high")[0];
       (w.vmware.clusters || []).forEach(function (c) {
         ["cpu", "mem"].forEach(function (k) { if (typeof c[k] === "number") rows.push({label: c.n, sub: "cluster " + (k === "cpu" ? "CPU" : "memory"), v: c[k], w: hp, c: null, st: A.status(lvl(c[k], hp, null), c.feed), ref: "cl:" + c.vc + "|" + c.n + "|" + k}); });
@@ -124,7 +135,13 @@
   function focusName() { var f = focus(); return f ? (A.areaOf(f) || {}).name || f : ""; }
   function worstNow() { return A.nowList(focus()); }
   function sevWord(st) { return st === "crit" ? "Critical" : st === "warn" ? "Warning" : st === "stale" ? "Not current" : st === "ok" ? "OK" : "Not on the wall yet"; }
-  function clock() { return h("span", "wx-clock", [A.hms(A.NOW()), h("small", "", [A.zoneName()])]); }
+  function clock() { return h("span", "wx-clock", [h("b", "", [A.hms(A.NOW())]), h("small", "", [A.zoneName()])]); }
+  function dayTxt() {
+    try { return new Intl.DateTimeFormat("en-GB", {weekday: "short", day: "2-digit", month: "short", year: "numeric", timeZone: W().zone || "UTC"}).format(new Date(A.NOW())); }
+    catch (e) { return new Date(A.NOW()).toDateString(); }
+  }
+  // what moves by itself says so, kiosk too: the rotation (Rotate button, R) and how often
+  function rotCue() { return A.ROT.on ? "Rotating " + (A.ROT.mode === "styles" ? "styles" : "areas") + " every " + A.ROT.every + " s" : "Rotation off"; }
   function nothingOn() { return h("p", "wx-empty", ["Nothing on the wall is open, or nothing current to say so: green only when every source of an area is current."]); }
 
   // ================================================================ STRATA
@@ -139,10 +156,15 @@
     var top = now.filter(function (i) { return i.type === "cond" && i.sev === "crit"; })[0] || now.filter(function (i) { return i.type === "cond"; })[0];
     if (top) board.appendChild(h("div", "sx-ban " + top.sev, [A.word(top.sev, sevWord(top.sev).toUpperCase()), h("b", "", [A.aShort(top.area) + " · " + top.t]),
       h("span", "", ["Since " + A.when(top.since) + " (" + A.dur(A.NOW() - top.since) + ")" + (top.sub ? " · " + top.sub : "")]),
-      srcLine(top.c.feed), h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + top.id, title: "Open its detail card (and Share to Teams)"})]));
+      srcLine(top.c.feed || (top.c.vc ? "vc:" + top.c.vc : "")), h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + top.id, title: "Open its detail card (and Share to Teams)"})]));
     var left = h("div", "sx-left"), tiles = h("div", "sx-tiles");
     var spotList = list.filter(function (a) { return a.st !== "off"; }).sort(function (a, b) { return (RANK[b.st] - RANK[a.st]) || ((b.n.crit + b.n.warn) - (a.n.crit + a.n.warn)); });
-    if (focus()) { var fi = spotList.map(function (a) { return a.id; }).indexOf(focus()); if (fi >= 0) SPOT.i = fi; }
+    if (focus() !== SPOT.focus) {               // the area chosen (?area=, the menu, rotate areas) goes on stage once; a click may move it
+      SPOT.focus = focus();
+      var fi = spotList.map(function (a) { return a.id; }).indexOf(focus());
+      if (fi >= 0) SPOT.i = fi;
+    }
+    SPOT.n = spotList.length;
     var spot = spotList.length ? spotList[SPOT.i % spotList.length] : null;
     list.forEach(function (a) {
       var t = h("div", "sx-tile " + a.st + (spot && spot.id === a.id ? " onstage" : ""), [
@@ -170,19 +192,20 @@
     var right = h("div", "sx-stage" + (spot ? " " + spot.st : ""));
     var tabs = h("div", "sx-tabs", spotList.map(function (a, i) {
       return h("button", "tb " + a.st + (spot && spot.id === a.id ? " on" : ""), [A.word(a.st, String(i + 1) + " " + (A.aShort(a.id) || a.name))], {type: "button", "data-spot": a.id});
-    }).concat([h("span", "cd", [spotList.length > 1 ? (SPOT.pausedUntil > Date.now() ? "paused" : moves() ? "next in " + SPOT.left + " s" : "use ‹ ›") + " · problems first" : "problems first"]),
+    }).concat([h("span", "cd", [spotList.length > 1 ? (SPOT.pausedUntil > Date.now() ? "paused 60 s after a click" : moves() && !frozen() ? "next in " + SPOT.left + " s" : "use ‹ ›") + " · problems first" : "problems first"]),
       h("button", "sb", ["‹"], {type: "button", "data-step": "-1", title: "The area before"}), h("button", "sb", ["›"], {type: "button", "data-step": "1", title: "The next area"})]));
     right.appendChild(tabs);
     if (spot) right.appendChild(stageOf(spot)); else right.appendChild(nothingOn());
     board.appendChild(h("div", "sx-body", [left, right]));
     var feeds = Object.keys(w.feeds || {}).filter(function (k) { return k !== "netapp-run"; });
-    board.appendChild(h("footer", "sx-ft", feeds.map(function (k) { var x = fresh(k); return h("span", "fd " + x.st, [h("i"), x.t], {"data-d": "feed:" + k, tabindex: "0", role: "button"}); }).concat([
+    board.appendChild(h("footer", "sx-ft", feeds.map(function (k) { var x = fresh(k), e = h("span", "fd " + x.st, [h("i"), h("span", "", [x.name + " · "]), x.t], {"data-d": "feed:" + k, tabindex: "0", role: "button"}); e.setAttribute("data-fresh", k); return e; }).concat([
+      h("span", "rot", [rotCue()]),
       h("span", "lg", ["Key: ", A.word("crit", "Crit"), A.word("warn", "Warn / late > " + Math.round((w.late || 180) / 60) + " min"), h("span", "lgk", ["✓ OK = every source current"]), A.word("stale", "Not current > " + Math.round((w.stale || 600) / 60) + " min")])])));
     r.appendChild(board);
     board.addEventListener("click", function (e) {
       var sp = e.target.closest("[data-spot]"), st = e.target.closest("[data-step]");
-      if (st) { SPOT.i = (SPOT.i + (+st.getAttribute("data-step")) + Math.max(1, spotList.length)) % Math.max(1, spotList.length); SPOT.left = EVERY; SPOT.pausedUntil = Date.now() + 60000; strata(clearTo(r)); fitAgain(); return; }
-      if (sp) { var i = spotList.map(function (a) { return a.id; }).indexOf(sp.getAttribute("data-spot")); if (i >= 0) { SPOT.i = i; SPOT.left = EVERY; SPOT.pausedUntil = Date.now() + 60000; strata(clearTo(r)); fitAgain(); } }
+      if (st) { SPOT.i = (SPOT.i + (+st.getAttribute("data-step")) + Math.max(1, spotList.length)) % Math.max(1, spotList.length); SPOT.left = EVERY; SPOT.pausedUntil = Date.now() + 60000; A.render(); return; }
+      if (sp) { var i = spotList.map(function (a) { return a.id; }).indexOf(sp.getAttribute("data-spot")); if (i >= 0) { SPOT.i = i; SPOT.left = EVERY; SPOT.pausedUntil = Date.now() + 60000; A.render(); } }
     });
     board.addEventListener("keydown", function (e) { if ((e.key === "Enter" || e.key === " ") && e.target.getAttribute && e.target.getAttribute("data-spot")) { e.preventDefault(); e.target.click(); } });
   }
@@ -194,14 +217,14 @@
       h("b", "", [items[0] ? items[0].t : a.st === "stale" ? a.name + ": data not current" : a.name + ": nothing open"]),
       items[0] ? h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + items[0].id}) : null]));
     if (a.id === "storage") {
-      var rows = capRows(8);
+      var rows = capRows(8, "storage");
       box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Capacity - aggregates and datastores, nearest their limit first"]), h("span", "", ["each against its own warn / crit"])])].concat(
         rows.map(function (m) { return h("div", "crow " + m.st, [h("span", "nm", [m.label, h("small", "", [m.sub])]), bar(m, "sm"), h("span", "v", [said(m)])], {"data-d": m.ref, tabindex: "0", role: "button"}); }))));
     } else if (a.id === "vmware") {
       var w = W(), hosts = (w.vmware.hosts || []);
       var hot = (w.vmware.hot || []).slice(0, 4), hp = A.thr("high")[0];
       if (hot.length) box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Sustained high - the last hour against the " + hp + " % line"]), h("span", "", [A.thr("high")[1] + " min or longer counts"])])].concat(
-        hot.map(function (x) { return h("div", "hrow", [h("span", "nm", [x.n, h("small", "", [x.k + " · " + x.m])]), spark(x.spark, hp, x.cond && A.cond(x.cond) && A.condStale(A.cond(x.cond)) ? "stale" : "warn"), h("span", "v", [num(x.v) + "% · " + pts(x.v - hp, "%") + " over high " + hp])],
+        hot.map(function (x) { return h("div", "hrow", [h("span", "nm", [x.n, h("small", "", [x.k + " · " + x.m])]), spark(x.spark, hp, (x.cond && A.cond(x.cond) && A.condStale(A.cond(x.cond))) || A.status("warn", A.vcFeed()) !== "warn" ? "stale" : "warn"), h("span", "v", [num(x.v) + "% · " + pts(x.v - hp, "%") + " over high " + hp])],
           x.cond ? {"data-d": "c:" + x.cond, tabindex: "0", role: "button"} : null); }))));
       box.appendChild(h("div", "sx-fleet", [h("div", "ch", [h("b", "", ["Hosts (" + hosts.length + ")"]), h("span", "", ["each square a host · click for its card"])]),
         h("div", "fg", hosts.slice(0, 96).map(function (x) {
@@ -232,7 +255,7 @@
     var w = W(), list = areas(), now = worstNow();
     var board = h("div", "wx wx-relay");
     board.appendChild(h("header", "rx-hd", [logo(), h("div", "rx-t", [h("b", "", [w.title || "Ops center"]), h("small", "", [[w.enclave, focusName()].filter(Boolean).join(" / ")])]),
-      h("div", "rx-time", [clock(), h("small", "", [new Intl.DateTimeFormat("en-GB", {weekday: "short", day: "2-digit", month: "short", year: "numeric"}).format(new Date(A.NOW()))])])]));
+      h("div", "rx-time", [clock(), h("small", "wx-day", [dayTxt()])])]));
     var crit = now.filter(function (i) { return i.type === "cond" && i.sev === "crit"; })[0];
     if (crit) board.appendChild(h("div", "rx-alarm", [A.lamp("crit", "big"), h("div", "", [h("small", "", ["Critical alarm · " + A.aShort(crit.area)]), h("b", "", [crit.t])]),
       h("div", "o", [h("b", "", [crit.sub || ""]), h("span", "", ["Since " + A.when(crit.since) + " (" + A.dur(A.NOW() - crit.since) + ")"])]),
@@ -268,7 +291,7 @@
     board.appendChild(h("section", "rx-capw", [h("div", "sh", [h("b", "", ["Capacity watch"]), h("span", "", ["value against its warn / crit limit"])]), cap]));
     var feeds = Object.keys(w.feeds || {}).filter(function (k) { return k !== "netapp-run"; }), cur = feeds.filter(function (k) { return A.feedFresh(k) === "ok"; }).length;
     board.appendChild(h("footer", "rx-ft", [h("span", "", [cur + " of " + feeds.length + " sources current"]),
-      h("span", "", [A.ROT.on ? "Rotation every " + A.ROT.every + " s (" + (A.ROT.mode === "styles" ? "styles" : "areas") + ")" : "Rotation off - the Rotate button or R"]),
+      h("span", "", [rotCue() + (A.ROT.on ? "" : " - the Rotate button or R")]),
       h("span", "", ["Grey = no current data, never green"])]));
     r.appendChild(board);
   }
@@ -283,6 +306,7 @@
       h("div", "sum", [c.crit ? h("span", "c", [A.word("crit", c.crit + " CRITICAL")]) : null, c.warn ? h("span", "w", [A.word("warn", c.warn + " WARNING")]) : null,
         h("span", "o", [A.word(c.ok ? "ok" : "off", c.ok + " OK")]), c.stale ? h("span", "s", [A.word("stale", c.stale + " NOT CURRENT")]) : null]),
       h("div", "src", feeds.slice(0, 3).map(function (k) { var f = A.feed(k), st = A.feedFresh(k), age = f && f.asof ? A.ago(A.ageS(f.asof)).replace(" ago", "") : "never";
+        st = feedSt(k);
         return h("span", st, [h("i"), (f ? f.name.replace(/^(vCenter|ONTAP) /, "$1 ").split(".")[0] : k) + " " + (st === "ok" ? age : st === "late" ? "LATE " + age : "NOT CURRENT")], {"data-d": "feed:" + k, tabindex: "0", role: "button"}); })),
       clock()]));
     var grid = h("section", "mx-grid");
@@ -306,16 +330,17 @@
     if (lastOne && spare) lastOne.classList.add("span" + Math.min(4, 1 + spare));
     var side = h("aside", "mx-now", [h("h3", "", [h("span", "", ["Now · worst first"]), h("span", "", [now.length + " open"])])]);
     now.slice(0, 5).forEach(function (i) {
-      side.appendChild(h("div", "ev " + i.sev, [h("span", "s", [i.sev === "crit" ? "CRIT" : i.sev === "warn" ? "WARN" : "LATE"]), h("span", "wt", [i.t]),
+      side.appendChild(h("div", "ev " + i.sev, [h("span", "s", [i.sev === "crit" ? "CRIT" : i.sev === "warn" ? "WARN" : "NOT CURRENT"]), h("span", "wt", [i.t]),
         h("span", "a", [i.since ? A.dur(A.NOW() - i.since) : ""]),
         h("span", "d", [A.aShort(i.area) + (i.sub ? " · " + i.sub : "")]),
         i.type === "cond" ? h("button", "shb", ["Share to Teams"], {type: "button", "data-share-now": i.id, title: "Copy this as a message and a picture for Teams"}) : null],
         i.type === "cond" ? {"data-d": "c:" + i.id, tabindex: "0", role: "button"} : {"data-d": "feed:" + i.feed, tabindex: "0", role: "button"}));
     });
     if (!now.length) side.appendChild(nothingOn());
-    var since = A.NOW() - 4 * 3600000, opened = (w.conds || []).filter(function (x) { return x.start >= since; }).length, cleared = (w.conds || []).filter(function (x) { return x.end != null && x.end >= since; }).length;
-    var longest = (w.conds || []).filter(function (x) { return x.end == null; }).reduce(function (m, x) { return Math.max(m, A.NOW() - x.start); }, 0);
-    side.appendChild(h("div", "shift", [h("h3", "", [h("span", "", ["Last 4 hours"])]),
+    var mine = (w.conds || []).filter(function (x) { return !focus() || x.area === focus(); });
+    var since = A.NOW() - 4 * 3600000, opened = mine.filter(function (x) { return x.start >= since; }).length, cleared = mine.filter(function (x) { return x.end != null && x.end >= since; }).length;
+    var longest = mine.filter(function (x) { return x.end == null; }).reduce(function (m, x) { return Math.max(m, A.NOW() - x.start); }, 0);
+    side.appendChild(h("div", "shift", [h("h3", "", [h("span", "", ["Last 4 hours" + (focus() ? " · " + focusName() : "")])]),
       h("div", "kv", [h("b", "", [String(opened)]), h("span", "", ["opened"])]), h("div", "kv", [h("b", "", [String(cleared)]), h("span", "", ["cleared"])]),
       h("div", "kv", [h("b", "", [longest ? A.dur(longest) : "–"]), h("span", "", ["longest open"])])]));
     side.appendChild(h("p", "quiet", ["Quiet: " + (list.filter(function (a) { return a.st === "ok"; }).map(function (a) { return a.name; }).join(", ") || "none") + ". Grey = no current data, never green."]));
@@ -323,7 +348,7 @@
     var cap = h("section", "mx-cap", [h("h3", "", ["Capacity"])]);
     capRows(6).forEach(function (m) { cap.appendChild(h("div", "bb " + m.st, [h("div", "lab", [h("span", "", [m.label]), h("b", "", [num(m.v) + "%"])]), bar(m, "sm")], {"data-d": m.ref, tabindex: "0", role: "button"})); });
     board.appendChild(cap);
-    board.appendChild(h("div", "mx-pv", [(moves() ? "Tiles turn over every " + FLIP_EVERY + " s to their worst items · " : "Hover a tile to see its worst items · ") + "a tile shows its area · a row opens its detail card · Share to Teams copies text and a picture"]));
+    board.appendChild(h("div", "mx-pv", [(moves() ? "Tiles turn over every " + FLIP_EVERY + " s to their worst items · " : "Hover a tile to see its worst items · ") + "a tile shows its area · a row opens its detail card · Share to Teams copies text and a picture · " + rotCue()]));
     r.appendChild(board);
     board.addEventListener("click", function (e) {
       var b = e.target.closest("[data-share-now]");
@@ -335,13 +360,14 @@
   setInterval(function () {
     if (!A || !W() || document.hidden) return;
     var de = document.documentElement;
-    if (de.classList.contains("style-strata") && moves() && SPOT.pausedUntil <= Date.now()) {
+    if (!frozen()) document.querySelectorAll(".wx .wx-clock>b").forEach(function (c) { c.textContent = A.hms(A.NOW()); });     // the board's own clock ticks
+    if (de.classList.contains("style-strata") && moves() && !frozen() && (SPOT.n || 0) > 1 && SPOT.pausedUntil <= Date.now()) {
       SPOT.left--;
       var cd = document.querySelector(".sx-tabs .cd");
       if (SPOT.left <= 0) {
         SPOT.left = EVERY; SPOT.i++;
         var stage = document.getElementById("stage");
-        if (stage && !document.querySelector("#dsBack.on")) { var y = window.scrollY; A.clear(stage); strata(stage); window.scrollTo(0, y); fitAgain(); }
+        if (stage && !document.querySelector("#dsBack.on")) A.render();
       } else if (cd) cd.textContent = "next in " + SPOT.left + " s · problems first";
     }
     if (de.classList.contains("style-metro") && moves()) {
@@ -355,7 +381,7 @@
       setTimeout(function () { t.classList.remove("flip"); }, 4000);
     }
   }, 1000);
-  function fitAgain() { window.dispatchEvent(new Event("resize")); }
+  function frozen() { return document.documentElement.classList.contains("freeze"); }
 
   window.SAWallStyles = {
     strata: function (api, r) { A = api; strata(r); },

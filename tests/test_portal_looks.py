@@ -89,6 +89,18 @@ class Settings(unittest.TestCase):
         for n in ("wall-styles.js", "wall-styles.css", "wall-share.js", "portal-looks.css", "portal-looks.js"):
             self.assertIn("{src: static/%s, dest: static/%s}" % (n, n), y)
 
+    def test_the_refusal_page_needs_only_what_a_refused_reader_may_fetch(self):
+        """review r1 (Codex 16): the reader-refusal page links the base stylesheet only (the looks' is behind the reader check)"""
+        cfg = self.cfg()
+        cfg.ad_groups_why, cfg.ad_groups = "", None
+        page = sp.reader_refusal_page(cfg, "DOE.JANE.Q.1234567890")
+        self.assertIn("static/portal.css", page)
+        self.assertNotIn("portal-looks.css", page)
+
+    def test_the_theme_script_is_versioned(self):
+        """review r1 (Neon 15): portal-theme.js changed in 1.135.0 - its address carries its hash, so a browser takes the new one"""
+        self.assertRegex(sp.shell(self.cfg(), "T", "<p>x</p>"), r'src="/portal/static/portal-theme\.js\?v=[0-9a-f]{10}"')
+
 
 class LookFiles(unittest.TestCase):
     def test_the_stylesheet_is_made_from_its_source(self):
@@ -212,6 +224,17 @@ class Summary(unittest.TestCase):
         conds[0]["last_known"] = True
         self.assertEqual(self.by(M.summary(answer(now, conds=conds), now))["vmware"]["state"], "stale")
 
+    def test_an_inaccessible_datastore_is_critical_whatever_its_fill(self):
+        """review r1 (Codex 5): no aggregate, a watched datastore vCenter marks inaccessible at 50 %: critical, as the wall's dsLevel"""
+        now = time.time()
+        m = answer(now)
+        m["storage"]["aggr"] = []
+        m["storage"]["ds"] = [{"n": "DS-A", "v": 50.0, "accessible": False, "capacity_watched": True, "feed": "vc:vc1.example.mil"},
+                              {"n": "DS-B", "v": 70.0, "accessible": True, "capacity_watched": True, "feed": "vc:vc1.example.mil"}]
+        met = self.by(M.summary(m, now))["storage"]["metric"]
+        self.assertEqual((met["obj"], met["state"]), ("DS-A", "crit"))
+        self.assertTrue(met.get("forced"))
+
     def test_the_endpoint(self):
         class FakeWall(object):
             cfg = type("C", (), {"tz_name": "Europe/Berlin"})()
@@ -243,6 +266,22 @@ class ShareText(unittest.TestCase):
         self.assertNotIn('"><', html_.split('href="', 1)[1].split('">Open on the wall', 1)[0])
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html_)
         self.assertIn("host " + evil, text)                                                       # the plain text is the text itself
+
+    def test_a_cleared_or_last_known_condition_is_said_so(self):
+        """review r1 (Codex 3, 4): a cleared condition is never shared as open; a last-known one says when it was last seen"""
+        base = {"area": "VMware", "title": "host down", "obj": "", "since": "05:27", "until": "06:00", "age": "33 min", "site": "",
+                "v": None, "warn": None, "crit": None, "src": "vCenter", "asof": "05:59", "asofAge": "", "check": "-", "link": "https://portal.example.mil/portal/wall",
+                "stamp": "08:00", "zone": "UTC", "lastSeen": ""}
+        r = self.run_js("var S = window.SAWallShare; process.stdout.write(JSON.stringify([S.text(%s), S.text(%s)]));"
+                        % (json.dumps(dict(base, sev="cleared")), json.dumps(dict(base, sev="stale", lastSeen="05:59:30 (2 h ago)"))))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cleared, last = json.loads(r.stdout)
+        self.assertTrue(cleared.startswith("[CLEARED]"), cleared)
+        self.assertIn("Was open 05:27 to 06:00 (33 min) - cleared, not open now", cleared)
+        self.assertNotIn("CRITICAL", cleared)
+        self.assertTrue(last.startswith("[NOT CURRENT]"), last)
+        self.assertIn("last seen 05:59:30 (2 h ago)", last)
+        self.assertIn("recovery not observed", last)
 
     def test_the_words_say_where_the_value_is(self):
         r = self.run_js("var w = window.SAWallShare.words; process.stdout.write(JSON.stringify([w({v: 91, warn: 85, crit: 97, unit: '%'}), "

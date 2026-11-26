@@ -5419,7 +5419,7 @@ class Motion1870(unittest.TestCase):
         self.assertIn('cl.toggle("moves", cl.contains("motion-always") || (!cl.contains("motion-off") && !(mq && mq.matches)))', t)
         self.assertIn('mq.addEventListener("change", motion)', t)
         h = sp.shell(self.cfg(), "T", "<p>x</p>")
-        self.assertLess(h.index("portal-theme.js\"></script>"), h.index("</head>"))
+        self.assertLess(h.index("portal-theme.js?v="), h.index("</head>"))
         self.assertNotIn("portal-theme.js\" defer", h)                                                          # before the page is drawn
 
     def test_3_no_html_from_strings_no_inline_style(self):

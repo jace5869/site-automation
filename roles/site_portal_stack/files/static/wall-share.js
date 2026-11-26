@@ -7,7 +7,7 @@
 (function () {
   "use strict";
   var SEV = {crit: {w: "CRITICAL", c: "#e0454b", ink: "#ffffff", mark: "✖"}, warn: {w: "WARNING", c: "#e8a92c", ink: "#1a1200", mark: "▲"},
-             stale: {w: "NOT CURRENT", c: "#8b95a3", ink: "#111418", mark: "?"}, ok: {w: "OK", c: "#3fcf86", ink: "#062312", mark: "✔"}};
+             stale: {w: "NOT CURRENT", c: "#8b95a3", ink: "#111418", mark: "?"}, cleared: {w: "CLEARED", c: "#8b95a3", ink: "#111418", mark: "✔"}};
   function esc(t) {
     return String(t == null ? "" : t).replace(/[&<>"']/g, function (ch) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch]; });
   }
@@ -24,10 +24,12 @@
     var s = SEV[a.sev] || SEV.stale;
     return [
       ["[" + s.w + "] " + a.area + " - " + a.title, true],
-      ["Since " + a.since + (a.age ? " (" + a.age + ")" : "") + (a.site ? " · " + a.site : ""), false],
+      [(a.sev === "cleared" ? "Was open " + a.since + " to " + a.until + (a.age ? " (" + a.age + ")" : "") + " - cleared, not open now"
+        : "Since " + a.since + (a.age ? " (" + a.age + ")" : "")) + (a.site ? " · " + a.site : ""), false],
       a.obj ? ["What: " + a.obj, false] : null,
       words(a) ? ["Value: " + words(a), false] : null,
-      a.sev === "stale" ? ["Not current: its source is late or failing - this is the last known state", false] : null,
+      a.sev === "stale" ? [a.lastSeen ? "Last known: last seen " + a.lastSeen + "; not in the latest read and not seen OK since - recovery not observed"
+        : "Not current: its source is late or failing - this is the last known state", false] : null,
       ["Source: " + a.src + " · as of " + a.asof + (a.asofAge ? " (" + a.asofAge + ")" : ""), false],
       ["Check: " + a.check, false]
     ].filter(Boolean);
@@ -54,16 +56,18 @@
     x.fillText(fit(x, (a.site ? a.site + " · " : "") + a.stamp + " " + a.zone, W - 76 - bw), W - 36, 58);
     x.textAlign = "left";
     x.fillStyle = "#f3f5f7"; x.font = "700 36px " + sans; x.fillText(fit(x, a.title, W - 80), 40, 128);
-    x.fillStyle = "#c9d0d8"; x.font = "500 21px " + sans; x.fillText(fit(x, a.area + " · since " + a.since + (a.age ? " (" + a.age + ")" : ""), W - 80), 40, 164);
+    x.fillStyle = "#c9d0d8"; x.font = "500 21px " + sans;
+    x.fillText(fit(x, a.area + (a.sev === "cleared" ? " · open " + a.since + " to " + a.until + " (" + a.age + ") · cleared" : " · since " + a.since + (a.age ? " (" + a.age + ")" : "")), W - 80), 40, 164);
     var top = 204, L = 40, R = W - 40;
     if (a.v != null && a.warn != null) {
       var max = a.max || 100, X = function (v) { return L + (R - L) * Math.max(0, Math.min(max, v)) / max; }, cr = a.crit != null ? a.crit : max;
       x.fillStyle = "#262b33"; x.fillRect(L, top, R - L, 30);
       x.fillStyle = "rgba(232,169,44,.27)"; x.fillRect(X(a.warn), top, X(cr) - X(a.warn), 30);
       if (a.crit != null) { x.fillStyle = "rgba(224,69,75,.33)"; x.fillRect(X(a.crit), top, R - X(a.crit), 30); }
-      x.fillStyle = a.sev === "stale" ? "#6b7480" : "#aab3bd"; x.fillRect(L, top + 9, X(Math.min(a.v, a.warn)) - L, 12);
-      if (a.sev !== "stale" && a.v > a.warn) { x.fillStyle = "#e8a92c"; x.fillRect(X(a.warn), top + 9, X(Math.min(a.v, cr)) - X(a.warn), 12); }
-      if (a.sev !== "stale" && a.crit != null && a.v > a.crit) { x.fillStyle = "#e0454b"; x.fillRect(X(a.crit), top + 9, X(a.v) - X(a.crit), 12); }
+      var grey = a.sev === "stale" || a.sev === "cleared";            // a last-known or cleared value: its whole bar grey
+      x.fillStyle = grey ? "#6b7480" : "#aab3bd"; x.fillRect(L, top + 9, X(grey ? a.v : Math.min(a.v, a.warn)) - L, 12);
+      if (!grey && a.v > a.warn) { x.fillStyle = "#e8a92c"; x.fillRect(X(a.warn), top + 9, X(Math.min(a.v, cr)) - X(a.warn), 12); }
+      if (!grey && a.crit != null && a.v > a.crit) { x.fillStyle = "#e0454b"; x.fillRect(X(a.crit), top + 9, X(a.v) - X(a.crit), 12); }
       x.setLineDash([5, 4]); x.lineWidth = 2;
       x.strokeStyle = "#e8a92c"; x.beginPath(); x.moveTo(X(a.warn), top - 8); x.lineTo(X(a.warn), top + 38); x.stroke();
       if (a.crit != null) { x.strokeStyle = "#e0454b"; x.beginPath(); x.moveTo(X(a.crit), top - 8); x.lineTo(X(a.crit), top + 38); x.stroke(); }
@@ -72,7 +76,7 @@
       x.fillText((a.crit == null ? "high " : "warn ") + n1(a.warn) + a.unit.trim(), X(a.warn) + (x.textAlign === "right" ? -6 : 6), top - 12);
       if (a.crit != null) { x.fillStyle = "#e0454b"; x.textAlign = a.crit > max * 0.8 ? "right" : "left"; x.fillText("crit " + n1(a.crit) + a.unit.trim(), X(a.crit) + (x.textAlign === "right" ? -6 : 6), top + 54); }
       x.textAlign = "left";
-      x.fillStyle = "#f3f5f7"; x.font = "700 22px " + sans; x.fillText(fit(x, words(a) + (a.sev === "stale" ? " · not current" : ""), W - 80), L, top + 92);
+      x.fillStyle = "#f3f5f7"; x.font = "700 22px " + sans; x.fillText(fit(x, words(a) + (a.sev === "stale" ? " · not current" : a.sev === "cleared" ? " · when it was open" : ""), W - 80), L, top + 92);
       if (a.series && a.series.length > 1) {
         var vals = a.series.filter(function (v) { return typeof v === "number"; });
         if (vals.length > 1) {
@@ -85,7 +89,7 @@
             var p = a.series[i - 1], q = a.series[i];
             if (typeof p !== "number" || typeof q !== "number") continue;
             var v = Math.max(p, q);
-            x.strokeStyle = a.sev === "stale" ? "#6b7480" : a.crit != null && v >= a.crit ? "#e0454b" : v >= a.warn ? "#e8a92c" : "#aab3bd";
+            x.strokeStyle = grey ? "#6b7480" : a.crit != null && v >= a.crit ? "#e0454b" : v >= a.warn ? "#e8a92c" : "#aab3bd";
             x.beginPath(); x.moveTo(L + (i - 1) * (R - L) / (a.series.length - 1), ys(p)); x.lineTo(L + i * (R - L) / (a.series.length - 1), ys(q)); x.stroke();
           }
           x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono; x.fillText(a.seriesLab || "trend", L, gT + gH + 18);
@@ -95,7 +99,8 @@
       // no value with a limit (a host down, a login failed): the state and how long, big, then what it touches
       x.fillStyle = s.c; x.fillRect(L, top - 6, 6, 92);
       x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
-      x.fillText(fit(x, (a.sev === "stale" ? "Last known · " : s.w.charAt(0) + s.w.slice(1).toLowerCase() + " · ") + (a.since ? "since " + a.since : "") + (a.age ? " · for " + a.age : ""), R - L - 24), L + 22, top + 26);
+      x.fillText(fit(x, a.sev === "cleared" ? "Cleared · open " + a.since + " to " + a.until + " (" + a.age + ")" :
+        (a.sev === "stale" ? "Last known · " : s.w.charAt(0) + s.w.slice(1).toLowerCase() + " · ") + (a.since ? "since " + a.since : "") + (a.age ? " · for " + a.age : ""), R - L - 24), L + 22, top + 26);
       x.fillStyle = "#c9d0d8"; x.font = "500 22px " + sans;
       wrap(x, a.obj || "", L + 22, top + 66, R - L - 24, 30, 4);
     }
@@ -132,47 +137,61 @@
     var say = el("p", "shd", [""], {role: "status", "aria-live": "polite"});
     var msg = el("div", "msg", lines(a).map(function (l, i) { return el(i ? "div" : "b", "", [l[0]]); }).concat([el("div", "", ["Wall: " + a.link])]));
     var img = el("img", "shi", null, {alt: "The alert card picture: " + a.title});
-    var CV = null, ready = null;
-    var draw = function () { CV = picture(a); img.src = CV.toDataURL("image/png"); };
-    var fonts = document.fonts && document.fonts.load ? Promise.all([document.fonts.load("700 24px Figtree"), document.fonts.load("500 21px Figtree"),
-      document.fonts.load("600 16px 'Fira Code'")]).catch(function () { return null; }) : Promise.resolve();
-    ready = fonts.then(draw, draw);
-    var blob = function () { return ready.then(function () { return new Promise(function (res, rej) { CV.toBlob(function (b) { if (b) res(b); else rej(new Error("no picture")); }, "image/png"); }); }); };
+    // drawn at once (the system font if the bundled one is not loaded yet), drawn again when the fonts are there - Save and Copy
+    // always have a picture inside the click
+    var CV = picture(a);
+    img.src = CV.toDataURL("image/png");
+    if (document.fonts && document.fonts.load) {
+      Promise.all([document.fonts.load("700 24px Figtree"), document.fonts.load("500 21px Figtree"), document.fonts.load("600 16px 'Fira Code'")])
+        .then(function () { CV = picture(a); img.src = CV.toDataURL("image/png"); }, function () { /* the system font stays */ });
+    }
+    var blob = function () { return new Promise(function (res, rej) { CV.toBlob(function (bl) { if (bl) res(bl); else rej(new Error("no picture")); }, "image/png"); }); };
     var can = function () { return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext); };
+    var blocked = function (e) { return e && (e.name === "NotAllowedError" || e.name === "SecurityError"); };
     var b = function (t, cls, fn, title) { var x = el("button", cls || "", [t], {type: "button", title: title}); x.addEventListener("click", fn); return x; };
+    var write = function (items, ok, no) {
+      try {
+        navigator.clipboard.write([new ClipboardItem(items)]).then(function () { say.textContent = ok; }, function (e) { say.textContent = no(e); });
+      } catch (e) { say.textContent = no(e); }
+    };
     var copyText = b("Copy text", "pri", function () {
-      if (!can()) { say.textContent = "This browser keeps the clipboard closed here - select the message above and press Ctrl+C."; return; }
-      navigator.clipboard.write([new ClipboardItem({"text/plain": new Blob([text(a)], {type: "text/plain"}), "text/html": new Blob([html(a)], {type: "text/html"})})])
-        .then(function () { say.textContent = "Text copied - in Teams click the chat box and press Ctrl+V."; },
-              function () { say.textContent = "The browser blocked the copy - select the message above and press Ctrl+C."; });
+      if (!can()) {
+        if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+          navigator.clipboard.writeText(text(a)).then(function () { say.textContent = "Plain text copied (this browser takes no formatting) - in Teams press Ctrl+V."; },
+            function () { say.textContent = "The browser blocked the copy - select the message above and press Ctrl+C."; });
+        } else say.textContent = "This browser keeps the clipboard closed here - select the message above and press Ctrl+C.";
+        return;
+      }
+      write({"text/plain": new Blob([text(a)], {type: "text/plain"}), "text/html": new Blob([html(a)], {type: "text/html"})},
+        "Text copied - in Teams click the chat box and press Ctrl+V.",
+        function (e) { return blocked(e) ? "The browser blocked the clipboard - select the message above and press Ctrl+C." : "The copy did not work here - select the message above and press Ctrl+C."; });
     }, "The message, formatted (bold, the link) with a plain-text copy for apps that take only text");
     var copyPic = b("Copy picture", "", function () {
       if (!can()) { say.textContent = "This browser keeps pictures off the clipboard - use Save picture and drag the file into the chat."; return; }
-      navigator.clipboard.write([new ClipboardItem({"image/png": blob()})])
-        .then(function () { say.textContent = "Picture copied - in Teams press Ctrl+V."; },
-              function () { say.textContent = "The browser blocked the picture - use Save picture and drag the file into the chat."; });
+      write({"image/png": blob()}, "Picture copied - in Teams press Ctrl+V.",
+        function (e) { return blocked(e) ? "The browser blocked the clipboard - use Save picture and drag the file into the chat." : "This browser takes no pictures on the clipboard - use Save picture."; });
     }, "The alert card below, as a PNG picture");
     var copyBoth = b("Copy both", "", function () {
       if (!can()) { say.textContent = "This browser keeps the clipboard closed here - select the message and press Ctrl+C, then use Save picture."; return; }
-      navigator.clipboard.write([new ClipboardItem({"text/plain": new Blob([text(a)], {type: "text/plain"}), "text/html": new Blob([html(a)], {type: "text/html"}), "image/png": blob()})])
-        .then(function () { say.textContent = "Text and picture copied - in Teams press Ctrl+V."; },
-              function () { say.textContent = "This browser takes one at a time - use Copy text, paste, then Copy picture."; });
-    }, "The message and the picture together (some browsers take one at a time)");
+      write({"text/plain": new Blob([text(a)], {type: "text/plain"}), "text/html": new Blob([html(a)], {type: "text/html"}), "image/png": blob()},
+        "Copied together - press Ctrl+V in Teams. If only the text arrives, press Copy picture and Ctrl+V again (Teams picks one form of a paste).",
+        function (e) { return blocked(e) ? "The browser blocked the clipboard - select the message and press Ctrl+C, then use Save picture." : "This browser takes one form at a time - use Copy text, paste, then Copy picture."; });
+    }, "The message and the picture on the clipboard together (Teams may paste only one of them)");
     var save = b("Save picture", "", function () {
-      ready.then(function () {
+      try {
         var l = document.createElement("a");
         l.download = String(a.area || "wall").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + String(a.stamp || "").replace(/[^0-9]/g, "") + ".png";
         l.href = CV.toDataURL("image/png");
         document.body.appendChild(l); l.click(); document.body.removeChild(l);
         say.textContent = "Picture saved - drag it from your downloads into the Teams chat.";
-      });
+      } catch (e) { say.textContent = "The picture could not be saved here - right-click the picture and save it."; }
     }, "Download the picture (when the browser keeps pictures off the clipboard)");
     var close = b("Close", "", function () { panel.parentNode.removeChild(panel); }, "Back to the detail card");
     var panel = el("section", "share", [
       el("h3", "", ["Share to Teams", el("small", "", [" " + a.title + " · " + a.area])]),
       el("div", "shg", [
         el("div", "", [el("p", "lab", ["Message - pastes formatted"]), msg, el("div", "btns", [copyText, copyPic, copyBoth, save, close]), say,
-          el("p", "hint", ["In Teams: click the chat box, then Ctrl+V. Copy both puts the text and the picture on together; a browser that takes one at a time says so."])]),
+          el("p", "hint", ["In Teams: click the chat box, then Ctrl+V. Copy both puts the text and the picture on together; Teams may paste only one - then Copy picture and paste again."])]),
         el("div", "", [el("p", "lab", ["Picture - drawn from the wall's data, not a screen grab"]), img])])
     ], {"aria-label": "Share to Teams"});
     card.appendChild(panel);

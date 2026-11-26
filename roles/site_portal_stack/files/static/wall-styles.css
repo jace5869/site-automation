@@ -7,7 +7,16 @@ html.screen body[data-page="wall"]{overflow:hidden}
 .hdr-in{flex-wrap:wrap;row-gap:6px;padding-top:4px;padding-bottom:4px}
 .htools{flex-wrap:wrap;row-gap:6px}
 html.screen #stage{overflow:hidden;position:relative;flex:none}
-html.screen body.kiosk .hdr{position:fixed;top:6px;right:8px;z-index:70;background:none;border:0;backdrop-filter:none}
+/* kiosk: the wall's controls stay out of the board's clock - shown on a pointer or a key (Esc leaves kiosk); the board itself says
+   what rotates and how often */
+html.screen body.kiosk .hdr{position:fixed;top:6px;right:8px;z-index:70;background:none;border:0;backdrop-filter:none;opacity:0;transition:opacity .2s}
+html.screen body.kiosk .hdr:hover,html.screen body.kiosk .hdr:focus-within,html.screen body.kiosk .hdr:has(.dd.open){opacity:1}
+/* the portal not answering: a row over the board's top, never under it */
+html.screen #stage>.unreach{position:absolute;z-index:6;left:0;right:0;top:0}
+/* What the wall watches in these styles: the setup list, scrolling */
+.sS .kmain,.sR .kmain,.sX .kmain{padding:16px 24px;overflow:auto}
+/* a look's page width never narrows the wall */
+:root[data-skin] body[data-page="wall"] main{max-width:none}
 html.screen body.kiosk .hdr .brand,html.screen body.kiosk .hdr .karea,html.screen body.kiosk .hdr .hclock,html.screen body.kiosk .hdr .hsep{display:none}
 html.screen body.kiosk .hdr-in{min-height:0;padding:0}
 .wx{position:absolute;left:0;top:0;transform-origin:0 0;box-sizing:border-box;display:grid;gap:14px;padding:16px 20px;overflow:hidden;font-size:18px;line-height:1.3;color:var(--wx-ink);background:var(--wx-bg)}
@@ -22,6 +31,7 @@ html.screen body.kiosk .hdr-in{min-height:0;padding:0}
 .wx-logo img{max-height:72px;max-width:220px;object-fit:contain;display:block}
 .wx-logo.badge{width:72px;background:var(--wx-accent);color:var(--wx-accent-ink);font:800 38px/1 var(--wx-disp)}
 .wx-clock{display:inline-flex;align-items:baseline;gap:8px;font:600 40px/1 var(--wx-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.wx-clock b{font:inherit}
 .wx-clock small{font-size:14px;color:var(--wx-mute);letter-spacing:.06em}
 .wx-src{font:500 13px/1.3 var(--wx-mono);color:var(--wx-mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wx-src .tag{font-weight:700;border:1px solid currentColor;border-radius:3px;padding:0 4px;margin-right:6px}
@@ -65,7 +75,7 @@ html.style-strata{--wx-bg:light-dark(#e9e7e1,#0f1216);--wx-panel:light-dark(#fbf
 .sx-ban.crit{background:var(--wx-crit-solid);color:#fff}.sx-ban.warn{background:var(--wx-warn-solid);color:#1a1103}
 .wx .sx-ban .word{flex:none;background:rgba(255,255,255,.94);color:#a1141f;border-radius:999px;padding:3px 12px;font-size:16px}
 .wx .sx-ban.warn .word{color:#6b3a00}
-.sx-ban b{font:700 24px var(--wx-disp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%}
+.sx-ban>b{font:700 24px var(--wx-disp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%}
 .sx-ban>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sx-ban .wx-src{color:inherit;opacity:.9;min-width:0;flex:0 1 auto;max-width:28%}
 .sx-ban .sx-insp{flex:none}
@@ -74,7 +84,7 @@ html.style-strata{--wx-bg:light-dark(#e9e7e1,#0f1216);--wx-panel:light-dark(#fbf
 .sx-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.95fr);gap:16px}
 .sx-left{display:grid;grid-template-rows:minmax(0,1fr) auto;gap:14px;min-height:0}
 .sx-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);gap:12px;min-height:0}
-.sx-tile{display:flex;flex-direction:column;gap:6px;background:var(--wx-panel);border:1px solid var(--wx-line);border-top:4px solid var(--wx-line);border-radius:12px;padding:12px 16px;min-height:0;overflow:hidden}
+.sx-tile{display:flex;flex-direction:column;gap:4px;background:var(--wx-panel);border:1px solid var(--wx-line);border-top:4px solid var(--wx-line);border-radius:12px;padding:12px 16px;min-height:0;overflow:hidden}
 .sx-tile.crit{border-top-color:var(--wx-crit-solid);border-color:color-mix(in srgb,var(--wx-crit-solid) 45%,var(--wx-line))}
 .sx-tile.warn{border-top-color:var(--wx-warn-solid);border-color:color-mix(in srgb,var(--wx-warn-solid) 45%,var(--wx-line))}
 .sx-tile.ok{border-top-color:var(--ok)}
@@ -84,11 +94,14 @@ html.style-strata{--wx-bg:light-dark(#e9e7e1,#0f1216);--wx-panel:light-dark(#fbf
 .sx-tile .th b{flex:1}
 .sx-tile .th .word{font-size:15px;border:1px solid currentColor;border-radius:999px;padding:2px 10px}
 .sx-tile .big{display:flex;align-items:baseline;gap:10px}
-.sx-tile .big b{font:700 54px/1 var(--wx-disp)}
+.sx-tile .big b{font:700 46px/1 var(--wx-disp)}
 .sx-tile.crit .big b{color:var(--wx-crit)}.sx-tile.warn .big b{color:var(--wx-warn)}.sx-tile.stale .big b,.sx-tile.off .big{color:var(--wx-mute)}
 .sx-tile .big span{color:var(--wx-mute);font:500 15px var(--wx-mono)}
 .sx-tile .big.off{font:700 54px/1 var(--wx-disp)}
-.sx-tile .sub{margin:0;font-size:18px;color:var(--wx-ink);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.sx-tile .sub{margin:0;font-size:17px;color:var(--wx-ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:none}
+.sx-tile.off .sub{white-space:normal}
+.sx-tile>*{flex:none}
+.sx-tile .wb-ph{flex:1}
 .sx-tile .say{margin:0;font:600 14px var(--wx-mono);color:var(--wx-mute)}
 .sx-tile .say.warn{color:var(--wx-warn)}.sx-tile .say.crit{color:var(--wx-crit)}
 .sx-tile .wb-ph{flex:1}
@@ -149,7 +162,9 @@ html.style-strata{--wx-bg:light-dark(#e9e7e1,#0f1216);--wx-panel:light-dark(#fbf
 .sx-side .it .word{font-size:13px}
 .sx-ft{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:hidden;background:var(--wx-panel);border:1px solid var(--wx-line);border-radius:10px;padding:8px 12px}
 .sx-ft .fd{display:inline-flex;align-items:center;gap:7px;font:500 13px var(--wx-mono);border:1px solid var(--wx-line);border-radius:7px;padding:4px 9px;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis}
-.sx-ft .fd i{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none}
+.sx-ft .fd i{width:9px;height:9px;border-radius:50%;background:var(--wx-mute);flex:none}
+.sx-ft .fd.ok i{background:var(--ok)}
+.sx-ft .rot{font:500 13px var(--wx-mono);color:var(--wx-mute);white-space:nowrap;flex:none}
 .sx-ft .fd.late i{background:var(--wx-warn-solid)}.sx-ft .fd.stale i{background:var(--wx-mute)}.sx-ft .fd.late{color:var(--wx-warn)}.sx-ft .fd.stale{color:var(--wx-mute)}
 .sx-ft .lg{margin-left:auto;display:flex;gap:14px;font-size:14px;white-space:nowrap;flex:none}
 .sx-ft .fd{flex:0 1 auto;min-width:0}
@@ -245,7 +260,8 @@ html.style-metro{--wx-bg:light-dark(#e9ecef,#0d0f12);--wx-panel:light-dark(#ffff
 .mx-hd .sum>.w{background:var(--wx-warn-solid)}.mx-hd .sum .w .word{color:#1a1200}
 .mx-hd .src{margin-left:auto;display:flex;gap:8px;min-width:0;overflow:hidden}
 .mx-hd .src>span{display:flex;min-width:0;overflow:hidden;text-overflow:ellipsis;align-items:center;gap:7px;font:600 13px var(--wx-mono);padding:6px 10px;background:var(--wx-panel);color:var(--wx-mute);white-space:nowrap}
-.mx-hd .src i{width:9px;height:9px;border-radius:50%;background:var(--ok)}
+.mx-hd .src i{width:9px;height:9px;border-radius:50%;background:var(--wx-mute)}
+.mx-hd .src .ok i{background:var(--ok)}
 .mx-hd .src .late{color:var(--wx-warn);box-shadow:inset 0 0 0 2px var(--wx-warn-solid)}.mx-hd .src .late i{background:var(--wx-warn-solid)}
 .mx-hd .src .stale i{background:var(--wx-mute)}.mx-hd .src .stale{box-shadow:inset 0 0 0 2px var(--wx-line)}
 .mx-hd .wx-clock{font-weight:300;font-size:44px;font-family:var(--wx-sans)}
@@ -271,7 +287,9 @@ html.style-metro{--wx-bg:light-dark(#e9ecef,#0d0f12);--wx-panel:light-dark(#ffff
 .mx-grid .word{margin-top:auto;font-size:28px}
 .mx-grid .t.crit .word{font-size:62px;line-height:1}
 .mx-grid .t.warn .word{font-size:32px}
-.mx-grid .t.warn .big{font-size:48px;margin-top:0}
+.mx-grid .t.warn .big{font-size:44px;margin-top:0}
+.mx-grid .t.warn .mwhy{-webkit-line-clamp:1;font-size:18px}
+.mx-grid .t.warn .wb{padding:14px 0 14px}
 .mx-grid .t.off .word,.mx-grid .t.stale .word{font-size:20px}
 .mx-grid .t.crit .wb-t,.mx-grid .t.warn .wb-t{background:rgba(0,0,0,.18)}
 .mx-grid .t.crit .wb .xb-w,.mx-grid .t.crit .wb .xb-c,.mx-grid .t.warn .wb .xb-w,.mx-grid .t.warn .wb .xb-c{background:rgba(0,0,0,.2)}
@@ -313,6 +331,10 @@ html.moves .mx-grid .t.flip .face{transform:rotateX(90deg);transform-origin:50% 
 .mx-cap .lab b{font-family:var(--wx-mono)}
 .mx-cap .bb.warn .lab b{color:var(--wx-warn)}.mx-cap .bb.crit .lab b{color:var(--wx-crit)}
 .mx-pv{text-align:center;font:600 13px var(--wx-mono);color:var(--wx-mute);letter-spacing:.04em}
+
+/* a critical word's X on a solid red plate: drawn in the plate's red, never white on white */
+.mx-grid .t.crit .word svg .xk,.mx-hd .sum>.c .word svg .xk,.sx-sum .p.crit.on .word svg .xk{stroke:var(--wx-crit-solid)}
+.wx .sx-ban .word svg .xk{stroke:#fff}
 
 /* ================================================================ Share to Teams (every style's detail card) */
 .dsc .shareon{font-weight:700}

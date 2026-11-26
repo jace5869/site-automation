@@ -930,8 +930,13 @@ def summary(m, now):
             else:
                 ds = [x for x in st_.get("ds") or [] if isinstance(x, dict) and isinstance(x.get("v"), (int, float)) and x.get("capacity_watched") is not False]
                 if ds:
-                    w_ = max(ds, key=lambda x: x["v"])
-                    metric = _metric("fullest datastore", w_.get("n"), w_["v"], dw, dc, "%", w_.get("feed"), m, now, by)
+                    # an inaccessible datastore is critical whatever its fill (the wall's dsLevel): it is the one shown
+                    bad = [x for x in ds if x.get("accessible") is False]
+                    w_ = bad[0] if bad else max(ds, key=lambda x: x["v"])
+                    metric = _metric("fullest datastore" if not bad else "datastore inaccessible", w_.get("n"), w_["v"], dw, dc, "%", w_.get("feed"), m, now, by)
+                    if bad and metric:
+                        metric["state"] = _status(m, "crit", w_.get("feed"), now, by)
+                        metric["forced"] = "inaccessible (vCenter)"
             if metric:
                 big, unit = _n(metric["v"]), "% used · " + str(metric["obj"] or "")
             nodes = st_.get("nodes") if isinstance(st_.get("nodes"), list) and len(st_.get("nodes")) == 2 else None

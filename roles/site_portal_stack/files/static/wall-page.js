@@ -416,14 +416,14 @@
     de.classList.add("style-" + S.style);
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
-    de.classList.toggle("screen", !!SCREEN[S.style]);
-    if (!SCREEN[S.style]) stage.style.height = "";
+    de.classList.toggle("screen", !!SCREEN[S.style] && S.area !== "watch");
+    if (!SCREEN[S.style] || S.area === "watch") stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
     RENDER[S.style](stage);
-    if (SCREEN[S.style]) fitScreen();
+    if (SCREEN[S.style] && S.area !== "watch") fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
       " since " + hms(UNREACH_SINCE) + " - every value below is the last known one and not current. The page keeps trying every " + ((W && W.poll) || 30) + " s."],
       {role: "alert"}), stage.firstChild);
@@ -438,6 +438,7 @@
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
   function setKiosk(on, user) {
     document.body.classList.toggle("kiosk", on);
+    if (SCREEN[S.style]) fitScreen();                    // 1.135.0: the board takes the room the page now leaves
     if (user) { try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* not allowed here */ } }
   }
   var ROT = {on: false, mode: "styles", every: 60, left: 60, resumeAt: 0}, IDLE_RESUME = 20;
@@ -500,6 +501,7 @@
     });
     stage.addEventListener("keydown", function (e) {
       if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.target.closest("button,a")) return;          // a real button or link (Share to Teams in a row) does its own click
       var d = e.target.closest("[data-d]"), g = e.target.closest("[data-goto]");
       if (d) { e.preventDefault(); openDetail(d.getAttribute("data-d")); } else if (g) { e.preventDefault(); setArea(g.getAttribute("data-goto")); }
     });
@@ -533,6 +535,7 @@
       tip.classList.remove("on");
     });
     var rt;
+    document.addEventListener("fullscreenchange", function () { if (SCREEN[S.style]) fitScreen(); });
     window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map") render(); else if (SCREEN[S.style]) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
@@ -796,6 +799,8 @@
   function dsFeed() { return vcFeed(); }
   function vcFeed() { return oldest(((W.vmware || {}).vcenters || []).map(function (x) { return x.feed; })); }
   function openDetail(ref, again) {
+    // 1.135.0: Share to Teams open: a refresh keeps it (its text and picture are a snapshot) - the card is redrawn on the next open
+    if (again && card.querySelector(".share")) return;
     var i = ref.indexOf(":"), kind = ref.slice(0, i), key = ref.slice(i + 1);
     if (kind === "ds") { openDs(key, again); return; }
     var m = DET[kind] ? DET[kind](key) : null;
@@ -1142,26 +1147,32 @@
   function fitScreen() {
     var b = stage.querySelector(".wx");
     if (!b) return;
-    var top = stage.getBoundingClientRect().top, w = Math.max(320, stage.clientWidth), hh = Math.max(240, innerHeight - Math.max(0, top));
-    var k = Math.min(w / 1920, hh / 1000);
+    // the room below the stage's top, less the lower classification banner (report_banner) that follows the page
+    var low = document.querySelector("main ~ .banner"), lowH = low ? low.getBoundingClientRect().height : 0;
+    var top = stage.getBoundingClientRect().top + window.scrollY, w = Math.max(320, stage.clientWidth), hh = Math.max(240, innerHeight - Math.max(0, top) - lowH);
+    var k = Math.min(w / 1920, hh / 1080);
     b.style.width = (w / k) + "px";
     b.style.height = (hh / k) + "px";
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
   }
   function shareOf(c) {
+    var cleared = c.end != null;
     // what a Teams post says about one condition: from the model only (escaped by static/wall-share.js), the limits from the settings
     var t = c.kind === "dsfull" || c.kind === "dswarn" ? thr("ds") : c.kind === "aggrfull" || c.kind === "aggrwarn" ? thr("aggr") :
       c.kind === "cpu" || c.kind === "mem" ? [thr("high")[0], null] : c.kind === "sm" && c.lag_h != null ? thr("snapmirror_lag_hours") : null;
     var hot = null;
     if (c.kind === "cpu" || c.kind === "mem") (W.vmware.hot || []).forEach(function (x) { if (x.cond === c.id) hot = x; });
-    var f = feed(c.feed || (c.vc ? "vc:" + c.vc : "")), stale = condStale(c);
-    return {sev: stale ? "stale" : c.sev, area: aShort(c.area), title: c.t, obj: c.obj || "", since: c.start ? when(c.start) : "", age: c.start ? dur(NOW() - c.start) : "",
+    var f = feed(c.feed || (c.vc ? "vc:" + c.vc : "")), stale = !cleared && condStale(c);
+    var seen = c.last_known && c.seen ? c.seen : null;     // a last-known condition: when it was last seen, not the feed's newer read
+    return {sev: cleared ? "cleared" : stale ? "stale" : c.sev, area: aShort(c.area), title: c.t, obj: c.obj || "", since: c.start ? when(c.start) : "",
+            until: cleared ? when(c.end) : "", age: c.start ? dur((cleared ? c.end : NOW()) - c.start) : "",
+            lastSeen: seen ? hms(seen) + " (" + ago(ageS(seen)) + ")" : "",
             site: [W.title, W.enclave, c.site].filter(Boolean).join(" · "),
             v: c.v != null ? c.v : c.kind === "sm" && c.lag_h != null ? c.lag_h : null, unit: c.kind === "sm" ? " h" : "%",
             warn: t ? t[0] : null, crit: t ? t[1] : null, max: c.kind === "sm" && t ? Math.max(t[1] * 1.3, (c.lag_h || 0) * 1.1) : 100,
             series: hot && Array.isArray(hot.spark) ? hot.spark : null, seriesLab: hot ? "last hour, per minute" : "",
-            src: f ? f.name : (c.feed || "the wall's read"), asof: f && f.asof ? hms(f.asof) : "never", asofAge: f && f.asof ? ago(ageS(f.asof)) : "",
+            src: f ? f.name : (c.feed || "the wall's read"), asof: seen ? hms(seen) : f && f.asof ? hms(f.asof) : "never", asofAge: seen ? ago(ageS(seen)) : f && f.asof ? ago(ageS(f.asof)) : "",
             check: verify(c), link: location.origin + SRC.replace(/api\/wall$/, "wall") + "?area=" + encodeURIComponent(c.area) + "&open=" + encodeURIComponent("c:" + c.id),
             stamp: hms(NOW()), zone: zoneName()};
   }
@@ -1172,11 +1183,12 @@
     overallState: overallState, openConds: openConds, condStale: condStale, nowList: nowList, feed: feed, feedFresh: feedFresh, status: status,
     level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
     unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
-    dsRef: dsRef, cond: function (id) { return BY[id] || null; }, openDetail: openDetail, setArea: setArea,
+    dsRef: dsRef, cond: function (id) { return BY[id] || null; }, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
     share: function (id) { if (!BY[id]) return; openDetail("c:" + id); if (window.SAWallShare) window.SAWallShare.open(card, shareOf(BY[id])); }
   };
   ["strata", "relay", "metro"].forEach(function (st) {
     RENDER[st] = function (r) {
+      if (S.area === "watch") { add(r, [h("div", "kmain", [khead("What the wall watches"), h("div", "panel", [watchEl()])])]); return; }   // the setup list, as in Cockpit
       if (window.SAWallStyles && window.SAWallStyles[st]) window.SAWallStyles[st](API, r);
       else r.appendChild(h("p", "note warn", ["This style's file (wall-styles.js) did not load - reload the page."]));
     };

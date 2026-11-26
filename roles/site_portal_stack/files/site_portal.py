@@ -4218,11 +4218,11 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     return ('<!doctype html><html lang="en" data-look="%s" data-skin="%s" data-skin-default="%s"%s%s><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/portal-looks.css?v=%s"><link rel="stylesheet" href="%sstatic/banner.css">'
-            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s%s</head>'
+            '<script src="%sstatic/portal-theme.js?v=%s"></script><script src="%sstatic/portal.js" defer></script>%s%s</head>'
             '<body data-page="%s">%s%s%s%s<main>%s</main>%s</body></html>'
             % (cfg.look, skin, skin, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
                site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
-               cfg.path, cfg.path, looks_version(), cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
+               cfg.path, cfg.path, looks_version(), cfg.path, cfg.path, static_version("portal-theme.js"), cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -4266,12 +4266,12 @@ def reader_refusal_page(cfg, cn):
     if cfg.ad_groups_why or (cfg.ad_groups and not cfg.ad_groups.status("readers")["ok"]):
         note = ("<p>AD groups have not been read or are unavailable. Only card names listed in "
                 "portal_viewers, portal_runners or portal_approvers may view the portal.</p>")
-    return ("""<!doctype html><html lang="en" data-look="%s" data-skin="%s"><head><meta charset="utf-8">
+    return ("""<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
-<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/portal-looks.css">%s</head><body>%s<main><h1>Portal access</h1>
+<link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
 <div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
 <p>Card CN: <b>%s</b></p>%s</div>%s</main>%s</body></html>""" %
-            (cfg.look, getattr(cfg, "skin", "strata"), esc(cfg.path), esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
+            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
 
 
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))

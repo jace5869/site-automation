@@ -58,11 +58,18 @@
   function num(v) { return (Math.round(v * 10) / 10).toString(); }
 
   // ---- the limit chart: one value against its warn / crit limits (0-100 %)
-  function zone(m) { return m.state === "stale" ? "stale" : m.crit != null && m.v >= m.crit ? "crit" : m.warn != null && m.v >= m.warn ? "warn" : "ok"; }
+  // the metric's state as the server said it (the wall's rule), never better: anything but ok / warn / crit is not current
+  function zone(m) {
+    if (m.state !== "ok" && m.state !== "warn" && m.state !== "crit") return "stale";
+    if (m.forced) return m.state;
+    var z = m.crit != null && m.v >= m.crit ? "crit" : m.warn != null && m.v >= m.warn ? "warn" : "ok";
+    return z === "ok" && m.state !== "ok" ? m.state : z;
+  }
   function pts(d) { d = Math.round(Math.abs(d) * 10) / 10; return d + (d === 1 ? " pt" : " pts"); }
   function sentence(m) {
     var z = zone(m), v = num(m.v) + m.unit, wl = m.crit == null ? "high" : "warn";
     if (z === "stale") return [h("b", "z-stale", [v + " · not current"]), " · last known value, its source is late or failing"];
+    if (m.forced) return [h("b", "z-" + z, [v + " · " + WORD[z].toUpperCase()]), " · " + m.forced];
     if (z === "crit") return [h("b", "z-crit", [v + " · CRITICAL"]), " · " + pts(m.v - m.crit) + " over crit " + num(m.crit)];
     if (z === "warn") return [h("b", "z-warn", [v + " · " + pts(m.v - m.warn) + " over " + wl + " " + num(m.warn)]), m.crit != null ? " · crit at " + num(m.crit) : ""];
     var t = m.warn != null ? m.warn : m.crit;
@@ -76,7 +83,7 @@
     if (m.warn != null) kids.push(s("rect", {class: "bw", x: X(m.warn), y: 0, width: X(m.crit != null ? m.crit : 100) - X(m.warn), height: bh}));
     if (m.crit != null) kids.push(s("rect", {class: "bc", x: X(m.crit), y: 0, width: W - X(m.crit), height: bh}));
     var vy = bh * 0.25, vh = bh * 0.5;
-    if (m.state === "stale") kids.push(s("rect", {class: "vs", x: 0, y: vy, width: X(m.v), height: vh}));
+    if (zone(m) === "stale") kids.push(s("rect", {class: "vs", x: 0, y: vy, width: X(m.v), height: vh}));
     else {
       var w0 = m.warn != null ? m.warn : 101, c0 = m.crit != null ? m.crit : 101;
       kids.push(s("rect", {class: "vo", x: 0, y: vy, width: X(Math.min(m.v, w0)), height: vh}));
@@ -99,7 +106,8 @@
 
   // ---- the parts
   function lamps(a) {
-    var on = function (k, n) { return h("span", "olm " + k + (n ? " on" : ""), [h("i"), (n || 0) + " " + (k === "crit" ? "crit" : "warn")]); };
+    var cur = a.state === "crit" || a.state === "warn";                       // a stale area's counts are never lit
+    var on = function (k, n) { return h("span", "olm " + k + (n && cur ? " on" : ""), [h("i"), (cur ? n || 0 : "–") + " " + (k === "crit" ? "crit" : "warn")]); };
     var okLamp = h("span", "olm ok" + (a.state === "ok" ? " on" : ""), [h("i"), a.state === "stale" ? "not current" : "OK"]);
     if (a.state === "stale") okLamp.className = "olm stale on";
     return h("div", "ot-lamps", [okLamp, on("warn", a.warn), on("crit", a.crit)], {"aria-hidden": "true"});
@@ -178,19 +186,21 @@
     D.areas.forEach(function (a, i) {
       var p = PLACE[a.id] || [140 + i * 190, 110], rings = a.state === "off" ? 1 : 2 + Math.min(3, (a.crit || 0) + (a.warn || 0)), g = [];
       for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], 36 + r * 10, i + 1)}));
-      g.push(s("text", {x: p[0], y: p[1] - 2, "text-anchor": "middle"}, [a.short || a.name]));
-      g.push(s("text", {class: "mts", x: p[0], y: p[1] + 15, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
+      var below = p[1] + (36 + (rings - 1) * 10) * 0.82 + 18;            // the state under the island, never across its rings
+      g.push(s("text", {x: p[0], y: p[1] + 5, "text-anchor": "middle"}, [a.short || a.name]));
+      g.push(s("text", {class: "mts", x: p[0], y: below, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
       var link = s("a", {href: WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id)), class: "k-" + a.state, "aria-label": a.name + ": " + WORD[a.state]}, g);
       kids.push(link);
     });
     return h("div", "ops-map", [h("p", "mt", ["Asset status by area", h("span", "", ["each island an area · rings = its state and open conditions · dashed grey = no current data · click an island for its wall"])]),
-      s("svg", {viewBox: "0 0 1220 240", role: "img", "aria-label": "Asset status by area"}, kids)]);
+      s("svg", {viewBox: "0 0 1220 250", role: "img", "aria-label": "Asset status by area"}, kids)]);
   }
   function summaryLine() {
     var need = D.areas.filter(function (a) { return a.state === "crit" || a.state === "warn"; });
     var n = {ok: 0, warn: 0, crit: 0, stale: 0};
     D.areas.forEach(function (a) { if (n[a.state] != null) n[a.state]++; });
     var say = need.length ? (need.length === 1 ? "1 area needs a look." : need.length + " areas need a look.")
+      : n.stale && n.ok ? n.ok + (n.ok === 1 ? " area OK, " : " areas OK, ") + n.stale + " not current - grey, never green."
       : n.stale ? "No area current enough to say OK." : n.ok ? "All areas on the wall are OK." : "No area on the wall yet.";
     var parts = [h("b", "", [say])];
     need.forEach(function (a) { parts.push(h("span", "", [a.name + ": " + [a.crit ? a.crit + " critical" : "", a.warn ? a.warn + " warning" : ""].filter(Boolean).join(", ")])); });
@@ -202,8 +212,23 @@
     return h("p", "ops-say", parts);
   }
 
+  // the server's state as of its answer, aged on this page's clock: OK turns grey once its oldest source passes LATE, and every
+  // value is "not current" once it passes STALE - between two reads, in a background tab, after a sleep
+  function aged() {
+    var late = (D.late || 180) * 1000, stale = (D.stale || 600) * 1000;
+    D.areas.forEach(function (a) {
+      if (a.state === "off") return;
+      var age = a.asof ? now() - a.asof * 1000 : Infinity;
+      if ((a.state === "ok" && age > late) || age > stale) {
+        if (a.state !== "stale") { a.state = "stale"; a.why = a.why || "its oldest source was read " + ago(a.asof * 1000) + " ago (LATE after " + Math.round(late / 60000) + " min)"; }
+        a.crit = 0; a.warn = 0;
+      }
+      if (a.metric && a.metric.state !== "stale" && ((a.metric.state === "ok" && age > late) || age > stale)) a.metric.state = "stale";
+    });
+  }
   function render() {
     if (!D) return;
+    aged();
     var lk = skin(), keep = sec.querySelector(".ops-h");
     clear(sec);
     var hint = lk === "strata" ? "spotlight steps every " + EVERY + " s · click an area for its wall"
@@ -226,8 +251,8 @@
   }
   function failed(msg) {
     FAIL++;
-    if (D) {                                     // a later read failed: every value grey, said - never a stale green
-      D.areas.forEach(function (a) { if (a.state !== "off") { a.state = "stale"; a.why = "the portal could not read the wall (" + msg + ")"; if (a.metric) a.metric.state = "stale"; } });
+    if (D) {                                     // a later read failed: every value grey, said - never a stale green, no lamp lit
+      D.areas.forEach(function (a) { if (a.state !== "off") { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the portal could not read the wall (" + msg + ")"; if (a.metric) a.metric.state = "stale"; } });
       render();
       return;
     }
@@ -236,19 +261,21 @@
     sec.appendChild(h("p", "ops-note", ["The wall's areas could not be read (" + msg + "). They are tried again in 60 s; the wall itself: ", h("a", "", ["open it"], {href: WALL}), "."]));
     sec.hidden = false;
   }
+  var SEQ = 0;
   function load() {
+    var mine = ++SEQ;
     fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
-      if (r.status === 404) { sec.hidden = true; return null; }        // the wall is off here
+      if (r.status === 404) { D = null; sec.hidden = true; return null; }      // the wall is off here: nothing kept to show again
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }).then(function (a) {
-      if (!a) return;
-      if (!a || !Array.isArray(a.areas)) throw new Error("no areas in the answer");
+      if (!a || mine !== SEQ) return;                                        // an older read that answered late: dropped
+      if (!Array.isArray(a.areas)) throw new Error("no areas in the answer");
       FAIL = 0;
       if (a.now) SKEW = a.now * 1000 - Date.now();
       D = a;
       render();
-    }).catch(function (e) { failed(e && e.message ? e.message : "no answer"); });
+    }).catch(function (e) { if (mine === SEQ) failed(e && e.message ? e.message : "no answer"); });
   }
   sec.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest("button[data-sp]");
@@ -263,12 +290,14 @@
   });
   sec.addEventListener("focusin", function () { PAUSE = Math.max(PAUSE, now() + 15000); });
   document.addEventListener("portal-look", function () { SPOT = 0; render(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { render(); load(); } });
   load();
   var tick = 0;
   setInterval(function () {
     tick++;
     if (tick % 60 === 0) load();
     if (!D || document.hidden) return;
+    if (tick % 15 === 0 && (skin() !== "strata" || !moves())) { render(); return; }      // ages on the page's clock (Strata redraws with its stage)
     var lk = skin();
     if (lk === "strata" && moves() && PAUSE <= now()) {
       SPOT_LEFT--;
