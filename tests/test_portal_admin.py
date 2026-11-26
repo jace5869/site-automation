@@ -489,7 +489,7 @@ class CodexR132(Admin):
     def test_07_placement_uses_the_helper_actions_who(self):
         self.portal.actions["helper"] = {"title": PLACEMENT, "aap": {"type": "job", "name": PLACEMENT}, "who": ["ALICE"], "vars": {}}
         got = []
-        with patch.object(self.portal, "launch_guard", lambda cn, ip, action, *a: got.append(action) or (403, {})):
+        with patch.object(self.portal, "launch_guard", lambda cn, ip, action, *a, **k: got.append(action) or (403, {})):
             self.portal._launch_placement("ALICE", "192.0.2.1", {}, None)
         self.assertEqual(got[0].get("who"), ["ALICE"])
 
@@ -1216,6 +1216,20 @@ class Neon1340R2(Codex1340R2):
         renamed = dict(self.portal.actions["example"], aap={"type": "job", "name": "Another job"})
         self.assertFalse(sp.template_allowed(self.cfg, RUN, renamed))           # id 1's grant is for JOB, not "Another job"
         self.assertTrue(sp.template_allowed(self.cfg, RUN, self.portal.actions["example"]))
+
+    def test_neon_r3_1_one_entry_answer_per_request(self):
+        self.cfg.readers = ["READ"]
+        self.cfg.ad_groups.want = dict(self.cfg.ad_groups.want, admins=[])
+        self.save("jt_1", add_run_groups=GROUP)
+        answers = iter([False, True])                                            # the grants change between two looks
+        with patch.object(self.portal, "may_use", lambda cn: next(answers, True)):
+            self.assertEqual(self.http("/reports/", RUN)[0], 403)
+
+    def test_neon_r3_2_the_picker_list_only_for_an_own_action(self):
+        self.cfg.readers = ["READ"]
+        self.cfg.ad_groups.want = dict(self.cfg.ad_groups.want, admins=[])
+        self.save("wf_2", add_approve_groups=APP_GROUP)                          # APPROVE: in by an approve group only
+        self.assertEqual(self.http("/api/inventory?q=a", APPROVE)[0], 403)
 
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:

@@ -3437,11 +3437,11 @@ class Portal(object):
                 return record.get("form")
         return None
 
-    def launch_guard(self, cn, ip, action, key, body, confirmation):
+    def launch_guard(self, cn, ip, action, key, body, confirmation, live=False):
         with access_pinned(self.cfg):            # Neon r4 #3: one read of the grants for the whole check
-            return self._launch_guard(cn, ip, action, key, body, confirmation)
+            return self._launch_guard(cn, ip, action, key, body, confirmation, live)
 
-    def _launch_guard(self, cn, ip, action, key, body, confirmation):
+    def _launch_guard(self, cn, ip, action, key, body, confirmation, live=False):
         saved = access_saved(self.cfg)
         if saved is None:
             # 1.134.0 (Neon r3 #3): access.json cannot be read and was not read whole since the portal started - what it
@@ -3450,8 +3450,9 @@ class Portal(object):
             return 503, {"error": "Not started: the portal's access settings (access.json) cannot be read. An admin can recover "
                                   "them on the Admin page (import a backup)."}
         entry = access_entry(self.cfg, action, key)
-        # Neon 1340 #1: every guarded launch, a discovered action's too (the placement path makes no same_template read)
-        if isinstance(key, str) and re.fullmatch(r"(jt|wf)_[0-9]+", key):
+        # Neon 1340 #1: a discovered action's too on the placement path (live=True), which makes no same_template read; a
+        # normal discovered launch checks the name in same_template and in its second read
+        if (live or not action.get("discovered")) and isinstance(key, str) and re.fullmatch(r"(jt|wf)_[0-9]+", key):
             # Codex r3 #8, #9: one live name check for every launch: a built-in here, a discovered one in same_template (the
             # same read it makes) - AAP must still name the template as the action does and as a saved grant on it does
             kind = "workflow_job_templates" if key.startswith("wf_") else "job_templates"
@@ -4440,7 +4441,7 @@ class Portal(object):
             # Neon r3 #3: a saved row on the helper (applied or not just now), or a damaged access file, counts as restricted
             row = (saved or {}).get(key) or {}
             if isinstance(helper.get("who"), list) or saved is None or row.get("run_groups") or row.get("confirm_again"):
-                guard = self.launch_guard(cn, ip, helper, key, body, confirmation)
+                guard = self.launch_guard(cn, ip, helper, key, body, confirmation, live=True)
                 if guard:
                     return guard, None, ""
         code, data = self.aap.call("POST", path + "launch/", body)
@@ -7470,7 +7471,10 @@ def make_handler(cfg, portal, static_dir, wall=None):
                                 "path": urllib.parse.urlsplit(self.path).path[:200]})
                 self._deny(why, api)
                 return None
-            if portal.may_use(user) and cfg.readers_restricted and not cfg.viewer_133(user) and not self._limited_ok(user):
+            with access_pinned(cfg):                    # Neon 1340 r3 #1: one answer, one read of the grants and of AD
+                may = portal.may_use(user)
+                limited = may and cfg.readers_restricted and not cfg.viewer_133(user) and not self._limited_ok(user)
+            if limited:
                 # Neon 1340 r2: in only as an admin or by a template's saved group - exactly that, nothing else of the portal
                 path = urllib.parse.urlsplit(self.path).path
                 portal.log.add({"event": "refused", "user": user, "ip": self._ip(), "path": path[:200], "why": "limited access (admin page or saved templates only)"})
@@ -7481,7 +7485,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 else:
                     self._send(403, message_page(cfg, "Portal access", reason, user, kind="bad"), "text/html; charset=utf-8")
                 return None
-            if not portal.may_use(user):
+            if not may:
                 portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
                 if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
                     self._send(403, {"error": "You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
@@ -7503,7 +7507,10 @@ def make_handler(cfg, portal, static_dir, wall=None):
             if m:
                 a = portal.actions.get(m.group(1))
                 return a is not None and template_allowed(cfg, cn, a)
-            return bool(re.match(r"^/(|jobs|approvals|refresh|api/approvals|api/summary|api/me|api/inventory)$", path)
+            if path == "/api/inventory":                 # Neon 1340 r3 #2: only an action's (or an inventory's) of their own - both checked there
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                return bool((q.get("action") or [""])[-1] or (q.get("inv") or [""])[-1])
+            return bool(re.match(r"^/(|jobs|approvals|refresh|api/approvals|api/summary|api/me)$", path)
                         or re.match(r"^/(api/)?jobs/\d{1,12}(/progress)?$", path)
                         or re.match(r"^/api/approvals/\d{1,12}/(approve|deny|placement)$", path))
 
