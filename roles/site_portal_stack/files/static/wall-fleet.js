@@ -299,6 +299,7 @@
     var gs = F.groups.filter(function (g) { return g.kind === "g" || g.kind === "c"; });
     var cue = document.getElementById("flSvcCue");
     if (cue) cue.textContent = (F.group_by === "groups" ? "SolarWinds groups" : "by the custom property " + F.group_by.slice(7)) + " · worst member wins";
+    if (!gs.length && F.feed.asof == null) { P.svc.appendChild(h("p", "wx-empty", ["SolarWinds not read yet - no service to show."])); return; }
     if (!gs.length) { P.svc.appendChild(h("p", "wx-empty", [F.group_by === "groups" ? "No SolarWinds group with nodes in it - every node is under Workloads (no group)." : "No node has a value in " + F.group_by.slice(7) + "."])); return; }
     var max = 16, list = gs;
     if (gs.length > max) {
@@ -337,6 +338,7 @@
         cn.unk ? "Nothing down or warning in the current read - " + cn.unk + " without current data (grey)." :
         "Every node SolarWinds watches is up, or off on purpose."]));
       P.more.hidden = true;
+      P.evs.__n = 0;
       return;
     }
     L.slice(0, 40).forEach(function (n) { P.evs.appendChild(row(n)); });
@@ -719,7 +721,7 @@
       if (SPOT.left <= 0) { step(1, false); return; }
     }
     var order = spotOrder();
-    spotCue(Math.max(0, order.map(function (g) { return g.i; }).indexOf(SPOT.g)), order.length);
+    if (order.length) spotCue(Math.max(0, order.map(function (g) { return g.i; }).indexOf(SPOT.g)), order.length);
   }, 1000);
 
   window.SAWallFleet = {render: render, fitted: fitted, _adapt: adapt};

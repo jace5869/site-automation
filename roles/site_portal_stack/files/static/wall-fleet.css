@@ -75,6 +75,7 @@ html:not(.style-strata):not(.style-relay):not(.style-metro) .wx-fleet{
 .fl-evs .ev .a{font:600 14px var(--wx-mono);color:var(--wx-mute);text-align:right}
 .fl-evs .ev .d{grid-column:2/4;font-size:13.5px;color:var(--wx-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fl-evs .ev:hover{outline:2px solid var(--fl-accent)}
+.fl-more[hidden],.fl-ban[hidden]{display:none}
 .fl-more{font:500 13px var(--wx-mono);color:var(--wx-mute);background:none;border:0;text-align:left;padding:2px 0;text-decoration:underline}
 .fl-cov .r{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--wx-line);font-size:14px}
 .fl-cov .r b{font:700 22px var(--wx-mono);text-align:right}
@@ -157,3 +158,4 @@ html.style-metro .wx-fleet .fl-svc .sv.warn{background:var(--wx-warn-solid)}html
 html.style-metro .wx-fleet .fl-svc .sv.ok{box-shadow:inset 0 -4px 0 var(--ok)}
 html.style-metro .wx-fleet .fl-evs .ev,html.style-metro .wx-fleet .fl-chips .chip,html.style-metro .wx-fleet .btn{border-radius:0}
 html.style-metro .wx-fleet .fl-ttl b{font-weight:300;font-size:36px}
+.fl-svc .wx-empty{grid-column:1/-1}
