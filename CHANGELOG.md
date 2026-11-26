@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.138.0 — 2026-11-26
+
+**To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
+Network map uses - nothing new to create). The area comes on by itself (`portal_wall_fleet: auto`). Optional: group by a
+node custom property instead of SolarWinds' groups (`portal_wall_fleet_group_by: custom:ServiceGroup`), show only some
+groups in your order (`portal_wall_fleet_groups`), what makes a node a VM (`portal_wall_fleet_vm_match`), how often
+(`portal_wall_fleet_seconds`, 60).
+
+- **Fleet & services on the ops wall** (`?area=fleet`, in every wall style and in *rotate areas*): every node SolarWinds
+  watches as one square, up or down, grouped by service group; the services strip (worst member wins), *Not up · worst
+  first*, *SolarWinds vs vCenter* and a Spotlight that steps through the groups, problems first. 3,000 nodes fit at 1080p.
+- **Compared with vCenter:** down in SolarWinds but powered off in vCenter shows *Powered off* (never down); down in
+  SolarWinds while vCenter runs the VM with its heartbeat green is flagged *Disagree - likely the network path*; VMs
+  SolarWinds does not watch show under *vCenter only* with vCenter's status; SolarWinds VMs vCenter does not have are
+  counted. Only from a current vCenter read; grey is no current data, never green.
+- **A card for each node** (click a square, a row or a chip): service, IP, status and why, since when, response and
+  loss, vCenter's state and host, the source and its age, where to check - with **Copy text / Copy picture / Copy both /
+  Save picture** for Teams. **Several at once:** tick them (or Ctrl+click squares, or *Select all down*) and **Share
+  selected to Teams** - one line a node (*DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since
+  05:21)*), a table and a picture of up to 40 lines.
+- **What lights the wall:** one condition per service group with a node down (critical) or warning - in every style's
+  Now list and the Overview; Strata, Relay and Metro show a *Fleet & services* tile where *Network (SolarWinds)* said
+  "not on the wall yet".
+- SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
+  60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
+  vCenter read now also takes each VM's guest IP and host name (for the match). The SolarWinds login and its CA are
+  deployed when the network map or the Fleet area is on.
+- The deploy summary's *Wall:* line ends with *Fleet on (by groups)* or *Fleet off (why)*.
+- Docs: docs/SITE_PORTAL.md (*Fleet & services*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
+  stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
+
 ## 1.135.0 — 2026-11-26
 
 **To set up:** run **Site portal - deploy**. Nothing to change: the pages start in the **Strata Console** look and the

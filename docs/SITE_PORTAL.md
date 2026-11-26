@@ -1200,8 +1200,8 @@ thresholds, freshness rule and detail cards as the other styles; nothing new rea
   its worst items (*Tiles turn over every 8 s*; with reduced motion, hovering turns it). The **Now** list has
   **Share to Teams** on each condition; *Last 4 hours* counts what opened and cleared; a capacity strip at the bottom.
 
-In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network) is a grey tile "Not on the
-wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
+In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network - with Fleet & services on,
+its tile takes Network's place) is a grey tile "Not on the wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
 critical bands, labelled dashed limit lines and one sentence, for example *91% · 6 pts over warn 85 · crit at 97*. With
 `?area=storage` or `?area=vmware` the board keeps every tile, and its banner, events, spotlight and capacity rows are that
 area's.
@@ -1224,6 +1224,82 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
+
+### Fleet & services (1.138.0)
+
+A wall area (`?area=fleet`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
+up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw
+it in their own colours and type, Lights / Cockpit / Map in the page's - on a board that fills the screen like the room's
+styles (720p to 4K, kiosk too).
+
+- **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the worst member wins
+  (*1 down*, *1 warn*, *all up*, *not current*) with *5/6 up*. Click a tile: that group in the Spotlight.
+- **Every node, by service group** - one square a node: green up, amber with a dark centre warning (packet loss or slow
+  answers), red with a ring and its name down, a hollow grey square powered off in vCenter or unmanaged in SolarWinds, grey
+  no current data. Nodes in no group are under **Workloads (no group)**; VMs vCenter has and SolarWinds does not watch are
+  under **vCenter only**, with vCenter's status (powered on with its Tools heartbeat green is up; heartbeat lost is down).
+  The squares shrink to fit (3,000 nodes fit at 1080p). Hover for the name, click for the node's card, **Ctrl** or
+  **Shift + click** to select several, click a group's name for the Spotlight.
+- **Not up · worst first** - down then warning, the longest first, each with its service, IP, why and since when; tick the
+  boxes, or **Select all down**, then **Share selected to Teams**. *+N more · open the full list* lists them all.
+- **SolarWinds vs vCenter** - VMs in vCenter not monitored in SolarWinds; SolarWinds VMs not found in vCenter (a node is a VM
+  by its Vendor or MachineType, `portal_wall_fleet_vm_match`); **Disagree** - down in SolarWinds while vCenter has the VM
+  running with its heartbeat green (likely the network path, not the VM); down in SolarWinds but powered off in vCenter.
+  Click a line for its list.
+- **Spotlight** - one group at a time, problems first, every 20 s (a bar fills, *next in 14 s*; ◀ ▶ or the arrow keys step
+  and pause it for 60 s; it holds while a card is open).
+
+**The node card** (a square, a row or a Spotlight chip): service (and the other groups it is in), IP, status and why, since
+when and how long, response time and loss, vCenter's state and host, what SolarWinds says and when it last polled, the
+source and its age, where to check - and **Copy text**, **Copy picture**, **Copy both**, **Save picture** (as Share to Teams
+below) and **Add to selection**. **Share selected** puts one line a node on the clipboard, for example
+
+```
+4 nodes not up - SITEA - 05:42
+DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)
+DOWN  SITEASQLV05 - Databases - 192.0.2.82 - down 6 min (since 05:36)
+Wall: https://<portal>/portal/wall?area=fleet
+```
+
+with the same as a table (HTML) and a picture of at most 40 lines (*+N more*). A node first seen down when the portal
+started reading says *down 21+ min (since 05:21 or earlier)*; after that the time is the read that first saw it down (kept
+on the portal's data volume through a restart).
+
+**The rules:**
+
+- The status is SolarWinds' own (Up, Warning, Down; Unmanaged grey; anything else grey "unknown").
+- **Powered off is never down:** down in SolarWinds and powered off (or suspended) in vCenter shows *Powered off*, grey -
+  only while that vCenter's read is current. With vCenter late or not read, the node stays down (never turned grey by old
+  data) and its card says vCenter was not compared.
+- A node and a VM are the same when their names match in any case, the short name against an FQDN (SolarWinds' caption or
+  DNS name, vCenter's VM name or guest host name); two VMs of one name are told apart by the IP, else not compared (said on
+  the card and in the panel). Templates and vCLS VMs are never counted.
+- **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
+  square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
+  `portal_wall_fleet_max_nodes` is not whole and the area is never shown OK. The vCenter-only squares follow vCenter's
+  own read.
+- **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
+  per node. They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
+  group lights nothing here (the VMware area has those VMs).
+
+**Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,
+SWQL SELECTs only (`Orion.Nodes`: NodeID, Caption, DNS, IPAddress, Status, StatusDescription, Vendor, MachineType,
+ResponseTime, PercentLoss, UnManaged, LastSync; `Orion.Container` and `Orion.ContainerMembers` for the groups, every
+15 min), every `portal_wall_fleet_seconds` while the wall or the Actions page is open, in a thread of its own (a refused
+SolarWinds login never stops a vCenter login, and waits `portal_wall_auth_retry_minutes` before the next try). vCenter: the
+wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.hostName`). The page reads
+`/portal/api/wall/fleet` every 30 s.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_wall_fleet` | `auto` | on with the "SolarWinds (read-only)" credential on Site portal - deploy; `true` / `false` |
+| `portal_wall_fleet_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
+| `portal_wall_fleet_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
+| `portal_wall_fleet_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
+| `portal_wall_fleet_vm_match` | `["*VMware*"]` | Vendor / MachineType globs that make a node a VM (for *not found in vCenter*) |
+| `portal_wall_fleet_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
+
+The deploy summary's *Wall:* line ends with *Fleet on (by groups)* or *Fleet off (why)*.
 
 ### Make a screen the ops wall (1.135.0)
 
