@@ -41,13 +41,14 @@ outage review and the STIG answer keys all use it.
   a new table, `act_answer_cache` (`schema_version` component `act_cache`, version 1). The first run makes it.
 - A later run that asks the same question takes the kept answer. ACT is not asked. The same question means the same
   evidence, prompt, provider, model and job.
-- The log analysis compares its patterns, not its evidence: their level, source, signature, hosts and count band
-  (1, 2-9, 10-99 ...), not the times. The same log set a day later finds its answer.
+- The log analysis compares its patterns, not its evidence: their level, source, signature, hosts, count band
+  (1, 2-9, 10-99 ...) and example lines, not the times. The same log set a day later finds its answer; `HTTP 401` and
+  `HTTP 503` stay two questions. Another model (also one set in `site_act_env`) or model URL is a new question.
 - When every answer is kept, the model is not reached at all.
-- Only ACT's analysis is kept, between its markers. An answer the job cannot read, or one that leaves an item out, is
-  not kept.
+- Only ACT's analysis is kept, between its markers, with any password or key it quotes removed (the repository's
+  redaction). An answer the job cannot read, or one that leaves an item out or says nothing about it, is not kept.
 - Each answer expires after `site_act_cache_ttl_days`, or the job kind's days in `site_act_cache_ttl_days_by`. Each run
-  deletes the expired ones.
+  deletes the expired ones. A shorter setting holds for answers kept under a longer one.
 - The report says *N of M answer(s) from an earlier run (the date UTC; site_act_cache).*
 - A database that cannot be used, or stops answering, is one line in the job output. ACT is asked as without the cache.
 - A dry run (Check) reads the cache and writes nothing.
@@ -56,7 +57,8 @@ outage review and the STIG answer keys all use it.
 
 - At the `explain` level, ACT reads the first host of each group of hosts with the same findings. The others take
   its answer, and their reports say so.
-- Findings count as the same without their numbers, times, addresses and the host's own names.
+- Findings count as the same without their numbers, times, addresses and the host's own names - but with their
+  ports, ids and read-only hints. fapolicyd compares the findings ACT is given too.
 - `diagnose`, `self-heal` and troubleshoot (its own evidence) still ask each host.
 - fapolicyd's analysis groups hosts with the same blocks too, and runs on `site_act_concurrency` hosts at a time,
   as the other ACT jobs.

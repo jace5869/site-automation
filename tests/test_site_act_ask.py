@@ -305,6 +305,7 @@ class Engine(Base):
             A.ActionBase.run = orig
         self.assertNotIn("failed", r)
         self.assertEqual(r["questions"][0]["reason"], "ACT could not be asked (OSError in site_act_ask).")
+        self.assertEqual(r["questions"][0]["cached"], "")          # Codex r1 P1: evidence_batches.yml reads it for every row
 
 
 
@@ -384,6 +385,126 @@ class Launcher(Base):
         env = jinja2.Environment()
         self.assertEqual(env.compile_expression(ask["env_pass"].strip("{} "))(), d["act_triage_env_pass"])
         self.assertEqual(env.compile_expression(ask["key_env_names"].strip("{} \n"))(), d["act_triage_key_env_names"])
+
+
+class ReviewRound1(Base):
+    """1.136.0, Codex's first review of the port: a test for each finding fixed."""
+
+    def test_an_explicit_zero_evidence_cap_sends_nothing(self):
+        r = self.ask([q("t1")], evidence_max=0)
+        self.assertEqual((r["questions"][0]["reason"], self.calls()), (A.NO_EVIDENCE, []))
+        self.ask([q("t2")], evidence_max=None)                              # not given: EVIDENCE_MAX
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_an_empty_item_is_not_complete(self):
+        self.assertFalse(A.complete('BEGIN_ACT_ANALYSIS {"items": [{"id": "P1"}]} END_ACT_ANALYSIS', [{"id": "P1"}]))
+        self.assertTrue(A.complete('BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "cause": "c"}]} END_ACT_ANALYSIS', [{"id": "P1"}]))
+
+    def test_the_url_never_on_a_command_line_nor_with_its_key_in_a_reason(self):
+        self.assertEqual(A._plain_url("https://u:p@gw.example.mil/v1/chat?api_key=SECRET#x"), "https://gw.example.mil/v1/chat")
+        why = A.unreached_reason("https://gw.example.mil/v1?key=SECRET", "Request failed: timed out")
+        self.assertNotIn("SECRET", why)
+        self.assertNotIn("url", A.PROBE.split("sys.argv")[1][:40])
+        srv = HTTPServer(("127.0.0.1", 0), Model)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            env = dict(os.environ, no_proxy="127.0.0.1", NO_PROXY="127.0.0.1")
+            self.assertEqual(A.reach("http://127.0.0.1:%d/v1?key=SECRET" % srv.server_address[1], env=env, timeout=5), (True, ""))
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_the_check_gets_no_key_from_the_settings_and_an_inherited_proxy_password_skips_it(self):
+        e = A.check_env({"GENAI_KEY": "k", "GENAI_URL": "u"}, environ={"PATH": "/bin"})
+        self.assertEqual(e, {"PATH": "/bin", "GENAI_URL": "u"})
+        old = os.environ.get("HTTPS_PROXY")
+        os.environ["HTTPS_PROXY"] = "http://u:pw-777@127.0.0.1:9"
+        try:
+            r = self.ask([q("t1")])
+        finally:
+            if old is None:
+                del os.environ["HTTPS_PROXY"]
+            else:
+                os.environ["HTTPS_PROXY"] = old
+        self.assertIsNone(r["reached"])
+        self.assertEqual(Model.gets, 0)
+        self.assertTrue(r["questions"][0]["ran"])
+
+    def test_the_sites_masking_list_reaches_the_engine(self):
+        t = open(os.path.join(REPO, "roles", "site_act", "tasks", "act_ask.yml")).read()
+        self.assertIn("+ (act_triage_pseudo_names | default([]))", t)
+
+
+class ReviewRound1Cache(Base):
+    def setUp(self):
+        Base.setUp(self)
+        A._cache()
+        self.real_db = A._cache_mods["db"]
+        self.db = A._cache_mods["db"] = FakeDB()
+
+    def tearDown(self):
+        A._cache_mods["db"] = self.real_db
+        Base.tearDown(self)
+
+    def cache(self, **kw):
+        c = {"kind": "log_analysis", "ttl_days": 7, "db": {"host": "db.example.mil", "user": "w", "password": "p"}}
+        c.update(kw)
+        return c
+
+    def test_another_model_setting_or_url_is_a_new_question(self):
+        self.ask([q("P1")], cache=self.cache())
+        env = {"FAKE_PLAN": self.plan, "FAKE_LOG": self.log, "GENAI_MODEL": "other-model"}
+        self.ask([q("P1")], cache=self.cache(), env=env)
+        self.ask([q("P1")], cache=self.cache(), url=self.url + "?deployment=2")
+        self.assertEqual(len(self.calls()), 3)
+        r = self.ask([q("P1")], cache=self.cache(), env=env)                  # the same again: from the cache
+        self.assertEqual((len(self.calls()), r["cache"]["hits"]), (3, 1))
+
+    def test_a_shorter_ttl_holds_for_answers_kept_under_a_longer_one(self):
+        import datetime as dt
+        self.ask([q("P1")], cache=self.cache(ttl_days=7))
+        for row in self.db.rows.values():
+            row[3] = row[3] - dt.timedelta(days=3)                              # kept three days ago, expires in four
+        self.ask([q("P1")], cache=self.cache(ttl_days=1))
+        self.assertEqual(len(self.calls()), 2)
+        r = self.ask([q("P1")], cache=self.cache(ttl_days=7))
+        self.assertEqual(r["cache"]["hits"], 1)
+
+    def test_what_is_kept_is_redacted_and_a_wrapped_answer_is_kept(self):
+        C = A._cache_mods["c"]
+        s = C.stored('BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "cause": "c", "evidence": '
+                     '["db error REPORT_DB_PASSWORD=hunter2xyz"]}]} END_ACT_ANALYSIS')
+        self.assertNotIn("hunter2xyz", s)
+        self.assertIn('"cause": "c"', s)
+        w = json.dumps({"message": 'Here: BEGIN_ACT_ANALYSIS {"items": [{"id": "P1", "cause": "c"}]} END_ACT_ANALYSIS'})
+        self.assertIn('"cause": "c"', C.stored(w))
+
+
+class ReviewRound1Keys(unittest.TestCase):
+    def test_the_log_key_tells_401_from_503_but_not_one_day_from_the_next(self):
+        LF = A._load("log_filters_for_key_r1", "filter", "log_filters.py")
+        p = {"id": "P1", "severity": "error", "source": "journal", "app": "web", "signature": "GET /api failed: HTTP <n>",
+             "hosts": ["web01"], "count": 5, "examples": [{"time": "t1", "message": "2026-11-01 10:00:01 GET /api failed: HTTP 401"}]}
+        k = LF.log_cache_key([p])
+        later = dict(p, examples=[{"time": "t2", "message": "2026-11-02 11:22:33 GET /api failed: HTTP 401"}])
+        self.assertEqual(LF.log_cache_key([later]), k)
+        other = dict(p, examples=[{"time": "t1", "message": "2026-11-01 10:00:01 GET /api failed: HTTP 503"}])
+        self.assertNotEqual(LF.log_cache_key([other]), k)
+
+    def test_hosts_with_other_ports_or_hints_are_not_one_group(self):
+        S = A._load("site_signature_r1", "module_utils", "site_signature.py")
+        a = [{"severity": "critical", "check": "ports", "summary": "dc1:443 refused"}]
+        b = [{"severity": "critical", "check": "ports", "summary": "dc1:636 refused"}]
+        self.assertNotEqual(S.finding_set(a), S.finding_set(b))
+        c = [{"severity": "warning", "check": "disk", "summary": "/var 91% full"}]
+        d = [{"severity": "warning", "check": "disk", "summary": "/var 93% full"}]
+        self.assertEqual(S.finding_set(c), S.finding_set(d))                  # numbers that are not ports still out
+        e = [dict(c[0], hint="du -xh /var | sort -h")]
+        self.assertNotEqual(S.finding_set(c), S.finding_set(e))
+
+    def test_fapolicyd_groups_by_its_findings_too(self):
+        t = open(os.path.join(REPO, "roles", "fapolicyd", "tasks", "act.yml")).read()
+        self.assertIn("ls + (_fr | fapolicyd_act_findings(_ff | default({}))", t)
 
 class FakeDB(object):
     """The report database as site_act_cache uses it: the table, schema_version, its rows {key: [kind, pv, model, created,

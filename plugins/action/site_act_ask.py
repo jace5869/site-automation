@@ -72,13 +72,14 @@ URLS = {"genai": "https://api.genai.mil/v1/chat/completions",
         "asksage": "https://api.genai.army.mil/server/openai/v1/chat/completions",
         "genai-beta": "https://api-beta.genai.mil/v1/chat/completions"}
 
-# The reachability check, run as `python -I -c PROBE url ca timeout` with ACT's environment: urllib picks the proxy and
+# The reachability check, run as `python -I -c PROBE ca timeout` (the URL on its stdin) with ACT's environment: urllib picks the proxy and
 # NO_PROXY from that environment exactly as ACT's own requests do. Prints {"ok": bool, "why": str}.
 PROBE = r'''
 import json, ssl, sys
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPSHandler, Request, build_opener
-url, ca, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+url = sys.stdin.readline().rstrip("\n")           # on stdin: a URL with a key in it never on a command line
+ca, timeout = sys.argv[1], float(sys.argv[2])
 def say(ok, why=""):
     print(json.dumps({"ok": ok, "why": why}))
     sys.exit(0)
@@ -161,8 +162,9 @@ def launch_input(settings, role_env, key_names, path=None, environ=None):
 def check_env(settings, keep=(), path=None, environ=None):
     """The environment of the reachability check: as ACT's (the launcher's allowlist, then the settings), no key."""
     environ = os.environ if environ is None else environ
+    L = rules(path)
     env = dict((n, v) for n, v in environ.items() if allowed(n, keep, path) and n not in DROP_ENV)
-    env.update((n, v) for n, v in settings.items() if v is not None)
+    env.update((n, v) for n, v in settings.items() if v is not None and n not in L.ACT_KEYS)    # never a key (Codex P2)
     return env
 
 
@@ -221,7 +223,11 @@ def complete(summary, items):
             if isinstance(i, dict):
                 pid = str(i.get("id") or "").strip().upper()              # as the reader writes them (P7, 7 -> P7)
                 asked.add(("P" + pid) if pid.isdigit() else pid)
-        return bool(r["parsed"]) and asked <= set(r.get("by_id") or {})
+        by_id = r.get("by_id") or {}
+        # 1.136.0 (Codex P2): an item that says nothing ({"id": "P1"}) is no answer - never kept for the next runs
+        said = set(k for k, v in by_id.items() if isinstance(v, dict)
+                   and any(str(x).strip() for f, x in v.items() if f not in ("id", "pid") and x not in (None, "", [], {})))
+        return bool(r["parsed"]) and asked <= said
     except Exception:
         return False
 
@@ -243,8 +249,8 @@ def reach(url, ca="", env=None, timeout=20, python=None):
     """(True, '') when any HTTP answer comes back from the URL, else (False, why). The key is not sent. Run with `env`
     (ACT's environment; the controller's when None), so the proxy and NO_PROXY are the ones ACT uses."""
     try:
-        out = subprocess.run([python or sys.executable, "-I", "-c", PROBE, url, ca or "", str(timeout)],
-                             env=dict(os.environ if env is None else env), stdin=subprocess.DEVNULL,
+        out = subprocess.run([python or sys.executable, "-I", "-c", PROBE, ca or "", str(timeout)],
+                             env=dict(os.environ if env is None else env), input=(url + "\n").encode("utf-8"),
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=timeout + 15)
         res = json.loads(out.stdout.decode("utf-8", "replace") or "{}")
         if isinstance(res, dict) and "ok" in res:
@@ -261,7 +267,21 @@ def unreached_reason(url, why):
             if "certificate verify failed" in why.lower() else
             ' Open HTTPS (port 443) from the AAP node to that address, or set a proxy:'
             ' site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}.')
-    return "This AAP node cannot reach the model at %s (%s).%s" % (url, why, hint)
+    return "This AAP node cannot reach the model at %s (%s).%s" % (_plain_url(url), why, hint)
+
+
+def _plain_url(url):
+    """The URL as a report shows it: no user, password, query or fragment (a gateway key can ride in them)."""
+    u = str(url or "")
+    u = re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@", r"\1", u)
+    return re.split(r"[?#]", u, 1)[0]
+
+
+def _effective_model(model, provider, env):
+    """The model ACT will use: a model setting of the provider in site_act_env (GENAI_MODEL ...) over site_act_model."""
+    name = {"genai": "GENAI_MODEL", "asksage": "ASKSAGE_MODEL", "genai-beta": "GENAI_BETA_MODEL"}.get(provider, "GENAI_MODEL")
+    v = env.get(name) if isinstance(env, dict) else None
+    return str(v) if v not in (None, "") else str(model or "")
 
 
 def payload(evidence, cap):
@@ -350,7 +370,8 @@ class ActionModule(ActionBase):
             result.update({"url": str(a.get("url") or ""), "reached": None, "why_not": why,
                            "questions": [{"ids": [str(i.get("id")) if isinstance(i, dict) else str(i) for i in (q.get("items") or [])],
                                           "asked": False, "ran": False, "status": "", "summary": "", "stop_reason": "",
-                                          "model": str(a.get("model") or ""), "tries": 0, "reason": why} for q in qs]})
+                                          "model": str(a.get("model") or ""), "tries": 0, "reason": why, "cached": ""}
+                                         for q in qs]})
         return result
 
     def ask(self, a):
@@ -375,8 +396,9 @@ class ActionModule(ActionBase):
         skip = str(a.get("skip") or "").strip()
         if skip:
             return nobody(skip)
-        cap = int(a.get("evidence_max") or 0)
-        cap = EVIDENCE_MAX if cap <= 0 else cap
+        # act_triage_evidence_total_chars: 0 sends nothing (as act_triage cut it to nothing); not given: EVIDENCE_MAX
+        cap = EVIDENCE_MAX if a.get("evidence_max") in (None, "") else int(a.get("evidence_max"))
+        cap = EVIDENCE_MAX if cap < 0 else cap
         piped = [payload(q.get("evidence"), cap) for q in questions]
         todo = [i for i, p in enumerate(piped) if p]
         for i, r in enumerate(rows):
@@ -401,9 +423,12 @@ class ActionModule(ActionBase):
             try:
                 C, DB, pv = _cache()
                 # a question's own cache_key (the log analysis: its patterns, not its times) stands for its task and evidence
-                keys = dict((i, C.key(provider, model, pv, kind, "", "cache_key:" + _text(questions[i].get("cache_key")))
+                # 1.136.0 (Codex P2): the model as ACT will use it (a model setting in site_act_env wins) and the URL it
+                # asks: another model or deployment never takes this one's answers
+                eff = "%s|%s" % (_effective_model(model, provider, a.get("env") or {}), url)
+                keys = dict((i, C.key(provider, eff, pv, kind, "", "cache_key:" + _text(questions[i].get("cache_key")))
                              if _text(questions[i].get("cache_key")).strip() else
-                             C.key(provider, model, pv, kind, _text(questions[i].get("task")), piped[i])) for i in todo)
+                             C.key(provider, eff, pv, kind, _text(questions[i].get("task")), piped[i])) for i in todo)
                 if not DB.HAS_PYMYSQL:
                     raise RuntimeError(DB.NO_PYMYSQL)
                 conn = DB.connect(cdb)[0]
@@ -414,7 +439,7 @@ class ActionModule(ActionBase):
                     now = _now()
                     if write:
                         info["pruned"] = C.purge(conn, now)
-                    hits = {} if _bool(c.get("clear", False)) else C.load(conn, keys.values(), now)
+                    hits = {} if _bool(c.get("clear", False)) else C.load(conn, keys.values(), now, ttl)
                 finally:
                     conn.close()
                 for i, k in keys.items():
@@ -447,8 +472,9 @@ class ActionModule(ActionBase):
         names = [str(n) for n in (a.get("names") or []) if n not in (None, "")]
         role_env = {"ACT_NO_BANNER": "1", "ACT_PSEUDONYMIZE": "1" if _bool(a.get("pseudonymize", True)) else "0"}
 
-        if _bool(a.get("check_url", True)) and not proxy_with_password(settings):
-            ok, why = reach(url, str(a.get("ca") or ""), check_env(settings, keep, launcher))
+        probe_env = check_env(settings, keep, launcher)
+        if _bool(a.get("check_url", True)) and not proxy_with_password(probe_env):      # the EE's own proxy too (Codex P2)
+            ok, why = reach(url, str(a.get("ca") or ""), probe_env)
             out["reached"] = ok
             if not ok:
                 reason = unreached_reason(url, why)
@@ -502,7 +528,8 @@ class ActionModule(ActionBase):
                     r["model"] = str(rec.get("model") or model)
                     r["ran"] = r["status"] != "error" and bool(r["summary"])
                     if not r["ran"]:
-                        r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider, url)
+                        r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider,
+                                                                              _plain_url(url))
                 except Exception as e:  # this question only: the others keep their answers. Its type, never its text
                     r.update(asked=r["tries"] > 0, ran=False, status="error", summary="",
                              stop_reason="%s while asking" % type(e).__name__,

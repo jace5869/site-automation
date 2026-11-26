@@ -26,7 +26,8 @@
 
 # 1.136.0: hosts with the same denials (site_act_group), asked once: ACT reads the first of them, the others take its
 # analysis, said in their report. Compared: fapolicyd's state and each block (what was blocked, by which program, how) -
-# not how often, and without numbers, times, addresses and the host's own names.
+# not how often, and without numbers, times, addresses and the host's own names - and the findings ACT is given (a trust file
+# that cannot be read, a trust database too small ...: Codex P2), so a host never takes another's fix.
 - name: Fapolicyd | this host's denials as one signature
   ansible.builtin.set_fact:
     _site_act_sig: >-
@@ -35,6 +36,7 @@
       {%-   set _ = ls.append((g.kind | default('')) ~ ' ' ~ (g.exe | default('')) ~ ' -> ' ~ (g.path | default('')) ~ ' ('
                               ~ (g.perm | default('')) ~ ')') -%}
       {%- endfor -%}
+      {%- set ls = ls + (_fr | fapolicyd_act_findings(_ff | default({})) | map('string') | list) -%}
       {{ (ls | site_text_set([inventory_hostname, inventory_hostname_short, ansible_host | default('')]))
          if _fa_act_skip | length == 0 and site_act_group | default(true) | bool else '' }}
 

@@ -17,7 +17,9 @@ __metaclass__ = type
 
 import datetime
 import hashlib
+import importlib.util
 import json
+import os
 import re
 
 SCHEMA_VERSION = 1
@@ -72,11 +74,41 @@ def _analysis(text):
     return None
 
 
+_redactor = []
+
+
+def _redact_all(value):
+    """site_redact.redact_all (the repository's one redaction), loaded by path once: what is kept never holds a secret
+    ACT quoted from the evidence (a password in a log line ...)."""
+    if not _redactor:
+        spec = importlib.util.spec_from_file_location("site_redact_for_act_cache",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_redact.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _redactor.append(mod.redact_all)
+    return _redactor[0](value)
+
+
+def _unwrap(text):
+    """A model that wraps its answer ({"message": "..."}): the text inside, as the jobs' reader (act_answer_text) takes it."""
+    t = str(text or "").strip()
+    if t.startswith("{"):
+        try:
+            v = json.loads(t)
+        except ValueError:
+            return text
+        if isinstance(v, dict) and isinstance(v.get("message"), str) and "items" not in v and "causes" not in v:
+            return v["message"]
+    return text
+
+
 def stored(answer):
-    """What is kept of an answer: its analysis between the markers, or '' (not kept: none, or longer than ANSWER_MAX)."""
-    v = _analysis(answer)
+    """What is kept of an answer: its analysis between the markers, every text in it redacted (site_redact), or '' (not
+    kept: none, or longer than ANSWER_MAX)."""
+    v = _analysis(_unwrap(answer))
     if v is None:
         return ""
+    v = _redact_all(v)
     s = "%s\n%s\n%s" % (MARK_BEGIN, json.dumps(v, ensure_ascii=False, sort_keys=True), MARK_END)
     return s if len(s) <= ANSWER_MAX else ""
 
@@ -128,9 +160,11 @@ def schema(conn, create):
     return True, not there
 
 
-def load(conn, keys, now):
-    """{key: {answer, model, created}} for the keys that have an answer not expired at now."""
+def load(conn, keys, now, days=None):
+    """{key: {answer, model, created}} for the keys that have an answer not expired at now - and, with days, kept no
+    longer ago than that (a shorter site_act_cache_ttl_days holds for answers kept under a longer one)."""
     keys = sorted(set(k for k in keys if k))
+    since = (now - datetime.timedelta(days=float(days))) if days else None
     out = {}
     cur = conn.cursor()
     for i in range(0, len(keys), 200):
@@ -138,6 +172,8 @@ def load(conn, keys, now):
         cur.execute("SELECT cache_key, answer, model, created FROM act_answer_cache WHERE cache_key IN (%s) AND expires > %%s"
                     % ", ".join(["%s"] * len(part)), tuple(part) + (now,))
         for k, answer, model, created in cur.fetchall():
+            if since is not None and hasattr(created, "strftime") and created < since:
+                continue
             out[str(k)] = {"answer": str(answer or ""), "model": str(model or ""),
                            "created": created.strftime("%Y-%m-%d %H:%M") if hasattr(created, "strftime") else str(created or "")}
     return out

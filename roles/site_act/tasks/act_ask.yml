@@ -46,7 +46,10 @@
          | combine({'GENAI_TIMEOUT': (_ea_model_timeout | default(site_act_model_timeout, true) | int | string)})
          | combine(site_act_env | default({})) }}
     # ACT masks these before anything reaches the model: this host's names, as ACT's role did, and the job's own
-    names: "{{ [inventory_hostname, inventory_hostname_short, ansible_host | default('')] + (_ea_names | default([])) }}"
+    # and act_triage_pseudo_names, the site's own list, as ACT's role took it (Codex P2)
+    names: >-
+      {{ [inventory_hostname, inventory_hostname_short, ansible_host | default('')] + (_ea_names | default([]))
+         + (act_triage_pseudo_names | default([])) }}
     pseudonymize: "{{ act_triage_pseudonymize | default(true) | bool }}"        # as ACT's role did (its default)
     evidence_max: "{{ act_triage_evidence_total_chars | default(1500000) | int }}"   # as ACT's role did (its default)
     concurrency: "{{ site_act_concurrency | int }}"

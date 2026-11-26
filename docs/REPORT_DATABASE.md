@@ -2097,20 +2097,21 @@ ACT is not asked, and the model is not reached at all when every answer is kept.
 2. Launch it. The first run makes the table `act_answer_cache` and keeps its answers.
 3. The job output says `ACT answer cache: N answer(s) from it, N kept for the next runs, N expired deleted.`
 
-The same question means the same evidence, the same prompt, the same provider and model, and the same job kind. The
-evidence counts as ACT read it: after it was cut to its size.
+The same question means the same evidence, the same prompt, the same provider, model and model URL, and the same job
+kind. The model is the one ACT uses: a model name in `site_act_env` counts. The evidence counts as ACT read it: after it
+was cut to its size.
 
 The log analysis compares its patterns instead: each pattern's level, source, signature and hosts, and its count as
-a band (1, 2-9, 10-99 ...). Also the team's question and the site's instructions. Not the times or the example lines.
-So the same log set a day later finds its answer. For the VMware analyses, other times or counts in the evidence make
+a band (1, 2-9, 10-99 ...), and its example lines without their times and dates. Also the team's question and the
+site's instructions. So the same log set a day later finds its answer, but `HTTP 401` and `HTTP 503` are two questions. For the VMware analyses, other times or counts in the evidence make
 a new question.
 
 | | |
 |---|---|
-| What a run keeps | per question, ACT's analysis only: its JSON between the markers. Not ACT's other words |
-| What is not kept | an answer the job cannot read, or one that leaves an item out |
-| The key | a sha256 of the provider, model, prompt version, job kind, task and evidence. No text of the evidence |
-| How long | `site_act_cache_ttl_days` (7), or per job kind in `site_act_cache_ttl_days_by` |
+| What a run keeps | per question, ACT's analysis only: its JSON between the markers, with any password or key it quotes removed. Not ACT's other words |
+| What is not kept | an answer the job cannot read, or one that leaves an item out or says nothing about it |
+| The key | a sha256 of the provider, model, model URL, prompt version, job kind, task and evidence. No text of the evidence |
+| How long | `site_act_cache_ttl_days` (7), or per job kind in `site_act_cache_ttl_days_by`. A shorter setting holds for answers kept under a longer one |
 | What a run deletes | the answers that expired |
 | On the report | *N of M answer(s) from an earlier run (the date UTC; site_act_cache).* |
 | When the database is down | one line in the job output. ACT is asked, as without the cache. The job stays green |

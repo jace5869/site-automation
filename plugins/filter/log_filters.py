@@ -512,13 +512,22 @@ def _band(n):
     return "%d-%d" % (lo, lo * 10 - 1)
 
 
+_KEY_TIMES = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d)?(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?)?"
+                        r"|\b\d{1,2}:\d\d:\d\d(?:[.,]\d+)?\b"
+                        r"|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\b")
+
+
 def log_cache_key(problems, opts=None):
     """1.136.0: what makes two log questions the same, for ACT's answer cache (site_act_cache): the patterns asked (id,
     level, source, signature, hosts, the count as a band) and what shapes the prompt (the team's question, the hosts'
     group, the site's instructions) - not the times, the window or the example lines. An unchanged log set asks no
     model again. opts: question, what, extra."""
     o = opts or {}
-    pats = [[p.get("id"), p.get("severity"), _src(p), p.get("signature") or "", sorted(p.get("hosts") or []), _band(p.get("count"))]
+    # 1.136.0 (Codex P1): the example lines too, their times and dates out - a pattern's signature has its numbers
+    # out, so "HTTP 401" and "HTTP 503" are one pattern: the answer about one never stands for the other
+    pats = [[p.get("id"), p.get("severity"), _src(p), p.get("signature") or "", sorted(p.get("hosts") or []), _band(p.get("count")),
+             sorted(set(_KEY_TIMES.sub("<t>", str((e or {}).get("message") or "")) for e in (p.get("examples") or [])
+                        if isinstance(e, dict)))]
             for p in problems or []]
     return json.dumps({"question": " ".join(str(o.get("question") or "").split()), "what": str(o.get("what") or ""),
                        "extra": " ".join(str(o.get("extra") or "").split()), "patterns": pats}, sort_keys=True)

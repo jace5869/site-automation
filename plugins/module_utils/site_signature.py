@@ -77,13 +77,27 @@ def group(records, text="message", obj="host", examples=3, cap=300, names=None):
     return out
 
 
+_PORTS = re.compile(r"(?i)(?:\bport\s*|(?<=[A-Za-z0-9\]]):)(\d{1,5})\b")
+
+
 def finding_lines(findings, names=None):
     """A host's findings as signatures, sorted and each once: '[severity] check: summary', its names taken out."""
     lines = set()
     for f in findings or []:
         if isinstance(f, dict):
-            lines.add(signature("[%s] %s: %s" % (str(f.get("severity") or "").upper(), f.get("check") or "", f.get("summary") or ""),
-                                names))
+            text = "%s %s" % (f.get("summary") or "", f.get("hint") or "")
+            # 1.136.0 (Codex P2): the ports stay (443 and 636 are two services), and the finding's id and its hint (the
+            # read-only command ACT is shown): two hosts are one group only when the same things failed the same way
+            ports = sorted(set(_PORTS.findall(text)))
+            line = signature("[%s] %s: %s" % (str(f.get("severity") or "").upper(), f.get("check") or "", f.get("summary") or ""),
+                             names)
+            if f.get("id") not in (None, ""):
+                line += " id=" + signature(str(f.get("id")), names)
+            if f.get("hint"):
+                line += " hint=" + signature(str(f.get("hint")), names)
+            if ports:
+                line += " ports=" + ",".join(ports)
+            lines.add(line)
     return sorted(lines)
 
 
