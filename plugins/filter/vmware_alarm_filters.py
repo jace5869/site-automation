@@ -831,6 +831,8 @@ def vm_alarm_act_report(problems, parsed=None, opts=None):
     model = " ".join(x for x in (o.get("provider"), o.get("model")) if x)
     subtitle = ("ACT%s read vCenter %s's alarms and the events of the last %s h. Likely causes, not certain ones: check before "
                 "you change anything." % (" (" + model + ")" if model else "", o.get("vcenter", ""), _hours(o.get("hours", 24))))
+    if o.get("cache_note"):
+        subtitle += " " + str(o["cache_note"])              # 1.136.0: answers from the report database's cache, and when
     summary = [{"label": "Problems", "value": len(ps)},
                {"label": "Critical", "value": crit, "status": "critical" if crit else "ok"},
                {"label": "Warning", "value": warn, "status": "warning" if warn else "ok"}]

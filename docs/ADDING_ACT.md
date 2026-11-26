@@ -355,6 +355,21 @@ answers HTTP 429. `site_act_concurrency` (default **3**) caps how many hosts run
 time; the rest wait their turn. `0` = no cap. ACT itself also waits when the gateway sends a 429
 with `Retry-After`.
 
+### Hosts with the same findings: `site_act_group`
+
+Many hosts of one job often found the same things: the same service down, the same disk nearly full. At the
+`explain` level, ACT reads the first host of each such group only. The others take its answer.
+
+- Each host's report says so: *The same findings on 4 hosts: web01, web02, web03, web04 (ACT read web01; the
+  others take its answer).*
+- Findings count as the same without their numbers, times, addresses and the host's own names. *91% full* on
+  one host and *95% full* on another is the same finding.
+- `diagnose` and `self-heal` always ask each host: a fix is for the host it was found on.
+- A job that brings its own evidence for each host (troubleshoot) asks each host.
+- fapolicyd's analysis groups the same way: the same blocks (what, by which program, how) on several hosts are
+  read once, however often each was blocked.
+- `site_act_group: false` asks every host.
+
 ### Many items at once: `site_act_batch`
 
 The jobs where ACT reads evidence - the VMware alarms analysis, capacity planning and log analysis - ask
@@ -365,6 +380,43 @@ question fails, the others' analyses are still in the report and the job names t
 analyzed (`P6-P10 not analyzed: ...`). `site_act_batch: 3` for a slow model or a strict gateway; `0` asks
 everything in one question. Each job has its own setting too: `vm_alarm_act_batch`, `vm_capacity_act_batch`,
 `log_analysis_act_batch`.
+
+### How the jobs on the AAP side ask ACT
+
+The jobs where ACT reads evidence on the AAP side ask through one engine (`plugins/action/site_act_ask.py`).
+These are the log analysis, the VMware alarms, capacity and right-sizing analyses, the WAR, ticket insights,
+the incident documents, the triage of a finding, VM ask and deploy, the outage review and the STIG answer keys.
+One job asks like this:
+
+- One check of the way to the model, for all its questions. When the model cannot be reached, the report says
+  so once, and nothing is asked.
+- One copy of ACT for the whole job, in a private temporary folder that is removed after.
+- Its questions run `site_act_concurrency` (3) at a time, or up to 4 when it is `0`. They come back in the
+  order they were asked.
+- A question that failed is asked once more (`site_act_retries`, default **1**; `0` = never again). In the
+  jobs that ask in batches, an answer the job cannot read is asked again too. A question that ran out of
+  `site_act_timeout` is not asked again.
+- A question with no evidence is never sent. The report says *No evidence to read: ACT was not asked.* The
+  evidence is checked as it is sent, cut at `act_triage_evidence_total_chars` (1,500,000 characters).
+- What ACT reads always starts with one fixed line, so ACT only reads and answers. It never works on its own
+  or runs a command on the AAP node.
+- ACT masks the host names, as before (`act_triage_pseudonymize`, default `true`).
+- The check of the way uses ACT's own environment: the job's proxy and `NO_PROXY` settings. A proxy with a user
+  name and password (`user:pass@`) is not checked; ACT is asked and says itself when it fails.
+- ACT starts through the same launcher as every ACT run (`act_launch.py` of the `act_triage` role, 1.104.0). ACT
+  gets only an allowlist of the job's environment, never its other credentials (`VMWARE_PASSWORD`,
+  `SN_PASSWORD` ...). The keys and `site_act_env` go on the launcher's input, never on a command line. A name in
+  `site_act_env` that ACT may not get stops the job's questions before any is asked; the report names it, never
+  its value. `site_act_env` cannot turn the masking off.
+- With a model time of the job's own (the outage review's `vm_outage_act_model_timeout`), each ACT run is held
+  to twice it and a minute, `site_act_timeout` at most.
+- A question that could not be asked at all gets its own reason. The others keep their answers.
+- ACT's answer is never printed in the job's output. The report shows what it needs.
+- With the **Report database** credential on the template, the batched jobs keep their answers (1.136.0,
+  `site_act_cache`). A later run with the same question takes the kept answer, and ACT is not asked. Its report
+  says *N of M answer(s) from an earlier run*. See [REPORT_DATABASE.md](REPORT_DATABASE.md), *ACT's answer cache*.
+
+The STIG answer keys ask every rule in one call too (`evidence_many.yml`): the drafts, then the cross-check.
 
 ### Causes: one answer shape for every "why" report
 

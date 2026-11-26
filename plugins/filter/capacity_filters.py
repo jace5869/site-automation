@@ -1137,7 +1137,8 @@ def vm_capacity_act_section(items, parsed=None, opts=None):
                         "(the same as in the tables above). GenAI: ACT (an AI assistant) read those numbers and made its own estimate, with "
                         "judgement the line does not have (seasonality, jumps, what limit comes first). They agree when they are within 30 "
                         "days or 25%% of each other: %d agree, %d differ. Where they differ, read ACT's reasoning - and plan for the sooner "
-                        "one. Confidence is ACT's own (green 80+, amber 50-79, red under 50)." % (agree, differ),
+                        "one. Confidence is ACT's own (green 80+, amber 50-79, red under 50)." % (agree, differ)
+                        + ((" " + str(o["cache_note"])) if o.get("cache_note") else ""),
                         ["#", "Item", "Math (straight line)", "GenAI (ACT)", "Agreement", "ACT's estimate", "Recommendation", "Reasoning",
                          "Confidence"], rows, "", keep_order=True))
     return out

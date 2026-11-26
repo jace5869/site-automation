@@ -27,6 +27,21 @@
       {{ out }}
     _site_act_looks: "{{ site_findings | map(attribute='hint') | select | unique | list }}"
 
+# 1.136.0: hosts with the same findings, asked once (site_act_group; level explain only - a fix is for its own host, and
+# a job that brings its own evidence, as troubleshoot, is asked for each host): ACT reads the first of them, the others
+# take its answer, said in each one's report. The signature leaves out the numbers, times, addresses and the host's
+# own names (plugins/module_utils/site_signature.py).
+- name: ACT | this host's findings as one signature
+  ansible.builtin.set_fact:
+    _site_act_sig: >-
+      {{ (site_findings | site_finding_set([inventory_hostname, inventory_hostname_short, ansible_host | default('')]))
+         if (_site_act_level == 'explain' and site_act_group | default(true) | bool and _site_act_key_ok | bool
+             and site_act_evidence_text | default('') | length == 0) else '' }}
+
+- name: ACT | the hosts with the same findings
+  ansible.builtin.set_fact:
+    _site_act_group: "{{ hostvars | site_act_group(ansible_play_hosts, inventory_hostname, '_site_act_sig') }}"
+
 - name: ACT | no API key for {{ site_act_provider }} - ACT is skipped (the findings are still reported)
   ansible.builtin.set_fact:
     site_act_result:
@@ -38,7 +53,7 @@
   when: not (_site_act_key_ok | bool)
 
 - name: ACT | run (level {{ _site_act_level }}, provider {{ site_act_provider }})
-  when: _site_act_key_ok | bool
+  when: _site_act_key_ok | bool and _site_act_group.lead == inventory_hostname
   ansible.builtin.include_role:
     name: act_triage
     apply:
@@ -63,7 +78,7 @@
     act_triage_write_report: false
 
 - name: ACT | result for the report (and the ServiceNow ticket)
-  when: _site_act_key_ok | bool
+  when: _site_act_key_ok | bool and _site_act_group.lead == inventory_hostname
   ansible.builtin.set_fact:
     site_act_result:
       level: "{{ _site_act_level }}"
@@ -82,6 +97,24 @@
            | map(attribute='command') | list }}
   vars:
     _site_act_chat: "{{ act_triage_result.summary | default('') | act_is_chat_reply }}"
+
+- name: ACT | the answer of {{ _site_act_group.lead }} - the same findings
+  ansible.builtin.set_fact:
+    site_act_result: >-
+      {{ hostvars[_site_act_group.lead].site_act_result
+         | default({'level': _site_act_level, 'status': 'error', 'applied': [], 'proposed': [],
+                    'summary': 'ACT did not run here: ' ~ _site_act_group.lead ~ ' has the same findings, and its answer was not there.'}) }}
+  when: _site_act_key_ok | bool and _site_act_group.lead != inventory_hostname
+
+- name: ACT | the hosts with the same findings, said in the answer
+  ansible.builtin.set_fact:
+    site_act_result: >-
+      {{ site_act_result | combine({'summary': (_site_act_group.same | site_act_same_note(_site_act_group.lead)) ~ _nl
+                                               ~ site_act_result.summary,
+                                    'same_hosts': _site_act_group.same, 'read_on': _site_act_group.lead}) }}
+  vars:
+    _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
+  when: _site_act_key_ok | bool and _site_act_group.same | length > 1
 
 - name: ACT | what ACT says
   ansible.builtin.debug:

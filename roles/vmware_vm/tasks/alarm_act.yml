@@ -58,6 +58,7 @@
           {%- endfor -%}
           {{ out }}
         _eb_check_url: "{{ vm_alarm_act_check_url }}"
+        _eb_kind: vm_alarm_act              # the answer cache's job kind (site_act_cache)
         _ea_names: "{{ _vm_al_read | vm_alarm_names }}"
         _ea_model_timeout: "{{ vm_alarm_act_model_timeout }}"
 
@@ -73,7 +74,7 @@
         _vm_al_doc: >-
           {{ _vm_al_p.problems | vm_alarm_act_report(_vm_al_parsed,
                {'vcenter': _vm_al_read.vcenter, 'hours': vm_alarm_hours, 'provider': site_act_provider,
-                'model': _ea_model, 'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': _vm_al_raw,
+                'model': _ea_model, 'cache_note': _ea_cache_note | default(''), 'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': _vm_al_raw,
                 'not_analyzed': _vm_al_p.not_analyzed, 'max_items': vm_alarm_act_max_items}) }}
 
     - name: VMware | ACT analysis

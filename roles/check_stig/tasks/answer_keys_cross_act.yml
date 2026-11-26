@@ -1,18 +1,48 @@
 ---
 # STIG ANSWER KEYS - THE CROSS-CHECK (1.77.0), on the AAP side, once (playbooks/stig_answer_keys.yml: run_once, delegated
-# to localhost): ACT on its own - for each call of _akx_asks (answer_keys_cross.yml), DISA's check text and the host's
+# to localhost): ACT on its own - for each ask of _akx_asks (answer_keys_cross.yml), DISA's check text and the host's
 # read-only evidence, never the code, its result or Evaluate-STIG's status; ACT runs no command (evidence mode). Then the
 # four sources side by side, rule by rule (_akx_doc), for answer_keys_report.yml.
 - name: Answer keys cross-check | no ACT answer yet
   ansible.builtin.set_fact:
     _akx_answers: {}
 
-- name: Answer keys cross-check | ACT on its own - once per rule and evidence (it reads the evidence, runs no command)
-  ansible.builtin.include_tasks: answer_keys_cross_act_one.yml
-  loop: "{{ _akx_asks.asks | default([]) }}"
-  loop_control:
-    loop_var: _akx_ask
-    label: "{{ _akx_ask.label }} {{ _akx_ask.v }} ({{ _akx_ask.hosts | length }} host{{ '' if _akx_ask.hosts | length == 1 else 's' }})"
+# 1.136.0: every rule and evidence in ONE ask (evidence_many.yml): one check of the way to the model, ACT copied once,
+# site_act_concurrency at a time. Each gets DISA's check text and what the host returned for the read-only commands -
+# never the code. ACT masks that rule's hosts.
+- name: Answer keys cross-check | ACT on its own - each rule and evidence, in one ask (it reads the evidence, runs no command)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_many.yml
+    # 1.77.0i (Codex P1): no_log - ACT's answer never shows in the job's output (site_act_ask prints nothing either);
+    # the answer is kept redacted below
+    apply:
+      no_log: true
+  vars:
+    _em_questions: >-
+      {%- set out = [] -%}
+      {%- for x in _akx_asks.asks | default([]) -%}
+      {%-   set _ = out.append({'key': x.id, 'items': [{'id': x.v}],
+                               'evidence': 'Read-only evidence for ' ~ x.v ~ ' (' ~ x.from ~ ' commands):' ~ _nl ~ x.evidence,
+                               'task': x.task, 'names': x.hosts}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
+  when: _akx_asks.asks | default([]) | length > 0
+
+- name: Answer keys cross-check | ACT's answers, rule by rule
+  ansible.builtin.set_fact:
+    _akx_answers: >-
+      {%- set out = {} -%}
+      {%- for x in _akx_asks.asks | default([]) -%}
+      {%-   set a = (_em_answers | default({})).get(x.id) or {'ran': false, 'raw': '', 'reason': ''} -%}
+      {%-   set _ = out.update({x.id: (a.raw | default('') | string | site_redact) if a.ran | bool
+                                else 'unsure' ~ _nl ~ 'ACT did not answer: ' ~ (a.reason | default('') | string | site_redact | truncate(200))}) -%}
+      {%- endfor -%}
+      {{ out }}
+  vars:
+    _nl: "\n"                          # the reader takes the first line as the verdict, the second as why
+  when: _akx_asks.asks | default([]) | length > 0
 
 - name: Answer keys cross-check | the four sources side by side, rule by rule
   ansible.builtin.set_fact:

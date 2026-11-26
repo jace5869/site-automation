@@ -59,7 +59,7 @@ EOF
 printf 'PermitRootLogin no\n' > "$fx/sshd_config"
 "$py" "$repo/tests/email/fake_smtp.py" "$port_smtp" "$work/mail" >/dev/null 2>&1 & smtp_pid=$!
 "$py" "$here/stigman_mock.py" "$port_sm" "$work/sm.json" "$work/sm.log" >/dev/null 2>&1 & sm_pid=$!
-# ACT's model URL: any HTTP answer shows the way is open (roles/site_act evidence_ask.yml); the fake ACT answers itself
+# ACT's model URL: any HTTP answer shows the way is open (plugins/action/site_act_ask.py); the fake ACT answers itself
 mkdir -p "$work/actweb"
 "$py" -m http.server "$port_act" --bind 127.0.0.1 --directory "$work/actweb" >/dev/null 2>&1 & act_pid=$!
 sleep 1
@@ -160,7 +160,8 @@ writes() {  # any request to STIG Manager but a GET (and the token's POST) fails
     else echo "ok   - $1: only GET requests reached STIG Manager ($(wc -l < "$work/sm.log") requests)"; fi
 }
 
-act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+# the rules are asked at the same time (site_act_concurrency): each answer goes to its rule by its V- number
+act "{\"summaries_by\": {\"V-257985\": $(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), \"V-257883\": $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')}}"
 run "six rules: a pattern's block, ACT's block, one needs a value, ACT's refused, one Not a Finding, one Evaluate-STIG passes" ok -e "$all6" -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" \
     "V-258999 ready: A manual check: a document." "V-257985 ACT draft: RHEL 9 must not permit direct logons to the root account using remote access through SSH." \
@@ -268,7 +269,8 @@ untouched "every run"
 mkdir -p "$work/sdoff"
 printf '#!/bin/sh\ntouch "%s/sdoff/ran"\nexit 1\n' "$work" > "$work/sdoff/systemd-run"
 chmod 755 "$work/sdoff/systemd-run"
-act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+# the rules are asked at the same time (site_act_concurrency): each answer goes to its rule by its V- number
+act "{\"summaries_by\": {\"V-257985\": $(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), \"V-257883\": $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')}}"
 run "the trial off (the default): the check only, the block offered marked not tried, no systemd-run" ok \
     -e "$all6" -e answer_keys_trial=false -e _ak_sandbox="$work/sdoff/systemd-run" -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" "V-258999 ready (not tried): A manual check: a document." \

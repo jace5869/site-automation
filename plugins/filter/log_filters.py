@@ -31,6 +31,11 @@ _spec = importlib.util.spec_from_file_location(
     "act_causes", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "act_causes.py"))
 _ac = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ac)
+# a line's signature (1.136.0): plugins/module_utils/site_signature.py - the same rules the jobs that group hosts use
+_spec = importlib.util.spec_from_file_location(
+    "site_signature", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_signature.py"))
+_sig = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_sig)
 _spec = importlib.util.spec_from_file_location("site_filters_for_logs", os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_filters.py"))
 _sf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_sf)
@@ -52,23 +57,7 @@ _ERR_WORDS = re.compile(r"\b(err(or|ors)?|fail(ed|ure|s|ing)?|exception|denied|r
                         r"unreachable|not responding|lost|abort(ed)?|severe)\b", re.I)
 
 # the parts of a line that change from one occurrence to the next
-_NORMALIZE = [
-    (re.compile(r"^\s*\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?\]?\s*"), ""),     # a leading ISO time
-    (re.compile(r"^\s*[A-Z][a-z]{2}\s+\d{1,2}\s+\d\d:\d\d:\d\d\s+"), ""),                                  # a leading syslog time
-    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I), "<uuid>"),
-    (re.compile(r"\b\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?\b"), "<time>"),
-    (re.compile(r"\b\d\d:\d\d:\d\d(\.\d+)?\b"), "<time>"),
-    (re.compile(r"\b(\d{1,3}\.){3}\d{1,3}(:\d+)?\b"), "<ip>"),
-    (re.compile(r"\b([0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b", re.I), "<ip>"),
-    (re.compile(r"\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", re.I), "<mac>"),
-    (re.compile(r"\b0x[0-9a-f]+\b", re.I), "<hex>"),
-    (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "<hex>"),
-    (re.compile(r"\"[^\"]{0,200}\"|'[^']{0,200}'"), "<q>"),
-    (re.compile(r"\[\d+\]"), "[<n>]"),
-    (re.compile(r"\b\d+(\.\d+)*\b"), "<n>"),
-    (re.compile(r"(<n>[\s,]*){2,}"), "<n> "),
-    (re.compile(r"\s+"), " "),
-]
+_NORMALIZE = _sig.RULES          # 1.136.0: the rules live in plugins/module_utils/site_signature.py (one copy)
 
 
 def _t(iso):
@@ -230,10 +219,7 @@ def log_window(hours, since="", until="", now=None, zone=""):
 def log_signature(message):
     """A line's signature: the words that stay the same from one occurrence to the next (lower case,
     at most 200 characters)."""
-    s = str(message or "")
-    for rx, rep in _NORMALIZE:
-        s = rx.sub(rep, s)
-    return s.strip().lower()[:200]
+    return _sig.signature(message)
 
 
 def log_level(level, message=""):
@@ -512,6 +498,32 @@ def log_evidence(data, problems, opts=None):
     return text if len(text) <= cap else text[:cap] + nl + "[... evidence cut at %d characters ...]" % cap
 
 
+def _band(n):
+    """A count as its order of magnitude: 1, 2-9, 10-99, 100-999 ..."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "?"
+    if n <= 1:
+        return str(max(n, 0))
+    if n < 10:
+        return "2-9"
+    lo = 10 ** (len(str(n)) - 1)
+    return "%d-%d" % (lo, lo * 10 - 1)
+
+
+def log_cache_key(problems, opts=None):
+    """1.136.0: what makes two log questions the same, for ACT's answer cache (site_act_cache): the patterns asked (id,
+    level, source, signature, hosts, the count as a band) and what shapes the prompt (the team's question, the hosts'
+    group, the site's instructions) - not the times, the window or the example lines. An unchanged log set asks no
+    model again. opts: question, what, extra."""
+    o = opts or {}
+    pats = [[p.get("id"), p.get("severity"), _src(p), p.get("signature") or "", sorted(p.get("hosts") or []), _band(p.get("count"))]
+            for p in problems or []]
+    return json.dumps({"question": " ".join(str(o.get("question") or "").split()), "what": str(o.get("what") or ""),
+                       "extra": " ".join(str(o.get("extra") or "").split()), "patterns": pats}, sort_keys=True)
+
+
 def log_act_task(problems, opts=None):
     """The task (prompt) for ACT. opts: what, window, hours, question, extra."""
     o = opts or {}
@@ -611,6 +623,8 @@ def log_report(data, parsed=None, opts=None):
     if with_act:
         subtitle += " ACT%s analyzed the top %d: likely causes, not certain ones - check before you change anything." % (
             " (" + model + ")" if model else "", len(ps))
+        if o.get("cache_note"):
+            subtitle += " " + str(o["cache_note"])         # 1.136.0: answers from the report database's cache, and when
     # ACT's causes as cards (site_filters.report_cause_cards): an answer of the older shape (one analysis per pattern)
     # becomes one cause per pattern
     cc = None
@@ -756,7 +770,7 @@ def log_list(value, lines_only=False):
 
 class FilterModule(object):
     def filters(self):
-        return {"log_settings": log_settings, "log_window": log_window, "log_signature": log_signature, "log_level": log_level,
+        return {"log_settings": log_settings, "log_window": log_window, "log_signature": log_signature, "log_cache_key": log_cache_key, "log_level": log_level,
                 "log_linux_entries": log_linux_entries, "log_win_entries": log_win_entries, "log_analysis": log_analysis,
                 "log_evidence": log_evidence, "log_act_task": log_act_task, "log_report": log_report, "log_names": log_names,
                 "log_host_wanted": log_host_wanted, "log_list": log_list, "log_vcenter_unread": log_vcenter_unread}

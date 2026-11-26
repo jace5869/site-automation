@@ -1,0 +1,86 @@
+---
+# ACT reads evidence and answers, on the AAP side: the one place that asks (plugins/action/site_act_ask.py). Only from
+# evidence_analysis.yml, evidence_batches.yml and evidence_many.yml, which check site_act_enabled first
+# (tests/test_act_switch.py).
+# Once per call, whatever the number of questions: the settings, one check of the way to the model, ACT copied once,
+# at most site_act_concurrency questions at a time, a failed one asked once more (site_act_retries).
+# Input:  _ask_questions ([{items, evidence, task, names}]: names, ACT masks them for that question too),
+#         _ask_check_url (bool), _ask_cache_kind (the job kind for the answer cache - 1.136.0, the batched jobs; '' or
+#         undefined: no cache), _ask_retry_unreadable (bool: an answer
+#         act_analysis_parse cannot read is asked again too), _ea_names, _ea_model_timeout, _ea_in_check
+# Output: _ea_ask (the plugin's result: url, reached, why_not, questions [{ids, asked, ran, status, summary, stop_reason,
+#         model, tries, reason}]), _ea_url
+- name: ACT | settings (provider, model, URL; the key comes from the job's credential)
+  ansible.builtin.include_tasks: env.yml
+
+- name: ACT | where ACT sends its request, and the proxy settings it uses
+  ansible.builtin.set_fact:
+    _ea_url: >-
+      {{ _site_act_env_all[{'genai': 'GENAI_URL', 'asksage': 'ASKSAGE_URL', 'genai-beta': 'GENAI_BETA_URL'}[site_act_provider]]
+         | default({'genai': 'https://api.genai.mil/v1/chat/completions',
+                    'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
+                    'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
+
+# The task is no_log: its result holds ACT's answers, which quote the evidence. The reports show what they need.
+- name: >-
+    ACT | {{ _ask_questions | map(attribute='items') | map('length') | sum }} item(s) in {{ _ask_questions | length }}
+    question(s), {{ site_act_concurrency | int if site_act_concurrency | int > 0 else 'up to 4' }} at a time - evidence mode, ACT runs no command
+  site_act_ask:
+    questions: "{{ _ask_questions }}"
+    # nothing asked: a dry run (Check) unless the job only reads (_ea_in_check), or no key for the provider
+    skip: >-
+      {%- if ansible_check_mode and not _ea_in_check | default(false) | bool -%}
+      A dry run (Check): ACT was not called. It would analyze the {{ _ask_questions | map(attribute='items') | map('length') | sum }} item(s) below.
+      {%- elif not _site_act_key_ok | bool -%}
+      This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
+      {%- endif -%}
+    check_url: "{{ _ask_check_url | default(true) | bool }}"
+    url: "{{ _ea_url }}"
+    ca: "{{ site_act_ca | default('', true) }}"
+    # this job's model time (vm_alarm_act_model_timeout ...) over site_act_model_timeout; a GENAI_TIMEOUT in site_act_env wins over both.
+    # A plain answer, not one of ACT's own steps: ACT 0.6.25 sends its action protocol in this mode too - its tools
+    # (plan, run, finish ...) with a call required, or else the action schema and a "{" to go on from - so the model
+    # could only answer as a step ({'action': 'plan'}, {'message': ...}). Off here (_site_act_plain_env); site_act_env wins.
+    env: >-
+      {{ _site_act_env_all | combine(_site_act_plain_env)
+         | combine({'GENAI_TIMEOUT': (_ea_model_timeout | default(site_act_model_timeout, true) | int | string)})
+         | combine(site_act_env | default({})) }}
+    # ACT masks these before anything reaches the model: this host's names, as ACT's role did, and the job's own
+    names: "{{ [inventory_hostname, inventory_hostname_short, ansible_host | default('')] + (_ea_names | default([])) }}"
+    pseudonymize: "{{ act_triage_pseudonymize | default(true) | bool }}"        # as ACT's role did (its default)
+    evidence_max: "{{ act_triage_evidence_total_chars | default(1500000) | int }}"   # as ACT's role did (its default)
+    concurrency: "{{ site_act_concurrency | int }}"
+    # 1.104.0 (Neon): with a model time of this job's, each ACT run is held to twice it and a minute (site_act_timeout at most)
+    timeout: >-
+      {{ [site_act_timeout | int, _ea_model_timeout | int * 2 + 60] | min if _ea_model_timeout | default('', true) | string | length > 0
+         and _ea_model_timeout | int > 0 else site_act_timeout | int }}
+    retries: "{{ site_act_retries | int }}"
+    retry_unreadable: "{{ _ask_retry_unreadable | default(false) | bool }}"
+    script: "{{ act_triage_script_src | default(role_path ~ '/../../vendor/act/act', true) }}"
+    # 1.104.0: ACT starts through act_triage's launcher (files/act_launch.py): its allowlist, the keys on stdin; these two
+    # as act_triage's defaults (vendor/act/ansible/roles/act_triage/defaults/main.yml; tests/test_site_act_ask.py keeps them alike)
+    env_pass: "{{ act_triage_env_pass | default(['FAKE_ACT_OUT', 'FAKE_ACT_CONFIG']) }}"
+    key_env_names: >-
+      {{ act_triage_key_env_names | default(['GENAI_KEY', 'GENAI_KEYS', 'ASKSAGE_KEY', 'ASKSAGE_API_KEY', 'ASKSAGE_KEYS',
+                                             'GENAI_BETA_KEY', 'GENAI_BETA_KEYS']) }}
+    provider: "{{ site_act_provider }}"
+    model: "{{ site_act_model or (site_act_models | default({}))[site_act_provider] | default('') }}"
+    # 1.136.0: the answers kept in the report database (act_answer_cache) - the batched jobs, with the "Report database"
+    # credential on the template and site_act_cache on; a dry run (Check) reads it, writes nothing
+    cache: >-
+      {{ {} if (_ask_cache_kind | default('') | length == 0 or not site_act_cache | default(true) | bool
+                or lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length == 0) else
+         {'kind': _ask_cache_kind, 'clear': site_act_cache_clear | default(false) | bool,
+          'ttl_days': (site_act_cache_ttl_days_by | default({}))[_ask_cache_kind] | default(site_act_cache_ttl_days | default(7)),
+          'create': site_act_cache_create | default(true) | bool, 'write': not ansible_check_mode,
+          'db': {'host': lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim,
+                 'port': lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int,
+                 'database': lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim,
+                 'user': lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim,
+                 'password': lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD'),
+                 'tls': lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool,
+                 'ca_file': lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim,
+                 'connect_timeout': site_act_cache_timeout | default(10) | int}} }}
+  register: _ea_ask
+  check_mode: false                  # it only reads the evidence and asks the model; in Check only with _ea_in_check (skip otherwise)
+  no_log: true

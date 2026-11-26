@@ -216,9 +216,10 @@
 # site_act_model_timeout: 600
 
 ## How many hosts may run ACT at the same time in one job (0 = no limit: as many as the job's
-## forks). Every host in a job uses the same key, and GenAI.mil's default quota is 60 requests and
-## 200,000 tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many
-## requests).
+## forks). The jobs that ask ACT about evidence on the AAP side (log analysis, the VMware alarms,
+## the WAR ...) ask this many questions at a time (0 = up to 4 at a time). Every host in a job uses
+## the same key, and GenAI.mil's default quota is 60 requests and 200,000 tokens a minute per key: a
+## fleet run with many hosts at once gets HTTP 429 (too many requests).
 # site_act_concurrency: 3
 
 ## Old copies of ACT on the hosts (1.53.0): an `act` someone put there by hand runs instead of the

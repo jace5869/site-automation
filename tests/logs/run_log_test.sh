@@ -99,6 +99,7 @@ base="{\"log_analysis_become\": false, \"log_analysis_profiles\": [\"sssd\", \"m
 
 run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
     local tname="$1" want="$2"; shift 2
+    rm -rf "$work/act/fake-act-stdin.d"     # what each ACT call of this run was given (several at once: site_act_ask)
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
     (cd "$repo" && PATH="$work/bin:$PATH" FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json" \
@@ -143,8 +144,17 @@ grep -q "Connection reset by .* port" "$work/act/fake-act-stdin.txt" && [ "$(gre
 run "ACT asked 2 patterns at a time (log_analysis_act_batch): one report, each question with its own evidence" ok \
     -e "$actvars" -e log_analysis_act_batch=2 -- "pattern(s), 2 at a time" "P1, P2: Give the JVM more memory first." "90% high" \
        "Not explained: "
-grep -q "^P1 " "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...the last question had P1's evidence"; fails=$((fails + 1)); } \
-    || echo "ok   -   ...the last question had only its own patterns' evidence"
+# the questions run at the same time (site_act_concurrency): each call's own evidence, from fake-act-stdin.d
+if "$py" - "$work/act/fake-act-stdin.d" > "$work/batches.txt" <<'EOPY'
+import os, re, sys
+d = sys.argv[1]
+seen = [set(re.findall(r"^(P\d+) ", open(os.path.join(d, f)).read(), re.M)) for f in sorted(os.listdir(d))] if os.path.isdir(d) else []
+every = set().union(*seen) if seen else set()
+print("questions: %s" % "; ".join(",".join(sorted(s)) for s in seen))
+sys.exit(0 if len(seen) >= 2 and all(0 < len(s) <= 2 for s in seen) and sum(len(s) for s in seen) == len(every) else 1)
+EOPY
+then echo "ok   -   ...each question had only its own patterns' evidence"
+else echo "FAIL -   ...batch evidence: $(cat "$work/batches.txt")"; fails=$((fails + 1)); fi
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | sort -V | tail -1)"
 if [ -n "$eml" ] && grep -q "Likely causes and fixes" "$eml" && grep -q "First seen" "$eml" && grep -q "What was read" "$eml" \
    && ls "$work/site"/*/latest.html >/dev/null 2>&1; then

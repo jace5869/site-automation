@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.136.0 — 2026-11-26
+
+**To set up: nothing.** The answer cache needs the **Report database** credential (the writer, `report_writer`) on the
+template; without it, nothing changes. New settings, all with defaults: `site_act_retries` (1), `site_act_group` (true),
+`site_act_cache` (true), `site_act_cache_ttl_days` (7), `site_act_cache_ttl_days_by` ({}), `site_act_cache_clear`,
+`site_act_cache_create`, `site_act_cache_timeout`.
+
+**ACT: one engine for every job that asks it about evidence on the AAP side** (step A of the ACT rework;
+docs/ADDING_ACT.md, "How the jobs on the AAP side ask ACT"). The log analysis, the VMware alarms, capacity and
+right-sizing analyses, the WAR, ticket insights, the incident documents, a finding's triage, VM ask and deploy, the
+outage review and the STIG answer keys all use it.
+
+- One check of the way to the model per job, for all its questions. When it fails, the report says so once and
+  nothing is asked. Before, a job in batches checked before the first batch only, then asked the others anyway.
+- ACT copied once per job into a private folder, which is removed after, also when ACT fails.
+- The questions run `site_act_concurrency` (3) at a time, not one after another (`0`: up to 4). Their answers keep
+  the order they were asked in.
+- The STIG answer keys ask all their rules in one call: the drafts, then the cross-check.
+- A question that failed is asked once more (`site_act_retries`). In the jobs that ask in batches, an answer the
+  job cannot read is asked again too (not the WAR: it has its own reader). A question that ran out of time is not.
+- A question with no evidence is never sent: *No evidence to read: ACT was not asked.* The evidence is checked as
+  it is sent, cut at `act_triage_evidence_total_chars`.
+- What ACT reads always starts with a fixed line. So ACT only reads and answers, and never runs a command on the
+  AAP node.
+- 1.104.0's rules stay: ACT starts through the `act_triage` launcher (`act_launch.py`). Its environment is an
+  allowlist, never the job's other credentials. Only the provider keys in `act_triage_key_env_names` are passed, on
+  the launcher's input, never a command line. A `site_act_env` name ACT may not get stops the questions before any is
+  asked; the report names it, never its value. `site_act_env` cannot turn the masking off. A proxy with a user name
+  and password is not checked. With the job's own model time (the outage review), each run is held to twice it and
+  a minute.
+- The check of the way to the model uses ACT's own environment: the job's proxy and `NO_PROXY`.
+- A question that could not be asked gets its own reason. The others keep their answers. An error in the engine is
+  a reason in the report, never a failed job.
+- ACT's answer is no longer printed in the job's output.
+
+**ACT's answer cache in the report database** (docs/REPORT_DATABASE.md, "ACT's answer cache").
+
+- The log analysis, the VMware alarms ACT analysis, and the capacity and right-sizing analyses keep each answer in
+  a new table, `act_answer_cache` (`schema_version` component `act_cache`, version 1). The first run makes it.
+- A later run that asks the same question takes the kept answer. ACT is not asked. The same question means the same
+  evidence, prompt, provider, model and job.
+- The log analysis compares its patterns, not its evidence: their level, source, signature, hosts and count band
+  (1, 2-9, 10-99 ...), not the times. The same log set a day later finds its answer.
+- When every answer is kept, the model is not reached at all.
+- Only ACT's analysis is kept, between its markers. An answer the job cannot read, or one that leaves an item out, is
+  not kept.
+- Each answer expires after `site_act_cache_ttl_days`, or the job kind's days in `site_act_cache_ttl_days_by`. Each run
+  deletes the expired ones.
+- The report says *N of M answer(s) from an earlier run (the date UTC; site_act_cache).*
+- A database that cannot be used, or stops answering, is one line in the job output. ACT is asked as without the cache.
+- A dry run (Check) reads the cache and writes nothing.
+
+**Hosts with the same findings, asked once** (docs/ADDING_ACT.md, "Hosts with the same findings").
+
+- At the `explain` level, ACT reads the first host of each group of hosts with the same findings. The others take
+  its answer, and their reports say so.
+- Findings count as the same without their numbers, times, addresses and the host's own names.
+- `diagnose`, `self-heal` and troubleshoot (its own evidence) still ask each host.
+- fapolicyd's analysis groups hosts with the same blocks too, and runs on `site_act_concurrency` hosts at a time,
+  as the other ACT jobs.
+
+**One signature library**: `plugins/module_utils/site_signature.py`. The log analysis' line signatures moved there
+unchanged, and the grouping uses the same rules.
+
+- Files: `plugins/action/site_act_ask.py` (`ansible.cfg`: `action_plugins`), `roles/site_act/tasks/act_ask.yml`,
+  `evidence_many.yml`, `plugins/module_utils/site_act_cache.py`, `plugins/filter/act_group_filters.py`.
+  `evidence_analysis.yml` and `evidence_batches.yml` ask through the engine. `evidence_ask.yml`,
+  `evidence_one_batch.yml`, `answer_keys_act_one.yml` and `answer_keys_cross_act_one.yml` are gone.
+- Tests: `tests/test_site_act_ask.py` (a stand-in ACT and model: the engine, the launcher's rules, the cache with a
+  stand-in database, the statements in the doc), `tests/test_site_signature.py`, `tests/act/run_act_cache_test.sh` (a
+  real MySQL 8.4), `tests/act/run_act_group_test.sh`; `tests/test_outage_act.py` holds the 1.104.0 rules on the engine.
+- Not in it: service watch reusing a diagnosis (step B).
+
 ## 1.133.0 — 2026-11-25
 
 **To set up:** run **Site portal - deploy**. Nothing to change unless your site uses a card form other than the five

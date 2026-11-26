@@ -75,6 +75,10 @@ jobs:
           python tests/test_xlsx_sparklines.py
           python tests/test_log_analysis.py
           python tests/test_act_causes.py
+          python tests/test_site_act_ask.py
+          /tmp/ac216/bin/python tests/test_site_act_ask.py
+          python tests/test_site_signature.py
+          /tmp/ac216/bin/python tests/test_site_signature.py
           python tests/test_report_cards.py
           python tests/test_servicenow_mid.py
           python tests/test_servicenow_node.py
@@ -508,6 +512,17 @@ jobs:
           docker pull -q mariadb:10.11
           SNAPSHOT_DB_TEST_RUNTIME=docker SNAPSHOT_DB_TEST_IMAGES="mysql:8.4 mariadb:10.11" bash tests/solarwinds/run_snapshot_test.sh
           SNAPSHOT_DB_TEST_RUNTIME=docker SNAPSHOT_DB_TEST_IMAGES="mysql:8.4 mariadb:10.11" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/solarwinds/run_snapshot_test.sh
+      - name: ACT's answer cache in a real MySQL 8.4 (docker) - kept, used, cleared, expired, Check, a database that is down (current ansible-core and 2.16)
+        run: |
+          pip install PyMySQL cryptography
+          /tmp/ac216/bin/pip -q install PyMySQL cryptography
+          docker pull -q mysql:8.4
+          CONTAINER_ENGINE=docker ACT_CACHE_TEST_IMAGE=mysql:8.4 bash tests/act/run_act_cache_test.sh
+          CONTAINER_ENGINE=docker ACT_CACHE_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/act/run_act_cache_test.sh
+      - name: ACT on hosts with the same findings, asked once - site_act and fapolicyd, with the fake ACT (current ansible-core and 2.16)
+        run: |
+          bash tests/act/run_act_group_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/act/run_act_group_test.sh
 
   ansible-linux:
     name: Linux checks, ACT and remediation
