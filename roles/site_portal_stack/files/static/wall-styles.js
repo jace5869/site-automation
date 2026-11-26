@@ -98,7 +98,7 @@
   function fleetInfo() {
     var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("fleet"), n = A.areaCounts("fleet"), tot = 0;
     Object.keys(c).forEach(function (k) { tot += +c[k] || 0; });
-    var up = (+c.u || 0) + (+c.w || 0);
+    var up = +c.u || 0;
     return {id: "fleet", st: st, n: n, m: null, big: tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: tot ? "nodes up" : "no value read",
             sub: n.crit + n.warn ? A.nowList("fleet").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
               tot ? (+c.d || 0) + " down · " + ((+c.p || 0) + (+c.m || 0)) + " off or unmanaged · " + (f.groups || 0) + " groups" : ""};

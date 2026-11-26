@@ -381,6 +381,7 @@
       - portal_wall_fleet | default('auto') | string | lower in ['auto', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
       - (portal_wall_fleet_seconds | string) is match('^[0-9]+$') and 60 <= portal_wall_fleet_seconds | int <= 3600
       - (portal_wall_fleet_max_nodes | string) is match('^[0-9]+$') and 100 <= portal_wall_fleet_max_nodes | int <= 50000
+      - (portal_wall_fleet_poll_stale_minutes | string) is match('^[0-9]+$') and 5 <= portal_wall_fleet_poll_stale_minutes | int <= 1440
       - portal_wall_fleet_group_by | string | lower == 'groups' or (portal_wall_fleet_group_by | string) is match('^custom:[A-Za-z_][A-Za-z0-9_]{0,63}$')
       - portal_wall_fleet_groups is sequence and portal_wall_fleet_groups is not string and portal_wall_fleet_groups is not mapping
       - portal_wall_fleet_groups | reject('string') | list | length == 0
@@ -389,7 +390,7 @@
       - not (_portal_wall_fleet | bool) or (portal_solarwinds_url | trim | length > 0 and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0)
     fail_msg: >-
       The wall's Fleet & services settings (docs/SITE_PORTAL.md, "Fleet & services"): portal_wall_fleet auto, true or false;
-      portal_wall_fleet_seconds 60 to 3600; portal_wall_fleet_max_nodes 100 to 50000; portal_wall_fleet_group_by groups or
+      portal_wall_fleet_seconds 60 to 3600; portal_wall_fleet_max_nodes 100 to 50000; portal_wall_fleet_poll_stale_minutes 5 to 1440; portal_wall_fleet_group_by groups or
       custom:<a node custom property> (letters, digits and _); portal_wall_fleet_groups and portal_wall_fleet_vm_match lists of names;
       portal_wall_fleet true needs the "SolarWinds (read-only)" credential (its address and login) on this deploy - nothing was changed.
     quiet: true
@@ -1229,6 +1230,7 @@
         fleet_groups: "{{ portal_wall_fleet_groups | default([], true) }}"
         fleet_vm_match: "{{ portal_wall_fleet_vm_match | default([], true) }}"
         fleet_max_nodes: "{{ portal_wall_fleet_max_nodes | int }}"
+        fleet_poll_stale_minutes: "{{ portal_wall_fleet_poll_stale_minutes | int }}"
         ds_warn: "{{ portal_wall_datastore_warn | float }}"
         ds_crit: "{{ portal_wall_datastore_crit | float }}"
         aggr_warn: "{{ portal_wall_aggr_warn | float }}"

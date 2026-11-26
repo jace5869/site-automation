@@ -223,17 +223,19 @@
   var PIC_MAX = 40, TEXT_MAX = 200;
   function nline(n) { return n.st + "  " + n.name + " - " + (n.svc || "no group") + " - " + (n.ip || "no IP") + " - " + n.phrase; }
   function nhead(L, ctx) {
-    var down = L.filter(function (n) { return n.st === "DOWN"; }).length;
+    var down = L.filter(function (n) { return n.st === "DOWN"; }).length, allBad = L.every(function (n) { return !n.up; });
     return L.length === 1 ? "[" + L[0].st + "] " + L[0].name + " - " + (L[0].svc || "no group") :
-      L.length + " nodes not up" + (down && down < L.length ? " (" + down + " down)" : "") + (ctx.site ? " - " + ctx.site : "") + " - " + ctx.stamp;
+      L.length + (allBad ? " nodes not up" : " nodes") + (down && down < L.length ? " (" + down + " down)" : "") + (ctx.site ? " - " + ctx.site : "") + " - " + ctx.stamp;
   }
+  // the link back to the wall: http(s) only (anything else: the wall's own path, never a script)
+  function safeLink(u) { return /^https?:\/\//i.test(String(u || "")) ? String(u) : "#"; }
   function ntext(L, ctx) {
     var out = [nhead(L, ctx)];
     if (L.length === 1) {
       var n = L[0];
       out.push("IP " + (n.ip || "none") + " · " + n.phrase + (n.loss ? " · " + n.loss + "% loss" : ""));
       if (n.vc) out.push("vCenter: " + n.vc + (n.host ? " · host " + n.host : ""));
-      out.push("Source: " + ctx.src + " · as of " + ctx.stamp + (ctx.site ? " · " + ctx.site : ""));
+      out.push("Source: " + ctx.src + " · as of " + (ctx.asof || ctx.stamp) + (ctx.site ? " · " + ctx.site : ""));
     } else {
       L.slice(0, TEXT_MAX).forEach(function (n) { out.push(nline(n)); });
       if (L.length > TEXT_MAX) out.push("+" + (L.length - TEXT_MAX) + " more on the wall");
@@ -251,7 +253,7 @@
     return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (L.length === 1 && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
       (L.length > TEXT_MAX ? "<p>+" + (L.length - TEXT_MAX) + " more on the wall</p>" : "") +
       (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
-      '<p><a href="' + esc(ctx.link) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";
+      '<p><a href="' + esc(safeLink(ctx.link)) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";
   }
   function npicture(L, ctx) {
     var cv = document.createElement("canvas"), x = cv.getContext("2d"), Wd = 1000, shown = L.slice(0, PIC_MAX), more = L.length - shown.length;
@@ -262,7 +264,7 @@
     var worst = L.some(function (n) { return n.sev === "crit"; }) ? "crit" : L.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
     x.fillStyle = NSEV[worst].c; x.fillRect(0, 0, 12, Hh);
     x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
-    x.fillText(fit(x, one ? L[0].name : L.length + " nodes not up", 560), 36, 52);
+    x.fillText(fit(x, one ? L[0].name : L.length + (L.every(function (n) { return !n.up; }) ? " nodes not up" : " nodes"), 560), 36, 52);
     x.font = "600 16px " + mono; x.fillStyle = "#9aa3ae"; x.textAlign = "right";
     x.fillText(fit(x, (ctx.site ? ctx.site + " · " : "") + ctx.day + " " + ctx.stamp + " " + ctx.zone, 360), Wd - 30, 50);
     x.textAlign = "left"; x.fillStyle = "#c9d0d8"; x.font = "500 18px " + sans;
@@ -276,6 +278,7 @@
       x.fillStyle = "#c9d0d8"; x.font = "500 19px " + sans;
       x.fillText(fit(x, n.said || "", Wd - 110), 58, 170);
       x.fillText(fit(x, n.vc ? "vCenter: " + n.vc + (n.host ? " · host " + n.host : "") : "vCenter: not a VM it knows", Wd - 110), 58, 202);
+      if (ctx.stale) { x.fillStyle = "#f3c46a"; x.font = "600 17px " + sans; x.fillText(fit(x, "NOT CURRENT: " + ctx.stale, Wd - 110), 58, 236); }
     } else {
       shown.forEach(function (n, i) {
         var y = 118 + i * 44, s = NSEV[n.sev] || NSEV.stale;
@@ -290,7 +293,7 @@
       if (more) { x.fillStyle = "#f3f5f7"; x.font = "600 17px " + sans; x.fillText("+" + more + " more - the full list on the wall", 42, 118 + shown.length * 44 + 4); }
     }
     x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono;
-    x.fillText(fit(x, "Source " + ctx.src + " · Ops center wall", Wd - 72), 36, Hh - 18);
+    x.fillText(fit(x, "Source " + ctx.src + (one && ctx.asof ? " · as of " + ctx.asof : "") + " · Ops center wall", Wd - 72), 36, Hh - 18);
     return cv;
   }
   // the share panel for nodes, built node by node: the message as it pastes, the buttons, what happened, the picture

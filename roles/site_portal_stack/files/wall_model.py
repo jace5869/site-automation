@@ -988,7 +988,7 @@ def summary(m, now):
             cn = fs.get("counts") or {}
             tot = sum(int(v or 0) for v in cn.values())
             if tot:
-                big, unit = "%d/%d" % (int(cn.get("u") or 0) + int(cn.get("w") or 0), tot), "nodes up"
+                big, unit = "%d/%d" % (int(cn.get("u") or 0), tot), "nodes up"
                 note = "%d down · %d warning · %d off or unmanaged" % (int(cn.get("d") or 0), int(cn.get("w") or 0), int(cn.get("p") or 0) + int(cn.get("m") or 0))
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
         # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest

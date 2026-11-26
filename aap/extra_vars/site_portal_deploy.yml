@@ -550,6 +550,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK
 # portal_wall_fleet_max_nodes: 10000
 
+## a node SolarWinds itself last polled (LastSync) longer ago than this is not current: never green,
+## never a recovery (5 to 1440)
+# portal_wall_fleet_poll_stale_minutes: 15
+
 ## Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback
 ## button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at
 ## <portal>/wall/feedback for the readers. No email.

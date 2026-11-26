@@ -1271,15 +1271,21 @@ on the portal's data volume through a restart).
 - **Powered off is never down:** down in SolarWinds and powered off (or suspended) in vCenter shows *Powered off*, grey -
   only while that vCenter's read is current. With vCenter late or not read, the node stays down (never turned grey by old
   data) and its card says vCenter was not compared.
-- A node and a VM are the same when their names match in any case, the short name against an FQDN (SolarWinds' caption or
-  DNS name, vCenter's VM name or guest host name); two VMs of one name are told apart by the IP, else not compared (said on
-  the card and in the panel). Templates and vCLS VMs are never counted.
+- A node and a VM are the same when an FQDN of each is the same, else when the short names match in any case (SolarWinds'
+  caption or DNS name, vCenter's VM name or guest host name) - but never when both have an FQDN in different domains, or
+  both an IP and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
+  never greys a production node down). Two VMs that still fit are told apart by the IP, else not compared (said on the card
+  and in the panel). Templates and vCLS VMs are never counted.
+- A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_fleet_poll_stale_minutes` (15) is not
+  current: grey, never green, and never a recovery.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
   square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
-  `portal_wall_fleet_max_nodes` is not whole and the area is never shown OK. The vCenter-only squares follow vCenter's
-  own read.
+  `portal_wall_fleet_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only
+  squares follow vCenter's own read; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
+  the side searched (else "not counted", said).
 - **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
-  per node. They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
+  per node; a node in two groups counts in both. A group's condition clears only when every member is seen in a known,
+  current state (unknown, unmanaged or an old poll is no recovery). They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
   group lights nothing here (the VMware area has those VMs).
 
 **Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,
@@ -1298,6 +1304,7 @@ wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.h
 | `portal_wall_fleet_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
 | `portal_wall_fleet_vm_match` | `["*VMware*"]` | Vendor / MachineType globs that make a node a VM (for *not found in vCenter*) |
 | `portal_wall_fleet_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
+| `portal_wall_fleet_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
 
 The deploy summary's *Wall:* line ends with *Fleet on (by groups)* or *Fleet off (why)*.
 

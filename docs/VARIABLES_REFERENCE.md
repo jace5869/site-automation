@@ -2298,6 +2298,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_fleet_groups` | `[]` | only these groups, in this order (names, any case; [] = every group with a node in it, A to Z); the rest under "Workloads (no group)" |
 | `portal_wall_fleet_vm_match` | `["*VMware*"]` | a SolarWinds node whose Vendor or MachineType matches (globs, any case) is a VM: counted "not found in vCenter" when vCenter has none of its name |
 | `portal_wall_fleet_max_nodes` | `10000` | at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK |
+| `portal_wall_fleet_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (LastSync) longer ago than this is not current: never green, never a recovery (5 to 1440) |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approve_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |

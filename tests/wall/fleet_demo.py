@@ -166,11 +166,16 @@ class FakeReader(object):
     def viewed(self):
         pass
 
+    def rows(self, at):
+        """the fixture's rows, Orion's own poll 40 s before the read (as a live Orion)"""
+        sync = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at - 40))
+        return [dict(r, LastSync=sync) for r in rows_of(self.fx, self.prop)]
+
     def snapshot(self):
         now = time.time()
         at = (self.t0 + (now - self.t0) // 60 * 60 if self.moving else self.t0) - self.age_s     # moving: read again every minute
         return {"state": self.state, "why": "" if self.state == "ok" else "SolarWinds refused the login (HTTP 401)", "at": at, "tried": at,
-                "fail_since": None, "next_try": at + 60, "nodes": rows_of(self.fx, self.prop), "cut": False, "notes": [],
+                "fail_since": None, "next_try": at + 60, "nodes": self.rows(at), "cut": False, "notes": [],
                 "groups": None if self.prop else groups_of(self.fx), "groups_at": at, "groups_why": "", "reads": self.reads}
 
 

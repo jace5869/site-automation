@@ -8,7 +8,7 @@
 // DOM is built node by node, every value from the answer goes in as text.
 (function () {
   "use strict";
-  var A = null, F = null, ETAG = "", FAIL = "", LOADED_AT = 0, BUSY = false;
+  var A = null, F = null, ETAG = "", FAIL = "", LOADED_AT = 0, BUSY = false, VER = 0, GSC = {sig: "", m: {}};
   var B = null, P = {};                       // the board (kept across the page's redraws, so an open card survives them) and its parts
   var SEL = {}, OV = null;                    // the selection (node keys), the open card or list
   var SPOT = {g: null, left: 20, pausedUntil: 0}, DWELL = 20;
@@ -33,18 +33,22 @@
       var n = {g: +r[0] || 0, name: String(r[1] == null ? "" : r[1]), ip: String(r[2] || ""), c: ST_WORD[r[3]] ? r[3] : "x", rt: typeof r[4] === "number" ? r[4] : null,
                loss: typeof r[5] === "number" ? r[5] : null, since: r[6] ? r[6] * 1000 : 0, exact: !!r[7], why: String(r[8] || ""), vm: vmw[r[9]] || "",
                host: hosts[r[10]] || "", vc: vcs[r[11]] ? String(vcs[r[11]][0]) : "", flags: String(r[12] || ""), key: String(r[13]), also: arr(r[14]),
-               polled: typeof r[15] === "number" ? r[15] : null, said: String(r[16] || ""), model: models[r[17]] || ""};
+               polled: typeof r[15] === "number" ? r[15] : null, said: String(r[16] || ""), model: models[r[17]] || "", vci: typeof r[11] === "number" ? r[11] : -1};
       n.vconly = n.flags.indexOf("v") >= 0;
       return n;
     });
-    nodes.forEach(function (n) { var g = groups[n.g]; if (g) g.nodes.push(n); else n.g = -1; });
+    // g.nodes: its squares (each node once, in its first group); g.members: every node in it (a node in two groups counts in both)
+    groups.forEach(function (g) { g.members = []; });
+    nodes.forEach(function (n) { var g = groups[n.g]; if (g) { g.nodes.push(n); g.members.push(n); } else n.g = -1; });
+    nodes.forEach(function (n) { if (n.g >= 0) n.also.forEach(function (i) { if (groups[i] && i !== n.g) groups[i].members.push(n); }); });
     nodes = nodes.filter(function (n) { return n.g >= 0; });
     var by = {};
     nodes.forEach(function (n) { by[n.key] = n; });
     var f = a.feed || {};
+    VER++;
     return {groups: groups, nodes: nodes, by: by, cmp: a.cmp || {}, counts: a.counts || {}, vcs: vcs, incomplete: arr(a.incomplete), notes: arr(a.notes),
             seconds: a.seconds || 60, feed: f, zone: a.zone || "UTC", title: a.title || "", enclave: a.enclave || "", group_by: a.group_by || "groups",
-            vmRule: (a.cmp || {}).vm_rule || ""};
+            vmRule: (a.cmp || {}).vm_rule || "", late: +a.late || 180, stale: +a.stale || 600};
   }
   function load(first) {
     if (BUSY) return;
@@ -67,26 +71,41 @@
   }
 
   // ---------------------------------------------------------------- the one rule: green only when current
-  function swFresh() { return FAIL ? "stale" : A.feedFresh("sw:fleet"); }
-  function vcFresh(n) { return n.vc ? A.feedFresh("vc:" + n.vc) : "stale"; }
-  function fresh(n) { return n.vconly ? (n.flags.indexOf("s") >= 0 ? "stale" : vcFresh(n)) : swFresh(); }
+  // freshness from the rows on screen: their own answer's read times (never the wall's other poll), the portal reachable,
+  // this answer fetched; LATE / STALE as the answer says (SolarWinds: stretched with portal_wall_fleet_seconds)
+  function age(asof) { return asof == null ? null : Math.max(0, (NOW() - asof * 1000) / 1000); }
+  function fr(asof, state, late, stale) {
+    if (FAIL || A.unreach() || state !== "ok" || asof == null) return "stale";
+    var a = age(asof);
+    return a > stale ? "stale" : a > late ? "late" : "ok";
+  }
+  function swFresh() { return F ? fr(F.feed.asof, F.feed.state, F.late, F.stale) : "stale"; }
+  function vcFreshI(i) { var v = F && F.vcs[i]; return v ? fr(v[1], v[2], (W() && W().late) || 180, (W() && W().stale) || 600) : "stale"; }
+  function fresh(n) { return n.vconly ? (n.flags.indexOf("s") >= 0 ? "stale" : vcFreshI(n.vci)) : swFresh(); }
+  function sig() { var x = [VER, swFresh(), FAIL ? 1 : 0]; (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); }); return x.join(","); }
   // what a node is drawn as: up (green, only when its source is current), down, warn, off (hollow grey), unk (grey),
   // lastdown / lastwarn (its source not current: grey, "last known")
   function shown(n) {
-    var fr = fresh(n);
-    if (n.c === "d") return fr === "stale" ? "lastdown" : "down";
-    if (n.c === "w") return fr === "stale" ? "lastwarn" : "warn";
+    var f = fresh(n), old = n.flags.indexOf("o") >= 0, whole = !F.incomplete.length || n.vconly;
+    if (n.c === "d") return f === "stale" ? "lastdown" : "down";                    // red beats grey: an old poll's down stays down
+    if (n.c === "w") return f === "stale" || old ? "lastwarn" : "warn";
     if (n.c === "p" || n.c === "m") return "off";
-    if (n.c === "u") return fr === "ok" ? "up" : "unk";
+    if (n.c === "u") return f === "ok" && !old && whole ? "up" : "unk";            // green only from a current, whole read and poll
     return "unk";
   }
   var RANK = {down: 0, warn: 1, lastdown: 2, lastwarn: 3, unk: 4, off: 5, up: 6};
   function sevOf(s) { return s === "down" ? "crit" : s === "warn" ? "warn" : s === "up" ? "ok" : s === "off" ? "off" : "stale"; }
+  // a group's state from every member (a node in two groups counts in both), kept until the data or a source's freshness changes
   function gState(g) {
+    var sg = sig();
+    if (GSC.sig !== sg) GSC = {sig: sg, m: {}};
+    if (GSC.m[g.i]) return GSC.m[g.i];
     var c = {down: 0, warn: 0, up: 0, off: 0, unk: 0, lastdown: 0, lastwarn: 0};
-    g.nodes.forEach(function (n) { c[shown(n)]++; });
-    c.st = c.down ? "crit" : c.warn ? "warn" : c.unk || c.lastdown || c.lastwarn || !g.nodes.length ? "stale" : "ok";
+    (g.members || g.nodes).forEach(function (n) { c[shown(n)]++; });
+    c.n = (g.members || g.nodes).length;
+    c.st = c.down ? "crit" : c.warn ? "warn" : c.unk || c.lastdown || c.lastwarn || !c.n ? "stale" : !c.up ? "off" : "ok";
     if (c.st === "ok" && g.kind !== "v" && F.incomplete.length) c.st = "stale";        // a read not whole: never green
+    GSC.m[g.i] = c;
     return c;
   }
   function svcOf(n) { var g = F.groups[n.g]; return g ? (g.kind === "n" ? "no group" : g.name) : ""; }
@@ -100,25 +119,31 @@
     if (n.c === "u") return s === "up" ? "up" + (n.rt != null ? " · " + n.rt + " ms" : "") : "up when last read - not current";
     return n.why || ST_WORD[n.c].toLowerCase();
   }
-  function srcAge(fk) { var f = A.feed(fk); return f && f.asof ? A.ago(A.ageS(f.asof)) : "never read"; }
+  function agoS(asof) { return asof == null ? "never read" : A.ago(age(asof)); }
   function staleText() {
     if (FAIL) return "the Fleet answer could not be read (" + FAIL + ") - the last one shown";
-    var f = A.feed("sw:fleet"), fr = swFresh();
-    if (fr === "ok") return "";
-    if (!f || !f.asof) return "SolarWinds not read yet" + (f && f.why ? ": " + f.why : "");
-    return "SolarWinds last read " + srcAge("sw:fleet") + (f.state !== "ok" && f.why ? " - " + f.why : "") + (fr === "late" ? " (late)" : "");
+    if (A.unreach()) return "the portal is not answering - the last answer shown";
+    var f = F.feed, fv = swFresh();
+    if (fv === "ok") return "";
+    if (!f.asof) return "SolarWinds not read yet" + (f.why ? ": " + f.why : "");
+    return "SolarWinds last read " + agoS(f.asof) + (f.state !== "ok" && f.why ? " - " + f.why : "") + (fv === "late" ? " (late)" : "");
   }
+  function srcOf(n) { return n.vconly ? {name: "vCenter " + n.vc, asof: (F.vcs[n.vci] || [])[1]} : {name: "SolarWinds", asof: F.feed.asof}; }
   function share(n) {
     var s = shown(n);
     return {st: ST_WORD[n.c], sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, phrase: phrase(n), loss: n.loss, vc: n.vm, host: n.host,
-            said: n.why || (n.said ? "SolarWinds: " + n.said : "")};
+            said: n.why || (n.said ? "SolarWinds: " + n.said : ""), up: s === "up" || s === "off"};
   }
-  function ctx(one) {
-    var w = W(), z = F.zone || "UTC", day = "";
+  function ctx(L) {
+    var w = W(), z = F.zone || "UTC", day = "", one = L.length === 1 ? L[0] : null;
     try { day = new Intl.DateTimeFormat("en-GB", {timeZone: z, day: "2-digit", month: "short"}).format(new Date(NOW())); } catch (e) { day = ""; }
     var base = location.origin + A.src.replace(/api\/wall$/, "wall") + "?area=fleet";
-    return {site: w.enclave || "", stamp: hm(NOW()), day: day, zone: A.zoneName(), src: "SolarWinds every " + F.seconds + " s · vCenter compared",
-            link: one ? base + "&node=" + encodeURIComponent(one.key) : base, stale: staleText()};
+    var src = one ? srcOf(one) : null, vco = L.some(function (n) { return n.vconly; }), sw = L.some(function (n) { return !n.vconly; });
+    var stale = L.some(function (n) { var s = shown(n); return s === "lastdown" || s === "lastwarn" || s === "unk"; }) ?
+      (sw && swFresh() !== "ok" ? staleText() : "a source of these is not current - the last known state") : (sw ? staleText() : "");
+    return {site: w.enclave || "", stamp: hm(NOW()), day: day, zone: A.zoneName(),
+            src: one ? src.name + (one.vconly ? "" : " every " + F.seconds + " s · vCenter compared") : (sw ? "SolarWinds every " + F.seconds + " s" : "") + (sw && vco ? " · " : "") + (vco ? "vCenter (VMs not in SolarWinds)" : ""),
+            asof: src && src.asof ? hm(src.asof * 1000) : hm(NOW()), link: one ? base + "&node=" + encodeURIComponent(one.key) : base, stale: stale};
   }
 
   // ---------------------------------------------------------------- the board
@@ -200,24 +225,25 @@
   }
   function srcs() {
     clear(P.src);
-    var mk = function (fk, name) {
-      var f = A.feed(fk);
+    var mk = function (fk, name, ref, why) {
       var e = h("span", "fd", [h("i"), h("span", "", [name + " "]), h("b", "age", [""])],
-                {"data-d": "feed:" + fk, tabindex: "0", role: "button", title: (f ? f.name + (f.why ? " - " + f.why : "") + " · " : "") + "read by the portal itself · click for the source's card"});
-      e.setAttribute("data-fl-age", fk);
+                {"data-d": "feed:" + fk, tabindex: "0", role: "button", title: name + (why ? " - " + why : "") + " · read by the portal itself · click for the source's card"});
+      e.setAttribute("data-fl-age", ref);
       return e;
     };
-    P.src.appendChild(mk("sw:fleet", "SolarWinds"));
-    (F ? F.vcs : []).forEach(function (v) { P.src.appendChild(mk("vc:" + v[0], "vCenter " + String(v[0]).split(".")[0])); });
+    if (!F) return;
+    P.src.appendChild(mk("sw:fleet", "SolarWinds", "sw", F.feed.why));
+    F.vcs.forEach(function (v, i) { P.src.appendChild(mk("vc:" + v[0], "vCenter " + String(v[0]).split(".")[0], "vc" + i, "")); });
     ages();
   }
-  // each source's age, as the wall's rule says it: "35 s", LATE, NOT CURRENT (ticks every second)
+  // each source's age, as the wall's rule says it: "35 s", LATE, NOT CURRENT - from the Fleet answer's own read times (ticks every second)
   function ages() {
+    if (!F) return;
     P.src.querySelectorAll("[data-fl-age]").forEach(function (e) {
-      var fk = e.getAttribute("data-fl-age"), f = A.feed(fk), fr = FAIL && fk === "sw:fleet" ? "stale" : A.feedFresh(fk);
-      var age = f && f.asof ? A.ago(A.ageS(f.asof)).replace(" ago", "") : "never read";
-      e.className = "fd " + fr;
-      e.lastChild.textContent = fr === "ok" ? age : fr === "late" ? "LATE " + age : "NOT CURRENT" + (f && f.asof ? " · " + age : "");
+      var r = e.getAttribute("data-fl-age"), i = r === "sw" ? -1 : +r.slice(2), asof = i < 0 ? F.feed.asof : (F.vcs[i] || [])[1];
+      var fv = i < 0 ? swFresh() : vcFreshI(i), ag = asof != null ? A.ago(age(asof)).replace(" ago", "") : "never read";
+      e.className = "fd " + fv;
+      e.lastChild.textContent = fv === "ok" ? ag : fv === "late" ? "LATE " + ag : "NOT CURRENT" + (asof != null ? " · " + ag : "");
     });
   }
   function counts() {
@@ -258,9 +284,9 @@
     }
     P.svc.classList.toggle("two", list.length > 8);
     list.forEach(function (g) {
-      var c = gState(g), up = c.up + c.warn, word = c.down ? c.down + " down" : c.warn ? c.warn + " warn" : c.st === "stale" ? "not current" : "all up";
+      var c = gState(g), word = c.down ? c.down + " down" : c.warn ? c.warn + " warn" : c.st === "stale" ? "not current" : c.st === "off" ? "off / unmanaged" : c.off ? "rest off" : "all up";
       P.svc.appendChild(h("div", "sv " + c.st + (SPOT.g === g.i ? " on" : ""), [h("b", "", [g.name]),
-        h("span", "ln", [A.word(c.st === "ok" ? "ok" : c.st, word), h("small", "", [up + "/" + g.nodes.length + " up"])])],
+        h("span", "ln", [A.word(c.st === "ok" ? "ok" : c.st, word), h("small", "", [c.up + "/" + c.n + " up"])])],
         {"data-g": String(g.i), tabindex: "0", role: "button", title: g.name + ": put it in the Spotlight" + (g.sw ? " · SolarWinds says " + ST_WORD[g.sw].toLowerCase() : "")}));
     });
     if (gs.length > list.length) P.svc.appendChild(h("div", "sv more", [h("b", "", ["+" + (gs.length - list.length) + " more groups"]), h("span", "", ["all in the grid below"])]));
@@ -283,7 +309,10 @@
     P.clr.hidden = !nsel;
     clear(P.evs);
     if (!L.length) {
-      P.evs.appendChild(h("p", "wx-empty", [swFresh() === "ok" ? "Every node SolarWinds watches is up (or off on purpose)." : "No current data - nothing can be said up or down."]));
+      var cn = counts();
+      P.evs.appendChild(h("p", "wx-empty", [swFresh() !== "ok" ? "No current data - nothing can be said up or down." :
+        cn.unk ? "Nothing down or warning in the current read - " + cn.unk + " without current data (grey)." :
+        "Every node SolarWinds watches is up, or off on purpose."]));
       P.more.hidden = true;
       return;
     }
@@ -312,10 +341,10 @@
       return h("div", "r" + (n ? " " + cls : "") + (ref ? "" : " flat"), [h("b", "", [String(n)]), h("div", "", [t, h("small", "", [sub])])],
                ref && n ? {"data-cmp": ref, tabindex: "0", role: "button", title: "The list of these nodes"} : null);
     };
-    var curVc = F.vcs.some(function (v) { return A.feedFresh("vc:" + v[0]) === "ok"; });
+    var curVc = F.vcs.some(function (v, i) { return vcFreshI(i) === "ok"; });
     add(P.cmp, [
-      line(c.vc_only || 0, "", "VMs in vCenter, not monitored in SolarWinds", "in the grid as \"vCenter only\", with vCenter's status (heartbeat)", "v"),
-      line(c.vc_read ? c.not_in_vc || 0 : "–", "warn", "SolarWinds VMs not found in vCenter", c.vc_read ? "decommissioned? still polled · a VM by its Vendor or MachineType (" + F.vmRule + ")" : "not counted: not every vCenter read yet", "n"),
+      line(c.vc_only == null ? "–" : c.vc_only, "", "VMs in vCenter, not monitored in SolarWinds", c.vc_only == null ? "not counted: SolarWinds' read is not whole and current" : "in the grid as \"vCenter only\", with vCenter's status (heartbeat)", "v"),
+      line(c.vc_read ? c.not_in_vc || 0 : "–", "warn", "SolarWinds VMs not found in vCenter", c.vc_read ? "decommissioned? still polled · a VM by its Vendor or MachineType (" + F.vmRule + ")" : "not counted: not every vCenter's read is current", "n"),
       line(c.disagree || 0, "crit", "Disagree: SolarWinds down, vCenter running with heartbeat", (c.disagree_names || []).slice(0, 3).join(", ") + (c.disagree ? " - likely the network path, not the VM" : "none"), "g"),
       line(c.off_in_vc || 0, "", "SolarWinds down, powered off in vCenter", "shown as Powered off (grey), never down", "p"),
       c.ambiguous ? line(c.ambiguous, "warn", "Not compared: two VMs of one name", "the IP did not settle which - see each node's card", "a") : null,
@@ -324,7 +353,7 @@
   // the Spotlight: one group at a time, problems first; steps every DWELL s, or by ◀ ▶ (a click pauses it for 60 s)
   function spotOrder() {
     var rk = {crit: 0, warn: 1, stale: 2, ok: 3};
-    return F.groups.filter(function (g) { return g.nodes.length; }).map(function (g) { return {g: g, s: gState(g)}; })
+    return F.groups.filter(function (g) { return (g.members || g.nodes).length; }).map(function (g) { return {g: g, s: gState(g)}; })
       .sort(function (a, b) { return rk[a.s.st] - rk[b.s.st] || b.s.down - a.s.down || b.s.warn - a.s.warn || a.g.i - b.g.i; }).map(function (x) { return x.g; });
   }
   function spotlight() {
@@ -336,7 +365,7 @@
     P.sph.textContent = "Spotlight · " + g.name;
     spotCue(idx, order.length);
     clear(P.chips);
-    var ns = g.nodes.slice().sort(function (a, b) { return RANK[shown(a)] - RANK[shown(b)] || (a.name < b.name ? -1 : 1); });
+    var ns = (g.members || g.nodes).slice().sort(function (a, b) { return RANK[shown(a)] - RANK[shown(b)] || (a.name < b.name ? -1 : 1); });
     var max = 15, show = ns.length > max ? ns.slice(0, max - 1) : ns;
     show.forEach(function (n) {
       var s = shown(n);
@@ -506,10 +535,10 @@
       as.addEventListener("click", function () { if (SEL[n.key]) delete SEL[n.key]; else SEL[n.key] = 1; as.textContent = SEL[n.key] ? "Remove from selection" : "Add to selection"; notUp(); drawGrid(); });
       extra.push(as);
     }
-    var sh = window.SAWallShare && window.SAWallShare.nodes ? window.SAWallShare.nodes.panel(L.map(share), ctx(one ? n : null), extra) :
+    var sh = window.SAWallShare && window.SAWallShare.nodes ? window.SAWallShare.nodes.panel(L.map(share), ctx(one ? [n] : L), extra) :
       h("p", "note warn", ["Share to Teams (wall-share.js) did not load - reload the page."]);
     var g = F.groups[n.g] || {}, also = (n.also || []).map(function (i) { return (F.groups[i] || {}).name; }).filter(Boolean);
-    var fr = fresh(n), f = A.feed(n.vconly ? "vc:" + n.vc : "sw:fleet");
+    var fr = fresh(n), sr = srcOf(n);
     var body = one ? kv([
       ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
       ["IP", n.ip || "none known", "mono"],
@@ -519,7 +548,7 @@
       ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (n.flags.indexOf("s") >= 0 ? " · not current - not compared" : "") :
         n.flags.indexOf("a") >= 0 ? "more than one VM of this name - not compared (the IP did not settle it)" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
       n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.ago(n.polled).replace(" ago", "") + " before the read" : "")],
-      ["Source", (n.vconly ? "vCenter " + n.vc : "SolarWinds") + " · " + (f && f.asof ? "as of " + A.hms(f.asof) + " (" + A.ago(A.ageS(f.asof)) + ")" : "never read")],
+      ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
       ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]]) : null;
     var card = h("div", "fl-card" + (one ? "" : " bulk"), [head, body ? h("div", "fl-cb", [body]) : null, sh], {role: "dialog", "aria-modal": "true", "aria-label": one ? n.name : "Share to Teams"});
     P.ov.appendChild(card);
@@ -536,9 +565,8 @@
     var shareB = h("button", "btn pri", ["Share these to Teams"], {type: "button"});
     var selB = h("button", "btn", ["Tick all of these"], {type: "button"});
     var box = h("div", "fl-evs all");
-    L.slice(0, 500).forEach(function (n) { box.appendChild(row(n)); });
-    if (L.length > 500) box.appendChild(h("p", "wx-empty", ["+" + (L.length - 500) + " more - narrow it in SolarWinds"]));
-    shareB.addEventListener("click", function () { var sel = L.filter(function (n) { return SEL[n.key]; }); openCard((sel.length ? sel : L).slice(0, 2000), "bulk"); });
+    L.forEach(function (n) { box.appendChild(row(n)); });               // every one reachable (a long list scrolls)
+    shareB.addEventListener("click", function () { var sel = L.filter(function (n) { return SEL[n.key]; }); openCard(sel.length ? sel : L, "bulk"); });
     selB.addEventListener("click", function () { L.forEach(function (n) { SEL[n.key] = 1; }); box.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = true; }); notUp(); drawGrid(); });
     P.ov.appendChild(h("div", "fl-card list", [h("h2", "", [h("span", "nm", [title]), h("small", "", [L.length + " node" + (L.length === 1 ? "" : "s")]), x]),
       note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, h("span", "fl-click", ["click a row for its card · tick to share several"])]), box], {role: "dialog", "aria-modal": "true", "aria-label": title}));

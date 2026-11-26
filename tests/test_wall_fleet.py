@@ -33,7 +33,8 @@ OPTS = wf.opts_of({})[0]
 def sw_row(nid, name, status=1, dns=None, ip="192.0.2.10", vendor="VMware Inc.", model="VMware Virtual Platform", loss=0, rt=3, unmanaged=False, cp=None):
     r = {"NodeID": nid, "Caption": name, "DNS": dns if dns is not None else name.lower() + ".corp.example.mil", "IPAddress": ip, "Status": status,
          "StatusDescription": "Node status is %s." % {1: "Up", 2: "Down", 3: "Warning"}.get(status, "Unknown"), "Vendor": vendor, "MachineType": model,
-         "ResponseTime": -1 if status == 2 else rt, "PercentLoss": 100 if status == 2 else loss, "UnManaged": unmanaged, "LastSync": "2026-11-26T05:41:20Z"}
+         "ResponseTime": -1 if status == 2 else rt, "PercentLoss": 100 if status == 2 else loss, "UnManaged": unmanaged,
+         "LastSync": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 40))}
     if cp is not None:
         r["cp_group"] = cp
     return r
@@ -49,7 +50,10 @@ def view(vms, now, age=20, state="ok", name="vc01.corp.example.mil"):
                                             "snap": {"hosts": [], "clusters": [], "datastores": [], "vms": vms}}}, "history": {}}
 
 
-def snap(rows, groups=None, now=None, age=30, state="ok", cut=False):
+NOGROUPS = {"list": [], "members": {}, "cut": False}       # an Orion with no groups set up: read, whole, empty
+
+
+def snap(rows, groups=NOGROUPS, now=None, age=30, state="ok", cut=False):
     at = (now or time.time()) - age
     return {"state": state, "why": "", "at": at, "tried": at, "fail_since": None, "next_try": at + 60, "nodes": rows, "cut": cut, "notes": [],
             "groups": groups, "groups_at": at, "groups_why": "", "reads": 1}
@@ -110,7 +114,7 @@ class Grouping(unittest.TestCase):
     def test_a_custom_property(self):
         rows = [sw_row(1, "A1", cp="Active Directory"), sw_row(2, "A2", cp="active directory"), sw_row(3, "B1", cp=""), sw_row(4, "C1", cp=None)]
         o = wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0]
-        fm = wf.model(snap(rows, None, self.now), None, o, self.now)
+        fm = wf.model(snap(rows, now=self.now), None, o, self.now)
         self.assertEqual([g[0] for g in fm["groups"]], ["Active Directory", wf.NO_GROUP])     # any case: one group, its first spelling
         self.assertEqual(fm["groups"][0][1], "c")
         self.assertEqual([r[0] for r in fm["nodes"]], [0, 0, 1, 1])
@@ -121,7 +125,7 @@ class Compare(unittest.TestCase):
         self.now = time.time()
 
     def fm(self, rows, vms, age=20, state="ok", o=OPTS):
-        return wf.model(snap(rows, None, self.now), view(vms, self.now, age, state), o, self.now)
+        return wf.model(snap(rows, now=self.now), view(vms, self.now, age, state), o, self.now)
 
     def test_powered_off_is_never_down(self):
         rows = [sw_row(1, "SITEAAPPV031", status=2), sw_row(2, "SITEAAPPV032", status=2)]
@@ -174,16 +178,16 @@ class Compare(unittest.TestCase):
 
     def test_not_found_is_not_counted_before_every_vcenter_was_read(self):
         rows = [sw_row(1, "SITEAOLDV01")]
-        fm = wf.model(snap(rows, None, self.now), {"sources": {"vcenter:a": {"kind": "vcenter", "name": "a", "state": "ok", "at": self.now - 10, "snap": {"vms": []}},
+        fm = wf.model(snap(rows, now=self.now), {"sources": {"vcenter:a": {"kind": "vcenter", "name": "a", "state": "ok", "at": self.now - 10, "snap": {"vms": []}},
                                                                 "vcenter:b": {"kind": "vcenter", "name": "b", "state": "auth", "at": None, "snap": None}}}, OPTS, self.now)
         self.assertEqual(fm["cmp"]["not_in_vc"], 0)
         self.assertFalse(fm["cmp"]["vc_read"])
 
     def test_names_any_case_short_or_fqdn_and_two_of_a_name(self):
         rows = [sw_row(1, "SITEADB01", ip="192.0.2.21"), sw_row(2, "siteadb02.corp.example.mil", dns="", ip="192.0.2.22"),
-                sw_row(3, "SITEADB03", ip="192.0.2.23"), sw_row(4, "192.0.2.40", dns="", ip="192.0.2.40")]
+                sw_row(3, "SITEADB03", dns="", ip="192.0.2.23"), sw_row(4, "192.0.2.40", dns="", ip="192.0.2.40")]
         vms = [vm("siteadb01.corp.example.mil", ip="192.0.2.21"), vm("SITEADB02"),
-               vm("SITEADB03", ip="192.0.2.99", mid="vm-a"), vm("siteadb03.other.example.mil", ip="192.0.2.98", mid="vm-b"),
+               vm("SITEADB03", mid="vm-a"), vm("siteadb03.other.example.mil", mid="vm-b"),
                vm("SITEAAPP77", guest="192.0.2.40")]
         fm = self.fm(rows, vms)
         n = by_name(fm)
@@ -195,8 +199,111 @@ class Compare(unittest.TestCase):
         self.assertFalse([r for r in fm["nodes"] if "v" in r[12] and r[1].lower().startswith("siteadb03")])    # neither is "vCenter only"
         self.assertEqual(n["192.0.2.40"][9], "")                         # an IP caption is no name
         rows[2]["IPAddress"] = "192.0.2.98"
+        vms[3]["ip"] = "192.0.2.98"
         n = by_name(self.fm(rows, vms))
         self.assertEqual((n["SITEADB03"][9], n["SITEADB03"][12]), ("1", ""))     # the IP settles it
+
+
+class Review1(unittest.TestCase):
+    """review round 1 (Codex): recovery needs known members, another domain or IP is another machine, an old Orion poll,
+    the groups' completeness, every membership, absence only from a whole read, the since clock, the back-off clock"""
+
+    def setUp(self):
+        self.now = time.time()
+
+    def test_unknown_never_clears_a_down_group(self):
+        groups = {"list": [[1, "AD", 1]], "members": {"1": [1], "2": [1]}, "cut": False}
+        fm = wf.model(snap([sw_row(1, "DC1", status=2), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
+        self.assertEqual([c["id"] for c in wf.conds(fm, self.now)[0]], ["fleet:down:AD"])
+        for st, um in ((0, False), (9, True), (1, True)):                 # unknown, unmanaged: no recovery seen
+            fm = wf.model(snap([sw_row(1, "DC1", status=st, unmanaged=um), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
+            cs, ok = wf.conds(fm, self.now)
+            self.assertEqual((cs, "fleet:down:AD" in ok), ([], False), (st, um))
+        fm = wf.model(snap([sw_row(1, "DC1"), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
+        self.assertIn("fleet:down:AD", wf.conds(fm, self.now)[1])         # both known up: it clears
+
+    def test_another_domain_or_ip_is_another_machine(self):
+        rows = [sw_row(1, "APP", dns="app.prod.example.mil", ip="192.0.2.10", status=2)]
+        for v in (vm("app.test.example.mil", power="poweredOff", hb=None), vm("APP", power="poweredOff", hb=None, ip="192.0.2.99")):
+            fm = wf.model(snap(rows, now=self.now), view([v], self.now), OPTS, self.now)
+            n = by_name(fm)["APP"]
+            self.assertEqual(n[3], "d", v["name"])                       # never greyed by another machine's power state
+            self.assertIn("c", n[12])
+            self.assertEqual([r[1] for r in fm["nodes"] if "v" in r[12]], [v["name"]])     # that VM stays "vCenter only"
+        fm = wf.model(snap(rows, now=self.now), view([vm("app.prod.example.mil", power="poweredOff", hb=None)], self.now), OPTS, self.now)
+        self.assertEqual(by_name(fm)["APP"][3], "p")                      # the same FQDN, no IP to differ: the same machine
+
+    def test_an_old_orion_poll_is_not_current(self):
+        r = sw_row(1, "A1")
+        r["LastSync"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now - 3600))
+        groups = {"list": [[1, "G", 1]], "members": {"1": [1]}, "cut": False}
+        fm = wf.model(snap([r], groups, self.now, age=0), None, OPTS, self.now)
+        row = fm["nodes"][0]
+        self.assertIn("o", row[12])
+        self.assertIn("last polled it 60 min", row[8])
+        self.assertNotIn("fleet:down:G", wf.conds(fm, self.now)[1])
+
+    def test_groups_not_whole_are_not_whole(self):
+        rows = [sw_row(1, "A1")]
+        fm = wf.model(dict(snap(rows, None, now=self.now), groups_why="the groups were not read: HTTP 400"), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+        self.assertIn("groups were not read", " ".join(fm["incomplete"]))
+        fm = wf.model(snap(rows, {"list": [[1, "G", 1]], "members": {"1": [1]}, "cut": True}, self.now), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+        s2 = snap([sw_row(1, "A1", cp="AD")], now=self.now)
+        s2["notes"] = ["custom property ServiceGroup: not read (HTTP 400)"]
+        self.assertFalse(wf.model(s2, None, wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0], self.now)["complete"])
+
+    def test_every_membership_counts(self):
+        groups = {"list": [[1, "Alpha", 1], [2, "Beta", 1]], "members": {"1": [1, 2], "2": [2]}, "cut": False}
+        fm = wf.model(snap([sw_row(1, "SHARED", status=2), sw_row(2, "B1")], groups, self.now), None, OPTS, self.now)
+        self.assertEqual(sorted(c["id"] for c in wf.conds(fm, self.now)[0]), ["fleet:down:Alpha", "fleet:down:Beta"])
+        self.assertEqual(sorted(w[0] for w in wf.summary(fm)["worst"]), ["Alpha", "Beta"])
+
+    def test_absence_only_from_a_whole_current_read(self):
+        vms = [vm("SITEAVMX01")]
+        for sn in (snap([sw_row(1, "A1")], now=self.now, cut=True), dict(snap([], now=self.now), nodes=None, state="auth", at=None),
+                   snap([sw_row(1, "A1")], now=self.now, age=3600)):
+            fm = wf.model(sn, view(vms, self.now), wf.opts_of({"fleet_group_by": "custom:X"})[0], self.now)
+            self.assertIsNone(fm["cmp"]["vc_only"])
+            self.assertFalse([r for r in fm["nodes"] if "v" in r[12]])
+        two = view([vm("x")], self.now)
+        two["sources"]["vcenter:b"] = {"kind": "vcenter", "name": "b", "state": "ok", "at": self.now - 900, "snap": {"vms": []}}
+        fm = wf.model(snap([sw_row(1, "OLDV")], now=self.now), two, OPTS, self.now)
+        self.assertFalse(fm["cmp"]["vc_read"])                              # one vCenter old: "not found" not counted
+        self.assertEqual(fm["cmp"]["not_in_vc"], 0)
+
+    def test_since_by_each_sources_own_read(self):
+        s = wf.Since()
+        out = s.update({"sw:1": ("d", 1900.0), "vc:a:1": ("u", 1950.0)}, 1900.0)
+        out = s.update({"sw:1": ("d", 2000.0), "vc:a:1": ("d", 2100.0)}, 2000.0)
+        self.assertEqual(out["vc:a:1"], (2100.0, True))
+        s.update({"sw:1": ("d", 2060.0)}, 2060.0, whole=False)             # a cut read forgets nothing
+        self.assertIn("vc:a:1", s.d)
+
+    def test_backoff_counts_from_the_failure(self):
+        t = [1000.0]
+
+        class Slow(FakeClient):
+            def paged(self2, *a, **k):
+                t[0] += 600                                                 # the refusal after 10 min
+                raise site_swis.SwisError("refused", "auth")
+        r = wf.Reader(lambda: Slow([]), wf.opts_of({"fleet_group_by": "custom:X"})[0], clock=lambda: t[0], auth_retry=900)
+        try:
+            r.read_once()
+        except site_swis.SwisError as e:
+            r._failed(e, r.clock())
+        self.assertEqual(r.snapshot()["next_try"], 1600.0 + 900)
+
+    def test_groups_tried_every_15_minutes_even_when_never_read(self):
+        c = FakeClient([sw_row(1, "A1")], None, refuse=("Orion.Container",))
+        c.groups = {"list": [], "members": []}
+        t = [1000.0]
+        r = wf.Reader(lambda: c, OPTS, clock=lambda: t[0])
+        r.read_once()
+        t[0] += 60
+        r.read_once()
+        self.assertEqual(sum(1 for q, p in c.q if "Metadata.Entity" in q), 1)
 
 
 class StaleNeverGreen(unittest.TestCase):
@@ -211,21 +318,21 @@ class StaleNeverGreen(unittest.TestCase):
     def test_rules(self):
         now = time.time()
         up = [sw_row(1, "A1"), sw_row(2, "A2")]
-        a, m = self.area(wf.model(snap(up, None, now, age=30), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(up, now=now, age=30), None, OPTS, now), now)
         self.assertEqual(a["state"], "ok")
         self.assertEqual(m["feeds"]["sw:fleet"]["fresh"], "ok")
-        a, m = self.area(wf.model(snap(up, None, now, age=900), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(up, now=now, age=900), None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")                           # 15 min old: never green
-        a, m = self.area(wf.model(snap(up, None, now, age=240), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(up, now=now, age=240), None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")                           # LATE: never green either
-        a, m = self.area(wf.model(snap(up, None, now, age=30, cut=True), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(up, now=now, age=30, cut=True), None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")                           # cut at max_nodes: not whole
         down = [sw_row(1, "A1", status=2), sw_row(2, "A2")]
-        a, m = self.area(wf.model(snap(down, None, now, age=30), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(down, now=now, age=30), None, OPTS, now), now)
         self.assertEqual((a["state"], a["crit"]), ("crit", 1))
-        a, m = self.area(wf.model(snap(down, None, now, age=900), None, OPTS, now), now)
+        a, m = self.area(wf.model(snap(down, now=now, age=900), None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")                           # down as last known: grey, said, never green
-        st = dict(snap(up, None, now), state="auth", nodes=None, at=None)
+        st = dict(snap(up, now=now), state="auth", nodes=None, at=None)
         a, m = self.area(wf.model(st, None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")
         m = wm.build(None, None, None, {}, wm.Tracker(), now, fleet=None)
@@ -234,7 +341,7 @@ class StaleNeverGreen(unittest.TestCase):
     def test_a_longer_interval_stretches_late(self):
         now = time.time()
         o = wf.opts_of({"fleet_seconds": 600})[0]
-        a, m = self.area(wf.model(snap([sw_row(1, "A1")], None, now, age=900), None, o, now), now)
+        a, m = self.area(wf.model(snap([sw_row(1, "A1")], now=now, age=900), None, o, now), now)
         self.assertEqual(a["state"], "ok")                              # read every 10 min: 15 min old is inside its own LATE
 
     def test_on_but_not_readable_says_why(self):
@@ -265,8 +372,8 @@ class SinceTracker(unittest.TestCase):
     def test_since_in_the_rows(self):
         now = time.time()
         s = wf.Since()
-        wf.model(snap([sw_row(1, "A1")], None, now, age=60), None, OPTS, now - 30, since=s)
-        fm = wf.model(snap([sw_row(1, "A1", status=2)], None, now, age=0), None, OPTS, now, since=s)
+        wf.model(snap([sw_row(1, "A1")], now=now, age=60), None, OPTS, now - 30, since=s)
+        fm = wf.model(snap([sw_row(1, "A1", status=2)], now=now, age=0), None, OPTS, now, since=s)
         r = fm["nodes"][0]
         self.assertEqual((r[3], r[7]), ("d", 1))
         self.assertAlmostEqual(r[6], now, delta=2)
@@ -384,7 +491,7 @@ class Reader(unittest.TestCase):
         self.assertEqual(sn["state"], "ok")
         self.assertTrue(sn["groups_why"].startswith("the groups were not read"))
         fm = wf.model(sn, None, OPTS, time.time())
-        self.assertTrue(fm["complete"])                                 # up / down is still whole; the note says the groups
+        self.assertFalse(fm["complete"])                                # the services need their members: not whole, said (review 1)
         self.assertTrue(any("groups were not read" in n for n in fm["notes"]))
 
 
@@ -467,7 +574,7 @@ class ShareText(unittest.TestCase):
         self.assertNotIn("<script", h)
         self.assertNotIn('onerror="', h)
         self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;&quot;", h)
-        self.assertIn('href="javascript:&quot;&gt;&lt;script&gt;', h)          # the link's text escaped (the page makes it from location.origin)
+        self.assertIn('<a href="#">', h)                                     # http(s) links only (the page makes it from location.origin)
         many = [dict(L[0], name="N%03d" % i) for i in range(250)]
         o = self.run_js(many, dict(c, site="S"))
         self.assertEqual(o["text"].count("\nDOWN  "), 200)

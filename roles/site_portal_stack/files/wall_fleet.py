@@ -40,7 +40,7 @@ GROUPS_EVERY = 900                         # the groups change seldom: read agai
 IDLE = 300                                 # no viewer for this long: SolarWinds is not read until the next one
 LATE_S, STALE_S = 180, 600                 # the wall's own (wall_model.LATE_S / STALE_S)
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")      # a custom property's name goes into the SWQL text: nothing else
-DEFAULTS = {"seconds": 60, "group_by": "groups", "groups": [], "vm_match": ["*VMware*"], "max_nodes": 10000, "page": 1000}
+DEFAULTS = {"seconds": 60, "group_by": "groups", "groups": [], "vm_match": ["*VMware*"], "max_nodes": 10000, "page": 1000, "poll_stale_minutes": 15}
 NODE_COLS = ["N.NodeID", "N.Caption", "N.DNS", "N.IPAddress", "N.Status", "N.StatusDescription", "N.Vendor", "N.MachineType",
              "N.ResponseTime", "N.PercentLoss", "N.UnManaged"]
 OPTIONAL = [("N.LastSync", "LastSync", "the last poll time (LastSync)")]
@@ -75,6 +75,10 @@ def opts_of(o):
         out["max_nodes"] = max(100, min(50000, int(o.get("fleet_max_nodes", DEFAULTS["max_nodes"]))))
     except (TypeError, ValueError):
         bad.append("portal_wall_fleet_max_nodes is not a number")
+    try:
+        out["poll_stale_minutes"] = max(5, min(1440, int(o.get("fleet_poll_stale_minutes", DEFAULTS["poll_stale_minutes"]))))
+    except (TypeError, ValueError):
+        bad.append("portal_wall_fleet_poll_stale_minutes is not a number")
     return out, bad
 
 
@@ -193,7 +197,7 @@ class Reader(object):
         self.lock, self.wake = threading.Lock(), threading.Event()
         self.thread, self.seen = None, 0.0
         self.st = {"state": "never", "why": "", "at": None, "tried": None, "fail_since": None, "next_try": None,
-                   "nodes": None, "cut": False, "notes": [], "groups": None, "groups_at": None, "groups_why": "", "reads": 0}
+                   "nodes": None, "cut": False, "notes": [], "groups": None, "groups_at": None, "groups_tried": None, "groups_why": "", "reads": 0}
         self.fails = 0
 
     def viewed(self):
@@ -220,7 +224,7 @@ class Reader(object):
                 try:
                     self.read_once()
                 except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said, tried again
-                    self._failed(e, now)
+                    self._failed(e, self.clock())         # the wait counts from the failure's end, never from the read's start
             self.wake.wait(max(1.0, min(30.0, (self.st["next_try"] or now + 30) - self.clock())))
             self.wake.clear()
 
@@ -244,22 +248,22 @@ class Reader(object):
         client = self.client_fn()
         self.url = getattr(client, "url", "")
         prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
-        groups, gwhy, gat = self.st["groups"], self.st["groups_why"], self.st["groups_at"]
-        if not prop and (groups is None or now - (gat or 0) >= GROUPS_EVERY):
+        groups, gwhy, gat, gtried = self.st["groups"], self.st["groups_why"], self.st["groups_at"], self.st["groups_tried"]
+        if not prop and (gtried is None or now - gtried >= GROUPS_EVERY):
+            gtried = now                        # an attempt, good or not: the next one GROUPS_EVERY s later (never each minute)
             try:
                 groups, gwhy, gat = read_groups(client, o), "", now
             except Exception as e:  # pylint: disable=broad-except  - the nodes still read; the groups said not read
                 if getattr(e, "kind", "") == "auth":
                     raise
                 gwhy = "the groups were not read: %s" % _txt(e, 200) + (" - the last read's groups are shown" if groups else "")
-                gat = now                       # not asked again before GROUPS_EVERY (a slow or refused read is not repeated each minute)
         rows, cut, notes = read_nodes(client, o, prop)
         done = self.clock()
         with self.lock:
             was = self.st["state"]
             self.fails = 0
             self.st.update(state="ok", why="", at=done, tried=now, fail_since=None, next_try=done + o["seconds"], nodes=rows, cut=bool(cut),
-                           notes=notes, groups=groups if not prop else None, groups_at=gat, groups_why=gwhy, reads=self.st["reads"] + 1)
+                           notes=notes, groups=groups if not prop else None, groups_at=gat, groups_tried=gtried, groups_why=gwhy, reads=self.st["reads"] + 1)
         if was in ("auth", "error"):
             self.log({"event": "wall", "source": "solarwinds-fleet", "state": "read again"})
         return self.snapshot()
@@ -289,18 +293,23 @@ class Since(object):
             except (OSError, ValueError) as e:
                 self.log({"event": "wall", "fleet": "since file not read", "why": _txt(e, 200)})
 
-    def update(self, codes, at):
-        """codes: {key: code} of this read -> {key: (since, exact)}; a key not in this read is forgotten"""
-        out, new = {}, {}
+    def update(self, codes, at, whole=True):
+        """codes: {key: code} or {key: (code, when it was read)} -> {key: (since, exact)}. at: the read's time for a key without
+        its own. whole: the read covers every node - only then is a key not in it forgotten (a cut read keeps the others)."""
+        out, new = {}, ({} if whole else dict(self.d))
+        changed = False
         for k, c in codes.items():
+            c, t = (c if isinstance(c, tuple) else (c, at))
             old = self.d.get(k)
             if old and old[0] == c:
                 new[k] = old
             else:
-                new[k] = [c, float(at), bool(old)]
+                new[k] = [c, float(t if t is not None else at), bool(old)]
+                changed = True
             out[k] = (new[k][1], new[k][2])
-        self.d = new
-        self._save()
+        if changed or len(new) != len(self.d):
+            self.d = new
+            self._save()
         return out
 
     def _save(self):
@@ -370,31 +379,62 @@ def vcenter_vms(view, now, late=LATE_S):
     return vms, vcs
 
 
+def _full(name):
+    """an FQDN, lower case, no trailing dot ('' for a short name or an IP)"""
+    n = str(name or "").strip().rstrip(".").casefold()
+    return n if "." in n and short(n) else ""
+
+
+def _ip(v):
+    try:
+        return str(ipaddress.ip_address(str(v or "").strip()))
+    except ValueError:
+        return ""
+
+
 def match(nodes, vms):
-    """name -> VM: {node index: (vm index | None, why, the VMs it could be)}; why "ambiguous" when two VMs fit and the IP does not
-    settle it (those VMs are then neither compared nor "vCenter only": the node's card says so)"""
-    by = {}
+    """name -> VM: {node index: (vm index | None, why, the VMs it could be)}. A node and a VM are one machine when an FQDN of
+    each is the same (SolarWinds' caption or DNS name; vCenter's VM name or guest host name), else when the short names are -
+    but never when both have an FQDN in different domains, or both an IP and they differ (another machine of that name: a VM
+    powered off in "test" never greys a "prod" node down). Two that still fit: the IP settles it, else "ambiguous" (those VMs
+    are then neither compared nor "vCenter only": the node's card says so)."""
+    by, byfull = {}, {}
     for i, v in enumerate(vms):
+        v["_full"] = set(x for x in (_full(v["name"]), _full(v["guest"])) if x)
+        v["_ips"] = set(x for x in (_ip(a) for a in v["ip"]) if x)
         for key in set(x for x in (short(v["name"]), short(v["guest"])) if x):
             by.setdefault(key, []).append(i)
+        for f in v["_full"]:
+            byfull.setdefault(f, []).append(i)
     out = {}
     for ni, n in enumerate(nodes):
-        cands = []
-        for key in (short(n["name"]), short(n["dns"])):
-            for i in by.get(key, []) if key else []:
-                if i not in cands:
-                    cands.append(i)
+        nfull = set(x for x in (_full(n["name"]), _full(n["dns"])) if x)
+        nip = _ip(n["ip"])
+        exact = set(i for f in nfull for i in byfull.get(f, ()))
+        cands = exact or set(i for key in set(x for x in (short(n["name"]), short(n["dns"])) if x) for i in by.get(key, ()))
         if not cands:
             continue
-        if len(cands) > 1:
-            byip = [i for i in cands if n["ip"] and n["ip"] in vms[i]["ip"]]
+        ok = set()
+        for i in cands:
+            v = vms[i]
+            if nip and v["_ips"] and nip not in v["_ips"]:
+                continue                        # both have an IP and they differ: another machine
+            if i not in exact and nfull and v["_full"] and not (set(f.split(".", 1)[1] for f in nfull) & set(f.split(".", 1)[1] for f in v["_full"])):
+                continue                        # both have a domain and they differ: another machine
+            ok.add(i)
+        if not ok:
+            out[ni] = (None, "conflict: a VM of this name in vCenter has another %s - not the same machine, not compared" %
+                       ("IP" if nip else "domain"), sorted(cands))
+            continue
+        if len(ok) > 1:
+            byip = [i for i in ok if nip and nip in vms[i]["_ips"]]
             if len(byip) == 1:
-                cands = byip
+                ok = set(byip)
             else:
-                out[ni] = (None, "ambiguous: %d VMs named %s in vCenter%s" % (len(cands), short(n["name"]) or n["name"],
-                                                                                " (the IP does not settle it)" if n["ip"] else ""), cands)
+                out[ni] = (None, "ambiguous: %d VMs named %s in vCenter%s" % (len(ok), short(n["name"]) or n["name"],
+                                                                                " (the IP does not settle it)" if nip else ""), sorted(ok))
                 continue
-        out[ni] = (cands[0], "", [])
+        out[ni] = (ok.pop(), "", [])
     return out
 
 
@@ -428,6 +468,13 @@ def model(snap, view, o, now, since=None, late=LATE_S):
                    "off_in_vc": 0, "vm_rule": ", ".join(o["vm_match"]) or "(none)", "vc_read": False}}
     if snap.get("groups_why"):
         out["notes"].append(snap["groups_why"])
+    if rows is not None and o["group_by"] == "groups":       # the services need their members: not read or cut is not whole
+        if not snap.get("groups"):
+            out["incomplete"].append(snap.get("groups_why") or "the SolarWinds groups were not read")
+        elif snap["groups"].get("cut"):
+            out["incomplete"].append("the groups' members were cut short (portal_wall_fleet_max_nodes)")
+    if any(n.startswith("custom property") for n in snap.get("notes") or []):
+        out["incomplete"].append("the custom property %s was not read - nodes not in their services" % o["group_by"][7:])
     if rows is None:
         out["incomplete"].append("SolarWinds not read yet" if feed["state"] == "never" else "SolarWinds: " + feed["why"])
         rows = []
@@ -475,8 +522,13 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     # ---- vCenter
     vms, vcs = vcenter_vms(view, now, late)
     out["vcs"] = [[v[0], v[2], v[3]] for v in vcs]
-    # "not found in vCenter" only when every vCenter was read at least once and one is current (else a VM may just be unread)
-    out["cmp"]["vc_read"] = bool(vcs) and all(v[2] is not None for v in vcs) and any(v[1] for v in vcs)
+    # "not found in vCenter" only when every vCenter's read is current (else a VM may just be unread there)
+    out["cmp"]["vc_read"] = bool(vcs) and all(v[1] for v in vcs)
+    vct = dict((i, v[2]) for i, v in enumerate(vcs))
+    at = snap.get("at")
+    # SolarWinds whole and current: only then may a VM be said "not monitored in SolarWinds"
+    sw_whole = rows is not None and not out["incomplete"] and feed["state"] == "ok" and at is not None and now - float(at) <= sw_stale
+    poll_stale = o["poll_stale_minutes"] * 60
     pairs = match(nodes, vms) if vms else {}
     used_vm = set()
     rx = o["vm_match"]
@@ -492,7 +544,6 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             d[v] = len(d)
             out[t].append(v)
         return d[v]
-    at = snap.get("at")
     for ni, n in enumerate(nodes):
         gl = [gi_of[k] for k in member.get(n["id"], []) if k in gi_of]
         gl = sorted(set(gl))
@@ -500,10 +551,16 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         c, why, flags, vcode, host, vci = n["c"], "", "", "", "", -1
         why = _since_words(c, n["rt"], n["loss"], n["desc"])
         vi, mwhy, maybe = pairs.get(ni, (None, "", []))
-        if mwhy:
+        if mwhy.startswith("ambiguous"):
             flags += "a"
-            used_vm.update(maybe)
+            used_vm.update(maybe)               # neither compared nor "vCenter only": which one is not known
             out["cmp"]["ambiguous"] += 1
+        elif mwhy:
+            flags += "c"                        # a VM of the name is another machine: it stays "vCenter only"
+        pa = round(at - n["polled"]) if at and n["polled"] else None
+        if pa is not None and pa > poll_stale and c in (UP, WARN, DOWN):
+            flags += "o"                        # Orion's own poll of it is old: its status is not current (never green)
+            why = (why + " · " if why else "") + "SolarWinds last polled it %d min before the read" % (pa // 60)
         if vi is not None:
             v = vms[vi]
             used_vm.add(vi)
@@ -525,14 +582,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             out["cmp"]["not_in_vc"] += 1
             if len(out["cmp"]["not_in_vc_names"]) < 20:
                 out["cmp"]["not_in_vc_names"].append(n["name"])
-        codes["sw:" + n["id"]] = c
+        codes["sw:" + n["id"]] = (c, at)
         built.append([gi, n["name"], n["ip"], c, None if n["rt"] is None or n["rt"] < 0 else round(n["rt"]), None if n["loss"] is None else round(n["loss"]),
                       0, 0, why, vcode, idx("hosts", host), vci, flags, n["id"], [x for x in gl if x != gi],
-                      round(at - n["polled"]) if at and n["polled"] else None, n["desc"] if c != UP else "",
+                      pa, n["desc"] if c != UP else "",
                       idx("models", (n["vendor"] + " · " + n["model"]).strip(" ·"))])
     # ---- vCenter only: VMs SolarWinds does not watch (their status from vCenter; not current there: grey on the page)
     vco = []
-    for i, v in enumerate(vms):
+    for i, v in enumerate(vms if sw_whole else []):
         if i in used_vm:
             continue
         p, hb = v["power"], v["heartbeat"]
@@ -549,14 +606,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         else:
             c, why = UNKNOWN, "vCenter: powered on, no heartbeat to judge (Tools not running or not installed)"
         key = "vc:%s:%s" % (vcs[v["vc"]][0], v["id"])
-        codes[key] = c
+        codes[key] = (c, vct.get(v["vc"]) or at)
         vco.append([nog + 1, v["name"], (v["ip"] or [""])[0], c, None, None, 0, 0, why, _vm_code(v), idx("hosts", v["host"]), v["vc"], "v" + ("" if v["current"] else "s"), key, [], None, "", -1])
-    if vco or vms:
+    if vco:
         groups.append([VC_ONLY, "v", ""])
-    out["cmp"]["vc_only"] = len(vco)
+    out["cmp"]["vc_only"] = len(vco) if sw_whole else None        # None: SolarWinds not whole and current - not counted
     built.extend(vco)
-    # ---- since: when each left its last code (the tracker), only for what is not up
-    sn = (since.update(codes, snap.get("at") or now) if since is not None and snap.get("at") else {})
+    # ---- since: when each left its last code (the tracker, each source by its own read's time), only for what is not up
+    sn = (since.update(codes, at, whole=sw_whole) if since is not None and at else {})
     for row in built:
         key = ("sw:" + row[13]) if "v" not in row[12] else row[13]
         s = sn.get(key)
@@ -595,7 +652,8 @@ def conds(fm, now):
             bad = sorted([r for r in rs if r[3] == code], key=lambda r: (r[6] or now, r[1]))
             cid = "fleet:%s:%s" % (kind[5:], g[0])
             if not bad:
-                if fm.get("complete"):
+                # seen OK only when every member's state is known and current: an unknown, unmanaged or old poll is no recovery
+                if fm.get("complete") and all(r[3] in (UP, WARN, DOWN, OFF) and "o" not in r[12] for r in rs):
                     ok.append(cid)
                 continue
             names = ", ".join(r[1] for r in bad[:3]) + (" +%d more" % (len(bad) - 3) if len(bad) > 3 else "")
@@ -613,9 +671,9 @@ def summary(fm):
     bad = {}
     for r in fm["nodes"]:
         if r[3] in (DOWN, WARN) and "v" not in r[12]:       # vCenter-only VMs: the VMware area's, as in conds()
-            g = fm["groups"][r[0]][0]
-            b = bad.setdefault(g, [0, 0])
-            b[0 if r[3] == DOWN else 1] += 1
+            for gi in [r[0]] + list(r[14] or []):            # every group it is in, as conds()
+                b = bad.setdefault(fm["groups"][gi][0], [0, 0])
+                b[0 if r[3] == DOWN else 1] += 1
     worst = sorted(bad.items(), key=lambda kv: (-kv[1][0], -kv[1][1], kv[0]))[:6]
     return {"counts": fm["counts"], "groups": len([g for g in fm["groups"] if g[1] in ("g", "c")]), "worst": [[k, v[0], v[1]] for k, v in worst],
             "cmp": dict((k, fm["cmp"][k]) for k in ("vc_only", "not_in_vc", "disagree", "ambiguous", "off_in_vc")), "complete": fm.get("complete", False)}
