@@ -1109,7 +1109,7 @@ class Portal(unittest.TestCase):
         import site_portal_filters as rules
         self.assertFalse(rules.may_run({"who": None}, "OPERATOR.SAM.J.2345678901", c.requesters))   # never open: nobody but the named
         h = sp.deciders_html(c)
-        self.assertIn('<span class="chip s-warning">AD not read</span><b>Only the named approvers may decide</b>: 1 in <code>portal_approvers</code>.', h)
+        self.assertIn('<span class="chip s-warning">AD not read</span><b>Only people on the named list can approve</b>: 1 in <code>portal_approvers</code>.', h)
         self.assertIn("AAP-Approvers (AD) is not counted until AD answers.", h)
         self.assertIn("dc01.corp.example.mil:636 no answer - tried ", h)
         sp2, none = self.cfg(PORTAL_APPROVERS="[]")

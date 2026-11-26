@@ -2893,6 +2893,11 @@ def access_entry(cfg, action, key=None):
     if key is None and applied:
         tid = action.get("tid") or cfg.template_id(action.get("name"))
         key = ("wf_" if action["aap"]["type"] == "workflow" else "jt_") + str(tid)
+        row = applied.get(key, {})
+        # Neon 1340 r2 #4: an id cached for the action counts only while the grant is for the template name the action runs
+        if row and row.get("template") != str((action.get("aap") or {}).get("name") or ""):
+            return {}, error
+        return row, error
     return applied.get(key, {}), error
 
 
@@ -4957,7 +4962,7 @@ def home_page(cfg, portal, cn, query=None):
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
-            % (strip, why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
+            % (strip, why_panel(cfg, portal) if cfg.label and cfg.viewer_133(cn) else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
     return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home")
 
 
@@ -5997,7 +6002,7 @@ def deciders_html(cfg):
                 'count, disabled accounts never. A card matches its AD account by its number (%s).</p></div>'
                 % (" &middot; ".join(parts + ([named_t] if named_t else [])), esc(_when(cfg, st["at"])), max(1, cfg.ad_groups_seconds // 60),
                    esc(", ".join(sorted(set(r["attribute"] for r in cfg.ad_groups.reader.matches))) if cfg.ad_groups else "")))
-    return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only the named approvers may decide</b>: %s. '
+    return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only people on the named list can approve</b>: %s. '
             '%s %s not counted until AD answers.<p class="muted-line">%s%s. Said in the portal\'s log too.</p></div>' % (
                 ("%d in <code>portal_approvers</code>" % named) if named else "nobody (<code>portal_approvers</code> is empty)",
                 " and ".join("%s (AD)" % esc(g["name"]) for g in st["groups"]), "is" if len(st["groups"]) == 1 else "are",
@@ -6014,7 +6019,7 @@ def approvals_page(cfg, portal, cn):
             '<div id="approvals" data-approver="%s"></div>'
             % ((" You may approve or deny - not a run you started yourself." if not cfg.self_approval else " You may approve or deny.")
                if approver else " You can view the workflows waiting for approval.",
-               deciders_html(cfg), esc(cfg.access_description(cn)), "1" if approver else "0"))
+               deciders_html(cfg) if cfg.viewer_133(cn) else "", esc(cfg.access_description(cn)), "1" if approver else "0"))
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
 
@@ -7465,6 +7470,17 @@ def make_handler(cfg, portal, static_dir, wall=None):
                                 "path": urllib.parse.urlsplit(self.path).path[:200]})
                 self._deny(why, api)
                 return None
+            if portal.may_use(user) and cfg.readers_restricted and not cfg.viewer_133(user) and not self._limited_ok(user):
+                # Neon 1340 r2: in only as an admin or by a template's saved group - exactly that, nothing else of the portal
+                path = urllib.parse.urlsplit(self.path).path
+                portal.log.add({"event": "refused", "user": user, "ip": self._ip(), "path": path[:200], "why": "limited access (admin page or saved templates only)"})
+                reason = ("Your access here is the Admin page and the templates your groups were given on it - not the rest of the portal. "
+                          "Ask %s to add you to a view list (portal_viewers, portal_view_groups)." % cfg.access_contact)
+                if api or path.startswith("/api/"):
+                    self._send(403, {"error": reason})
+                else:
+                    self._send(403, message_page(cfg, "Portal access", reason, user, kind="bad"), "text/html; charset=utf-8")
+                return None
             if not portal.may_use(user):
                 portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
                 if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
@@ -7474,6 +7490,22 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     self._send(403, reader_refusal_page(cfg, user), "text/html; charset=utf-8")
                 return None
             return user
+
+        def _limited_ok(self, cn):
+            """Neon 1340 r2: the pages someone in only as an admin (the Admin page) or by a template's saved group (that
+            template's form and launch, its jobs and approvals) may open"""
+            path = urllib.parse.urlsplit(self.path).path
+            if path == "/admin":
+                return cfg.admin_allowed(cn)
+            if not cfg.template_member(cn):
+                return False
+            m = re.match(r"^/(?:api/)?actions/([A-Za-z0-9_]{1,64})(?:/details)?$", path)
+            if m:
+                a = portal.actions.get(m.group(1))
+                return a is not None and template_allowed(cfg, cn, a)
+            return bool(re.match(r"^/(|jobs|approvals|refresh|api/approvals|api/summary|api/me|api/inventory)$", path)
+                        or re.match(r"^/(api/)?jobs/\d{1,12}(/progress)?$", path)
+                        or re.match(r"^/api/approvals/\d{1,12}/(approve|deny|placement)$", path))
 
         def _admin_allowed(self, cn):
             if cfg.admin_allowed(cn):

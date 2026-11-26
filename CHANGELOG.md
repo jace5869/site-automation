@@ -24,7 +24,8 @@ the card lines and access lists of 1.133.0 stay as they are.
   is looked up again). Self-approval is refused also for a run started in AAP under the approver's own name; an approval AAP
   says nothing about is decided in AAP.
 - Getting in only as an admin or through a template's saved group gives exactly that: the Admin page, or that template -
-  never the open run default, an action's `who` list, or the 1.133.0 job visibility. A run started from the portal whose record is
+  never the open run default, an action's `who` list, the 1.133.0 job visibility, or the other pages (reports, AD, NetApp,
+  wall, network map, host search), which stay for the view lists. A run started from the portal whose record is
   no longer kept is decided in AAP (who started it is not known). *AAP - set up portal actions* grants Approve only from
   the Admin page's export.
 - Card matching, AD reads and the 1.133.0 names are unchanged.

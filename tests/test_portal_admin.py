@@ -1190,12 +1190,42 @@ class Codex1340R2(Codex1340):
         self.assertFalse(self.api.writes)
 
 
+class Neon1340R2(Codex1340R2):
+    """1.134.0: Neon's second gate round - in only as an admin or by a saved group gives exactly that"""
+
+    def test_neon_r2_1_2_3_limited_entry_reaches_only_its_pages(self):
+        self.cfg.readers = ["READ"]
+        self.cfg.admin_groups = []
+        self.cfg.ad_groups.want = dict(self.cfg.ad_groups.want, admins=[])      # (no admin group: RUN is no admin)
+        self.save("jt_1", add_run_groups=GROUP)                                  # RUN: in by this group only
+        for path in ("/reports/", "/ad", "/netmap", "/wall", "/api/hosts?q=a", "/actions/flow"):
+            for cn in (ADMIN, RUN):
+                self.assertEqual(self.http(path, cn)[0], 403, (path, cn))
+        self.assertEqual(self.http("/admin", ADMIN)[0], 200)
+        self.assertEqual(self.http("/", ADMIN)[0], 403)                          # an admin only: the Admin page only
+        self.assertEqual(self.http("/admin", RUN)[0], 403)
+        home = self.http("/", RUN)
+        self.assertEqual(home[0], 200)
+        self.assertEqual(self.http("/actions/example", RUN)[0], 200)             # its own template
+        self.assertEqual(self.http("/approvals", RUN)[0], 200)
+        self.assertNotIn("Who can approve", self.http("/approvals", RUN)[1])     # no approver groups or counts
+        self.assertEqual(self.http("/reports/", "READ")[0] in (200, 301, 404), True)   # a 1.133.0 viewer: as before
+
+    def test_neon_r2_4_a_cached_id_never_carries_another_names_grant(self):
+        self.save("jt_1", add_run_groups=GROUP)
+        renamed = dict(self.portal.actions["example"], aap={"type": "job", "name": "Another job"})
+        self.assertFalse(sp.template_allowed(self.cfg, RUN, renamed))           # id 1's grant is for JOB, not "Another job"
+        self.assertTrue(sp.template_allowed(self.cfg, RUN, self.portal.actions["example"]))
+
+
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(OneController1340, _n, None)            # (only their own tests run there)
 for _n in [n for n in vars(OneController1340) if n.startswith("test_")]:
     setattr(Codex1340, _n, None)
 for _n in [n for n in vars(Codex1340) if n.startswith("test_")]:
     setattr(Codex1340R2, _n, None)
+for _n in [n for n in vars(Codex1340R2) if n.startswith("test_")]:
+    setattr(Neon1340R2, _n, None)
 
 
 if __name__ == "__main__":
