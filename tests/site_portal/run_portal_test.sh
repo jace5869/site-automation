@@ -553,7 +553,7 @@ deploy_vc() {
         MICROSOFT_AD_LDAP_USERNAME=svc_aap_adreader@corp.example.mil MICROSOFT_AD_LDAP_PASSWORD=Test-Only-ldappw-1120 \
         VMWARE_HOST=vc-none.invalid VMWARE_USER=svc_wall@corp.example.mil VMWARE_PASSWORD=Test-Only-vcpw-1311 \
         SOLARWINDS_URL=https://swis-none.invalid:17774 SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_PASSWORD=Test-Only-swpw-1380 \
-        "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" "$@") > "$work/out-vc.txt" 2>&1
+        "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" -e portal_wall_monitor=true "$@") > "$work/out-vc.txt" 2>&1
 }
 if deploy_vc && podman secret inspect site-portal-vcenter >/dev/null 2>&1 && grep -q "Wall: VMware on" "$work/out-vc.txt"; then
     pass "a vCenter credential: the deploy runs the wall's token step, makes its login secret, says VMware on"
