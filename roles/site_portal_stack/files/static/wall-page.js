@@ -114,7 +114,11 @@
 
   // ---------------------------------------------------------------- the model, freshness, the one set of rules
   var S = {area: "overview", style: "cockpit", site: ""};
-  var STYLES = ["lights", "cockpit", "map"], STYLE_NAME = {lights: "Lights", cockpit: "Cockpit", map: "Map"}, STYLE_CLASS = {lights: "sL", cockpit: "sK", map: "sM"};
+  // 1.135.0: three more styles - Strata, Relay, Metro (static/wall-styles.js; the same model, rule and detail cards)
+  var STYLES = ["lights", "cockpit", "map", "strata", "relay", "metro"],
+    STYLE_NAME = {lights: "Lights", cockpit: "Cockpit", map: "Map", strata: "Strata", relay: "Relay", metro: "Metro"},
+    STYLE_CLASS = {lights: "sL", cockpit: "sK", map: "sM", strata: "sS", relay: "sR", metro: "sX"},
+    SCREEN = {strata: 1, relay: 1, metro: 1};       // the styles drawn on a 1920 x 1080 board that fills the screen
   var K_STYLE = "opsWall.style", K_THEME = "site-report-theme";
   function sget(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function sset(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* this page only */ } }
@@ -328,7 +332,10 @@
     var styleIc = {
       lights: icon([["circle", {cx: 5, cy: 8, r: 3.2, fill: "currentColor"}], ["circle", {cx: 12, cy: 8, r: 2.2, fill: "none", stroke: "currentColor", "stroke-width": 1.5}]], "0 0 16 16"),
       cockpit: icon([P("M2.5 11.5a5.5 5.5 0 1 1 11 0", {"stroke-width": 1.6, "stroke-linecap": "round"}), P("M8 11.5l2.6-3.6", {"stroke-width": 1.6, "stroke-linecap": "round"})], "0 0 16 16"),
-      map: icon([P("M1.5 3.5l4-1.5 5 1.5 4-1.5v10.5l-4 1.5-5-1.5-4 1.5z M5.5 2v10.5 M10.5 3.5V14", {"stroke-width": 1.4, "stroke-linejoin": "round"})], "0 0 16 16")
+      map: icon([P("M1.5 3.5l4-1.5 5 1.5 4-1.5v10.5l-4 1.5-5-1.5-4 1.5z M5.5 2v10.5 M10.5 3.5V14", {"stroke-width": 1.4, "stroke-linejoin": "round"})], "0 0 16 16"),
+      strata: icon([P("M2 3h12v4H2zM2 9h5v4H2zM9 9h5v4H9z", {"stroke-width": 1.4, "stroke-linejoin": "round"})], "0 0 16 16"),
+      relay: icon([["circle", {cx: 4, cy: 8, r: 2, fill: "currentColor"}], ["circle", {cx: 8, cy: 8, r: 2, fill: "none", stroke: "currentColor", "stroke-width": 1.4}], ["circle", {cx: 12, cy: 8, r: 2, fill: "none", stroke: "currentColor", "stroke-width": 1.4}]], "0 0 16 16"),
+      metro: icon([["rect", {x: 2, y: 2, width: 7, height: 7, fill: "currentColor"}], ["rect", {x: 10.5, y: 2, width: 3.5, height: 7, fill: "none", stroke: "currentColor", "stroke-width": 1.3}], ["rect", {x: 2, y: 10.5, width: 12, height: 3.5, fill: "none", stroke: "currentColor", "stroke-width": 1.3}]], "0 0 16 16")
     };
     var rotPop = h("div", "pop rpop", [
       h("h3", "", ["Rotate for a wall screen"]),
@@ -409,11 +416,14 @@
     de.classList.add("style-" + S.style);
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
+    de.classList.toggle("screen", !!SCREEN[S.style]);
+    if (!SCREEN[S.style]) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
     RENDER[S.style](stage);
+    if (SCREEN[S.style]) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
       " since " + hms(UNREACH_SINCE) + " - every value below is the last known one and not current. The page keeps trying every " + ((W && W.poll) || 30) + " s."],
       {role: "alert"}), stage.firstChild);
@@ -440,7 +450,7 @@
     if (!ROT.on) { cd.textContent = "off"; cd.className = "rcd"; }
     else if (ROT.resumeAt) { cd.textContent = "paused - resumes in " + Math.max(0, Math.ceil((ROT.resumeAt - Date.now()) / 1000)) + " s"; cd.className = "rcd paused"; }
     else { cd.textContent = "next in " + ROT.left + " s"; cd.className = "rcd on"; }
-    $("#rotNote").textContent = (ROT.mode === "styles" ? "Styles: Lights, Cockpit, Map on the same area (" + areaTitle(S.area) + "). " :
+    $("#rotNote").textContent = (ROT.mode === "styles" ? "Styles: " + STYLES.map(function (x) { return STYLE_NAME[x]; }).join(", ") + " on the same area (" + areaTitle(S.area) + "). " :
       "Areas: " + ["Overview"].concat(areaList().filter(function (a) { return a.on; }).map(function (a) { return a.short || a.name; })).join(", ") + " in " + STYLE_NAME[S.style] + ". ") +
       "Clicks, keys, scrolling or touch pause rotation. In kiosk mode only keys pause it. Rotation resumes after " + IDLE_RESUME + " s.";
   }
@@ -497,6 +507,8 @@
       if (e.target === back) { closeDetail(); return; }
       var d = e.target.closest("[data-d]");
       if (d) { e.preventDefault(); openDetail(d.getAttribute("data-d")); return; }
+      var sh = e.target.closest("[data-share]");
+      if (sh && BY[sh.getAttribute("data-share")]) { window.SAWallShare.open(card, shareOf(BY[sh.getAttribute("data-share")])); return; }
       var fb = e.target.closest("[data-fb]");
       if (fb) { var t = card.querySelector("h2"); openFeedback((t ? t.textContent : "") + " (" + fb.getAttribute("data-fb") + ")", fb.getAttribute("data-fb-area") || "general"); return; }
       if (e.target.closest(".x")) closeDetail();
@@ -504,7 +516,7 @@
     document.addEventListener("keydown", function (e) {
       if (e.target.closest && e.target.closest("select,input,textarea")) return;
       if (e.key === "Escape") { if (closeDetail()) return; closePops(); if (document.body.classList.contains("kiosk")) setKiosk(false, true); if (S.site) { S.site = ""; render(); } }
-      else if (e.key === "1" || e.key === "2" || e.key === "3") setStyle(STYLES[+e.key - 1], true);
+      else if (/^[1-6]$/.test(e.key)) setStyle(STYLES[+e.key - 1], true);
       else if (e.key === "k" || e.key === "K") setKiosk(!document.body.classList.contains("kiosk"), true);
       else if (e.key === "t" || e.key === "T") $("#themeBtn").click();
       else if (rotateShortcut(e)) togglePop("#ddRot");
@@ -521,7 +533,7 @@
       tip.classList.remove("on");
     });
     var rt;
-    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map") render(); }, 150); });
+    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map") render(); else if (SCREEN[S.style]) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
     clear(tip);
@@ -791,7 +803,8 @@
     if (!m) { if (again) { closeDetail(); return; } m = {title: "Not on the wall any more", st: "off", rows: [["", "It cleared or left the read since this was drawn."]]}; }
     if (!again) lastFocus = document.activeElement;
     openRef = ref;
-    add(card, [dHead(m.title, m.st, m.chips, m.fk), h("div", "dbody " + (m.st || ""), [kv(m.rows)]), dFoot(m.area)]);
+    var share = kind === "c" && BY[key] && window.SAWallShare ? h("button", "shareon", ["Share to Teams…"], {type: "button", "data-share": key, title: "Copy this condition as text and as a picture, to paste into a Teams chat"}) : null;
+    add(card, [dHead(m.title, m.st, m.chips, m.fk), h("div", "dbody " + (m.st || ""), [kv(m.rows)]), dFoot(m.area, share)]);
     back.classList.add("on");
     tip.classList.remove("on");
     if (!again) { var x = card.querySelector(".x"); if (x) x.focus(); }
@@ -1123,6 +1136,51 @@
     r.appendChild(main);
     later(countHidden);
   };
+
+  // ================================================================ 1.135.0: Strata, Relay, Metro - drawn by static/wall-styles.js on a
+  // 1920 x 1080 board scaled to the room the page leaves (kiosk: the whole screen); this page lends it its model, rule and helpers
+  function fitScreen() {
+    var b = stage.querySelector(".wx");
+    if (!b) return;
+    var top = stage.getBoundingClientRect().top, w = Math.max(320, stage.clientWidth), hh = Math.max(240, innerHeight - Math.max(0, top));
+    var k = Math.min(w / 1920, hh / 1000);
+    b.style.width = (w / k) + "px";
+    b.style.height = (hh / k) + "px";
+    b.style.transform = "scale(" + k + ")";
+    stage.style.height = hh + "px";
+  }
+  function shareOf(c) {
+    // what a Teams post says about one condition: from the model only (escaped by static/wall-share.js), the limits from the settings
+    var t = c.kind === "dsfull" || c.kind === "dswarn" ? thr("ds") : c.kind === "aggrfull" || c.kind === "aggrwarn" ? thr("aggr") :
+      c.kind === "cpu" || c.kind === "mem" ? [thr("high")[0], null] : c.kind === "sm" && c.lag_h != null ? thr("snapmirror_lag_hours") : null;
+    var hot = null;
+    if (c.kind === "cpu" || c.kind === "mem") (W.vmware.hot || []).forEach(function (x) { if (x.cond === c.id) hot = x; });
+    var f = feed(c.feed || (c.vc ? "vc:" + c.vc : "")), stale = condStale(c);
+    return {sev: stale ? "stale" : c.sev, area: aShort(c.area), title: c.t, obj: c.obj || "", since: c.start ? when(c.start) : "", age: c.start ? dur(NOW() - c.start) : "",
+            site: [W.title, W.enclave, c.site].filter(Boolean).join(" · "),
+            v: c.v != null ? c.v : c.kind === "sm" && c.lag_h != null ? c.lag_h : null, unit: c.kind === "sm" ? " h" : "%",
+            warn: t ? t[0] : null, crit: t ? t[1] : null, max: c.kind === "sm" && t ? Math.max(t[1] * 1.3, (c.lag_h || 0) * 1.1) : 100,
+            series: hot && Array.isArray(hot.spark) ? hot.spark : null, seriesLab: hot ? "last hour, per minute" : "",
+            src: f ? f.name : (c.feed || "the wall's read"), asof: f && f.asof ? hms(f.asof) : "never", asofAge: f && f.asof ? ago(ageS(f.asof)) : "",
+            check: verify(c), link: location.origin + SRC.replace(/api\/wall$/, "wall") + "?area=" + encodeURIComponent(c.area) + "&open=" + encodeURIComponent("c:" + c.id),
+            stamp: hms(NOW()), zone: zoneName()};
+  }
+  var API = {
+    h: h, s: s, add: add, clear: clear, icon: icon, P: P, lamp: lamp, word: word, WORD: WORD, GLYPH: GLYPH, areaIcon: areaIcon,
+    W: function () { return W; }, S: S, NOW: NOW, hm: hm, hms: hms, when: when, dur: dur, ago: ago, ageS: ageS, pct: pct, size: size, zoneName: zoneName,
+    areaList: areaList, areaOf: areaOf, areaOn: areaOn, aShort: aShort, areaState: areaState, areaCounts: areaCounts, areaAsof: areaAsof, areaFresh: areaFresh,
+    overallState: overallState, openConds: openConds, condStale: condStale, nowList: nowList, feed: feed, feedFresh: feedFresh, status: status,
+    level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
+    unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
+    dsRef: dsRef, cond: function (id) { return BY[id] || null; }, openDetail: openDetail, setArea: setArea,
+    share: function (id) { if (!BY[id]) return; openDetail("c:" + id); if (window.SAWallShare) window.SAWallShare.open(card, shareOf(BY[id])); }
+  };
+  ["strata", "relay", "metro"].forEach(function (st) {
+    RENDER[st] = function (r) {
+      if (window.SAWallStyles && window.SAWallStyles[st]) window.SAWallStyles[st](API, r);
+      else r.appendChild(h("p", "note warn", ["This style's file (wall-styles.js) did not load - reload the page."]));
+    };
+  });
 
   // ================================================================ LIGHTS: one big status light per area
   function lWorst(id) {
@@ -1519,7 +1577,9 @@
 
   // ---------------------------------------------------------------- start: the URL, this viewer's choice, the answer
   (function () {
-    var st = QS.get("style"); S.style = STYLES.indexOf(st) >= 0 ? st : (STYLES.indexOf(sget(K_STYLE)) >= 0 ? sget(K_STYLE) : "cockpit");
+    // the address's style, else this viewer's last pick, else the site's portal_wall_style (data-style), else Cockpit
+    var st = QS.get("style"), dflt = root.getAttribute("data-style");
+    S.style = STYLES.indexOf(st) >= 0 ? st : (STYLES.indexOf(sget(K_STYLE)) >= 0 ? sget(K_STYLE) : (STYLES.indexOf(dflt) >= 0 ? dflt : "cockpit"));
     S.area = QS.get("area") || "overview";
     var th = QS.get("theme"); if (th === "dark" || th === "light") document.documentElement.setAttribute("data-theme", th);
     var r = QS.get("rotate"); if (r === "styles" || r === "areas") { ROT.on = true; ROT.mode = r; }

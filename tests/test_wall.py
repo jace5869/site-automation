@@ -869,7 +869,8 @@ class Browser(unittest.TestCase):
         return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=180).stdout
 
     def test_styles(self):
-        for st, mark in (("cockpit", 'class="sK"'), ("lights", 'class="sL"'), ("map", 'class="sM"')):
+        for st, mark in (("cockpit", 'class="sK"'), ("lights", 'class="sL"'), ("map", 'class="sM"'),
+                         ("strata", 'class="sS"'), ("relay", 'class="sR"'), ("metro", 'class="sX"')):          # 1.135.0
             for w in (1920, 1280):
                 out = self.dom("style=%s&freeze=1" % st, w)
                 self.assertIn('data-ready="1"', out, (st, w))
@@ -907,7 +908,7 @@ class Browser(unittest.TestCase):
             return v
         url, stop = demo.portal(collector=demo.FakeCollector(stale_view), netapp_minutes_old=30)
         self.addCleanup(stop)
-        for st in ("lights", "cockpit", "map"):
+        for st in ("lights", "cockpit", "map", "strata", "relay", "metro"):
             args = [browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1920,1080", "--virtual-time-budget=8000",
                     "--dump-dom", url + "wall?style=%s&freeze=1" % st]
             out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=180).stdout
@@ -1021,7 +1022,8 @@ class Browser(unittest.TestCase):
         self.assertIn('data-ready="1"', out)
 
     GREEN = re.compile(r'class="(?:word ok|wd ok|lamp s-ok|ctr ok|fl f-ok|val g-ok|ln g-ok|cell s-ok|brow s-ok|gauge s-ok|'
-                       r'(?:sdot|sc|tag|nr|cd|sg) k-ok)[" ]')
+                       r'(?:sdot|sc|tag|nr|cd|sg) k-ok|'
+                       r'(?:sx-tile|sx-stage|wr|crow|hq|tb|rx-bay|plate|cc|t|bb) ok)[" ]')       # 1.135.0: Strata, Relay, Metro
 
     def greens(self, out):
         return [m.group(0) for m in self.GREEN.finditer(out)]
@@ -1039,7 +1041,7 @@ class Browser(unittest.TestCase):
         for name, fn, netapp in cases:
             url, stop = demo.portal(netapp=netapp, collector=demo.FakeCollector(fn))
             try:
-                for st in ("lights", "cockpit", "map"):
+                for st in ("lights", "cockpit", "map", "strata", "relay", "metro"):
                     for area in ("overview", "storage", "vmware"):
                         out = self.run_page(url, "style=%s&area=%s&freeze=1" % (st, area))
                         self.assertIn('data-ready="1"', out, (name, st, area))
@@ -1390,14 +1392,14 @@ window.addEventListener("load", function () {
    r.greens.forEach(function(g){bad.push(p+': '+g)})};
 var ctl=0;
 window.ANS.forEach(function(x,i){var a=x.a,R=%s.slice();
- if(x.control){T.set(JSON.parse(JSON.stringify(a)));['lights','cockpit','map'].forEach(function(st){T.view(st,'vmware');ctl+=T.greens().greens.length});
+ if(x.control){T.set(JSON.parse(JSON.stringify(a)));['lights','cockpit','map','strata','relay','metro'].forEach(function(st){T.view(st,'vmware');ctl+=T.greens().greens.length});
    if(ctl)bad.push('control: green seen');return;}
  (a.vmware.hosts.slice(0,3)).forEach(function(h){R.push('host:'+h.vc+'|'+h.n)});
  (a.vmware.clusters.slice(0,2)).forEach(function(c){R.push('cl:'+c.vc+'|'+c.n+'|hosts');R.push('cl:'+c.vc+'|'+c.n+'|cpu')});
  (a.storage.aggr.slice(0,2)).forEach(function(g){R.push('aggr:'+g.ref)});
  (a.storage.ds.slice(0,3)).forEach(function(s){R.push('ds:'+(s.vc?s.vc+'|':'')+s.n)});
  T.set(JSON.parse(JSON.stringify(a)));
- ['lights','cockpit','map'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
+ ['lights','cockpit','map','strata','relay','metro'].forEach(function(st){['overview','storage','vmware'].forEach(function(ar){T.view(st,ar);
    add(i+' '+x.cut+' '+st+'/'+ar,T.greens(),st==='map')})});
  T.view('cockpit','overview');
  R.forEach(function(r){T.open(r);add(i+' '+x.cut+' card '+r,T.greens(),false)});

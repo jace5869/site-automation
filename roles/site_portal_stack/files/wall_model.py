@@ -685,6 +685,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             st_ = str(r.get("state") or "").replace("-", "_")
             cid = "sm:%s:%s" % (addr, r.get("dst"))
             severity = "warn"
+            lag_h = None                          # 1.135.0: the lag in hours, for its limit chart (Share to Teams)
             if r.get("healthy") is False or st_ == "broken_off":
                 word = "broken off" if st_ == "broken_off" else "unhealthy"
             elif r.get("healthy") is True and st_ in SM_GOOD:
@@ -698,6 +699,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
                     ok.append((fk, cid))
                     continue
                 word = "lag %.2f h" % (lag / 3600)
+                lag_h = round(lag / 3600.0, 2)
                 if lag > o["snapmirror_lag_crit_hours"] * 3600:
                     severity = "crit"
             else:
@@ -709,6 +711,8 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
             conds.append({"id": cid, "kind": "sm", "sev": severity, "t": "SnapMirror %s %s" % (r.get("dst"), word),
                           "obj": "from %s · %s" % (r.get("src") or "-", r.get("why") or r.get("state") or ""), "feed": fk,
                           "cluster": cl, "obj_name": r.get("dst"), "site": site})
+            if lag_h is not None:
+                conds[-1]["lag_h"] = lag_h
         if sm is None and "snapmirror" not in (snap.get("failed") or {}):
             part["incomplete"].append("ONTAP %s: SnapMirror not read" % addr)
         if nodes is None and "nodes" not in (snap.get("failed") or {}):

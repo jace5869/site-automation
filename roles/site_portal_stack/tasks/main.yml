@@ -274,6 +274,18 @@
   ansible.builtin.set_fact:
     _portal_motion: "{{ 'off' if portal_motion is sameas false else (portal_motion | string | lower) }}"
 
+# 1.135.0: the look and the wall's default style - a word from the list, else the deploy stops and says so
+- name: Settings | portal_look and portal_wall_style are known names
+  ansible.builtin.assert:
+    that:
+      - (portal_look | default('strata') | string | lower | trim) in ['strata', 'metro', 'relay', 'chroma', 'press', 'atlas', 'tower']
+      - (portal_wall_style | default('cockpit') | string | lower | trim) in ['lights', 'cockpit', 'map', 'strata', 'relay', 'metro']
+    fail_msg: >-
+      portal_look is {{ portal_look | default('strata') }} and portal_wall_style is {{ portal_wall_style | default('cockpit') }};
+      portal_look must be strata, metro, relay, chroma, press, atlas or tower, and portal_wall_style lights, cockpit, map, strata,
+      relay or metro - nothing was changed
+    quiet: true
+
 - name: Settings | portal_motion is auto, always or off (checked)
   ansible.builtin.assert:
     that: _portal_motion in ['auto', 'always', 'off']
@@ -571,6 +583,7 @@
     - {path: "{{ portal_config_dir }}", mode: "0750"}
     - {path: "{{ portal_config_dir }}/app", mode: "0755"}
     - {path: "{{ portal_config_dir }}/app/static", mode: "0755"}
+    - {path: "{{ portal_config_dir }}/app/static/fonts", mode: "0755"}       # 1.135.0: the looks' fonts
     - {path: "{{ portal_config_dir }}/trust.d", mode: "0750"}
   loop_control:
     label: "{{ item.path }}"
@@ -634,9 +647,22 @@
     - {src: static/wall-page.js, dest: static/wall-page.js}
     - {src: static/wall-page.css, dest: static/wall-page.css}
     - {src: static/wall-land.js, dest: static/wall-land.js}
+    - {src: static/wall-styles.js, dest: static/wall-styles.js}          # 1.135.0: the Strata, Relay and Metro styles
+    - {src: static/wall-styles.css, dest: static/wall-styles.css}
+    - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
+    - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
+    - {src: static/portal-looks.js, dest: static/portal-looks.js}        # 1.135.0: the Actions page's Ops center section
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
+
+# 1.135.0: the looks' fonts - woff2 files (latin) and each family's SIL Open Font License, served by the portal itself (offline, no CDN)
+- name: Files | the looks' fonts (SIL Open Font License, the licence beside each family)
+  ansible.builtin.copy:
+    src: static/fonts/
+    dest: "{{ portal_config_dir }}/app/static/fonts/"
+    mode: "0644"
+    directory_mode: "0755"
 
 # ---------------------------------------------------------------- the site's logo (portal_logo, 1.78.2)
 - name: Logo | where the image goes on this server
@@ -1081,6 +1107,7 @@
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
       PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
+      PORTAL_LOOK: "{{ portal_look | default('strata') | string | lower | trim }}"                 # 1.135.0
       PORTAL_SEASON: "{{ _portal_season }}"
       PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
       PORTAL_SEASON_LIGHTS: "{{ '1' if report_theme_season_lights | default(true) | bool else '0' }}"
@@ -1141,6 +1168,7 @@
       PORTAL_WALL: "{{ '1' if portal_wall | bool else '0' }}"
       PORTAL_WALL_TITLE: "{{ portal_wall_title | string | trim }}"
       PORTAL_WALL_PREVIEW: "{{ '1' if portal_wall_preview | bool else '0' }}"
+      PORTAL_WALL_STYLE: "{{ portal_wall_style | default('cockpit') | string | lower | trim }}"    # 1.135.0
       PORTAL_WALL_ENCLAVE: "{{ portal_wall_enclave | default('', true) | string | trim }}"
       PORTAL_WALL_AUTH_RETRY_SECONDS: "{{ (portal_wall_auth_retry_minutes | int * 60) | string }}"
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"

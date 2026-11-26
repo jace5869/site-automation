@@ -49,7 +49,7 @@
   function ic(d, cls) {
     return s("svg", {viewBox: "0 0 24 24", "aria-hidden": "true", class: cls || null, fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round"}, [s("path", {d: d})]);
   }
-  function word(st) { return h("span", "w " + st, [ic(ICON[st] || ICON.off), WORD[st] || st]); }
+  function word(st) { return h("span", "ow " + st, [ic(ICON[st] || ICON.off), WORD[st] || st]); }
   function hm(t) {
     try { return new Intl.DateTimeFormat("en-GB", {hour: "2-digit", minute: "2-digit", timeZone: (D && D.zone) || "UTC"}).format(new Date(t)); }
     catch (e) { return new Date(t).toISOString().slice(11, 16); }
@@ -86,7 +86,7 @@
     var labels = [];
     var lim = function (v, cls, tcls, label, below) {
       kids.push(s("line", {class: cls, x1: X(v), x2: X(v), y1: 0, y2: bh, "vector-effect": "non-scaling-stroke"}));
-      var t = h("span", "lb " + tcls + (below ? " below" : "") + (v > 70 ? " end" : ""), [label]);
+      var t = h("span", "olb " + tcls + (below ? " below" : "") + (v > 70 ? " end" : ""), [label]);
       t.style.left = Math.max(0, Math.min(100, v)) + "%";
       labels.push(t);
     };
@@ -94,14 +94,14 @@
     if (m.crit != null) lim(m.crit, "lcr", "tc", "crit " + num(m.crit), true);
     var svg = s("svg", {viewBox: "0 0 " + W + " " + bh, preserveAspectRatio: "none", role: "img", class: big ? "big" : null,
                         "aria-label": m.label + " " + num(m.v) + m.unit + (m.warn != null ? ", warning at " + num(m.warn) : "") + (m.crit != null ? ", critical at " + num(m.crit) : "")}, kids);
-    return h("div", "lc", [h("div", "lc-b" + (m.crit != null ? " lc2" : ""), [svg].concat(labels)), h("p", "", sentence(m))]);
+    return h("div", "olc", [h("div", "lc-b" + (m.crit != null ? " lc2" : ""), [svg].concat(labels)), h("p", "", sentence(m))]);
   }
 
   // ---- the parts
   function lamps(a) {
-    var on = function (k, n) { return h("span", "lm " + k + (n ? " on" : ""), [h("i"), (n || 0) + " " + (k === "crit" ? "crit" : "warn")]); };
-    var okLamp = h("span", "lm ok" + (a.state === "ok" ? " on" : ""), [h("i"), a.state === "stale" ? "not current" : "OK"]);
-    if (a.state === "stale") okLamp.className = "lm stale on";
+    var on = function (k, n) { return h("span", "olm " + k + (n ? " on" : ""), [h("i"), (n || 0) + " " + (k === "crit" ? "crit" : "warn")]); };
+    var okLamp = h("span", "olm ok" + (a.state === "ok" ? " on" : ""), [h("i"), a.state === "stale" ? "not current" : "OK"]);
+    if (a.state === "stale") okLamp.className = "olm stale on";
     return h("div", "ot-lamps", [okLamp, on("warn", a.warn), on("crit", a.crit)], {"aria-hidden": "true"});
   }
   function back(a) {
@@ -196,7 +196,7 @@
     need.forEach(function (a) { parts.push(h("span", "", [a.name + ": " + [a.crit ? a.crit + " critical" : "", a.warn ? a.warn + " warning" : ""].filter(Boolean).join(", ")])); });
     var lp = h("span", "lamps", []);
     [["crit", "critical"], ["warn", "warning"], ["ok", "OK"], ["stale", "not current"]].forEach(function (k) {
-      if (n[k[0]]) lp.appendChild(h("span", "w " + k[0], [ic(ICON[k[0]]), n[k[0]] + (n[k[0]] === 1 ? " area " : " areas ") + k[1]]));
+      if (n[k[0]]) lp.appendChild(h("span", "ow " + k[0], [ic(ICON[k[0]]), n[k[0]] + (n[k[0]] === 1 ? " area " : " areas ") + k[1]]));
     });
     parts.push(lp);
     return h("p", "ops-say", parts);
