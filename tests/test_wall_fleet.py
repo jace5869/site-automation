@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.138.0: the wall's Fleet & services area (roles/site_portal_stack/files/wall_fleet.py, static/wall-fleet.js, the node share in
+"""1.138.0: the wall's Ops monitor area (roles/site_portal_stack/files/wall_fleet.py, static/wall-fleet.js, the node share in
 static/wall-share.js): the grouping (SolarWinds groups, a custom property, the configured list), the vCenter compare (powered off is
 never down, Disagree, vCenter only, not found, two VMs of a name), stale never green, the since-tracker, 3,000 nodes, the payload,
 the reader (SWQL SELECTs only, a refused login, a column Orion has not) against the fake SWIS, the share text and HTML (escaped),
@@ -68,13 +68,13 @@ class Settings(unittest.TestCase):
     def test_defaults_and_refusals(self):
         o, bad = wf.opts_of({})
         self.assertEqual((o["seconds"], o["group_by"], o["groups"], o["vm_match"]), (60, "groups", [], ["*VMware*"]))
-        o, bad = wf.opts_of({"fleet_seconds": 5, "fleet_group_by": "custom:ServiceGroup", "fleet_groups": ["AD", 3, ""]})
+        o, bad = wf.opts_of({"monitor_seconds": 5, "monitor_group_by": "custom:ServiceGroup", "monitor_groups": ["AD", 3, ""]})
         self.assertEqual((o["seconds"], o["group_by"], o["groups"]), (60, "custom:ServiceGroup", ["AD"]))
         for gb in ("custom:Service Group", "custom:x;DROP", "custom:", "custom:1abc", "Location"):   # SWQL text: letters, digits, _ only
-            o, bad = wf.opts_of({"fleet_group_by": gb})
+            o, bad = wf.opts_of({"monitor_group_by": gb})
             self.assertEqual(o["group_by"], "groups", gb)
             self.assertTrue(bad, gb)
-        self.assertEqual(wf.opts_of({"fleet_seconds": 99999})[0]["seconds"], 3600)
+        self.assertEqual(wf.opts_of({"monitor_seconds": 99999})[0]["seconds"], 3600)
 
     def test_late_and_stale_stretch_with_the_interval(self):
         self.assertEqual(wf.limits(60), (180, 600))
@@ -106,14 +106,14 @@ class Grouping(unittest.TestCase):
     def test_the_configured_list_limits_and_orders(self):
         rows = [sw_row(1, "A1"), sw_row(2, "B1"), sw_row(3, "C1")]
         groups = {"list": [[1, "Alpha", 1], [2, "Beta", 1], [3, "Gamma", 1]], "members": {"1": [1], "2": [2], "3": [3]}, "cut": False}
-        o = wf.opts_of({"fleet_groups": ["gamma", "ALPHA", "Nope"]})[0]
+        o = wf.opts_of({"monitor_groups": ["gamma", "ALPHA", "Nope"]})[0]
         fm = wf.model(snap(rows, groups, self.now), None, o, self.now)
         self.assertEqual([g[0] for g in fm["groups"]], ["Gamma", "Alpha", wf.NO_GROUP])
         self.assertEqual(by_name(fm)["B1"][0], 2)                       # Beta not listed: under Workloads (no group)
 
     def test_a_custom_property(self):
         rows = [sw_row(1, "A1", cp="Active Directory"), sw_row(2, "A2", cp="active directory"), sw_row(3, "B1", cp=""), sw_row(4, "C1", cp=None)]
-        o = wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0]
+        o = wf.opts_of({"monitor_group_by": "custom:ServiceGroup"})[0]
         fm = wf.model(snap(rows, now=self.now), None, o, self.now)
         self.assertEqual([g[0] for g in fm["groups"]], ["Active Directory", wf.NO_GROUP])     # any case: one group, its first spelling
         self.assertEqual(fm["groups"][0][1], "c")
@@ -252,7 +252,7 @@ class Review1(unittest.TestCase):
         self.assertFalse(fm["complete"])
         s2 = snap([sw_row(1, "A1", cp="AD")], now=self.now)
         s2["notes"] = ["custom property ServiceGroup: not read (HTTP 400)"]
-        self.assertFalse(wf.model(s2, None, wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0], self.now)["complete"])
+        self.assertFalse(wf.model(s2, None, wf.opts_of({"monitor_group_by": "custom:ServiceGroup"})[0], self.now)["complete"])
 
     def test_every_membership_counts(self):
         groups = {"list": [[1, "Alpha", 1], [2, "Beta", 1]], "members": {"1": [1, 2], "2": [2]}, "cut": False}
@@ -264,7 +264,7 @@ class Review1(unittest.TestCase):
         vms = [vm("SITEAVMX01")]
         for sn in (snap([sw_row(1, "A1")], now=self.now, cut=True), dict(snap([], now=self.now), nodes=None, state="auth", at=None),
                    snap([sw_row(1, "A1")], now=self.now, age=3600)):
-            fm = wf.model(sn, view(vms, self.now), wf.opts_of({"fleet_group_by": "custom:X"})[0], self.now)
+            fm = wf.model(sn, view(vms, self.now), wf.opts_of({"monitor_group_by": "custom:X"})[0], self.now)
             self.assertIsNone(fm["cmp"]["vc_only"])
             self.assertFalse([r for r in fm["nodes"] if "v" in r[12]])
         two = view([vm("x")], self.now)
@@ -288,7 +288,7 @@ class Review1(unittest.TestCase):
             def paged(self2, *a, **k):
                 t[0] += 600                                                 # the refusal after 10 min
                 raise site_swis.SwisError("refused", "auth")
-        r = wf.Reader(lambda: Slow([]), wf.opts_of({"fleet_group_by": "custom:X"})[0], clock=lambda: t[0], auth_retry=900)
+        r = wf.Reader(lambda: Slow([]), wf.opts_of({"monitor_group_by": "custom:X"})[0], clock=lambda: t[0], auth_retry=900)
         try:
             r.read_once()
         except site_swis.SwisError as e:
@@ -478,7 +478,7 @@ class StaleNeverGreen(unittest.TestCase):
     def area(self, fm, now):
         m = wm.build(None, None, None, {}, wm.Tracker(), now, fleet=fm)
         s = wm.summary(m, now)
-        return [a for a in s["areas"] if a["id"] == "fleet"][0], m
+        return [a for a in s["areas"] if a["id"] == "monitor"][0], m
 
     def test_rules(self):
         now = time.time()
@@ -501,18 +501,18 @@ class StaleNeverGreen(unittest.TestCase):
         a, m = self.area(wf.model(st, None, OPTS, now), now)
         self.assertEqual(a["state"], "stale")
         m = wm.build(None, None, None, {}, wm.Tracker(), now, fleet=None)
-        self.assertFalse(any(x["id"] == "fleet" for x in m["areas"]))  # off: not on the wall at all
+        self.assertFalse(any(x["id"] == "monitor" for x in m["areas"]))  # off: not on the wall at all
 
     def test_a_longer_interval_stretches_late(self):
         now = time.time()
-        o = wf.opts_of({"fleet_seconds": 600})[0]
+        o = wf.opts_of({"monitor_seconds": 600})[0]
         a, m = self.area(wf.model(snap([sw_row(1, "A1")], now=now, age=900), None, o, now), now)
         self.assertEqual(a["state"], "ok")                              # read every 10 min: 15 min old is inside its own LATE
 
     def test_on_but_not_readable_says_why(self):
         now = time.time()
         m = wm.build(None, None, None, {}, wm.Tracker(), now, fleet=None, fleet_why="no SolarWinds login")
-        a = [x for x in m["areas"] if x["id"] == "fleet"][0]
+        a = [x for x in m["areas"] if x["id"] == "monitor"][0]
         self.assertEqual((a["on"], a["why"]), (False, "no SolarWinds login"))
 
 
@@ -627,7 +627,7 @@ class Reader(unittest.TestCase):
 
     def test_a_column_orion_has_not(self):
         c = FakeClient([sw_row(1, "A1", cp="AD")], None, refuse=("LastSync",))
-        o = wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0]
+        o = wf.opts_of({"monitor_group_by": "custom:ServiceGroup"})[0]
         sn = wf.Reader(lambda: c, o).read_once()
         self.assertEqual(sn["state"], "ok")
         self.assertTrue(any("LastSync" in n for n in sn["notes"]), sn["notes"])
@@ -672,7 +672,7 @@ class LiveSwql(unittest.TestCase):
             json.dump(fx, fh)
         f = Fake(tmp)
         self.addCleanup(f.stop)
-        for o in (OPTS, wf.opts_of({"fleet_group_by": "custom:ServiceGroup"})[0]):
+        for o in (OPTS, wf.opts_of({"monitor_group_by": "custom:ServiceGroup"})[0]):
             sn = wf.Reader(f.client, o).read_once()
             self.assertEqual(sn["state"], "ok", sn["why"])
             self.assertEqual(len(sn["nodes"]), len(fx["nodes"]))
@@ -722,12 +722,12 @@ class ShareText(unittest.TestCase):
     def test_the_lines_the_user_asked_for(self):
         L = [{"st": "DOWN", "sev": "crit", "name": "SITEADIRDCV01", "svc": "Active Directory", "ip": "192.0.2.12", "phrase": "down 21 min (since 05:21)"},
              {"st": "WARN", "sev": "warn", "name": "SITEACERTV02", "svc": "Certificate Services", "ip": "", "phrase": "packet loss 8% (12 min, since 05:30)"}]
-        c = {"site": "SITEA", "stamp": "05:42", "day": "26 Nov", "zone": "Berlin", "src": "SolarWinds every 60 s", "link": "https://portal.example.mil/portal/wall?area=fleet", "stale": ""}
+        c = {"site": "SITEA", "stamp": "05:42", "day": "26 Nov", "zone": "Berlin", "src": "SolarWinds every 60 s", "link": "https://portal.example.mil/portal/wall?area=monitor", "stale": ""}
         o = self.run_js(L, c)
         self.assertEqual(o["line"][0], "DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)")
         self.assertEqual(o["line"][1], "WARN  SITEACERTV02 - Certificate Services - no IP - packet loss 8% (12 min, since 05:30)")
         self.assertTrue(o["text"].startswith("2 nodes not up (1 down) - SITEA - 05:42\nDOWN  SITEADIRDCV01"))
-        self.assertTrue(o["text"].endswith("\nWall: https://portal.example.mil/portal/wall?area=fleet"))
+        self.assertTrue(o["text"].endswith("\nWall: https://portal.example.mil/portal/wall?area=monitor"))
 
     def test_everything_escaped(self):
         bad = '<img src=x onerror="alert(1)">&\'"'
@@ -750,34 +750,34 @@ class Deploy(unittest.TestCase):
     def test_settings_reach_the_service(self):
         import yaml
         d = yaml.safe_load(open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")))
-        for k in ("portal_wall_fleet", "portal_wall_fleet_seconds", "portal_wall_fleet_group_by", "portal_wall_fleet_groups", "portal_wall_fleet_vm_match",
-                  "portal_wall_fleet_max_nodes"):
+        for k in ("portal_wall_monitor", "portal_wall_monitor_seconds", "portal_wall_monitor_group_by", "portal_wall_monitor_groups", "portal_wall_monitor_vm_match",
+                  "portal_wall_monitor_max_nodes", "portal_wall_monitor_poll_stale_minutes"):
             self.assertIn(k, d)
         t = open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")).read()
-        for k in ("PORTAL_WALL_FLEET:", "fleet_seconds:", "fleet_group_by:", "fleet_groups:", "fleet_vm_match:", "fleet_max_nodes:"):
+        for k in ("PORTAL_WALL_MONITOR:", "monitor_seconds:", "monitor_group_by:", "monitor_groups:", "monitor_vm_match:", "monitor_max_nodes:", "monitor_poll_stale_minutes:"):
             self.assertIn(k, t)
-        self.assertIn('_portal_has_swis: "{{ _portal_swis | bool }}"', t)                       # the login deployed for the Fleet area too
+        self.assertIn('_portal_has_swis: "{{ _portal_swis | bool }}"', t)                       # the login deployed for the Ops monitor area too
         self.assertIn("PORTAL_SWIS_URL: \"{{ portal_solarwinds_url | trim if _portal_swis | bool else '' }}\"", t)
         import site_portal_filters as F
         base = {"wall": True, "vc_on": True, "ontap_on": True, "netmap_sites": {}}
         self.assertEqual(F.site_portal_wall_summary(base), "Wall: VMware on, Storage on, Map places from netmap_sites: 0")
-        self.assertEqual(F.site_portal_wall_summary(dict(base, fleet_on=True, fleet_group_by="custom:ServiceGroup")),
-                         "Wall: VMware on, Storage on, Map places from netmap_sites: 0, Fleet on (by custom:ServiceGroup)")
-        self.assertTrue(F.site_portal_wall_summary(dict(base, fleet_on=False, sw_url=False)).endswith("Fleet off (no SolarWinds address (SOLARWINDS_URL / netmap_solarwinds_url empty))"))
+        self.assertEqual(F.site_portal_wall_summary(dict(base, monitor_on=True, monitor_group_by="custom:ServiceGroup")),
+                         "Wall: VMware on, Storage on, Map places from netmap_sites: 0, Ops monitor on (by custom:ServiceGroup)")
+        self.assertTrue(F.site_portal_wall_summary(dict(base, monitor_on=False, sw_url=False)).endswith("Ops monitor off (no SolarWinds address (SOLARWINDS_URL / netmap_solarwinds_url empty))"))
 
     def test_the_service_settings(self):
         import site_portal as sp
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         T = __import__("test_netapp_live")
-        cfg = T.cfg_for(d, PORTAL_WALL_FLEET="1")
+        cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1")
         self.assertTrue(cfg.wall_fleet)
         self.assertIn("no SolarWinds address", cfg.wall_fleet_why)
-        cfg = T.cfg_for(d, PORTAL_WALL_FLEET="1", PORTAL_SWIS_URL="https://swis.example.invalid", PORTAL_SWIS_LOGIN=json.dumps({"user": "u", "password": "p"}),
-                        PORTAL_WALL_OPTS=json.dumps({"fleet_group_by": "custom:Bad Name", "fleet_seconds": 120}))
+        cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1", PORTAL_SWIS_URL="https://swis.example.invalid", PORTAL_SWIS_LOGIN=json.dumps({"user": "u", "password": "p"}),
+                        PORTAL_WALL_OPTS=json.dumps({"monitor_group_by": "custom:Bad Name", "monitor_seconds": 120}))
         self.assertEqual((cfg.wall_fleet_why, cfg.wall_fleet_opts["seconds"], cfg.wall_fleet_opts["group_by"]), ("", 120, "groups"))
         self.assertTrue(cfg.wall_fleet_notes)
-        cfg = T.cfg_for(d, PORTAL_WALL_FLEET="1", PORTAL_WALL="0")
+        cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1", PORTAL_WALL="0")
         self.assertFalse(cfg.wall_fleet)
 
 
@@ -809,7 +809,7 @@ class Page(unittest.TestCase):
 
     def test_every_style_draws_the_area(self):
         for st in ("strata", "relay", "metro", "cockpit", "lights", "map"):
-            out = self.dom("area=fleet&style=%s&freeze=1" % st)
+            out = self.dom("area=monitor&style=%s&freeze=1" % st)
             self.assertIn('data-ready="1"', out, st)
             self.assertIn('class="wx wx-fleet"', out, st)
             self.assertIn("5 down", out, st)
@@ -818,26 +818,31 @@ class Page(unittest.TestCase):
             self.assertRegex(out, r"group \d+ of \d+ · problems first", st)    # the Spotlight's cue
             self.assertNotIn("<img src=\"x\"", out, st)                  # the markup in a caption stays text
         out = self.dom("style=strata&freeze=1")
-        self.assertIn("Fleet &amp; services", out)                      # its tile in the room's overview
+        self.assertIn("Ops monitor", out)                      # its tile in the room's overview
         self.assertNotIn("No live source on the wall yet (SolarWinds)", out)
 
+    def test_legacy_area_url_opens_monitor(self):
+        out = self.dom("area=fleet&style=strata&freeze=1")
+        self.assertIn('aria-label="Ops monitor"', out)
+
     def test_card_and_bulk(self):
-        out = self.dom("area=fleet&style=strata&fleet=one&freeze=1")
+        out = self.dom("area=monitor&style=strata&monitor=one&freeze=1")
         self.assertIn('class="fl-ov on"', out)
         self.assertIn("Copy picture", out)
         self.assertIn("Copy both", out)
         self.assertIn("Save picture", out)
         self.assertIn("Add to selection", out)
-        out = self.dom("area=fleet&style=metro&fleet=bulk&freeze=1")
+        out = self.dom("area=monitor&style=metro&monitor=bulk&freeze=1")
         self.assertIn("Share 5 nodes to Teams", out)
         self.assertIn("5 selected", out)
+        self.assertIn("Wall: " + self.url + "wall?area=monitor", out)
 
     def test_stale_solarwinds_is_never_green(self):
         import demo
         url, stop = demo.portal(vc2_state="ok", fleet=fd.FakeReader(self.fx, age_s=900), collector=demo.FakeCollector(lambda: fd.view(fx=self.fx, vc_age=900)))
         self.addCleanup(stop)
         for st in ("strata", "metro", "cockpit"):
-            out = self.dom("area=fleet&style=%s&freeze=1" % st, url=url)
+            out = self.dom("area=monitor&style=%s&freeze=1" % st, url=url)
             self.assertIn('data-ready="1"', out, st)
             board = out[out.index('class="wx wx-fleet"'):]
             self.assertNotIn('class="word ok"', board, st)               # no green word on the board: SolarWinds 15 min old

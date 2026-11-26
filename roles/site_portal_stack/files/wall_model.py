@@ -19,8 +19,8 @@ try:
 except ImportError:                        # pragma: no cover - the portal image has it
     site_swis = None
 try:
-    import wall_fleet                      # 1.138.0: the Fleet & services area's conditions and summary
-except ImportError:                        # pragma: no cover - an older deploy's files: no fleet area
+    import wall_fleet                      # 1.138.0: the Ops monitor area's conditions and summary
+except ImportError:                        # pragma: no cover - an older deploy's files: no Ops monitor area
     wall_fleet = None
 
 LATE_S = 180                     # amber (LATE) after 3 min
@@ -49,13 +49,13 @@ NOT_ON_WALL = {
     "storage": "EMS informational events, snapshot counts, autosupport.",
     "vmware": "vCenter informational alarms, short spikes (under the sustained window), snapshot age, tools out of date.",
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
-    "fleet": "a node's own alerts (CPU, disk, interfaces), SolarWinds events; a single node down lights its group, never a wall of its own.",
+    "monitor": "a node's own alerts (CPU, disk, interfaces), SolarWinds events; a single node down lights its group, never a wall of its own.",
 }
-# 1.138.0: Fleet & services (wall_fleet.py) - on the wall only with portal_wall_fleet (auto: when SolarWinds is configured)
-FLEET_AREA = {"id": "fleet", "name": "Fleet & services", "short": "Fleet", "sub": "SolarWinds", "team": "Service owners"}
+# 1.138.0: Ops monitor (wall_fleet.py) - on the wall only with portal_wall_monitor (auto: when SolarWinds is configured)
+FLEET_AREA = {"id": "monitor", "name": "Ops monitor", "short": "Monitor", "sub": "SolarWinds", "team": "Service owners"}
 FLEET_KINDS = {
-    "fleetdown": {"area": "fleet", "sev": "crit", "label": "A node of a service group down in SolarWinds (powered off in vCenter: never down)", "grp": "fleet"},
-    "fleetwarn": {"area": "fleet", "sev": "warn", "label": "A node of a service group warning in SolarWinds (packet loss or slow answers)", "grp": "fleet"},
+    "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds (powered off in vCenter: never down)", "grp": "fleet"},
+    "fleetwarn": {"area": "monitor", "sev": "warn", "label": "A node of a service group warning in SolarWinds (packet loss or slow answers)", "grp": "fleet"},
 }
 
 # 1.131.1 (Codex #11): vCenter's default hardware alarm definitions, by whole name (any case) - portal_wall_hw_alarms
@@ -766,8 +766,8 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
 
 
 def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why=""):
-    """-> the answer of /api/wall (times: epoch seconds). fleet: the Fleet & services area's model (wall_fleet.model) when that
-    area is on (portal_wall_fleet), with fleet_why when it is on but cannot read; None: the area is not on the wall."""
+    """-> the answer of /api/wall (times: epoch seconds). fleet: the Ops monitor area's model (wall_fleet.model) when that
+    area is on (portal_wall_monitor), with fleet_why when it is on but cannot read; None: the area is not on the wall."""
     o = opts_of(opts)
     ks = kinds(o)
     fleet_on = fleet is not None or bool(fleet_why)
@@ -819,23 +819,23 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         # the state at this answer (the page works the age out itself every second - no age here: the ETag stays until a change)
         f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o, f)
     area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run" and k != "sw:fleet") + sorted(f1)) if st["configured"] else [],
-                  "fleet": ["sw:fleet"] if fleet is not None else []}
+                  "monitor": ["sw:fleet"] if fleet is not None else []}
     areas = []
     for a in AREAS + ((FLEET_AREA,) if fleet_on else ()):
         x = dict(a)
-        x["on"] = (a["id"] in BUILT or a["id"] == "fleet") and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
-        x["built"] = a["id"] in BUILT or a["id"] == "fleet"
+        x["on"] = (a["id"] in BUILT or a["id"] == "monitor") and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
+        x["built"] = a["id"] in BUILT or a["id"] == "monitor"
         x["feeds"] = area_feeds.get(a["id"], [])
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
         inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else
-               ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "fleet" else [])
+               ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "monitor" else [])
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
             x["why"] = off_why.get("storage") or STORAGE_OFF          # 1.131.0: a login there but no cluster: that, not "no login"
         elif a["id"] == "vmware" and not vm["configured"]:
             x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
-        elif a["id"] == "fleet" and fleet is None:
+        elif a["id"] == "monitor" and fleet is None:
             x["why"] = fleet_why
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
@@ -858,7 +858,7 @@ def _feed_fresh(m, k, now):
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "fleet" if k.startswith("sw:") else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "monitor" if k.startswith("sw:") else ""
 
 
 def _home_ok(m, k, now, by):
@@ -983,7 +983,7 @@ def summary(m, now):
                 w_ = max(busy, key=lambda x: x["cpu"])
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
-        elif st != "off" and aid == "fleet":
+        elif st != "off" and aid == "monitor":
             fs = m.get("fleet") or {}
             cn = fs.get("counts") or {}
             tot = sum(int(v or 0) for v in cn.values())

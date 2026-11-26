@@ -66,7 +66,7 @@
     vdi: [["rect", {x: 3, y: 4, width: 18, height: 12, rx: 1.5}], P("M8 20h8M12 16v4"), P("M7.5 10.5l2.5-2.5 2.5 2.5 4-4")],
     tickets: [P("M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 000 4v2a2 2 0 00-2 2H5a2 2 0 00-2-2v-2a2 2 0 000-4z"), P("M9.5 6v12", {"stroke-dasharray": "2 2"})],
     list: [P("M4 6h16M4 12h16M4 18h10")],
-    fleet: [["rect", {x: 3, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 3, width: 5, height: 5, rx: 1}],
+    monitor: [["rect", {x: 3, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 3, width: 5, height: 5, rx: 1}],
             ["rect", {x: 3, y: 9.5, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 9.5, width: 5, height: 5, rx: 1}], ["circle", {cx: 18.5, cy: 12, r: 3}],
             ["rect", {x: 3, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 16, width: 5, height: 5, rx: 1}]]
   };
@@ -149,7 +149,7 @@
   function STALE() { return (W && W.stale) || 600; }
   var FRESH_TITLE = "Amber (LATE) after 3 min, STALE after 10 min. Stale data is never shown green.";
   function ageS(asof) { return asof == null ? null : Math.max(0, Math.round((NOW() - asof) / 1000)); }
-  // 1.138.0: a feed may carry its own limits (the Fleet area's SolarWinds when read less often than every minute)
+  // 1.138.0: a feed may carry its own limits (the Ops monitor area's SolarWinds when read less often than every minute)
   function fstate(sec, f) {
     var late = f && typeof f.late === "number" ? f.late : LATE(), stale = f && typeof f.stale === "number" ? f.stale : STALE();
     return sec == null ? "stale" : sec > stale ? "stale" : sec > late ? "late" : "ok";
@@ -248,7 +248,7 @@
   }
   // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
   // of its feeds is current (one vCenter not read, one host without a state: nothing of VMware is green)
-  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk.indexOf("sw:") === 0 ? "fleet" : ""; }
+  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk.indexOf("sw:") === 0 ? "monitor" : ""; }
   function homeOk(fk) {
     var a = homeOf(fk);
     if (!a) return true;
@@ -424,16 +424,16 @@
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
     de.classList.toggle("screen", screenOn());
-    de.classList.toggle("area-fleet", S.area === "fleet");
+    de.classList.toggle("area-monitor", S.area === "monitor");
     if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    // 1.138.0: Fleet & services - one board for every style (static/wall-fleet.js), in the style's own colours and type
-    if (S.area === "fleet") {
+    // 1.138.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
+    if (S.area === "monitor") {
       if (window.SAWallFleet) window.SAWallFleet.render(API, stage);
-      else stage.appendChild(h("p", "note warn", ["The Fleet area's file (wall-fleet.js) did not load - reload the page."]));
+      else stage.appendChild(h("p", "note warn", ["The Ops monitor area's script did not load - reload the page."]));
     } else RENDER[S.style](stage);
     if (screenOn()) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
@@ -447,9 +447,14 @@
         sh: document.documentElement.scrollHeight, ih: innerHeight, stage: stage.clientHeight, board: bx ? bx.getBoundingClientRect().height : null,
         btop: bx ? bx.getBoundingClientRect().top : null})); }, 300);
   }
-  function setArea(id) { if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview"; S.area = id; S.site = ""; closePops(); closeDetail(); render(); }
-  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Fleet area in every style (1.138.0)
-  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || S.area === "fleet"); }
+  function canonicalArea(id) { return id === "fleet" ? "monitor" : id; }
+  function setArea(id) {
+    id = canonicalArea(id);
+    if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview";
+    S.area = id; S.site = ""; closePops(); closeDetail(); render();
+  }
+  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.138.0)
+  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || S.area === "monitor"); }
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
@@ -553,7 +558,7 @@
     });
     var rt;
     document.addEventListener("fullscreenchange", function () { if (screenOn()) fitScreen(); });
-    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && S.area !== "fleet") render(); else if (screenOn()) fitScreen(); }, 150); });
+    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && S.area !== "monitor") render(); else if (screenOn()) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
     clear(tip);
@@ -682,7 +687,7 @@
     if (c.kind === "aggrfull" || c.kind === "aggrwarn") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Storage › Tiers › " + c.aggr;
     if (c.kind === "sm") return "ONTAP System Manager of " + (c.cluster || "the destination cluster") + " › Protection › Relationships";
     if (c.kind === "node") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Cluster › Overview (nodes, takeover)";
-    if (c.kind === "fleetdown" || c.kind === "fleetwarn") return "SolarWinds › My Dashboards › Groups › " + (c.group || "the group") + " (each node's Node Details); the wall's Fleet & services area";
+    if (c.kind === "fleetdown" || c.kind === "fleetwarn") return "SolarWinds › My Dashboards › Groups › " + (c.group || "the group") + " (each node's Node Details); the wall's Ops monitor area";
     return "-";
   }
   function hostBy(vc, n) { var r = null; W.vmware.hosts.forEach(function (x) { if (x.n === n && (!vc || x.vc === vc)) r = x; }); return r; }
@@ -1173,7 +1178,7 @@
     b.style.height = (hh / k) + "px";
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
-    if (S.area === "fleet" && window.SAWallFleet) window.SAWallFleet.fitted(k);
+    if (S.area === "monitor" && window.SAWallFleet) window.SAWallFleet.fitted(k);
   }
   // Share to Teams over the detail card: a snapshot; closing it draws the card again from the latest read
   function openShare(id) {
@@ -1620,7 +1625,7 @@
     // the address's style, else this viewer's last pick, else the site's portal_wall_style (data-style), else Cockpit
     var st = QS.get("style"), dflt = root.getAttribute("data-style");
     S.style = STYLES.indexOf(st) >= 0 ? st : (STYLES.indexOf(sget(K_STYLE)) >= 0 ? sget(K_STYLE) : (STYLES.indexOf(dflt) >= 0 ? dflt : "cockpit"));
-    S.area = QS.get("area") || "overview";
+    S.area = canonicalArea(QS.get("area") || "overview");
     var th = QS.get("theme"); if (th === "dark" || th === "light") document.documentElement.setAttribute("data-theme", th);
     var r = QS.get("rotate"); if (r === "styles" || r === "areas") { ROT.on = true; ROT.mode = r; }
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;

@@ -1,4 +1,4 @@
-// 1.138.0: the ops wall's "Fleet & services" area (?area=fleet) - every node SolarWinds watches, up or down, by service group,
+// 1.138.0: the ops wall's "Ops monitor" area (?area=monitor) - every node SolarWinds watches, up or down, by service group,
 // compared with vCenter (roles/site_portal_stack/files/wall_fleet.py makes /api/wall/fleet). One board in every wall style (the
 // style's colours and type): the services strip (worst member wins; click = the Spotlight), one square a node on a canvas (down: a
 // red ring and its name; warning: amber with a notch; grey hollow: powered off or unmanaged; grey: no current data - never green),
@@ -63,16 +63,16 @@
     }).then(function (a) {
       BUSY = false; FAIL = ""; LOADED_AT = Date.now();
       if (a) { F = adapt(a); Object.keys(SEL).forEach(function (k) { if (!F.by[k]) delete SEL[k]; }); }
-      if (A && A.S.area === "fleet") { refresh(); firstOpen(); }
+      if (A && A.S.area === "monitor") { refresh(); firstOpen(); }
     }).catch(function (e) {
       BUSY = false; FAIL = (e && e.message) || "not reachable";
-      if (A && A.S.area === "fleet") refresh();
+      if (A && A.S.area === "monitor") refresh();
     });
   }
 
   // ---------------------------------------------------------------- the one rule: green only when current
   // freshness from the rows on screen: their own answer's read times (never the wall's other poll), the portal reachable,
-  // this answer fetched; LATE / STALE as the answer says (SolarWinds: stretched with portal_wall_fleet_seconds)
+  // this answer fetched; LATE / STALE as the answer says (SolarWinds: stretched with portal_wall_monitor_seconds)
   function age(asof) { return asof == null ? null : Math.max(0, (NOW() - asof * 1000) / 1000); }
   function fr(asof, state, late, stale) {
     if (FAIL || A.unreach() || state !== "ok" || asof == null) return "stale";
@@ -148,7 +148,7 @@
   }
   function agoS(asof) { return asof == null ? "never read" : A.ago(age(asof)); }
   function staleText() {
-    if (FAIL) return "the Fleet answer could not be read (" + FAIL + ") - the last one shown";
+    if (FAIL) return "the Ops monitor answer could not be read (" + FAIL + ") - the last one shown";
     if (A.unreach()) return "the portal is not answering - the last answer shown";
     var f = F.feed, fv = swFresh();
     if (fv === "ok") return "";
@@ -164,7 +164,7 @@
   function ctx(L) {
     var w = W(), z = F.zone || "UTC", day = "", one = L.length === 1 ? L[0] : null;
     try { day = new Intl.DateTimeFormat("en-GB", {timeZone: z, day: "2-digit", month: "short"}).format(new Date(NOW())); } catch (e) { day = ""; }
-    var base = location.origin + A.src.replace(/api\/wall$/, "wall") + "?area=fleet";
+    var base = location.origin + A.src.replace(/api\/wall$/, "wall") + "?area=monitor";
     var src = one ? srcOf(one) : null, vco = L.some(function (n) { return n.vconly; }), sw = L.some(function (n) { return !n.vconly; });
     var notCur = L.filter(function (n) { var s = shown(n); return fresh(n) !== "ok" || s === "lastdown" || s === "lastwarn" || s === "unk"; });
     var stale = !notCur.length ? "" : notCur.some(function (n) { return !n.vconly; }) && swFresh() !== "ok" ? staleText() :
@@ -179,8 +179,8 @@
 
   // ---------------------------------------------------------------- the board
   function build() {
-    B = h("div", "wx wx-fleet", null, {"aria-label": "Fleet and services"});
-    P.title = h("b", "", ["Fleet & services"]);
+    B = h("div", "wx wx-fleet", null, {"aria-label": "Ops monitor"});
+    P.title = h("b", "", ["Ops monitor"]);
     P.small = h("small", "", [""]);
     P.site = h("span", "fl-site", [""]);
     P.pills = h("div", "fl-pills", null, {"aria-live": "polite"});
@@ -233,7 +233,7 @@
     stage.appendChild(B);
     refresh();
   }
-  function fitted(k) { LAY.k = k || 1; if (A && A.S.area === "fleet") soon(drawGrid); }
+  function fitted(k) { LAY.k = k || 1; if (A && A.S.area === "monitor") soon(drawGrid); }
 
   function refresh() {
     LASTSIG = A ? sig() : "";
@@ -250,7 +250,7 @@
     srcs();
     if (!F) {
       clear(P.pills); clear(P.svc); clear(P.evs); clear(P.cmp); clear(P.chips); clear(P.ft);
-      P.ban.className = "fl-ban on"; P.ban.textContent = FAIL ? "The Fleet area could not be read: " + FAIL + ". It tries again every 30 s." : "Reading SolarWinds…";
+      P.ban.className = "fl-ban on"; P.ban.textContent = FAIL ? "The Ops monitor area could not be read: " + FAIL + ". It tries again every 30 s." : "Reading SolarWinds…";
       return;
     }
     pills(); banner(); services(); notUp(); compare(); spotlight(); footer();
@@ -269,7 +269,7 @@
     F.vcs.forEach(function (v, i) { P.src.appendChild(mk("vc:" + v[0], "vCenter " + String(v[0]).split(".")[0], "vc" + i, "")); });
     ages();
   }
-  // each source's age, as the wall's rule says it: "35 s", LATE, NOT CURRENT - from the Fleet answer's own read times (ticks every second)
+  // each source's age, as the wall's rule says it: "35 s", LATE, NOT CURRENT - from the Ops monitor answer's own read times (ticks every second)
   function ages() {
     if (!F) return;
     P.src.querySelectorAll("[data-fl-age]").forEach(function (e) {
@@ -698,13 +698,13 @@
     });
     // Esc closes the card first (and never leaves kiosk while one is open); ← → step the Spotlight
     document.addEventListener("keydown", function (e) {
-      if (!A || A.S.area !== "fleet" || !B || !B.isConnected) return;
+      if (!A || A.S.area !== "monitor" || !B || !B.isConnected) return;
       if (e.key === "Escape" && OV) { e.stopImmediatePropagation(); e.preventDefault(); closeOv(); return; }
       if (OV || (e.target.closest && e.target.closest("select,input,textarea"))) return;
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); step(e.key === "ArrowRight" ? 1 : -1, true); }
     }, true);
   }
-  // the test harness (data-test) only: ?fleet=one | bulk opens a card at once (the screenshots); ?node=<key> on any wall: its card
+  // the test harness (data-test) only: ?monitor=one | bulk opens a card at once (the screenshots); ?node=<key> on any wall: its card
   var OPENED = false;
   function firstOpen() {
     if (OPENED || !F) return;
@@ -713,15 +713,15 @@
     if (k && Object.prototype.hasOwnProperty.call(F.by, k)) { openCard([F.by[k]]); return; }
     if (!A.test) return;
     var downs = notUpList().filter(function (n) { return n.c === "d"; });
-    if (q.get("fleet") === "one" && downs.length) openCard([downs[0]]);
-    if (q.get("fleet") === "bulk" && downs.length) { downs.forEach(function (n) { SEL[n.key] = 1; }); notUp(); drawGrid(); openCard(selected(), "bulk"); }
-    if (q.get("fleet") === "list") openList("Not up · worst first", notUpList());
+    if (q.get("monitor") === "one" && downs.length) openCard([downs[0]]);
+    if (q.get("monitor") === "bulk" && downs.length) { downs.forEach(function (n) { SEL[n.key] = 1; }); notUp(); drawGrid(); openCard(selected(), "bulk"); }
+    if (q.get("monitor") === "list") openList("Not up · worst first", notUpList());
   }
 
   // ---------------------------------------------------------------- the clock: the Spotlight's dwell, a read every 30 s, the hold while a card is open
   var tick = 0, LASTSIG = "";
   setInterval(function () {
-    if (!A || !B || !B.isConnected || A.S.area !== "fleet" || document.hidden) return;
+    if (!A || !B || !B.isConnected || A.S.area !== "monitor" || document.hidden) return;
     tick++;
     if (OV && A.ROT.on) A.ROT.resumeAt = Date.now() + A.idleResume * 1000;     // a card open holds the rotation
     if (!frozen() && tick % 30 === 0) load(false);

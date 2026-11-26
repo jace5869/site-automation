@@ -132,7 +132,7 @@
     (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
-  // 1.138.0: the clipboard plumbing every Share uses (a condition's card here, the Fleet area's nodes below): Copy text (text/plain
+  // 1.138.0: the clipboard plumbing every Share uses (a condition's card here, the Ops monitor area's nodes below): Copy text (text/plain
   // and text/html), Copy picture (PNG), Copy both, Save picture - each says in words what happened. o: {text(), html(), canvas(),
   // file, say (the status element), pic (the picture button's title)} -> [copyText, copyPic, copyBoth, save]
   function actions(o) {
@@ -213,7 +213,7 @@
     return panel;
   }
 
-  // ---- 1.138.0: the Fleet area's nodes - one node's card or many at once (the "Not up" list's selection). Each node n:
+  // ---- 1.138.0: the Ops monitor area's nodes - one node's card or many at once (the "Not up" list's selection). Each node n:
   // {st: DOWN | WARN | OFF | UNMANAGED | UNKNOWN | UP, sev: crit | warn | stale | off | ok, name, svc, ip, phrase ("down 21 min
   // (since 05:21)"), loss, vc, host, said (SolarWinds' own words)}; ctx: {site, stamp, day, zone, link, src, stale}. The text is one
   // line a node - "DOWN  NAME - Service - IP - down 21 min (since 05:21)" - the HTML a table, the picture a card of at most PIC_MAX

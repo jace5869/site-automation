@@ -83,8 +83,8 @@ try:
 except ImportError:                     # an older deploy's files: the wall from the report database only
     wall_live = None
 try:
-    import wall_fleet  # noqa: E402  1.138.0: the wall's Fleet & services area (SolarWinds' nodes, SWQL only, vs vCenter)
-except ImportError:                     # an older deploy's files: no fleet area
+    import wall_fleet  # noqa: E402  1.138.0: the wall's Ops monitor area (SolarWinds' nodes, SWQL only, vs vCenter)
+except ImportError:                     # an older deploy's files: no Ops monitor area
     wall_fleet = None
 try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
@@ -732,14 +732,14 @@ class Config(object):
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
             self.wall, self.wall_logins = False, {}
             wo = {}
-        # 1.138.0: the wall's Fleet & services area (PORTAL_WALL_FLEET: the deploy's portal_wall_fleet, auto resolved there - on with
+        # 1.138.0: the wall's Ops monitor area (PORTAL_WALL_MONITOR: the deploy's portal_wall_monitor, auto resolved there - on with
         # a SolarWinds credential) - SolarWinds read with the network map's address and read-only login; its settings in PORTAL_WALL_OPTS
-        self.wall_fleet = self.wall and flag(g("PORTAL_WALL_FLEET", "0"))
+        self.wall_fleet = self.wall and flag(g("PORTAL_WALL_MONITOR", "0"))
         self.wall_fleet_opts, fleet_bad = (wall_fleet.opts_of(wo if isinstance(wo, dict) else {}) if wall_fleet is not None
                                            else ({"seconds": 60}, []))
         self.wall_fleet_notes = fleet_bad
         self.wall_fleet_why = ("" if not self.wall_fleet else
-                               "the wall's Fleet reader (wall_fleet.py) or SolarWinds' (site_swis.py) is not in the service's files - deploy again"
+                               "the wall's Ops monitor reader or the SolarWinds reader (site_swis.py) is missing from the service's files - deploy again"
                                if wall_fleet is None or site_swis is None else
                                "no SolarWinds address: a \"SolarWinds (read-only)\" credential on Site portal - deploy (or netmap_solarwinds_url)"
                                if not self.swis_url else
@@ -7264,7 +7264,7 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
-        # 1.138.0: Fleet & services - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
+        # 1.138.0: Ops monitor - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
         self.fleet, self.fleet_key, self.fleet_model, self.fleet_since = fleet, None, None, None
         self.fleet_body, self.fleet_tag = "", ""
         if getattr(cfg, "wall_fleet", False) is True and wall_fleet is not None:
@@ -7321,7 +7321,7 @@ class WallLive(object):
             self.fleet.viewed()
 
     def fleet_of(self, view, now):
-        """1.138.0: the Fleet area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
+        """1.138.0: the Ops monitor area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
         changed (a 3,000-node join is not made per request). Called inside self.lock."""
         if self.fleet is None:
             return None
@@ -7343,7 +7343,7 @@ class WallLive(object):
             view = self.collector.view() if self.collector is not None else None
             fm = self.fleet_of(view, now)
             if fm is None:
-                return 404, json.dumps({"error": "The Fleet area is off here: %s." % (self.cfg.wall_fleet_why or "portal_wall_fleet is false")}), ""
+                return 404, json.dumps({"error": "The Ops monitor is off here: %s." % (self.cfg.wall_fleet_why or "portal_wall_monitor is false")}), ""
             if not self.fleet_body:
                 body = json.dumps(dict(fm, zone=self.cfg.tz_name or "UTC", title=self.cfg.wall_title, enclave=self.cfg.wall_enclave),
                                   separators=(",", ":"), ensure_ascii=False, default=str)
@@ -7820,7 +7820,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
                     return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
-            if path == "/api/wall/fleet":                   # 1.138.0: the Fleet & services area's nodes (static/wall-fleet.js)
+            if path == "/api/wall/fleet":                   # 1.138.0: the Ops monitor area's nodes (static/wall-fleet.js)
                 if not wall:
                     return self._send(404, {"error": "The wall is off here (portal_wall: false)."})
                 wall.viewed()
@@ -7828,7 +7828,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     code, body, etag = wall.fleet_answer((self.headers.get("If-None-Match") or "").strip())
                 except Exception as e:  # pylint: disable=broad-except  - the area says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "fleet": "not made", "why": clean(str(e), 200)})
-                    return self._send(503, {"error": "The Fleet area's answer could not be made (the portal's log says why)."})
+                    return self._send(503, {"error": "The Ops monitor area's answer could not be made (the portal's log says why)."})
                 return self._send(code, body if code != 304 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path in ("/wall", "/api/wall"):
                 if not wall:

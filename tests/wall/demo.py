@@ -134,7 +134,7 @@ def netapp_db(minutes_old=11):
 
 def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True, health=True, fleet=None, env_more=None):
     """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it.
-    1.138.0: fleet - a wall_fleet.Reader stand-in (tests/wall/fleet_demo.py FakeReader): the Fleet & services area on"""
+    1.138.0: fleet - a wall_fleet.Reader stand-in (tests/wall/fleet_demo.py FakeReader): the Ops monitor area on"""
     import json
     import shutil
     import tempfile
@@ -146,7 +146,7 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector
            "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_APPROVERS": json.dumps([CN]),
            "PORTAL_WALL_TEST": "1"}   # the test harness: ?freeze= and ?pull= honoured
     if fleet is not None:
-        env.update({"PORTAL_WALL_FLEET": "1", "PORTAL_SWIS_URL": "https://swis.example.invalid", "PORTAL_SWIS_LOGIN": json.dumps({"user": "svc_swis_ro", "password": "x"})})
+        env.update({"PORTAL_WALL_MONITOR": "1", "PORTAL_SWIS_URL": "https://swis.example.invalid", "PORTAL_SWIS_LOGIN": json.dumps({"user": "svc_swis_ro", "password": "x"})})
     env.update(env_more or {})
     cfg = T.cfg_for(tmp, **env)
     p = sp.Portal(cfg)

@@ -1200,7 +1200,7 @@ thresholds, freshness rule and detail cards as the other styles; nothing new rea
   its worst items (*Tiles turn over every 8 s*; with reduced motion, hovering turns it). The **Now** list has
   **Share to Teams** on each condition; *Last 4 hours* counts what opened and cleared; a capacity strip at the bottom.
 
-In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network - with Fleet & services on,
+In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network - with Ops monitor on,
 its tile takes Network's place) is a grey tile "Not on the wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
 critical bands, labelled dashed limit lines and one sentence, for example *91% · 6 pts over warn 85 · crit at 97*. With
 `?area=storage` or `?area=vmware` the board keeps every tile, and its banner, events, spotlight and capacity rows are that
@@ -1225,12 +1225,12 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
 
-### Fleet & services (1.138.0)
+### Ops monitor (1.138.0)
 
-A wall area (`?area=fleet`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
+A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
 up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw
 it in their own colours and type, Lights / Cockpit / Map in the page's - on a board that fills the screen like the room's
-styles (720p to 4K, kiosk too).
+styles (720p to 4K, kiosk too). The earlier link `?area=fleet` also opens Ops monitor.
 
 - **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the worst member wins
   (*1 down*, *1 warn*, *all up*, *not current*) with *5/6 up*. Click a tile: that group in the Spotlight.
@@ -1243,7 +1243,7 @@ styles (720p to 4K, kiosk too).
 - **Not up · worst first** - down then warning, the longest first, each with its service, IP, why and since when; tick the
   boxes, or **Select all down**, then **Share selected to Teams**. *+N more · open the full list* lists them all.
 - **SolarWinds vs vCenter** - VMs in vCenter not monitored in SolarWinds; SolarWinds VMs not found in vCenter (a node is a VM
-  by its Vendor or MachineType, `portal_wall_fleet_vm_match`); **Disagree** - down in SolarWinds while vCenter has the VM
+  by its Vendor or MachineType, `portal_wall_monitor_vm_match`); **Disagree** - down in SolarWinds while vCenter has the VM
   running with its heartbeat green (likely the network path, not the VM); down in SolarWinds but powered off in vCenter.
   Click a line for its list.
 - **Spotlight** - one group at a time, problems first, every 20 s (a bar fills, *next in 14 s*; ◀ ▶ or the arrow keys step
@@ -1258,7 +1258,7 @@ below) and **Add to selection**. **Share selected** puts one line a node on the 
 4 nodes not up - SITEA - 05:42
 DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)
 DOWN  SITEASQLV05 - Databases - 192.0.2.82 - down 6 min (since 05:36)
-Wall: https://<portal>/portal/wall?area=fleet
+Wall: https://<portal>/portal/wall?area=monitor
 ```
 
 with the same as a table (HTML) and a picture of at most 40 lines (*+N more*). A node first seen down when the portal
@@ -1278,14 +1278,14 @@ on the portal's data volume through a restart).
   and in the panel); two SolarWinds nodes that fit one VM likewise. A guest name like `localhost` is never a match. Templates
   and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
   nodes; the vCenter-only VMs are counted in the panel.
-- A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_fleet_poll_stale_minutes` (15) is not
+- A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_monitor_poll_stale_minutes` (15) is not
   current: grey, never green, never a recovery, and the read is not whole (said) - unless a current vCenter has its VM
   powered off. A short name more than 50 VMs share is compared with none of them, and none is listed *vCenter only*.
 - A node whose status SolarWinds does not know, or a row without a NodeID, makes the read not whole (grey, said) - as does a
   node with no last poll time when this Orion gives one.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
   square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
-  `portal_wall_fleet_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only
+  `portal_wall_monitor_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only
   squares follow vCenter's own read; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
   the side searched (else "not counted", said).
 - **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
@@ -1296,22 +1296,22 @@ on the portal's data volume through a restart).
 **Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,
 SWQL SELECTs only (`Orion.Nodes`: NodeID, Caption, DNS, IPAddress, Status, StatusDescription, Vendor, MachineType,
 ResponseTime, PercentLoss, UnManaged, LastSync; `Orion.Container` and `Orion.ContainerMembers` for the groups, every
-15 min), every `portal_wall_fleet_seconds` while the wall or the Actions page is open, in a thread of its own (a refused
+15 min), every `portal_wall_monitor_seconds` while the wall or the Actions page is open, in a thread of its own (a refused
 SolarWinds login never stops a vCenter login, and waits `portal_wall_auth_retry_minutes` before the next try). vCenter: the
 wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.hostName`). The page reads
 `/portal/api/wall/fleet` every 30 s.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `portal_wall_fleet` | `auto` | on with the "SolarWinds (read-only)" credential on Site portal - deploy; `true` / `false` |
-| `portal_wall_fleet_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
-| `portal_wall_fleet_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
-| `portal_wall_fleet_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
-| `portal_wall_fleet_vm_match` | `["*VMware*"]` | Vendor / MachineType globs that make a node a VM (for *not found in vCenter*) |
-| `portal_wall_fleet_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
-| `portal_wall_fleet_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
+| `portal_wall_monitor` | `auto` | on with the "SolarWinds (read-only)" credential on Site portal - deploy; `true` / `false` |
+| `portal_wall_monitor_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
+| `portal_wall_monitor_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
+| `portal_wall_monitor_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
+| `portal_wall_monitor_vm_match` | `["*VMware*"]` | Vendor / MachineType globs that make a node a VM (for *not found in vCenter*) |
+| `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
+| `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
 
-The deploy summary's *Wall:* line ends with *Fleet on (by groups)* or *Fleet off (why)*.
+The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* or *Ops monitor off (why)*.
 
 ### Make a screen the ops wall (1.135.0)
 

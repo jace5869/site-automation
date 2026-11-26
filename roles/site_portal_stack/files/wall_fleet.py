@@ -1,8 +1,8 @@
-"""1.138.0: the ops wall's "Fleet & services" area (/portal/wall?area=fleet, docs/SITE_PORTAL.md "The wall"): every node
+"""1.138.0: the ops wall's "Ops monitor" area (/portal/wall?area=monitor, docs/SITE_PORTAL.md "The wall"): every node
 SolarWinds watches, up or down, grouped by service, compared with what vCenter says of the same VM.
 
   Reader   reads SolarWinds itself (plugins/module_utils/site_swis.py: one SWQL SELECT per call, never anything else) every
-           portal_wall_fleet_seconds while the wall (or the Actions page's Ops center) is open: Orion.Nodes (status, response,
+           portal_wall_monitor_seconds while the wall (or the Actions page's Ops center) is open: Orion.Nodes (status, response,
            loss, last poll) every read; the groups (Orion.Container, Orion.ContainerMembers) every GROUPS_EVERY s. Its own
            thread - never the vCenter collector's (a SolarWinds refusal never stops a vCenter login, a slow Orion never
            delays one). A refused login waits auth_retry s; any other failure backs off. The last good read is kept (grey).
@@ -17,7 +17,7 @@ The rules, one place for all of them:
     network path";
   - matched by name (any case, short name against FQDN, the guest's host name too); two VMs of one name: the IP decides, else
     no compare (said); a VM not in SolarWinds: the "vCenter only" group with vCenter's status; a node whose Vendor or
-    MachineType says VM (portal_wall_fleet_vm_match) not found in vCenter: counted "not found in vCenter";
+    MachineType says VM (portal_wall_monitor_vm_match) not found in vCenter: counted "not found in vCenter";
   - a stale source (the wall's LATE / STALE) is grey on the page, never green; a read cut short is not whole: never green."""
 import fnmatch
 import ipaddress
@@ -51,40 +51,40 @@ ROW = ["group", "name", "ip", "code", "response_ms", "loss_pct", "since", "since
 
 
 def opts_of(o):
-    """the fleet's settings (PORTAL_WALL_OPTS fleet_*) with their defaults -> (opts, [what was wrong])"""
+    """the Ops monitor settings (PORTAL_WALL_OPTS monitor_*) with their defaults -> (opts, [what was wrong])"""
     o = o if isinstance(o, dict) else {}
     out, bad = dict(DEFAULTS), []
     try:
-        out["seconds"] = max(60, min(3600, int(o.get("fleet_seconds", DEFAULTS["seconds"]))))
+        out["seconds"] = max(60, min(3600, int(o.get("monitor_seconds", DEFAULTS["seconds"]))))
     except (TypeError, ValueError):
-        bad.append("portal_wall_fleet_seconds is not a number")
-    gb = str(o.get("fleet_group_by") or "groups").strip()
+        bad.append("portal_wall_monitor_seconds is not a number")
+    gb = str(o.get("monitor_group_by") or "groups").strip()
     if gb.lower() == "groups":
         out["group_by"] = "groups"
     elif gb.lower().startswith("custom:") and IDENT.match(gb.split(":", 1)[1].strip()):
         out["group_by"] = "custom:" + gb.split(":", 1)[1].strip()
     else:
-        bad.append("portal_wall_fleet_group_by is groups or custom:<a node custom property> (letters, digits and _): %r - groups used" % gb[:64])
-    for k, d in (("groups", "fleet_groups"), ("vm_match", "fleet_vm_match")):
+        bad.append("portal_wall_monitor_group_by is groups or custom:<a node custom property> (letters, digits and _): %r - groups used" % gb[:64])
+    for k, d in (("groups", "monitor_groups"), ("vm_match", "monitor_vm_match")):
         v = o.get(d, DEFAULTS[k])
         if isinstance(v, (list, tuple)):
             seen = set()                        # once each, any case (a duplicate would draw an empty tile)
             out[k] = [x for x in (str(y).strip()[:200] for y in v if isinstance(y, str)) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
         elif v is not None:
-            bad.append("portal_wall_fleet_%s is a list" % k)
+            bad.append("portal_wall_monitor_%s is a list" % k)
     try:
-        out["max_nodes"] = max(100, min(50000, int(o.get("fleet_max_nodes", DEFAULTS["max_nodes"]))))
+        out["max_nodes"] = max(100, min(50000, int(o.get("monitor_max_nodes", DEFAULTS["max_nodes"]))))
     except (TypeError, ValueError):
-        bad.append("portal_wall_fleet_max_nodes is not a number")
+        bad.append("portal_wall_monitor_max_nodes is not a number")
     try:
-        out["poll_stale_minutes"] = max(5, min(1440, int(o.get("fleet_poll_stale_minutes", DEFAULTS["poll_stale_minutes"]))))
+        out["poll_stale_minutes"] = max(5, min(1440, int(o.get("monitor_poll_stale_minutes", DEFAULTS["poll_stale_minutes"]))))
     except (TypeError, ValueError):
-        bad.append("portal_wall_fleet_poll_stale_minutes is not a number")
+        bad.append("portal_wall_monitor_poll_stale_minutes is not a number")
     return out, bad
 
 
 def limits(seconds):
-    """(late, stale) for the fleet's feed: the wall's 3 / 10 min, longer when SolarWinds is read less often than that"""
+    """(late, stale) for the Ops monitor feed: the wall's 3 / 10 min, longer when SolarWinds is read less often than that"""
     return max(LATE_S, 2 * int(seconds) + 30), max(STALE_S, 4 * int(seconds))
 
 
@@ -194,7 +194,7 @@ def read_groups(client, o):
 
 
 class Reader(object):
-    """SolarWinds for the fleet, read by this server alone while someone looks (viewed()): one read every `seconds`, the
+    """SolarWinds for the Ops monitor, read by this server alone while someone looks (viewed()): one read every `seconds`, the
     groups every GROUPS_EVERY s. snapshot() -> what the model reads. A refused login: no read for auth_retry s (said)."""
 
     def __init__(self, client_fn, opts, log=None, clock=time.time, auth_retry=900):
@@ -248,7 +248,7 @@ class Reader(object):
             self.st.update(state="auth" if kind == "auth" else "error", why=_txt(why, 300), tried=now, next_try=now + wait,
                            fail_since=self.st["fail_since"] or now)
         if first:
-            self.log({"event": "wall", "source": "solarwinds-fleet", "state": "not read", "why": _txt(why, 300),
+            self.log({"event": "wall", "source": "solarwinds-monitor", "state": "not read", "why": _txt(why, 300),
                       "again_in": int(wait)})
 
     def read_once(self):
@@ -277,7 +277,7 @@ class Reader(object):
             self.st.update(state="ok", why="", at=done, tried=now, fail_since=None, next_try=done + o["seconds"], nodes=rows, cut=bool(cut),
                            notes=notes, groups=groups if not prop else None, groups_at=gat, groups_tried=gtried, groups_why=gwhy, reads=self.st["reads"] + 1)
         if was in ("auth", "error"):
-            self.log({"event": "wall", "source": "solarwinds-fleet", "state": "read again"})
+            self.log({"event": "wall", "source": "solarwinds-monitor", "state": "read again"})
         return self.snapshot()
 
     def snapshot(self):
@@ -523,7 +523,7 @@ def _since_words(c, rt, loss, desc):
 
 
 def model(snap, view, o, now, since=None, late=LATE_S):
-    """snap (Reader.snapshot()), view (the wall collector's), opts (opts_of) -> the fleet's answer (compact: see the page)"""
+    """snap (Reader.snapshot()), view (the wall collector's), opts (opts_of) -> the Ops monitor answer (compact: see the page)"""
     snap = snap or {}
     sw_late, sw_stale = limits(o["seconds"])
     rows = snap.get("nodes")
@@ -540,14 +540,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         if not snap.get("groups") or snap.get("groups_why"):
             out["incomplete"].append(snap.get("groups_why") or "the SolarWinds groups were not read")
         elif snap["groups"].get("cut"):
-            out["incomplete"].append("the groups' members were cut short (portal_wall_fleet_max_nodes)")
+            out["incomplete"].append("the groups' members were cut short (portal_wall_monitor_max_nodes)")
     if any(n.startswith("custom property") for n in snap.get("notes") or []):
         out["incomplete"].append("the custom property %s was not read - nodes not in their services" % o["group_by"][7:])
     if rows is None:
         out["incomplete"].append("SolarWinds not read yet" if feed["state"] == "never" else "SolarWinds: " + feed["why"])
         rows = []
     if snap.get("cut"):
-        out["incomplete"].append("only the first %d nodes were read (portal_wall_fleet_max_nodes)" % o["max_nodes"])
+        out["incomplete"].append("only the first %d nodes were read (portal_wall_monitor_max_nodes)" % o["max_nodes"])
     if rows == [] and feed["state"] == "ok":
         out["incomplete"].append("SolarWinds answered with no node (does the account see the nodes?)")
     prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
@@ -569,7 +569,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     unknown = sum(1 for n in nodes if n["c"] == UNKNOWN)
     if unknown:
         out["incomplete"].append("%d node%s with a status SolarWinds does not know (grey)" % (unknown, "" if unknown == 1 else "s"))
-    # ---- groups: SolarWinds groups (direct node members) or a node custom property's value; portal_wall_fleet_groups limits and orders
+    # ---- groups: SolarWinds groups (direct node members) or a node custom property's value; portal_wall_monitor_groups limits and orders
     gnames, member = {}, {}
     if prop:
         for n in nodes:
@@ -710,14 +710,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     out["counts"] = cnt
     old = sum(1 for r in built if "o" in r[12] and "v" not in r[12])
     if old:
-        out["incomplete"].append("%d node%s SolarWinds itself has not polled for %d min or more (portal_wall_fleet_poll_stale_minutes)" %
+        out["incomplete"].append("%d node%s SolarWinds itself has not polled for %d min or more (portal_wall_monitor_poll_stale_minutes)" %
                                  (old, "" if old == 1 else "s", o["poll_stale_minutes"]))
     out["complete"] = not out["incomplete"]
     return out
 
 
 def conds(fm, now):
-    """the fleet's wall conditions: per group, one for its nodes down (critical) and one for its nodes warning - a node in two
+    """the Ops monitor wall conditions: per group, one for its nodes down (critical) and one for its nodes warning - a node in two
     groups counts in both; the vCenter-only group none (the VMware area has those VMs). -> (conds, ok ids)."""
     cs, ok = [], []
     if not fm or fm["feed"].get("state") != "ok" and fm["feed"].get("asof") is None:

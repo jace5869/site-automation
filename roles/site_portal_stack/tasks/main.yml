@@ -362,37 +362,37 @@
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
-# 1.138.0: the wall's Fleet & services area - on with the "SolarWinds (read-only)" credential (auto), or as portal_wall_fleet says;
+# 1.138.0: the wall's Ops monitor area - on with the "SolarWinds (read-only)" credential (auto), or as portal_wall_monitor says;
 # it reads with the network map's login, so that login is deployed when either is on (_portal_swis)
-- name: Settings | the wall's Fleet & services area (portal_wall_fleet)
+- name: Settings | the wall's Ops monitor area (portal_wall_monitor)
   ansible.builtin.set_fact:
-    _portal_wall_fleet: >-
-      {{ portal_wall | bool and ((portal_wall_fleet | default('auto') | string | lower in ['true', 'yes', 'on', '1'])
-         or (portal_wall_fleet | default('auto') | string | lower == 'auto' and portal_solarwinds_username | length > 0
+    _portal_wall_monitor: >-
+      {{ portal_wall | bool and ((portal_wall_monitor | default('auto') | string | lower in ['true', 'yes', 'on', '1'])
+         or (portal_wall_monitor | default('auto') | string | lower == 'auto' and portal_solarwinds_username | length > 0
              and portal_solarwinds_password | length > 0 and portal_solarwinds_url | trim | length > 0)) }}
 
-- name: Settings | SolarWinds' login is deployed for the map or the wall's Fleet area
+- name: Settings | SolarWinds' login is deployed for the map or the wall's Ops monitor area
   ansible.builtin.set_fact:
-    _portal_swis: "{{ _portal_netmap | bool or _portal_wall_fleet | bool }}"
+    _portal_swis: "{{ _portal_netmap | bool or _portal_wall_monitor | bool }}"
 
-- name: Settings | the wall's Fleet & services settings
+- name: Settings | the wall's Ops monitor settings
   ansible.builtin.assert:
     that:
-      - portal_wall_fleet | default('auto') | string | lower in ['auto', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
-      - (portal_wall_fleet_seconds | string) is match('^[0-9]+$') and 60 <= portal_wall_fleet_seconds | int <= 3600
-      - (portal_wall_fleet_max_nodes | string) is match('^[0-9]+$') and 100 <= portal_wall_fleet_max_nodes | int <= 50000
-      - (portal_wall_fleet_poll_stale_minutes | string) is match('^[0-9]+$') and 5 <= portal_wall_fleet_poll_stale_minutes | int <= 1440
-      - portal_wall_fleet_group_by | string | lower == 'groups' or (portal_wall_fleet_group_by | string) is match('^custom:[A-Za-z_][A-Za-z0-9_]{0,63}$')
-      - portal_wall_fleet_groups is sequence and portal_wall_fleet_groups is not string and portal_wall_fleet_groups is not mapping
-      - portal_wall_fleet_groups | reject('string') | list | length == 0
-      - portal_wall_fleet_vm_match is sequence and portal_wall_fleet_vm_match is not string and portal_wall_fleet_vm_match is not mapping
-      - portal_wall_fleet_vm_match | reject('string') | list | length == 0
-      - not (_portal_wall_fleet | bool) or (portal_solarwinds_url | trim | length > 0 and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0)
+      - portal_wall_monitor | default('auto') | string | lower in ['auto', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
+      - (portal_wall_monitor_seconds | string) is match('^[0-9]+$') and 60 <= portal_wall_monitor_seconds | int <= 3600
+      - (portal_wall_monitor_max_nodes | string) is match('^[0-9]+$') and 100 <= portal_wall_monitor_max_nodes | int <= 50000
+      - (portal_wall_monitor_poll_stale_minutes | string) is match('^[0-9]+$') and 5 <= portal_wall_monitor_poll_stale_minutes | int <= 1440
+      - portal_wall_monitor_group_by | string | lower == 'groups' or (portal_wall_monitor_group_by | string) is match('^custom:[A-Za-z_][A-Za-z0-9_]{0,63}$')
+      - portal_wall_monitor_groups is sequence and portal_wall_monitor_groups is not string and portal_wall_monitor_groups is not mapping
+      - portal_wall_monitor_groups | reject('string') | list | length == 0
+      - portal_wall_monitor_vm_match is sequence and portal_wall_monitor_vm_match is not string and portal_wall_monitor_vm_match is not mapping
+      - portal_wall_monitor_vm_match | reject('string') | list | length == 0
+      - not (_portal_wall_monitor | bool) or (portal_solarwinds_url | trim | length > 0 and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0)
     fail_msg: >-
-      The wall's Fleet & services settings (docs/SITE_PORTAL.md, "Fleet & services"): portal_wall_fleet auto, true or false;
-      portal_wall_fleet_seconds 60 to 3600; portal_wall_fleet_max_nodes 100 to 50000; portal_wall_fleet_poll_stale_minutes 5 to 1440; portal_wall_fleet_group_by groups or
-      custom:<a node custom property> (letters, digits and _); portal_wall_fleet_groups and portal_wall_fleet_vm_match lists of names;
-      portal_wall_fleet true needs the "SolarWinds (read-only)" credential (its address and login) on this deploy - nothing was changed.
+      The wall's Ops monitor settings (docs/SITE_PORTAL.md, "Ops monitor"): portal_wall_monitor auto, true or false;
+      portal_wall_monitor_seconds 60 to 3600; portal_wall_monitor_max_nodes 100 to 50000; portal_wall_monitor_poll_stale_minutes 5 to 1440; portal_wall_monitor_group_by groups or
+      custom:<a node custom property> (letters, digits and _); portal_wall_monitor_groups and portal_wall_monitor_vm_match lists of names;
+      portal_wall_monitor true needs the "SolarWinds (read-only)" credential (its address and login) on this deploy - nothing was changed.
     quiet: true
   when: portal_wall | bool
 
@@ -687,14 +687,14 @@
     # 1.130.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
     - {src: wall_model.py, dest: wall_model.py}
     - {src: wall_live.py, dest: wall_live.py}
-    - {src: wall_fleet.py, dest: wall_fleet.py}                          # 1.138.0: the wall's Fleet & services area
+    - {src: wall_fleet.py, dest: wall_fleet.py}                          # 1.138.0: the wall's Ops monitor area
     - {src: static/wall-page.js, dest: static/wall-page.js}
     - {src: static/wall-page.css, dest: static/wall-page.css}
     - {src: static/wall-land.js, dest: static/wall-land.js}
     - {src: static/wall-styles.js, dest: static/wall-styles.js}          # 1.135.0: the Strata, Relay and Metro styles
     - {src: static/wall-styles.css, dest: static/wall-styles.css}
     - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
-    - {src: static/wall-fleet.js, dest: static/wall-fleet.js}            # 1.138.0: Fleet & services
+    - {src: static/wall-fleet.js, dest: static/wall-fleet.js}            # 1.138.0: Ops monitor
     - {src: static/wall-fleet.css, dest: static/wall-fleet.css}
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}        # 1.135.0: the Actions page's Ops center section
@@ -758,7 +758,7 @@
     portal_trust_host_cas | bool and _portal_host_bundle.stat.exists | default(false)
     and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
 
-- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map and the wall's Fleet area
+- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map and the wall's Ops monitor area
   ansible.builtin.copy:
     src: "{{ portal_solarwinds_ca_file }}"
     dest: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
@@ -1222,15 +1222,15 @@
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
       PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
       PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
-      PORTAL_WALL_FLEET: "{{ '1' if _portal_wall_fleet | bool else '0' }}"     # 1.138.0: Fleet & services (its settings: fleet_* below)
+      PORTAL_WALL_MONITOR: "{{ '1' if _portal_wall_monitor | bool else '0' }}"     # 1.138.0: Ops monitor (its settings: monitor_* below)
       PORTAL_WALL_OPTS:
         seconds: "{{ portal_wall_seconds | int }}"
-        fleet_seconds: "{{ portal_wall_fleet_seconds | int }}"
-        fleet_group_by: "{{ portal_wall_fleet_group_by | string | trim }}"
-        fleet_groups: "{{ portal_wall_fleet_groups | default([], true) }}"
-        fleet_vm_match: "{{ portal_wall_fleet_vm_match | default([], true) }}"
-        fleet_max_nodes: "{{ portal_wall_fleet_max_nodes | int }}"
-        fleet_poll_stale_minutes: "{{ portal_wall_fleet_poll_stale_minutes | int }}"
+        monitor_seconds: "{{ portal_wall_monitor_seconds | int }}"
+        monitor_group_by: "{{ portal_wall_monitor_group_by | string | trim }}"
+        monitor_groups: "{{ portal_wall_monitor_groups | default([], true) }}"
+        monitor_vm_match: "{{ portal_wall_monitor_vm_match | default([], true) }}"
+        monitor_max_nodes: "{{ portal_wall_monitor_max_nodes | int }}"
+        monitor_poll_stale_minutes: "{{ portal_wall_monitor_poll_stale_minutes | int }}"
         ds_warn: "{{ portal_wall_datastore_warn | float }}"
         ds_crit: "{{ portal_wall_datastore_crit | float }}"
         aggr_warn: "{{ portal_wall_aggr_warn | float }}"
@@ -1665,9 +1665,9 @@
           'ontap_on': _portal_wall_ontap | bool, 'ontap_mode': portal_wall_ontap | string,
           'clusters': portal_wall_ontap_clusters | default([], true), 'ontap_user': portal_wall_ontap_username | default(''),
           'ontap_pass': portal_wall_ontap_password | default('') | length > 0, 'netmap_sites': netmap_sites | default({}, true),
-          'fleet_on': _portal_wall_fleet | bool, 'fleet_mode': portal_wall_fleet | default('auto') | string,
+          'monitor_on': _portal_wall_monitor | bool, 'monitor_mode': portal_wall_monitor | default('auto') | string,
           'sw_url': portal_solarwinds_url | trim | length > 0, 'sw_login': portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0,
-          'fleet_group_by': portal_wall_fleet_group_by | string}
+          'monitor_group_by': portal_wall_monitor_group_by | string}
          | site_portal_wall_summary }}
     _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-
