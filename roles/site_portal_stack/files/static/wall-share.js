@@ -264,7 +264,7 @@
     var sans = "Figtree, 'Segoe UI', Arial, sans-serif", mono = "'Fira Code', Consolas, monospace";
     cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
     x.fillStyle = "#15181d"; x.fillRect(0, 0, Wd, Hh);
-    var worst = L.some(function (n) { return n.sev === "crit"; }) ? "crit" : L.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
+    var worst = L.length === 1 ? L[0].sev : L.some(function (n) { return n.sev === "crit"; }) ? "crit" : L.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
     x.fillStyle = NSEV[worst].c; x.fillRect(0, 0, 12, Hh);
     x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
     x.fillText(fit(x, one ? L[0].name : L.length + (L.every(function (n) { return !n.up; }) ? " nodes not up" : " nodes"), 560), 36, 52);

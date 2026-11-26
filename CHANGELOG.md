@@ -9,7 +9,7 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 (`portal_wall_monitor_seconds`, 60).
 
 - **Ops monitor on the ops wall** (`?area=monitor`, in every wall style and in *rotate areas*): every node SolarWinds
-  watches as one square, up or down, grouped by service group; the services strip (worst member wins), *Not up · worst
+  watches as one square, up or down, grouped by service group; the services strip (one verdict per group), *Not up · worst
   first*, *SolarWinds vs vCenter* and a Spotlight that steps through the groups, problems first. 3,000 nodes fit at 1080p.
 - **Compared with vCenter:** down in SolarWinds but powered off in vCenter shows *Powered off* (never down); down in
   SolarWinds while vCenter runs the VM with its heartbeat green is flagged *Disagree - likely the network path*; VMs
@@ -30,6 +30,11 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 - The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* or *Ops monitor off (why)*.
 - Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
   stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
+
+- **Known limits (to 1.136.1)** — Large Teams previews can rebuild as outage durations change. When many VMs share a name, the portal can leave their SolarWinds
+  coverage unresolved. A service displays at most 200 missing-member placeholders even when its total is larger.
+  After one vCenter reconnects, its outage start can appear exact while another vCenter kept answering. A delivered
+  Actions tile can turn grey when its VM evidence expires, until the next SolarWinds verdict arrives.
 
 ## 1.135.1 — 2026-11-26
 

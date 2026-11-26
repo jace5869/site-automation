@@ -1232,8 +1232,8 @@ up or down, grouped by service, and what vCenter says of the same VM. It is in e
 it in their own colours and type, Lights / Cockpit / Map in the page's - on a board that fills the screen like the room's
 styles (720p to 4K, kiosk too). The earlier link `?area=fleet` also opens Ops monitor.
 
-- **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the worst member wins
-  (*1 down*, *1 warn*, *all up*, *not current*) with *5/6 up*. Click a tile: that group in the Spotlight.
+- **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the server shows the group verdict
+  (*1 down*, *1 warn*, *all up*, *no monitored nodes*, or *not current*) and the true member count. Click a tile: that group in the Spotlight.
 - **Every node, by service group** - one square a node: green up, amber with a dark centre warning (packet loss or slow
   answers), red with a ring and its name down, a hollow grey square powered off in vCenter or unmanaged in SolarWinds, grey
   no current data. Nodes in no group are under **Workloads (no group)**; VMs vCenter has and SolarWinds does not watch are
@@ -1267,20 +1267,22 @@ on the portal's data volume through a restart).
 
 **The rules:**
 
-- The status is SolarWinds' own (Up, Warning, Down; Unmanaged grey; anything else grey "unknown").
-- **Powered off is never down:** down in SolarWinds and powered off (or suspended) in vCenter shows *Powered off*, grey -
-  only while that vCenter's read is current. If it expires on screen, the node shows *last known down* until the next
-  fleet answer evaluates the SolarWinds status again.
-- A node and a VM are the same when an FQDN of each is the same (SolarWinds' caption or DNS name, vCenter's VM name or guest
-  host name); when one side has no FQDN at all, when their short names match in any case - but never when both have an IP
-  and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
-  never greys a production node down). Two VMs that still fit are told apart by the IP, else not compared (said on the card
-  and in the panel); two SolarWinds nodes that fit one VM likewise. A guest name like `localhost` is never a match. Templates
-  and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
-  nodes; the vCenter-only VMs are counted in the panel.
-- A monitored node needs a readable `LastSync` within `portal_wall_monitor_poll_stale_minutes` (15) of the wall clock and
-  at most 120 seconds in the future. An old poll can be overridden for a powered-off VM only while its vCenter read is current.
-  A short name or FQDN shared by more than 50 candidate VMs is ambiguous and none of those candidates is listed *vCenter only*.
+- The server computes one verdict per node. SolarWinds Status must be an integer. Unrecognized codes, strings,
+  fractions, booleans and missing values give an unknown verdict. Each page of nodes carries its own arrival time.
+- A verdict expires at the earliest of the page arrival plus LATE, the node's LastSync plus
+  `portal_wall_monitor_poll_stale_minutes` (default 15 minutes), and the vCenter read plus LATE when the row uses
+  current VM evidence. LastSync must be readable and at most 120 seconds in the future. A stale or missing poll
+  makes a down or warning observation *last known*. The card and Teams share show the poll time when available.
+- A current powered-off or suspended VM can explain a current SolarWinds down observation. An unmanaged node also
+  counts as off. The card dates VM evidence when its vCenter is late or unavailable.
+- Match the full caption or DNS name to the full VM name or guest host name, ignoring case and trailing dots.
+  Different known IPs rule out a match. Without a matching name, a unique matching guest IP establishes identity.
+  Ambiguous candidates are excluded from comparisons and from the vCenter-only list. A guest name like `localhost`
+  is ignored. Templates and vCLS VMs are excluded.
+- Each service uses the earliest member deadline and counts every listed member, including missing members beyond
+  the display limit. Any unknown member makes the service stale. All up or off with at least one up is OK.
+  All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The overview,
+  Actions tiles, dialogs and shares age the server verdict on their own clocks between refreshes.
 - A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
   a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
@@ -1289,8 +1291,7 @@ on the portal's data volume through a restart).
   squares follow vCenter's own read; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
   the side searched (else "not counted", said).
 - **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
-  per node; a node in two groups counts in both. A group's condition clears only when every member is seen in a known,
-  current state (unknown, unmanaged or an old poll is no recovery). They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
+  per node; a node in two groups counts in both. A group's condition clears only when the group verdict is current and OK. They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
   group lights nothing here (the VMware area has those VMs).
 
 **Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,

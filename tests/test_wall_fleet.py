@@ -7,6 +7,7 @@ and the page in each style (headless Chrome). Test data only (tests/wall/fleet_d
 import json
 import os
 import re
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -183,22 +184,23 @@ class Compare(unittest.TestCase):
         self.assertEqual(fm["cmp"]["not_in_vc"], 0)
         self.assertFalse(fm["cmp"]["vc_read"])
 
-    def test_names_any_case_short_or_fqdn_and_two_of_a_name(self):
+    def test_exact_names_any_case_and_two_of_a_name(self):
         rows = [sw_row(1, "SITEADB01", ip="192.0.2.21"), sw_row(2, "siteadb02.corp.example.mil", dns="", ip="192.0.2.22"),
                 sw_row(3, "SITEADB03", dns="", ip="192.0.2.23"), sw_row(4, "192.0.2.40", dns="", ip="192.0.2.40")]
         vms = [vm("siteadb01.corp.example.mil", ip="192.0.2.21"), vm("SITEADB02"),
-               vm("SITEADB03", mid="vm-a"), vm("siteadb03.other.example.mil", mid="vm-b"),
+               vm("SITEADB03", mid="vm-a"), vm("siteadb03.", mid="vm-b"),
                vm("SITEAAPP77", guest="192.0.2.40")]
         fm = self.fm(rows, vms)
         n = by_name(fm)
         self.assertEqual(n["SITEADB01"][9], "1")                        # matched: powered on, heartbeat OK
-        self.assertEqual(n["siteadb02.corp.example.mil"][9], "1")
+        self.assertEqual(n["siteadb02.corp.example.mil"][9], "")
         self.assertEqual(n["SITEADB03"][9], "")                         # two VMs, the IP settles nothing: not compared, said
         self.assertIn("a", n["SITEADB03"][12])
         self.assertEqual(fm["cmp"]["ambiguous"], 1)
         self.assertFalse([r for r in fm["nodes"] if "v" in r[12] and r[1].lower().startswith("siteadb03")])    # neither is "vCenter only"
         self.assertEqual(n["192.0.2.40"][9], "")                         # an IP caption is no name
         rows[2]["IPAddress"] = "192.0.2.98"
+        vms[2]["ip"] = "192.0.2.97"
         vms[3]["ip"] = "192.0.2.98"
         n = by_name(self.fm(rows, vms))
         self.assertEqual((n["SITEADB03"][9], n["SITEADB03"][12]), ("1", ""))     # the IP settles it
@@ -215,10 +217,10 @@ class Review1(unittest.TestCase):
         groups = {"list": [[1, "AD", 1]], "members": {"1": [1], "2": [1]}, "cut": False}
         fm = wf.model(snap([sw_row(1, "DC1", status=2), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
         self.assertEqual([c["id"] for c in wf.conds(fm, self.now)[0]], ["fleet:down:AD"])
-        for st, um in ((0, False), (9, True), (1, True)):                 # unknown, unmanaged: no recovery seen
+        for st, um in ((0, False), (9, True), (1, True)):                 # unknown blocks recovery, unmanaged plus up permits it
             fm = wf.model(snap([sw_row(1, "DC1", status=st, unmanaged=um), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
             cs, ok = wf.conds(fm, self.now)
-            self.assertEqual((cs, "fleet:down:AD" in ok), ([], False), (st, um))
+            self.assertEqual((cs, "fleet:down:AD" in ok), ([], um), (st, um))
         fm = wf.model(snap([sw_row(1, "DC1"), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
         self.assertIn("fleet:down:AD", wf.conds(fm, self.now)[1])         # both known up: it clears
 
@@ -228,7 +230,7 @@ class Review1(unittest.TestCase):
             fm = wf.model(snap(rows, now=self.now), view([v], self.now), OPTS, self.now)
             n = by_name(fm)["APP"]
             self.assertEqual(n[3], "d", v["name"])                       # never greyed by another machine's power state
-            self.assertIn("c", n[12])
+            self.assertIn("c" if v["ip"] else "n", n[12])
             self.assertEqual([r[1] for r in fm["nodes"] if "v" in r[12]], [v["name"]])     # that VM stays "vCenter only"
         fm = wf.model(snap(rows, now=self.now), view([vm("app.prod.example.mil", power="poweredOff", hb=None)], self.now), OPTS, self.now)
         self.assertEqual(by_name(fm)["APP"][3], "p")                      # the same FQDN, no IP to differ: the same machine
@@ -285,7 +287,7 @@ class Review1(unittest.TestCase):
         t = [1000.0]
 
         class Slow(FakeClient):
-            def paged(self2, *a, **k):
+            def query(self2, *a, **k):
                 t[0] += 600                                                 # the refusal after 10 min
                 raise site_swis.SwisError("refused", "auth")
         r = wf.Reader(lambda: Slow([]), wf.opts_of({"monitor_group_by": "custom:X"})[0], clock=lambda: t[0], auth_retry=900)
@@ -409,10 +411,10 @@ class Review2(unittest.TestCase):
 
     def test_a_group_attempt_is_kept_when_the_node_read_fails(self):
         class Fails(FakeClient):
-            def paged(self2, swql, *a, **k):
-                if "Orion.Nodes" in swql:
+            def query(self2, swql, *a, **k):
+                if "FROM Orion.Nodes" in swql:
                     raise site_swis.SwisError("no answer in time", "timeout")
-                return FakeClient.paged(self2, swql, *a, **k)
+                return FakeClient.query(self2, swql, *a, **k)
         c = Fails([], {"list": [], "members": []})
         r = wf.Reader(lambda: c, OPTS, clock=lambda: 1000.0)
         with self.assertRaises(site_swis.SwisError):
@@ -429,7 +431,7 @@ class Review2(unittest.TestCase):
 
 
 class Review2Neon(unittest.TestCase):
-    """review round 2 (Neon): an old poll is not whole (a powered-off VM drops it), the group attempt kept with its outcome, a
+    """review round 2 (Neon): an old poll is not whole even for a powered-off VM, the group attempt kept with its outcome, a
     crowded name keeps its VMs out of "vCenter only", each source's own gap"""
 
     def setUp(self):
@@ -442,14 +444,14 @@ class Review2Neon(unittest.TestCase):
         self.assertFalse(fm["complete"])
         r2 = dict(r, Status=2, Caption="VMOFF", DNS="")
         fm = wf.model(snap([r2], now=self.now, age=0), view([vm("VMOFF", power="poweredOff", hb=None)], self.now), OPTS, self.now)
-        self.assertEqual((fm["nodes"][0][3], "o" in fm["nodes"][0][12], fm["complete"]), ("p", False, True))
+        self.assertEqual((fm["nodes"][0][3], "o" in fm["nodes"][0][12], fm["complete"]), ("d", True, False))
 
     def test_group_attempt_with_its_outcome(self):
         class Fails(FakeClient):
-            def paged(self2, swql, *a, **k):
-                if "Orion.Nodes" in swql:
+            def query(self2, swql, *a, **k):
+                if "FROM Orion.Nodes" in swql:
                     raise site_swis.SwisError("no answer in time", "timeout")
-                return FakeClient.paged(self2, swql, *a, **k)
+                return FakeClient.query(self2, swql, *a, **k)
         c = Fails([], {"list": [{"ContainerID": 1, "Name": "G", "Status": 1}], "members": []})
         r = wf.Reader(lambda: c, OPTS, clock=lambda: 1000.0)
         with self.assertRaises(site_swis.SwisError):
@@ -567,11 +569,11 @@ class Payload(unittest.TestCase):
         fx = fd.fixture()
         now = time.time()
         fm = wf.model(fd.FakeReader(fx).snapshot(), fd.view(now, fx), OPTS, now, since=wf.Since())
-        self.assertEqual(len(fm["row"]), 18)
+        self.assertEqual(len(fm["row"]), 20)
         codes = set(r[3] for r in fm["nodes"])
         self.assertTrue(codes <= set("uwdpmx"), codes)
         for r in fm["nodes"]:
-            self.assertEqual(len(r), 18)
+            self.assertEqual(len(r), 20)
             self.assertIn(r[9], list(wf.VMW) + [""])
             self.assertTrue(-1 <= r[10] < len(fm["hosts"]))
             if r[3] == "u":
@@ -603,11 +605,11 @@ class FakeClient(object):
             return self.groups["list"]
         if "TOP 1" in swql:
             return self.rows[:1]
-        return self.rows
+        start, end = re.search(r"WITH ROWS (\d+) TO (\d+)$", swql).groups()
+        return self.rows[int(start)-1:int(end)]
 
     def paged(self, swql, order, params=None, page=1000, cap=None):
-        rows = self.query("%s ORDER BY %s WITH ROWS 1 TO %d" % (swql, order, page), params)
-        return rows, False
+        return site_swis.Client.paged(self, swql, order, params, page, cap)
 
 
 class Reader(unittest.TestCase):
@@ -702,19 +704,19 @@ const [dir, input, scenario] = process.argv.slice(1);
 const data = JSON.parse(input);
 let clock = data.now * 1000;
 function el(tag, cls, children) {
-  return {tag, cls, focus() { env.document.activeElement = this; },
+  return {tag, cls, attrs: arguments[3], insertBefore(x, before) {this.children.splice(this.children.indexOf(before), 0, x);}, focus() { env.document.activeElement = this; },
     querySelectorAll(tag) { return this.children.filter(x => x && x.querySelectorAll)
       .flatMap(x => (x.tag === tag ? [x] : []).concat(x.querySelectorAll(tag))); },
     children: (children || []).filter(x => x != null),
     get firstChild() { return this.children[0]; }, get lastChild() { return this.children.at(-1); },
     appendChild(x) { this.children.push(x); }, removeChild() { this.children.shift(); },
-    classList: {add(){}, remove(){}, toggle(){}}, addEventListener(){}};
+    classList: {add(){}, remove(){}, toggle(){}}, listeners: {}, addEventListener(type, fn) {this.listeners[type] = fn;}};
 }
-const api = {h: el, NOW: () => clock, W: () => ({}), feed: () => null, unreach: () => false,
-  styleName: () => "", zoneName: () => "UTC", hm: String, hms: String, ago: String, word: (s, w) => w,
+const api = {S: {area: "overview"}, h: el, NOW: () => clock, W: () => ({}), feed: () => null, unreach: () => false,
+  dur: String, styleName: () => "", zoneName: () => "UTC", hm: String, hms: String, ago: String, word: (s, w) => w,
   nowList: () => [], src: "/api/wall"};
 const env = {window: {}, document: {getElementById: () => null}, location: {origin: "https://portal.example.mil"},
-  setInterval(){}, requestAnimationFrame(){}, assert, api, data, el,
+  AbortController, setTimeout, clearTimeout, setInterval(){}, requestAnimationFrame(){}, assert, api, data, el,
   advance(s) { clock += s * 1000; }, Date: class extends Date { static now() { return clock; } }};
 vm.createContext(env);
 function script(name, setup) {
@@ -728,7 +730,18 @@ env.window.SAWallShare.nodes.panel = (rows, ctx) => {
   panel.__focus = panel.firstChild;
   return panel;
 };
-script("wall-styles.js", "A = api; window.stage = st => stageOf({id:'monitor', st, name:'Ops monitor'});");
+if (data.wall || data.actions) {
+  env.URLSearchParams = URLSearchParams;
+  env.window.fetch = () => {};
+  env.document.getElementById = () => ({getAttribute() {}});
+  const partial = (name, end, setup) => vm.runInContext(fs.readFileSync(dir + "/" + name, "utf8").split(end)[0] + setup + "})();", env);
+  if (data.wall) partial("wall-page.js", "  function overallState", `
+    W = adapt(data.wall); api.areaState = areaState; api.areaCounts = areaCounts; window.freshSignature = freshSig;`);
+  if (data.actions) partial("portal-looks.js", '  sec.addEventListener("click"', `
+    D0 = {areas:[data.actions], now:data.now}; D = {now:data.now}; window.actions = () => {aged(); return D.areas[0];};`);
+  env.document.getElementById = () => null;
+}
+script("wall-styles.js", "A = api; window.tile = fleetInfo; window.stage = st => stageOf({id:'monitor', st, name:'Ops monitor'});");
 script("wall-fleet.js", `
   A = api; F = adapt(data); B = {};
   P = {ov: el(), svc: el(), logo: el(), small: el(), site: el(), clock: el("", "", [{}, {}])};
@@ -796,14 +809,14 @@ class Gate(unittest.TestCase):
     def test_gate_4_vcenter_override_expires(self):
         self.rows[1]["Status"] = 2
         sn = snap(self.rows, self.groups, self.now)
-        vc = view([vm("DB", power="poweredOff")], self.now, age=180)
+        vc = view([vm("DB", power="poweredOff")], self.now, age=179)
         live = self.live(sn)
         fm = live.fleet_of(vc, self.now)
         self.assertIn("f", by_name(fm)["DB"][12])
         self.js(fm, """
           const db = F.by["2"];
           assert.equal(shown(db), "off"); advance(1);
-          assert.equal(shown(db), "lastdown"); assert.equal(gState(F.groups[0]).st, "stale");
+          assert.equal(shown(db), "unk"); assert.equal(gState(F.groups[0]).st, "stale");
         """)
         self.assertEqual(by_name(live.fleet_of(vc, self.now + 1))["DB"][3], "d")
 
@@ -811,11 +824,11 @@ class Gate(unittest.TestCase):
         fm = wf.model(snap(self.rows, self.groups, self.now), None, OPTS, self.now)
         self.js(fm, """
           openCard([F.by["1"]]); assert.equal(panel.rows[0].sev, "ok");
-          data.feed.state = "error"; F = adapt(data); refresh();
+          data.feed.state = "error"; data.nodes.forEach(r => {r[18] = "unk"; r[19] = null;}); F = adapt(data); refresh();
           assert.equal(panel.rows[0].sev, "stale"); assert(panel.ctx.stale);
           assert(panel.text.startsWith("[UNKNOWN]")); assert(card().includes("tag stale"));
           openCard(F.nodes, "bulk");
-          data.nodes.shift(); data.nodes[0][3] = "w"; data.feed.state = "ok"; F = adapt(data); refresh();
+          data.nodes.shift(); data.nodes[0][3] = "w"; data.nodes[0][18] = "warn"; data.nodes[0][19] = data.now + 30; data.feed.state = "ok"; F = adapt(data); refresh();
           assert.equal(OV.kind, "bulk"); assert.equal(panel.rows.length, 1);
           assert.equal(panel.rows[0].name, "DB"); assert.equal(panel.rows[0].sev, "warn");
           data.nodes = []; F = adapt(data); refresh(); assert.equal(OV, null); assert.equal(card(), "[]");
@@ -836,7 +849,7 @@ class Gate(unittest.TestCase):
         self.assertFalse(wf.conds(fm, self.now)[1])
         only_off = wf.model(snap(rows[1:], now=self.now), view([vm("DB", power="poweredOff")], self.now), OPTS, self.now)
         self.assertFalse(wf.conds(only_off, self.now)[1])
-        self.assertEqual(StaleNeverGreen().area(fm, self.now)[0]["state"], "stale")
+        self.assertEqual(StaleNeverGreen().area(fm, self.now)[0]["state"], "off")
         self.js(fm, """
           services(); assert.equal(gState(F.groups[0]).st, "off");
           assert(JSON.stringify(P.svc).includes("no monitored nodes"));
@@ -918,7 +931,7 @@ class Gate2(unittest.TestCase):
             vc = view([vm("OTHER")], self.now, age=age)
             fm = wf.model(snap(self.rows, now=self.now), vc, OPTS, self.now)
             area, _ = StaleNeverGreen().area(fm, self.now)
-            self.assertEqual((area["state"], area["ok_until"]), ("ok", self.now + 1) if age == 179 else ("stale", None))
+            self.assertEqual((area["state"], area["ok_until"]), ("ok", self.now + 150))
 
     @unittest.skipUnless(shutil.which("node"), "no node")
     def test_gate2_6_actions_aged_count(self):
@@ -953,6 +966,8 @@ class Gate2(unittest.TestCase):
             fm = wf.model(snap(self.rows, self.groups, self.now), None, dict(OPTS, max_nodes=cap), self.now)
             self.assertEqual(len(fm["nodes"]), min(cap, 202))
             self.assertIn("302 group members not in the node read", fm["incomplete"])
+            self.assertEqual(fm["groups"][0][3]["total"], 304)
+            self.assertEqual(fm["verdict"]["total"], 304)
             self.assertFalse(wf.conds(fm, self.now)[1])
 
         fm = wf.model(snap(self.rows, now=self.now), view([vm("EXTRA")], self.now), dict(OPTS, max_nodes=2), self.now)
@@ -971,6 +986,192 @@ class Gate2(unittest.TestCase):
             assert.notStrictEqual(panel, initial);
             assert.strictEqual(document.activeElement, P.ov.querySelectorAll("button")[2]);
           }
+        """)
+
+
+
+class Gate3(unittest.TestCase):
+    setUp = Gate.setUp
+    js = Gate.js
+    live = Gate.live
+
+    def model(self, vc=None):
+        return wf.model(snap(self.rows, self.groups, self.now), vc, OPTS, self.now)
+
+    def expiring(self):
+        self.rows[0]["LastSync"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now - 895))
+
+    def test_gate3_1_overview_poll_deadline(self):
+        self.expiring()
+        fm = self.model()
+        _, fm["wall"] = StaleNeverGreen().area(fm, self.now)
+        self.js(fm, """
+          api.W = () => data.wall;
+          assert.equal(window.tile().big, "2/2");
+          const before = window.freshSignature(); advance(6);
+          assert.notEqual(before, window.freshSignature());
+          const tile = window.tile();
+          assert.deepEqual([tile.st, tile.big, tile.unit], ["stale", "–", "no current data"]);
+          assert(!JSON.stringify(window.stage(tile.st)).includes("No service group with a node down or warning."));
+        """)
+
+    def test_gate3_2_actions_expires_with_live_down(self):
+        self.expiring()
+        self.rows[1]["Status"] = 2
+        fm = self.model()
+        area, wall = StaleNeverGreen().area(fm, self.now)
+        self.assertEqual((area["state"], area["big"]), ("crit", "1/2"))
+        self.assertEqual(area["live"], [["crit", self.now + 5]])
+        expired = next(a for a in wm.summary(wall, self.now + 6)["areas"] if a["id"] == "monitor")
+        self.assertEqual((expired["state"], expired["big"], expired["unit"]), ("stale", "–", "no current data"))
+        fm["actions"] = area
+        self.js(fm, """
+          assert.equal(window.actions().big, "1/2"); advance(6);
+          const a = window.actions();
+          assert.deepEqual([a.state, a.big, a.unit, a.crit], ["stale", "–", "no current data", 0]);
+        """)
+
+    def test_gate3_3_open_comparison_refresh(self):
+        fm = self.model(view([vm("EXTRA")], self.now))
+        fm["next"] = self.model(view([vm("EXTRA", hb="red")], self.now))
+        self.js(fm, """
+          B = el(); P.cv = el(); document.addEventListener = () => {}; wire();
+          const cmp = {getAttribute: () => "v"};
+          B.listeners.click({target: {closest: q => q === "[data-cmp]" ? cmp : null}});
+
+          assert(card().includes('"UP"')); F = adapt(data.next); refresh();
+          assert(card().includes('"DOWN"')); assert(!card().includes('"UP"'));
+          P.more = {closest: () => null}; B.listeners.click({target: P.more});
+          F = adapt(data); refresh();
+          assert(!card().includes("EXTRA"));
+        """)
+
+    def test_gate3_4_interrupted_body_and_retry(self):
+        from threading import Lock
+        live = self.live(snap(self.rows, self.groups, self.now))
+        live.cfg.tz_name, live.cfg.wall_title, live.cfg.wall_enclave = "UTC", "", ""
+        live.collector, live.lock = None, Lock()
+        from site_portal import make_handler
+        from types import SimpleNamespace
+        from test_netapp_live import cfg_for
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_for(tmp, PORTAL_NETAPP="0", PORTAL_AD="0")
+            live.viewed = lambda: None
+            handler = make_handler(cfg, SimpleNamespace(log=None), tmp, live)
+            request = handler.__new__(handler)
+            request.path, request.headers = "/api/wall/fleet", {"If-None-Match": "*"}
+            request._who = lambda api: "viewer"
+            request._send = lambda code, body, ctype, headers=None: (code, body, headers)
+            for _ in range(2):
+                code, body, headers = request.do_GET()
+                self.assertEqual((code, headers), (200, None))
+                self.assertEqual(len(json.loads(body)["nodes"]), 2)
+        self.js(self.model(), """
+          (async () => {
+            let response, headers;
+            globalThis.fetch = async (_, opts) => { headers = opts.headers; return response; };
+            response = {status:200, ok:true, headers:{get:()=>"v2"}, json:async()=>{throw Error("short body");}};
+            await load(false); assert.equal(shown(F.nodes[0]), "unk");
+            response = {status:304}; await load(false);
+            assert(!("If-None-Match" in headers)); assert.equal(shown(F.nodes[0]), "unk");
+            data.nodes[0][3] = "d"; data.nodes[0][18] = "down";
+            response = {status:200, ok:true, json:async()=>data}; await load(false);
+            assert.equal(shown(F.nodes[0]), "down");
+          })();
+        """)
+
+    def test_gate3_5_vm_evidence_dated_in_share(self):
+        self.rows[0]["Status"] = 2
+        fm = self.model(view([vm("APP")], self.now, age=181))
+        self.js(fm, """
+          openCard([F.by["1"]]); assert.equal(shown(F.by["1"]), "down");
+          assert(card().includes("(LATE)")); assert(panel.text.includes("as of " + hm((data.now-181)*1000) + " (LATE)"));
+          assert(window.SAWallShare.nodes.html(panel.rows, panel.ctx).includes("(LATE)"));
+          const painted = [];
+          document.createElement = () => ({getContext: () => ({
+            scale(){}, fillRect(){}, fillText(t){painted.push(t);}, measureText(t){return {width:t.length*7};}
+          })});
+          window.SAWallShare.nodes.picture(panel.rows, panel.ctx);
+          assert(painted.some(t => t.includes("heartbeat OK") && t.includes("(LATE)")));
+          advance(600); refresh();
+          assert(panel.rows[0].vc.includes("(NOT CURRENT)"));
+        """)
+
+    def test_gate3_6_slow_second_node_page(self):
+        clock = [self.now]
+        class Slow(FakeClient):
+            def query(client, swql, params=None):
+                if "WITH ROWS 1001 TO 2000" in swql:
+                    clock[0] += 240
+                return super().query(swql, params)
+        rows = [sw_row(i, "N%d" % i) for i in range(1001)]
+        client = Slow(rows, {"list": [], "members": []})
+        sn = wf.Reader(lambda: client, OPTS, clock=lambda: clock[0]).read_once()
+        fm = wf.model(sn, None, OPTS, clock[0])
+        self.assertEqual(fm["counts"][wf.UP], 1)
+        self.assertEqual([sn["nodes"][i]["_read_at"] for i in (0, 999, 1000)], [self.now, self.now, self.now + 240])
+        self.assertEqual((fm["complete"], fm["verdict"]["up"], fm["verdict"]["state"]), (False, 1, "stale"))
+
+    def test_gate3_7_full_dns_join(self):
+        name = "x" * 40 + "." + "y" * 22 + ".corp.example.mil"
+        self.assertEqual(len(name), 80)
+        self.rows[0].update(DNS=name + ".dr.corp.example.mil", Status=2)
+        fm = self.model(view([vm(name, power="poweredOff")], self.now))
+        self.assertEqual(fm["cmp"]["off_in_vc"], 0)
+        self.assertEqual(fm["verdict"]["state"], "crit")
+
+    def test_gate3_8_integer_status_only(self):
+        for status in (True, 1.5, "1", None):
+            with self.subTest(status=status):
+                self.rows[0]["Status"] = status
+                fm = self.model()
+                self.assertEqual(by_name(fm)["APP"][18:], ["unk", None])
+                self.assertEqual(fm["verdict"]["state"], "stale")
+
+    def test_gate3_9_service_tooltip_uses_members(self):
+        self.rows[0]["Status"] = 2
+        self.js(self.model(), """
+          services(); assert.equal(gState(F.groups[0]).st, "crit");
+          assert(!P.svc.children[0].attrs.title.includes("SolarWinds says"));
+          assert(JSON.stringify(P.svc).includes("1 down"));
+        """)
+
+    def test_gate3_10_monitor_only_ad_reader_off(self):
+        from test_netapp_live import cfg_for
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_for(tmp, PORTAL_NETMAP="0", PORTAL_AD="1", PORTAL_WALL_MONITOR="1",
+                          PORTAL_WALL_MONITOR_SWIS_URL="https://swis.corp.example.mil",
+                          PORTAL_SWIS_LOGIN=json.dumps({"user": "viewer", "password": "example"}))
+            self.assertTrue(cfg.ad_swis_why)
+            self.assertEqual(cfg.wall_fleet_why, "")
+            self.assertEqual(cfg.swis_url, "")
+        tasks = Path(ROOT, "roles/site_portal_stack/tasks/main.yml").read_text()
+        for var, gate in (("PORTAL_SWIS_URL", "_portal_netmap"), ("PORTAL_WALL_MONITOR_SWIS_URL", "_portal_wall_monitor")):
+            self.assertIn(var + ': "{{ portal_solarwinds_url | trim if ' + gate + " | bool else '' }}", tasks)
+
+    def test_gate3_p2_2_last_known_poll_in_share(self):
+        for status, word, poll in ((2, "DOWN", self.now - 86400), (3, "WARN", None)):
+            self.rows[0].update(Status=status, LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(poll)) if poll else None)
+            self.js(self.model(), """
+              const n = F.by["1"]; openCard([n]);
+              assert.equal(panel.rows[0].sev, "stale");
+              const expected = n.polled ? "SolarWinds last polled " + hm(n.polled*1000) : "SolarWinds last poll unknown";
+              assert(panel.text.startsWith("[" + ST_WORD[n.c] + " - last known, " + expected + "]"));
+              assert(phrase(n).includes(expected));
+            """)
+
+    def test_gate3_p2_7_timeout_releases_busy(self):
+        self.js(self.model(), """
+          (async () => {
+            let timeout, calls=0, ms;
+            globalThis.setTimeout = (fn, delay) => { timeout=fn; ms=delay; };
+            globalThis.fetch = (_, opts) => new Promise((_, reject) => {
+              calls++; opts.signal.addEventListener("abort", () => reject(Error("timed out")));
+            });
+            const first = load(false); assert(BUSY); assert.equal(ms, 60000);
+            timeout(); await first; assert(!BUSY); assert(FAIL); assert.equal(shown(F.nodes[0]), "unk");
+            const second = load(false); assert.equal(calls, 2); timeout(); await second;
+          })();
         """)
 
 
@@ -1037,7 +1238,7 @@ class Deploy(unittest.TestCase):
         for k in ("PORTAL_WALL_MONITOR:", "monitor_seconds:", "monitor_group_by:", "monitor_groups:", "monitor_vm_match:", "monitor_max_nodes:", "monitor_poll_stale_minutes:"):
             self.assertIn(k, t)
         self.assertIn('_portal_has_swis: "{{ _portal_swis | bool }}"', t)                       # the login deployed for the Ops monitor area too
-        self.assertIn("PORTAL_SWIS_URL: \"{{ portal_solarwinds_url | trim if _portal_swis | bool else '' }}\"", t)
+        self.assertIn("PORTAL_SWIS_URL: \"{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}\"", t)
         import site_portal_filters as F
         base = {"wall": True, "vc_on": True, "ontap_on": True, "netmap_sites": {}}
         self.assertEqual(F.site_portal_wall_summary(base), "Wall: VMware on, Storage on, Map places from netmap_sites: 0")
@@ -1053,7 +1254,7 @@ class Deploy(unittest.TestCase):
         cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1")
         self.assertTrue(cfg.wall_fleet)
         self.assertIn("no SolarWinds address", cfg.wall_fleet_why)
-        cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1", PORTAL_SWIS_URL="https://swis.example.invalid", PORTAL_SWIS_LOGIN=json.dumps({"user": "u", "password": "p"}),
+        cfg = T.cfg_for(d, PORTAL_WALL_MONITOR="1", PORTAL_WALL_MONITOR_SWIS_URL="https://swis.example.invalid", PORTAL_SWIS_LOGIN=json.dumps({"user": "u", "password": "p"}),
                         PORTAL_WALL_OPTS=json.dumps({"monitor_group_by": "custom:Bad Name", "monitor_seconds": 120}))
         self.assertEqual((cfg.wall_fleet_why, cfg.wall_fleet_opts["seconds"], cfg.wall_fleet_opts["group_by"]), ("", 120, "groups"))
         self.assertTrue(cfg.wall_fleet_notes)

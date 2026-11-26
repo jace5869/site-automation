@@ -49,7 +49,7 @@
   function ic(d, cls) {
     return s("svg", {viewBox: "0 0 24 24", "aria-hidden": "true", class: cls || null, fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round"}, [s("path", {d: d})]);
   }
-  function word(st) { return h("span", "ow " + st, [ic(ICON[st] || ICON.off), WORD[st] || st]); }
+  function word(st, label) { return h("span", "ow " + st, [ic(ICON[st] || ICON.off), label || WORD[st] || st]); }
   function hm(t) {
     try { return new Intl.DateTimeFormat("en-GB", {hour: "2-digit", minute: "2-digit", timeZone: (D && D.zone) || "UTC"}).format(new Date(t)); }
     catch (e) { return new Date(t).toISOString().slice(11, 16); }
@@ -114,24 +114,25 @@
   }
   function back(a) {
     var rows = (a.worst || []).map(function (c) { return h("div", "r", [h("span", "", [c.t]), h("b", "", [(c.sev === "crit" ? "CRIT" : "WARN") + (c.start ? " · " + ago(c.start * 1000) : "")])]); });
-    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? "Not on the wall yet" : "No current data"]),
+    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? a.unit || "Not on the wall yet" : "No current data"]),
                                              h("b", "", [a.asof ? "read " + hm(a.asof * 1000) : ""])])];
     return h("div", "ot-back", [h("h4", "", [a.name + " · worst first"])].concat(rows), {"aria-hidden": "true"});
   }
   function tile(a, i) {
-    var href = WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id));
+    var off = a.state === "off", monitoredOff = off && a.id === "monitor" && a.valid_until != null;
+    var href = WALL + (off && !monitoredOff ? "" : "?area=" + encodeURIComponent(a.id));
     var big = a.big ? h("div", "ot-big", [h("b", "", [a.big]), h("span", "", [a.unit])]) : a.state === "off" ? null : h("div", "ot-big", [h("b", "", ["–"]), h("span", "", ["no value read"])]);
     var face = h("div", "ot-face", [
       h("span", "ot-rank", [String(i + 1)], {"aria-hidden": "true"}),
-      h("div", "ot-h", [ic(AREA[a.id] || AREA.network), h("span", "", [a.short || a.name]), word(a.state)]),
+      h("div", "ot-h", [ic(AREA[a.id] || AREA.network), h("span", "", [a.short || a.name]), word(a.state, monitoredOff ? a.unit : "")]),
       big,
       a.note ? h("p", "ot-note", [a.note]) : null,
       a.metric ? chart(a.metric) : null,
-      a.state === "off" ? h("p", "ot-why", ["No live source on the wall yet - grey, never a guess."]) : a.why ? h("p", "ot-why", ["Why grey: " + a.why]) : (a.state !== "off" && (a.crit || a.warn) && a.worst && a.worst[0] ? h("p", "ot-why", ["Worst: " + a.worst[0].t]) : null),
+      monitoredOff ? null : a.state === "off" ? h("p", "ot-why", ["No live source on the wall yet - grey, never a guess."]) : a.why ? h("p", "ot-why", ["Why grey: " + a.why]) : (a.state !== "off" && (a.crit || a.warn) && a.worst && a.worst[0] ? h("p", "ot-why", ["Worst: " + a.worst[0].t]) : null),
       a.state === "off" ? null : lamps(a),
       h("span", "ot-cue", [a.state === "off" ? "Open the wall ›" : "Open on the wall ›"])
     ]);
-    var label = (a.name + ": " + WORD[a.state]) + (a.crit || a.warn ? ", " + a.crit + " critical, " + a.warn + " warning" : "") + ". Opens the wall.";
+    var label = (a.name + ": " + (monitoredOff ? a.unit : WORD[a.state])) + (a.crit || a.warn ? ", " + a.crit + " critical, " + a.warn + " warning" : "") + ". Opens the wall.";
     return h("li", "ot s-" + a.state, [h("a", "", [face, skin() === "metro" ? back(a) : null], {href: href, "aria-label": label})], {"data-id": a.id});
   }
   var RANK = {crit: 4, warn: 3, stale: 2, ok: 1, off: 0};
@@ -220,6 +221,12 @@
     var t = now(), stale = (D.stale || 600) * 1000, late = (D.late || 180) * 1000, old = D.now && t - D.now * 1000 > stale;
     D.areas = D0.areas.map(function (a0) {
       var a = JSON.parse(JSON.stringify(a0));
+      if (a.id === "monitor" && (a.state !== "off" || a.valid_until != null)) {
+        if (FAIL || a.valid_until == null || t >= a.valid_until * 1000) {
+          Object.assign(a, {state: "stale", big: "–", unit: "no current data", note: "", crit: 0, warn: 0, worst: [], why: "not current"});
+        }
+        return a;
+      }
       if (a.state === "off") return a;
       if (a.metric) {
         var ma = a.metric.asof ? t - a.metric.asof * 1000 : Infinity;

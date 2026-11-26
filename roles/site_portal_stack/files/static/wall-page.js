@@ -214,13 +214,17 @@
   // not current: its source old or failing - or a LAST KNOWN condition (no longer in the read, never seen OK: Codex verify 4)
   function condStale(c) { return UNREACH || !!c.last_known || !!(c.feed && feedFresh(c.feed) === "stale"); }
   // the freshness of every feed (and the portal's): a change redraws the page, so nothing stays green past STALE
-  function freshSig() { return (UNREACH ? "U" : "") + Object.keys((W && W.feeds) || {}).sort().map(function (k) { return k + "=" + feedFresh(k); }).join(","); }
+  function freshSig() { return (UNREACH ? "U" : "") + (W && W.fleet ? areaState("monitor") : "") + Object.keys((W && W.feeds) || {}).sort().map(function (k) { return k + "=" + feedFresh(k); }).join(","); }
   function openConds(area) { return W.conds.filter(function (c) { return c.end == null && (!area || c.area === area); }); }
   function areaCounts(id) { var n = {crit: 0, warn: 0}; openConds(id).forEach(function (c) { if (!condStale(c)) n[c.sev]++; }); return n; }
   function lastKnown(id) { var n = {crit: 0, warn: 0}; openConds(id).forEach(function (c) { n[c.sev]++; }); return n; }
   // a stale feed is never green: crit / warn from the current conditions; nothing current and a feed stale -> stale
   function areaState(id) {
     if (!areaOn(id)) return "off";
+    if (id === "monitor") {
+      var f = W.fleet;
+      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f && NOW() < f.valid_until * 1000 ? f.state : "stale";
+    }
     if (W.noConds) return "stale";
     var n = areaCounts(id);
     if (n.crit) return "crit";

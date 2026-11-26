@@ -96,11 +96,11 @@
   }
   // 1.136.0: Ops monitor (static/wall-fleet.js draws the area itself): its tile - nodes up of all, the worst group
   function fleetInfo() {
-    var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("monitor"), n = A.areaCounts("monitor"), tot = 0;
-    Object.keys(c).forEach(function (k) { tot += +c[k] || 0; });
-    var up = +c.u || 0;
-    return {id: "monitor", st: st, n: n, m: null, big: st !== "stale" && tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: st === "stale" ? "no current data" : tot ? "nodes up" : "no value read",
-            sub: n.crit + n.warn ? A.nowList("monitor").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
+    var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("monitor"), n = A.areaCounts("monitor"), tot = f.total || 0;
+    var up = f.up || 0;
+    if (st === "stale") n = {crit: 0, warn: 0};
+    return {id: "monitor", word: st === "off" && f.state === "off" ? f.label : sevWord(st), st: st, n: n, m: null, big: st !== "stale" && tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: st === "stale" ? "no current data" : tot ? "nodes up" : "no value read",
+            sub: st === "stale" ? "" : st === "off" ? f.label : n.crit + n.warn ? A.nowList("monitor").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
               tot ? (+c.d || 0) + " down · " + ((+c.p || 0) + (+c.m || 0)) + " off or unmanaged · " + (f.groups || 0) + " groups" : ""};
   }
   function fleetOn() { return (W().areas || []).some(function (a) { return a.id === "monitor" && a.built; }); }
@@ -181,7 +181,7 @@
     var spot = spotList.length ? spotList[SPOT.i % spotList.length] : null;
     list.forEach(function (a) {
       var t = h("div", "sx-tile " + a.st + (spot && spot.id === a.id ? " onstage" : ""), [
-        h("div", "th", [aIcon(a.id), h("b", "", [a.name]), A.word(a.st, sevWord(a.st))]),
+        h("div", "th", [aIcon(a.id), h("b", "", [a.name]), A.word(a.st, a.word || sevWord(a.st))]),
         a.off ? h("div", "big off", ["–"]) : h("div", "big", [h("b", "", [a.big]), h("span", "", [a.unit])]),
         h("p", "sub", [a.off ? "Not on the wall yet" + (a.sub ? " (" + a.sub + ")" : "") + " - grey, never a guess." : a.sub || ""]),
         a.m ? bar(a.m, "sm") : h("div", "wb-ph"),
@@ -225,8 +225,8 @@
   function clearTo(r) { A.clear(r); return r; }
   function stageOf(a) {
     var box = h("div", "sx-spot");
-    var items = A.nowList(a.id).filter(function (i) { return i.type === "cond"; });
-    box.appendChild(h("div", "sh", [A.word(a.st, sevWord(a.st)), h("small", "", ["Spotlight · " + a.name]),
+    var items = a.id === "monitor" && a.st === "stale" ? [] : A.nowList(a.id).filter(function (i) { return i.type === "cond"; });
+    box.appendChild(h("div", "sh", [A.word(a.st, a.word || sevWord(a.st)), h("small", "", ["Spotlight · " + a.name]),
       h("b", "", [items[0] ? items[0].t : a.st === "stale" ? a.name + ": data not current" : a.name + ": nothing open"]),
       items[0] ? h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + items[0].id}) : null]));
     if (a.id === "storage") {
@@ -246,9 +246,9 @@
         }))]));
     } else if (a.id === "monitor") {                    // 1.136.0: the worst groups; the whole area one click away
       var fw = (W().fleet || {}).worst || [], last = a.st === "stale";
-      box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Service groups with a node not up" + (last ? " (last known)" : "")]), h("span", "", ["click for the Ops monitor area"])])].concat(
-        fw.length ? fw.map(function (g) {
-          var st = last ? "stale" : g[1] ? "crit" : "warn";
+      box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Service groups with a node not up"]), h("span", "", ["click for the Ops monitor area"])])].concat(
+        !last && fw.length ? fw.map(function (g) {
+          var st = g[1] ? "crit" : "warn";
           return h("div", "crow " + st, [h("span", "nm", [String(g[0])]), A.word(st, [g[1] ? g[1] + " down" : "", g[2] ? g[2] + " warning" : ""].filter(Boolean).join(" · "))],
                    {"data-goto": "monitor", tabindex: "0", role: "button", title: "Open Ops monitor"});
         }) : [h("p", "wx-empty", [a.st === "ok" ? "No service group with a node down or warning." : "No current data."])]).concat([
@@ -288,8 +288,8 @@
       var n = a.n.crit + a.n.warn;
       bays.appendChild(h("div", "rx-bay " + a.st, [
         h("div", "bh", [aIcon(a.id), h("b", "", [a.name]), h("small", "", ["B-0" + (i + 1)])]),
-        h("div", "plate " + a.st, [A.word(a.st, sevWord(a.st).toUpperCase()), h("span", "ticks", [n ? (n > 9 ? "9+" : String(n)) + " open" : ""])]),
-        h("p", "bs", [a.off ? "No live source yet - grey, never a guess" : a.n.crit + a.n.warn ? countTxt(a.n) : a.st === "stale" ? lastTxt(a.id) : a.big ? a.big + " " + a.unit : ""]),
+        h("div", "plate " + a.st, [A.word(a.st, (a.word || sevWord(a.st)).toUpperCase()), h("span", "ticks", [n ? (n > 9 ? "9+" : String(n)) + " open" : ""])]),
+        h("p", "bs", [a.off ? "No live source yet - grey, never a guess" : a.n.crit + a.n.warn ? countTxt(a.n) : a.id === "monitor" ? a.big + " " + a.unit : a.st === "stale" ? lastTxt(a.id) : a.big ? a.big + " " + a.unit : ""]),
         a.off ? h("div", "bf", ["Not on the wall yet" + (a.sub ? " · " + a.sub : "")]) : h("div", "bf", [srcLine(null, a.id)])
       ], a.off ? null : {"data-goto": a.id, tabindex: "0", role: "button", title: "Show " + a.name + " on the wall (this style)"}));
     });
@@ -338,12 +338,12 @@
     var grid = h("section", "mx-grid");
     var sorted = list.slice().sort(function (a, b) { return RANK[b.st] - RANK[a.st]; });
     sorted.forEach(function (a) {
-      var items = a.off ? [] : A.nowList(a.id).filter(function (i) { return i.type === "cond"; });
+      var items = a.off || (a.id === "monitor" && a.st === "stale") ? [] : A.nowList(a.id).filter(function (i) { return i.type === "cond"; });
       var face = h("div", "face", [h("div", "nm", [aIcon(a.id), a.name]),
         a.off ? null : h("div", "big", [a.big, h("small", "", [a.unit])]),
         h("p", "mwhy", [a.off ? "No live source on the wall yet" + (a.sub ? " (" + a.sub + ")" : "") : items[0] ? items[0].t + " · since " + A.hm(items[0].since) + " (" + A.dur(A.NOW() - items[0].since) + ")" : a.sub || ""]),
         a.m ? bar(a.m) : null, a.m ? h("p", "say", [said(a.m)]) : null,
-        h("div", "word", [A.word(a.st, sevWord(a.st).toUpperCase())])]);
+        h("div", "word", [A.word(a.st, (a.word || sevWord(a.st)).toUpperCase())])]);
       var back = h("div", "back", [h("h4", "", [a.name + " · worst items"])].concat(items.slice(0, 4).map(function (i) {
         return h("div", "r", [h("span", "", [i.t]), h("b", "", [(i.sev === "crit" ? "CRIT " : "WARN ") + A.dur(A.NOW() - i.since)])]);
       })).concat(items.length ? [] : [h("div", "r", [h("span", "", [a.off ? "Not on the wall yet" : a.st === "ok" ? "Nothing open" : "No current data"]), h("b", "", [""])])]), {"aria-hidden": "true"});

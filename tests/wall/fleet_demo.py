@@ -169,7 +169,7 @@ class FakeReader(object):
     def rows(self, at):
         """the fixture's rows, Orion's own poll 40 s before the read (as a live Orion)"""
         sync = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at - 40))
-        return [dict(r, LastSync=sync) for r in rows_of(self.fx, self.prop)]
+        return [dict(r, LastSync=sync, _read_at=at) for r in rows_of(self.fx, self.prop)]
 
     def snapshot(self):
         now = time.time()

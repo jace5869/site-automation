@@ -829,10 +829,6 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
         inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else
                ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "monitor" else [])
-        if a["id"] == "monitor" and fleet and not inc and not any(fleet["counts"][c] for c in ("u", "w", "d", "x")):
-            inc = ["no monitored nodes"]
-        if a["id"] == "monitor" and fleet and any("v" in r[12] and "s" in r[12] for r in fleet["nodes"]):
-            inc = inc + ["a vCenter-only node's source is not current"]
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
@@ -917,9 +913,12 @@ def summary(m, now):
         opened = [c for c in conds or [] if isinstance(c, dict) and c.get("end") is None and c.get("area") == aid]
         cur = [c for c in opened if not _cond_stale(m, c, now)]
         n = {"crit": sum(1 for c in cur if c.get("sev") == "crit"), "warn": sum(1 for c in cur if c.get("sev") == "warn")}
-        if not a.get("on") or not a.get("built"):
+        fs = m.get("fleet") if aid == "monitor" else None
+        if fs:
+            st = fs["state"] if fs.get("valid_until") is not None and now < fs["valid_until"] else "stale"
+        elif not a.get("on") or not a.get("built"):
             st = "off"
-        elif conds is None:
+        elif aid == "monitor" or conds is None:
             st = "stale"
         elif n["crit"]:
             st = "crit"
@@ -987,15 +986,16 @@ def summary(m, now):
                 w_ = max(busy, key=lambda x: x["cpu"])
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
-        elif st != "off" and aid == "monitor":
-            fs = m.get("fleet") or {}
-            cn = fs.get("counts") or {}
-            tot = sum(int(v or 0) for v in cn.values())
+        elif fs:
             if st == "stale":
                 big, unit = "–", "no current data"
-            elif tot:
-                big, unit = "%d/%d" % (int(cn.get("u") or 0), tot), "nodes up"
-                note = "%d down · %d warning · %d off or unmanaged" % (int(cn.get("d") or 0), int(cn.get("w") or 0), int(cn.get("p") or 0) + int(cn.get("m") or 0))
+                cur, n = [], {"crit": 0, "warn": 0}
+                why = why or "not current"
+            elif st == "off":
+                big, unit, why = "–", fs["label"], fs["label"]
+            else:
+                big, unit = "%d/%d" % (fs["up"], fs["total"]), "nodes up"
+                note = "%d down · %d warning" % (fs["down"], fs["warn"])
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
         # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
@@ -1003,18 +1003,18 @@ def summary(m, now):
         late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
         fd = m.get("feeds") or {}
         lims = [float(fd[k]["asof"]) + float(fd[k].get("late") or late_s) for k in feeds if isinstance(fd.get(k), dict) and fd[k].get("asof") is not None]
-        if aid == "monitor" and st == "ok":
-            if fs.get("vc_asof") is not None:
-                lims.append(float(fs["vc_asof"]) + late_s)
-            if fs.get("next_expiry") is not None:
-                lims.append(fs["next_expiry"])
         ok_until = min(lims) if st == "ok" and asofs and len(asofs) == len(feeds) else None
         live = []                                  # each current condition: its severity, until when (None: until the next read)
         for c in cur:
             f = fd.get(c.get("feed")) if c.get("feed") else None
             live.append([c.get("sev"), (float(f["asof"]) + float(f.get("stale") or stale_s)) if isinstance(f, dict) and f.get("asof") is not None else None])
+        if fs:
+            until = fs.get("valid_until")
+            ok_until = until if st == "ok" else None
+            live = [[sev, until] for sev, _ in live]
         out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",
                     "ok_until": ok_until, "live": live,
+                    **({"valid_until": until} if fs else {}),
                     "state": st, "crit": n["crit"], "warn": n["warn"], "big": big, "unit": unit, "note": note, "metric": metric,
                     "worst": [{"t": c.get("t"), "sev": c.get("sev"), "start": c.get("start")} for c in worst],
                     "asof": min(asofs) if asofs else None, "why": why})

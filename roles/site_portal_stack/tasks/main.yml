@@ -1253,7 +1253,8 @@
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
-      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_swis | bool else '' }}"
+      PORTAL_WALL_MONITOR_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_wall_monitor | bool else '' }}"
+      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}"
       PORTAL_SWIS_VERIFY: "{{ '1' if portal_solarwinds_validate_certs | bool else '0' }}"
       PORTAL_SWIS_TIMEOUT: "{{ netmap_timeout | default(60) | string }}"
       PORTAL_NETMAP_OPTS:
