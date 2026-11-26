@@ -21,7 +21,7 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
   selected to Teams** - one line a node (*DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since
   05:21)*), a table and a picture of up to 40 lines.
 - **What lights the wall:** one condition per service group with a node down (critical) or warning - in every style's
-  Now list and the Overview; Strata, Relay and Metro show a *Ops monitor* tile where *Network (SolarWinds)* said
+  Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile where *Network (SolarWinds)* said
   "not on the wall yet".
 - SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
   60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
@@ -30,6 +30,27 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 - The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* or *Ops monitor off (why)*.
 - Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
   stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
+
+## 1.135.1 — 2026-11-26
+
+**To set up:** optional `sw_inventory_shares` for more destinations; nothing to change for one share.
+
+- **Linux - software inventory: more than one Windows file share.** `sw_inventory_shares` is a list of folders the same
+  files are copied to: `path` (needed, single quotes, the folder must be there), and optional `subdir`, `user`,
+  `password` (vault it), `auth`, `encrypt`. An empty `user` / `password` is the **Windows file share** credential's.
+  `sw_inventory_share` keeps working unchanged and is the first destination when set; the same folder twice is copied once.
+- Each destination on its own: one that fails (the login, a folder not there, no space) never stops the next. The job
+  output and the report's new **File shares** table (only with more than one) list each as `share 1`, `share 2`, ... with
+  ok or failed, the `SA-SWI` code and the fix. `sw_inventory_fail_on_output_error` still fails the job at its end.
+- Check logs in to each destination and looks at its folder; nothing is written. A path with a user in it is refused per
+  entry and never shown; a password is never in the job output nor the execution node's log (the step runs `no_log`).
+  Two destinations on one server keep their own logins. A list that cannot be read (an undefined variable) is said as
+  **shares** not written; the rest still goes. A full disk or quota is its own code, SA-SWI-35. What changed uses each
+  host's newest list of every copy of `sw-inventory-state.json` (an older read never replaces a newer list); a copy that
+  cannot be read is never written over. The controller step runs with `no_log` and hands its result to the next task
+  through a private file in the job's own folder, deleted when read; a crash there is said in fixed words.
+- Docs: `docs/LINUX_SW_INVENTORY.md` (*More than one share*). Tests: `tests/test_sw_inventory.py` (MoreShares),
+  `tests/swinv/run_sw_inventory_test.sh` (runs 1c, 1d, 1e, 3).
 
 ## 1.135.0 — 2026-11-26
 

@@ -17,6 +17,8 @@ file share, and with the report email.
    sw_inventory_share_subdir: linux
    ```
 
+   More than one share (1.135.1): add them in `sw_inventory_shares` (*More than one share* below). One share: nothing
+   to change.
 3. For the email: `report_email_to`, as for the other reports.
 4. Launch it with Job type **Check** (nothing runs on the hosts; it logs in to the share and looks at its folder, writes nothing),
    then **Run**. Schedule it **nightly at 02:00** with your Limit.
@@ -108,6 +110,46 @@ nodes (`/mnt/inventory`) works too.
 - Each file is copied on its own; a file open on the share is tried again for a few seconds. The job lists every file
   that could not be copied (the email: the first 50).
 
+### More than one share
+
+`sw_inventory_shares` (1.135.1) copies the same files to more folders. Each entry is a folder like
+`sw_inventory_share`; only `path` is needed.
+
+```yaml
+sw_inventory_shares:
+  - path: '\\fileserver.corp.example.mil\it\inventory'
+    subdir: linux
+  - path: '\\otherserver.corp.example.mil\security\inventory'
+    user: svc_aap_sec@CORP.EXAMPLE.MIL
+    password: "{{ vault_sw_inventory_sec_password | string }}"
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `path` | (needed) | `\\server\share\folder` or a mounted folder, in single quotes. The folder must be there |
+| `subdir` | `''` | A folder under it |
+| `user` | the credential's | Another account for this share, `user@YOURDOMAIN.MIL` |
+| `password` | the credential's | Its password: vault it, and write `\| string` in the reference (as above) so ansible-core 2.16 keeps it as written. Set `user` and `password` together |
+| `auth` | `sw_inventory_share_auth` | `negotiate`, `kerberos` or `ntlm` |
+| `encrypt` | `sw_inventory_share_encrypt` | `true` or `false`; empty: the setting. Anything else: that entry is not copied (SA-SWI-20) |
+
+- `sw_inventory_share`, when set, is the first destination. Both may be set. The same folder twice (same path and
+  `subdir`, any case for a share) is copied once.
+- Each destination is copied on its own. One that fails (the login, a folder not there, no space) never stops the
+  next. The job output and the report's **File shares** table list each one with ok or failed, the `SA-SWI` code and
+  the fix. They are named `share 1`, `share 2`, ... (with one destination: `share`, as before).
+- `sw_inventory_fail_on_output_error` (true) fails the job at its end when one of them failed, after the others.
+- **Check** logs in to each one and looks at its folder; nothing is written.
+- An entry with a user or password in its path (`user@server`) is refused and never shown. A path or sub folder that
+  is not valid is never repeated either: the entry is named by its number. A password is never in the job output nor
+  in the execution node's log (the step runs with `no_log`; its result reaches the next task through a private file
+  in the job's own folder, deleted when read). A password is taken out of the report's words too.
+- An entry with an undefined variable in any of its keys is not copied (SA-SWI-20); it is never taken as empty. A list that cannot be read at all (not a list; on
+  ansible-core 2.16 also an undefined variable in any entry) is said as **shares** not written (SA-SWI-20): none of its
+  folders gets the files, `sw_inventory_share` and the exports still do, and the job fails at its end.
+- **What changed** uses every copy of `sw-inventory-state.json` (here and on each share): each host's newest list. A
+  copy that cannot be read is left as it is there; the others are compared and updated.
+
 ## The email and the report
 
 With `report_email_to`, the report goes out like the other reports with the run's **CSV**, **JSON**, a zip of the
@@ -119,7 +161,7 @@ The website and the email are sent on their own: one failing never stops the oth
 job at its end like an export.
 
 The report, results first, empty sections left off: **Hosts not read** (with why), **Outputs not written**,
-**Software changes (last night)** (added, removed, updated per host), **Top changed packages**, **Notes**.
+**File shares** (with more than one share: each with ok or failed), **Software changes (last night)** (added, removed, updated per host), **Top changed packages**, **Notes**.
 
 ## Settings
 
@@ -132,6 +174,7 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | `sw_inventory_share_subdir` | `''` | A folder under the share's folder |
 | `sw_inventory_share_auth` | `report_web_smb_auth` | `negotiate`, `kerberos` or `ntlm` |
 | `sw_inventory_share_encrypt` | `report_web_smb_encrypt` | SMB 3 encryption always |
+| `sw_inventory_shares` | `[]` | More shares (*More than one share*): `path`, `subdir`, `user`, `password`, `auth`, `encrypt` each |
 | `sw_inventory_keep_days` | `90` | Dated files kept. `0`: all |
 | `sw_inventory_email` | `true` | Email the report with the files (`report_email_to`) |
 | `sw_inventory_email_max_mb` | `10` | The CSV, the JSON and the shield zip each at most (the workbook always goes) |
@@ -145,8 +188,8 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | Code | What | The fix |
 |---|---|---|
 | SA-SWI-01 | an export name not known | `sw_inventory_outputs`: shield, csv, json |
-| SA-SWI-20 | `sw_inventory_share` or its auth is not valid (or has a user in it) | `\\fileserver.corp.example.mil\share\folder`; `negotiate` |
-| SA-SWI-21 | the share refused the login | the Windows file share credential's user name and password |
+| SA-SWI-20 | `sw_inventory_share`, a `sw_inventory_shares` entry or its auth is not valid (no path, or a user in it) | `\\fileserver.corp.example.mil\share\folder`; `negotiate` |
+| SA-SWI-21 | the share refused the login | the Windows file share credential's user name and password (or the entry's) |
 | SA-SWI-22 | access denied | Modify on the folder |
 | SA-SWI-23 | no such share | the share's name in `sw_inventory_share` |
 | SA-SWI-24 | Kerberos: realm, server name, token, MD4 | `user@REALM`, the server's full name, `negotiate` |
@@ -160,6 +203,7 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | SA-SWI-32 | the state file cannot be read (no access, an I/O error) | read access for the job's user; it is left as it is |
 | SA-SWI-33 | the state file cannot be written | write access for the job's user |
 | SA-SWI-34 | a folder under `sw_inventory_dir` or a mounted share is a link that leads outside it | a real folder: nothing is written or deleted through a link |
+| SA-SWI-35 | no space on the share's disk (or the folder's), or the account's quota is full | free space there, or a larger quota |
 
 A host that cannot be reached is listed with a reason in plain words (never the connection's own text) and never fails
 the job; `site_unreachable_fails: true` fails it after the report has gone. The report goes out even when no host was
