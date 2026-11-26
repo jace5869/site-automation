@@ -1370,6 +1370,16 @@ class Fix1352(Admin):
                     self.assertNotIn("arow ok", self.card(page, key))
         self.api.nodes = ["odd"]
         self.assertTrue(self.portal.admin_catalog.read(force=True)[0]["wf_2"]["unknown_steps"])
+        for node in ({"id": 42, "workflow_job_template": 99}, {"id": 42, "summary_fields": {"unified_job_template": {"unified_job_type": "workflow_approval"}}},
+                     {"id": 42, "workflow_job_template": "0" * 4300 + "2"}):          # gate c2 #2-#4
+            with self.subTest(node=str(node)[:60]):
+                self.api.nodes = [node]
+                rows, error, _ = self.portal.admin_catalog.read(force=True)
+                self.assertFalse(error)
+                self.assertTrue(rows["wf_2"]["unknown_steps"])
+                page = self.http("/admin")[1]
+                self.assertNotIn("ready.", self.card(page, "jt_1").lower().replace("<b>ready.</b>", "READY"))
+                self.assertNotIn("<b>Ready.</b>", self.card(page, "jt_1"))
 
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:

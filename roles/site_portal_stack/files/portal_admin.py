@@ -100,19 +100,22 @@ class Catalog:
                     sf = node.get("summary_fields") if isinstance(node.get("summary_fields"), dict) else {}
                     ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
                     job_type = ujt.get("unified_job_type")
-                    if isinstance(job_type, str) and job_type in known_types:
-                        continue
+                    known = isinstance(job_type, str) and job_type in known_types
                     node_id = node.get("id")
                     if type(node_id) is not int:
                         node_id = node.get("unified_job_template")
                     name = "node %d" % node_id if type(node_id) is int else "a node without an id"
                     parent = node.get("workflow_job_template")
-                    if isinstance(parent, str) and parent.isdecimal():
+                    if isinstance(parent, str) and parent.isdecimal() and len(parent) <= 18:
                         parent = int(parent)            # "2" (any decimal digits) names workflow 2
-                    if type(parent) is int:
+                    if type(parent) is not int:
+                        if not known or job_type == "workflow_approval":   # an approval step or an undescribed one of no named workflow
+                            orphans.append(name + " (its workflow not named)")
+                    elif not known:
                         unknown_steps[parent].append(name)
-                    else:
-                        orphans.append(name + " (its workflow not named)")
+                wf_ids = {r["id"] for r in templates if isinstance(r, dict) and type(r.get("id")) is int}
+                for parent in [p_ for p_ in unknown_steps if p_ not in wf_ids]:   # a workflow not in the list: may be any
+                    orphans.extend(n_ + " (workflow %d, not in the list)" % parent for n_ in unknown_steps.pop(parent))
                 for name in orphans:                    # it may belong to any workflow: every workflow is in doubt
                     for r in templates:
                         if isinstance(r, dict) and type(r.get("id")) is int:
@@ -240,10 +243,10 @@ def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved, s
     if row["unknown_steps"] or stale:
         style = "warn"
     if stale:
-        status = "<b>%s</b> What AAP said then: %s" % (e(stale), status.replace("<b>Ready.</b>", "ready."))
+        status = "<b>%s</b> What AAP said then: %s" % (e(stale), status.replace("<b>Ready.</b> ", ""))
     elif doubt and style == "ok":
         # 1.135.2 (display only): AAP did not describe every workflow step - no card is confirmed ready meanwhile
-        style, status = "warn", "<b>%s</b> %s" % (e(doubt), status.replace("<b>Ready.</b>", "ready."))
+        style, status = "warn", "<b>%s</b> %s" % (e(doubt), status.replace("<b>Ready.</b> ", ""))
     own = bool(intent["run_groups"] or intent["approve_groups"])
     badges = ('<span class="ty">%s</span>' % ("Workflow" if row["workflow"] else "Job template")
               + ('<span class="badge">Approval</span>' if row["approval"] else "")
