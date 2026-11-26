@@ -572,7 +572,7 @@ done
 if podman exec site-portal-app grep -q '"source": "vcenter:vc-none.invalid", "state": "not read"' /data/portal-log.jsonl 2>/dev/null; then
     pass "the wall's collector reads with the new login and says why it could not (a name that does not resolve)"
 else fail "the wall's collector said why it could not read" "$(podman exec site-portal-app grep '"event": "wall"' /data/portal-log.jsonl 2>&1 | tail -5)"; fi
-# 1.138.0: the wall's Ops monitor area - on with the SolarWinds credential (auto): said in the summary, the login secret made,
+# 1.136.0: the wall's Ops monitor area - on with the SolarWinds credential (auto): said in the summary, the login secret made,
 # its answer and files served, the reader's failure said in the log (a name that never resolves), the area grey - never green
 fl="$(c "$k/jdoe" get /portal/api/wall/fleet)"; aw="$(c "$k/jdoe" get /portal/api/wall)"; fjs="$(c "$k/jdoe" get /portal/static/wall-fleet.js)"
 for _ in $(seq 1 60); do
@@ -585,7 +585,7 @@ if [ "$fsum" = 1 ] && podman secret inspect site-portal-swis >/dev/null 2>&1 && 
     && echo "$aw" | jq_ '[a["id"] for a in d["json"]["areas"]]' | grep -q monitor \
     && echo "$fjs" | jq_ 'd["code"]' | grep -q 200 \
     && podman exec site-portal-app grep -q '"source": "solarwinds-monitor", "state": "not read"' /data/portal-log.jsonl; then
-    pass "Ops monitor (1.138.0): the SolarWinds credential turns it on (summary, login secret), its answer and files served, the reader says why it could not read"
+    pass "Ops monitor (1.136.0): the SolarWinds credential turns it on (summary, login secret), its answer and files served, the reader says why it could not read"
 else fail "Ops monitor" "summary: $(grep -o 'Ops monitor [a-z]*[^,\"]*' "$work/out-vc.txt" | head -2) | Ops monitor: $(echo "$fl" | head -c 400) | log: $(podman exec site-portal-app grep 'solarwinds-monitor' /data/portal-log.jsonl 2>&1 | tail -2)"; fi
 denied="$(journalctl --user -u site-portal-app --since "-5min" --no-pager 2>/dev/null | grep -c 'PermissionError')"
 if echo "$css" | jq_ 'd["code"]' | grep -q 200 && echo "$css" | grep -q -- '--' && [ "${after:-0}" -gt "${before:-0}" ] && [ "$denied" = 0 ]; then

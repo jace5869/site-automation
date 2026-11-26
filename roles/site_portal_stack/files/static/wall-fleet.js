@@ -1,4 +1,4 @@
-// 1.138.0: the ops wall's "Ops monitor" area (?area=monitor) - every node SolarWinds watches, up or down, by service group,
+// 1.136.0: the ops wall's "Ops monitor" area (?area=monitor) - every node SolarWinds watches, up or down, by service group,
 // compared with vCenter (roles/site_portal_stack/files/wall_fleet.py makes /api/wall/fleet). One board in every wall style (the
 // style's colours and type): the services strip (worst member wins; click = the Spotlight), one square a node on a canvas (down: a
 // red ring and its name; warning: amber with a notch; grey hollow: powered off or unmanaged; grey: no current data - never green),

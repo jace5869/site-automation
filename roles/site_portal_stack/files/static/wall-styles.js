@@ -94,7 +94,7 @@
     return {id: "vmware", st: st, n: n, m: m, big: of ? up + "/" + of : "–", unit: of ? "hosts up" : "no value read",
             sub: n.crit + n.warn ? A.nowList("vmware").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" : of ? vms + " VMs on " + of + " hosts" : "", busy: busy};
   }
-  // 1.138.0: Ops monitor (static/wall-fleet.js draws the area itself): its tile - nodes up of all, the worst group
+  // 1.136.0: Ops monitor (static/wall-fleet.js draws the area itself): its tile - nodes up of all, the worst group
   function fleetInfo() {
     var w = W(), f = w.fleet || {}, c = f.counts || {}, st = A.areaState("monitor"), n = A.areaCounts("monitor"), tot = 0;
     Object.keys(c).forEach(function (k) { tot += +c[k] || 0; });
@@ -244,7 +244,7 @@
           var st = A.status(["crit", "warn", "ok", "stale"].indexOf(x.st) >= 0 ? x.st : "stale", x.feed);
           return h("span", "hq " + st, [x.n.split(".")[0]], {"data-d": "host:" + x.vc + "|" + x.n, tabindex: "0", role: "button", title: x.n + ": " + sevWord(st)});
         }))]));
-    } else if (a.id === "monitor") {                    // 1.138.0: the worst groups; the whole area one click away
+    } else if (a.id === "monitor") {                    // 1.136.0: the worst groups; the whole area one click away
       var fw = (W().fleet || {}).worst || [], last = a.st === "stale";
       box.appendChild(h("div", "sx-chart", [h("div", "ch", [h("b", "", ["Service groups with a node not up" + (last ? " (last known)" : "")]), h("span", "", ["click for the Ops monitor area"])])].concat(
         fw.length ? fw.map(function (g) {

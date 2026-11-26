@@ -83,7 +83,7 @@ try:
 except ImportError:                     # an older deploy's files: the wall from the report database only
     wall_live = None
 try:
-    import wall_fleet  # noqa: E402  1.138.0: the wall's Ops monitor area (SolarWinds' nodes, SWQL only, vs vCenter)
+    import wall_fleet  # noqa: E402  1.136.0: the wall's Ops monitor area (SolarWinds' nodes, SWQL only, vs vCenter)
 except ImportError:                     # an older deploy's files: no Ops monitor area
     wall_fleet = None
 try:
@@ -732,7 +732,7 @@ class Config(object):
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
             self.wall, self.wall_logins = False, {}
             wo = {}
-        # 1.138.0: the wall's Ops monitor area (PORTAL_WALL_MONITOR: the deploy's portal_wall_monitor, auto resolved there - on with
+        # 1.136.0: the wall's Ops monitor area (PORTAL_WALL_MONITOR: the deploy's portal_wall_monitor, auto resolved there - on with
         # a SolarWinds credential) - SolarWinds read with the network map's address and read-only login; its settings in PORTAL_WALL_OPTS
         self.wall_fleet = self.wall and flag(g("PORTAL_WALL_MONITOR", "0"))
         self.wall_fleet_opts, fleet_bad = (wall_fleet.opts_of(wo if isinstance(wo, dict) else {}) if wall_fleet is not None
@@ -7264,7 +7264,7 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
-        # 1.138.0: Ops monitor - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
+        # 1.136.0: Ops monitor - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
         self.fleet, self.fleet_key, self.fleet_model, self.fleet_since = fleet, None, None, None
         self.fleet_body, self.fleet_tag = "", ""
         if getattr(cfg, "wall_fleet", False) is True and wall_fleet is not None:
@@ -7321,7 +7321,7 @@ class WallLive(object):
             self.fleet.viewed()
 
     def fleet_of(self, view, now):
-        """1.138.0: the Ops monitor area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
+        """1.136.0: the Ops monitor area's model, made again only when SolarWinds' read, a vCenter's read or a vCenter's being current
         changed (a 3,000-node join is not made per request). Called inside self.lock."""
         if self.fleet is None:
             return None
@@ -7820,7 +7820,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
                     return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
-            if path == "/api/wall/fleet":                   # 1.138.0: the Ops monitor area's nodes (static/wall-fleet.js)
+            if path == "/api/wall/fleet":                   # 1.136.0: the Ops monitor area's nodes (static/wall-fleet.js)
                 if not wall:
                     return self._send(404, {"error": "The wall is off here (portal_wall: false)."})
                 wall.viewed()

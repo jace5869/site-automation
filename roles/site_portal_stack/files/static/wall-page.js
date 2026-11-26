@@ -149,7 +149,7 @@
   function STALE() { return (W && W.stale) || 600; }
   var FRESH_TITLE = "Amber (LATE) after 3 min, STALE after 10 min. Stale data is never shown green.";
   function ageS(asof) { return asof == null ? null : Math.max(0, Math.round((NOW() - asof) / 1000)); }
-  // 1.138.0: a feed may carry its own limits (the Ops monitor area's SolarWinds when read less often than every minute)
+  // 1.136.0: a feed may carry its own limits (the Ops monitor area's SolarWinds when read less often than every minute)
   function fstate(sec, f) {
     var late = f && typeof f.late === "number" ? f.late : LATE(), stale = f && typeof f.stale === "number" ? f.stale : STALE();
     return sec == null ? "stale" : sec > stale ? "stale" : sec > late ? "late" : "ok";
@@ -430,7 +430,7 @@
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    // 1.138.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
+    // 1.136.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
     if (S.area === "monitor") {
       if (window.SAWallFleet) window.SAWallFleet.render(API, stage);
       else stage.appendChild(h("p", "note warn", ["The Ops monitor area's script did not load - reload the page."]));
@@ -453,7 +453,7 @@
     if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview";
     S.area = id; S.site = ""; closePops(); closeDetail(); render();
   }
-  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.138.0)
+  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
   function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || S.area === "monitor"); }
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }

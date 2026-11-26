@@ -55,7 +55,7 @@ DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible
 VM_PATHS = ("name", "runtime.host", "runtime.powerState", "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
             "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus",
             "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type",
-            "guest.ipAddress", "guest.hostName")     # 1.138.0: the Ops monitor area's name / IP match with SolarWinds
+            "guest.ipAddress", "guest.hostName")     # 1.136.0: the Ops monitor area's name / IP match with SolarWinds
 SPECS = (("HostSystem", HOST_PATHS), ("ClusterComputeResource", CLUSTER_PATHS), ("Datastore", DS_PATHS), ("VirtualMachine", VM_PATHS))
 
 

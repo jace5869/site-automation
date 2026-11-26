@@ -849,7 +849,7 @@ def _lonlat_ok(v):
 
 def site_portal_wall_summary(w):
     """1.131.0: the deploy summary's wall line - 'Wall: VMware on|off (why), Storage on|off (why), Map places from
-    netmap_sites: N' (1.138.0: ', Ops monitor on|off (why)' when monitor_on is given). w: {wall, vc_on, vc_mode, vc_host, vcenters, vc_user, vc_pass, ontap_on, ontap_mode, clusters,
+    netmap_sites: N' (1.136.0: ', Ops monitor on|off (why)' when monitor_on is given). w: {wall, vc_on, vc_mode, vc_host, vcenters, vc_user, vc_pass, ontap_on, ontap_mode, clusters,
     ontap_user, ontap_pass, netmap_sites}. The why of an "off": the first missing piece, as the deploy decides."""
     w = w if isinstance(w, dict) else {}
 
@@ -902,7 +902,7 @@ def site_portal_wall_summary(w):
     out = "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
     if "monitor_on" not in w:                   # an older caller: the line as before
         return out
-    if on(w.get("monitor_on")):                 # 1.138.0: Ops monitor (SolarWinds' nodes by service, compared with vCenter)
+    if on(w.get("monitor_on")):                 # 1.136.0: Ops monitor (SolarWinds' nodes by service, compared with vCenter)
         fl = "Ops monitor on (by %s)" % (str(w.get("monitor_group_by") or "groups").strip() or "groups")
     elif str(w.get("monitor_mode", "auto")).strip().lower() in ("false", "no", "off", "0"):
         fl = "Ops monitor off (portal_wall_monitor: false)"

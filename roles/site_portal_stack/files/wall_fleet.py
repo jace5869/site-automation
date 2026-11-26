@@ -1,4 +1,4 @@
-"""1.138.0: the ops wall's "Ops monitor" area (/portal/wall?area=monitor, docs/SITE_PORTAL.md "The wall"): every node
+"""1.136.0: the ops wall's "Ops monitor" area (/portal/wall?area=monitor, docs/SITE_PORTAL.md "The wall"): every node
 SolarWinds watches, up or down, grouped by service, compared with what vCenter says of the same VM.
 
   Reader   reads SolarWinds itself (plugins/module_utils/site_swis.py: one SWQL SELECT per call, never anything else) every

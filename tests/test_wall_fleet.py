@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.138.0: the wall's Ops monitor area (roles/site_portal_stack/files/wall_fleet.py, static/wall-fleet.js, the node share in
+"""1.136.0: the wall's Ops monitor area (roles/site_portal_stack/files/wall_fleet.py, static/wall-fleet.js, the node share in
 static/wall-share.js): the grouping (SolarWinds groups, a custom property, the configured list), the vCenter compare (powered off is
 never down, Disagree, vCenter only, not found, two VMs of a name), stale never green, the since-tracker, 3,000 nodes, the payload,
 the reader (SWQL SELECTs only, a refused login, a column Orion has not) against the fake SWIS, the share text and HTML (escaped),

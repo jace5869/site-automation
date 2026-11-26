@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.138.0: the wall's Ops monitor demo - a made-up SolarWinds (nodes, groups, a custom property ServiceGroup) and the
+"""1.136.0: the wall's Ops monitor demo - a made-up SolarWinds (nodes, groups, a custom property ServiceGroup) and the
 VMs vCenter has of the same names, for tests/test_wall_fleet.py, the page tests and the screenshots. Placeholders only (names
 SITEA..., addresses from the documentation and benchmark ranges).
 

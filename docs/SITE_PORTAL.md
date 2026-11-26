@@ -1225,7 +1225,7 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
 
-### Ops monitor (1.138.0)
+### Ops monitor (1.136.0)
 
 A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
 up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw

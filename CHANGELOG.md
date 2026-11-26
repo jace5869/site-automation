@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.138.0 — 2026-11-26
+## 1.136.0 — 2026-11-26
 
 **To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
 Network map uses - nothing new to create). The area comes on by itself (`portal_wall_monitor: auto`). Optional: group by a

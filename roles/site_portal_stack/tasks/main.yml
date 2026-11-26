@@ -362,7 +362,7 @@
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
-# 1.138.0: the wall's Ops monitor area - on with the "SolarWinds (read-only)" credential (auto), or as portal_wall_monitor says;
+# 1.136.0: the wall's Ops monitor area - on with the "SolarWinds (read-only)" credential (auto), or as portal_wall_monitor says;
 # it reads with the network map's login, so that login is deployed when either is on (_portal_swis)
 - name: Settings | the wall's Ops monitor area (portal_wall_monitor)
   ansible.builtin.set_fact:
@@ -687,14 +687,14 @@
     # 1.130.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
     - {src: wall_model.py, dest: wall_model.py}
     - {src: wall_live.py, dest: wall_live.py}
-    - {src: wall_fleet.py, dest: wall_fleet.py}                          # 1.138.0: the wall's Ops monitor area
+    - {src: wall_fleet.py, dest: wall_fleet.py}                          # 1.136.0: the wall's Ops monitor area
     - {src: static/wall-page.js, dest: static/wall-page.js}
     - {src: static/wall-page.css, dest: static/wall-page.css}
     - {src: static/wall-land.js, dest: static/wall-land.js}
     - {src: static/wall-styles.js, dest: static/wall-styles.js}          # 1.135.0: the Strata, Relay and Metro styles
     - {src: static/wall-styles.css, dest: static/wall-styles.css}
     - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
-    - {src: static/wall-fleet.js, dest: static/wall-fleet.js}            # 1.138.0: Ops monitor
+    - {src: static/wall-fleet.js, dest: static/wall-fleet.js}            # 1.136.0: Ops monitor
     - {src: static/wall-fleet.css, dest: static/wall-fleet.css}
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}        # 1.135.0: the Actions page's Ops center section
@@ -1222,7 +1222,7 @@
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
       PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
       PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
-      PORTAL_WALL_MONITOR: "{{ '1' if _portal_wall_monitor | bool else '0' }}"     # 1.138.0: Ops monitor (its settings: monitor_* below)
+      PORTAL_WALL_MONITOR: "{{ '1' if _portal_wall_monitor | bool else '0' }}"     # 1.136.0: Ops monitor (its settings: monitor_* below)
       PORTAL_WALL_OPTS:
         seconds: "{{ portal_wall_seconds | int }}"
         monitor_seconds: "{{ portal_wall_monitor_seconds | int }}"

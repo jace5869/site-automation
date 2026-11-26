@@ -19,7 +19,7 @@ try:
 except ImportError:                        # pragma: no cover - the portal image has it
     site_swis = None
 try:
-    import wall_fleet                      # 1.138.0: the Ops monitor area's conditions and summary
+    import wall_fleet                      # 1.136.0: the Ops monitor area's conditions and summary
 except ImportError:                        # pragma: no cover - an older deploy's files: no Ops monitor area
     wall_fleet = None
 
@@ -51,7 +51,7 @@ NOT_ON_WALL = {
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
     "monitor": "a node's own alerts (CPU, disk, interfaces), SolarWinds events; a single node down lights its group, never a wall of its own.",
 }
-# 1.138.0: Ops monitor (wall_fleet.py) - on the wall only with portal_wall_monitor (auto: when SolarWinds is configured)
+# 1.136.0: Ops monitor (wall_fleet.py) - on the wall only with portal_wall_monitor (auto: when SolarWinds is configured)
 FLEET_AREA = {"id": "monitor", "name": "Ops monitor", "short": "Monitor", "sub": "SolarWinds", "team": "Service owners"}
 FLEET_KINDS = {
     "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds (powered off in vCenter: never down)", "grp": "fleet"},
@@ -134,7 +134,7 @@ def _n(x):
 
 
 def fstate(age, o=None, f=None):
-    """a feed's age (s, None = never read) -> ok | late | stale (f: the feed - 1.138.0: its own late / stale when it has them)"""
+    """a feed's age (s, None = never read) -> ok | late | stale (f: the feed - 1.136.0: its own late / stale when it has them)"""
     late, stale = (o or DEFAULTS)["late"], (o or DEFAULTS)["stale"]
     if isinstance(f, dict):
         late = f["late"] if isinstance(f.get("late"), (int, float)) and not isinstance(f.get("late"), bool) else late

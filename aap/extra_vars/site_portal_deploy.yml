@@ -521,7 +521,7 @@ portal_public_url: https://stigman.example.mil/portal/
 ## sites as a list
 # portal_wall_site_places: {}
 
-## 1.138.0: Ops monitor (docs/SITE_PORTAL.md, "Ops monitor") - a wall area (?area=monitor, in every
+## 1.136.0: Ops monitor (docs/SITE_PORTAL.md, "Ops monitor") - a wall area (?area=monitor, in every
 ## style, in the rotation) with every node SolarWinds watches as one square, up or down, grouped by
 ## service, and what vCenter says of the same VM (powered off is never "down"; down in SolarWinds
 ## but running in vCenter: "Disagree - likely the network path"). Click a node for its card (Copy
