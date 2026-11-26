@@ -318,11 +318,11 @@ def _crit(v):
 
 
 def job_critical(item):
-    """True when the job marks an item critical (its own data: severity or level critical, or critical true): it goes to the
-    smart model at once."""
+    """True when the job marks an item critical (its own data: severity, level or status critical, or critical true): it goes
+    to the smart model at once."""
     return isinstance(item, dict) and (item.get("critical") is True
-                                       or str(item.get("severity") or "").strip().lower() == "critical"
-                                       or str(item.get("level") or "").strip().lower() == "critical")
+                                       or any(str(item.get(f) or "").strip().lower() == "critical"
+                                              for f in ("severity", "level", "status")))     # status: capacity (Codex r2)
 
 
 def _reader(name, path, attr):
@@ -368,7 +368,7 @@ def judge(form, row, items, sure=SURE):
                 return "unreadable"         # an item left out
             if rec.get("noise"):
                 continue
-            if not (str(rec.get("cause") or "").strip() or str(rec.get("fix") or "").strip()):
+            if not says(rec):
                 return "unreadable"         # a confidence alone says nothing (Codex r1)
             if rec.get("confidence") is None or rec["confidence"] < sure:
                 return "unsure"
@@ -399,8 +399,17 @@ def safe(v, n=300):
     return _cut(re.sub(r"\?[^\s'\")>]*", "?<removed>", t), n)
 
 
+SAYS = ("cause", "fix", "estimate", "recommendation", "reasoning")     # what an item's analysis says (capacity: estimate ...)
+
+
+def says(rec):
+    """True when an item's record (act_analysis_parse's by_id) says something: noise, or a cause, fix, estimate,
+    recommendation or reasoning (Codex, Neon r2: capacity and right-sizing answer without cause and fix)."""
+    return isinstance(rec, dict) and (bool(rec.get("noise")) or any(str(rec.get(k) or "").strip() for k in SAYS))
+
+
 def answered(row, items, form):
-    """The items a question's answer really answers: for an analysis, the ones it says something about; else all."""
+    """How many items a question's answer really answers: for an analysis, the ones it says something about; else all."""
     ids = [str(x) for x in (row.get("ids") or [])]
     if form != "analysis" or not row.get("ran"):
         return len(ids) if row.get("ran") else 0
@@ -408,7 +417,7 @@ def answered(row, items, form):
         by = _parser()(row.get("summary"), items).get("by_id") or {}
     except Exception:
         return 0
-    return sum(1 for i in ids if _pid(i) in by)
+    return sum(1 for i in ids if says(by.get(_pid(i))))
 
 
 def _cut(v, n):
@@ -432,22 +441,21 @@ def synth_evidence(done):
         who = {"worker": "first pass", "escalated": "checked again by the stronger model",
                "smart": "the stronger model"}.get(row.get("tier"), "the stronger model")
         by = r.get("by_id") or {}
+        def clean(v, n):            # redacted whole, then cut: a cut never leaves half a secret behind (Codex r2)
+            return _cut(C._scrub(C._redact_all(" ".join(str(v or "").split()))), n)
         for it in items:
             pid = _pid(it.get("id"))
             rec = by.get(pid)
-            if not isinstance(rec, dict):
+            if not says(rec):
                 continue
             if rec.get("noise"):
-                lines.append("%s (%s): noise. %s" % (pid, who, _cut(rec.get("cause"), 200)))
+                lines.append("%s (%s): noise. %s" % (pid, who, clean(rec.get("cause"), 200)))
                 continue
             conf = rec.get("confidence")
-            parts = ["%s (%s, confidence %s):" % (pid, who, conf if conf is not None else "not given"),
-                     "cause: " + _cut(rec.get("cause"), 300)]
-            if rec.get("fix"):
-                parts.append("fix: " + _cut(rec.get("fix"), 300))
-            for k in ("estimate", "recommendation"):
-                if rec.get(k):
-                    parts.append("%s: %s" % (k, _cut(rec[k], 200)))
+            parts = ["%s (%s, confidence %s):" % (pid, who, conf if conf is not None else "not given")]
+            for k, n in (("cause", 300), ("fix", 300), ("estimate", 200), ("recommendation", 200)):
+                if str(rec.get(k) or "").strip():
+                    parts.append("%s: %s" % (k, clean(rec[k], n)))
             lines.append(" ".join(parts))
     if not lines:
         return ""
@@ -472,7 +480,9 @@ def synth_read(summary):
             except ValueError:
                 continue
             if isinstance(v, dict) and isinstance(v.get("overall"), str) and v["overall"].strip():
-                return _cut(v["overall"], 1500)
+                # redacted whole, then cut: the report and the cache never show a secret it quoted (Codex r2)
+                C = _cache()[0]
+                return _cut(C._scrub(C._redact_all(" ".join(v["overall"].split()))), 1500)
     return ""
 
 
@@ -502,7 +512,7 @@ def tiers_summary(T, rows, todo, syn, questions=()):
         if r.get("escalated"):
             why[r["escalated"]] = why.get(r["escalated"], 0) + k
         if r.get("escalation_failed"):
-            failed += k
+            failed += got
     note = "ACT models (site_act_worker_model): %d item(s) answered by the worker model (%s), %d by the smart model (%s)" % (
         n["worker"], T["worker"], n["smart"] + n["escalated"], T["smart"] or "ACT's default")
     if why:
@@ -718,8 +728,9 @@ class ActionModule(ActionBase):
         # 1.137.0 (Codex r1): for the tiers, the model ACT would use also when only the execution environment sets it - a
         # worker that is that model is one tier, and the smart questions are keyed with it
         # (Neon r1): with an ACT_PROVIDER of its own in site_act_env, site_act_model is another provider's - not that one's
-        mname = MODEL_SETTING.get(eprov, "GENAI_MODEL")
-        tsmart = str(aenv.get(mname) or os.environ.get(mname) or (model if eprov == provider else "") or "")
+        mname = MODEL_SETTING.get(eprov.strip().lower(), "GENAI_MODEL")     # ACT reads its provider in any case (Codex r2)
+        tsmart = (str(aenv.get(mname) or "") if mname in aenv else      # an explicit "" holds: ACT's default (Neon r2)
+                  str(os.environ.get(mname) or (model if eprov == provider else "") or ""))
         T = tiers_plan(a.get("tiers"), eprov, tsmart)
         if T.get("on"):
             smart = T["smart"]
@@ -787,7 +798,7 @@ class ActionModule(ActionBase):
         launcher = str(a.get("launcher") or LAUNCHER)
         settings = dict((str(k), None if v is None else str(v)) for k, v in (a.get("env") or {}).items() if str(k) not in DROP_ENV)
         names = [str(n) for n in (a.get("names") or []) if n not in (None, "")]
-        mset = MODEL_SETTING.get(eprov, "GENAI_MODEL")
+        mset = MODEL_SETTING.get(eprov.strip().lower(), "GENAI_MODEL")
 
         def job(i, n, row, tier):
             """One ACT run of question i: the worker's (its model in ACT's model setting) or the smart model's."""
@@ -799,7 +810,7 @@ class ActionModule(ActionBase):
                 j.update(settings=dict(settings, **{mset: T["worker"]}), mdl=T["worker"], fallback=T["worker"], again=False,
                          retries=0)
             elif tier:
-                j["fallback"] = smart or model
+                j["fallback"] = smart
             if tier:
                 row["tier"] = tier
             return j
@@ -947,41 +958,46 @@ class ActionModule(ActionBase):
                 esc = []
                 full = max(1, int(a.get("timeout") or 1200))
                 for j in first:
-                    if j["row"].get("tier") != "worker":
+                    r = j["row"]
+                    # a worker never asked (nothing could be asked: the model not reached ...) is not re-asked (Neon r2)
+                    if r.get("tier") != "worker" or not (r["asked"] or r["cached"]):
                         continue
-                    j["why"] = judge(T["form"], j["row"], j["items"], T["sure"])
+                    j["why"] = judge(T["form"], r, j["items"], T["sure"])
+                    j["said"] = answered(r, j["items"], T["form"])
                     if not j["why"]:
                         continue
-                    e = dict(j["row"], asked=False, ran=False, status="", summary="", stop_reason="", model=model,
+                    e = dict(r, asked=False, ran=False, status="", summary="", stop_reason="", model=smart,
                              tries=0, reason="", cached="")
                     # asked once, whatever comes: no second try, not even of an unreadable answer (Neon r1)
                     ej = dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j, again=False, retries=0)
-                    left = full - j.get("spent", 0)
-                    if left < min(30, max(1, full // 4)):           # the worker spent the question's time (Codex r1)
-                        j["row"]["escalation_failed"] = "no time left for the smart model (site_act_timeout)"
-                        continue
                     if j.get("spent"):
-                        ej["budget"] = left
+                        ej["budget"] = full - j["spent"]
                     esc.append(ej)
-                wave(lookup(esc))
+                # a kept smart answer first, whatever time the worker took (Codex r2); then only what has time left
+                pend = lookup(esc)
+                slow = [e for e in pend if "budget" in e and e["budget"] < min(30, max(1, full // 4))]
+                for e in slow:                  # the worker spent the question's time (Codex r1)
+                    e["row"]["reason"] = "no time left for the smart model (site_act_timeout)"
+                wave([e for e in pend if e not in slow])
                 for e in esc:
                     w, r, s = e["worker"], e["worker"]["row"], e["row"]
                     tried = bool(s["asked"] or s["cached"])
-                    # the smart model's answer stands when it can be read, or when the worker's could not either (Codex r1)
-                    good = s["ran"] and (judge(T["form"], s, w["items"], 0) not in ("no answer", "unreadable")
-                                         or w["why"] in ("no answer", "unreadable"))
+                    # the answer that answers more items stands; the smart model's when they answer as many (Codex, Neon r2)
+                    if T["form"] == "analysis":
+                        sgot = answered(s, w["items"], T["form"])
+                        good = s["ran"] and (sgot > w["said"] or (sgot == w["said"] and (sgot > 0 or w["why"] == "no answer")))
+                    else:
+                        good = s["ran"] and (judge(T["form"], s, w["items"], 0) not in ("no answer", "unreadable")
+                                             or w["why"] in ("no answer", "unreadable"))
                     if good:
                         r.update(s, tier="escalated", escalated=w["why"])
-                    elif not tried:     # nothing could be asked (the model not reached ...): not re-asked
-                        if r["ran"]:
-                            r.update(escalation_failed=safe(s["reason"] or "the smart model could not be asked"))
-                        else:
-                            r.update(reason=s["reason"] or r["reason"])
-                    elif r["ran"]:      # the worker's answer stays, said
-                        r.update(escalated=w["why"], escalation_failed=safe((s["reason"] if not s["ran"] else "")
-                                                                            or "the smart model's answer could not be read"))
-                    else:               # neither answered: the smart model's reason
-                        r.update(escalated=w["why"], reason=s["reason"] or r["reason"])
+                        continue
+                    if tried:
+                        r["escalated"] = w["why"]
+                    if w["said"]:               # the worker's answer stays, said
+                        r["escalation_failed"] = safe((s["reason"] if not s["ran"] else "") or "the smart model's answer could not be read")
+                    elif not r["ran"]:          # neither answered: the smart model's reason
+                        r["reason"] = safe(s["reason"] or r["reason"], 600)
                 # the third: the smart model reads the answers (never the evidence) and writes the cross-item verdict
                 done = [(rows[i], [x for x in (questions[i].get("items") or []) if isinstance(x, dict)]) for i in todo if rows[i]["ran"]]
                 if (T["form"] == "analysis" and T["synth"] and done
@@ -994,7 +1010,7 @@ class ActionModule(ActionBase):
                         for q in questions:
                             qn += [n for n in (q.get("names") or []) if n not in (None, "") and n not in qn]
                         sj = {"i": -1, "n": 2 * len(questions), "row": srow, "task": SYNTH_TASK, "piped": payload(text, cap),
-                              "own": "", "items": [], "qnames": qn, "settings": settings, "mdl": smart, "fallback": smart or model,
+                              "own": "", "items": [], "qnames": qn, "settings": settings, "mdl": smart, "fallback": smart,
                               "again": False, "retries": 0, "store": synth_store}
                         if sj["piped"]:
                             wave(lookup([sj]))

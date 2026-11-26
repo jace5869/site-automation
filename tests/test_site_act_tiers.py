@@ -678,7 +678,9 @@ class ReviewRound1Codex(unittest.TestCase):
         finally:
             A.run_act, A.time.time = A_run, t0
         self.assertEqual([c["model"] for c in self.rig.calls()], ["worker-model"])
-        self.assertIn("no time left", r["questions"][0]["escalation_failed"])
+        self.assertIn("no time left", r["questions"][0]["reason"])
+        self.assertNotIn("keep the worker's answer", r["tiers"]["note"])   # it had none (Neon r2)
+        self.assertIn("1 item(s) not answered.", r["tiers"]["note"])
 
     def test_a_cached_smart_answer_holds_when_the_model_cannot_be_reached(self):
         qs = [{"items": _items("P1"), "evidence": "e1", "task": "a"}]
@@ -774,6 +776,103 @@ class ReviewRound1Neon(unittest.TestCase):
         self.assertEqual(A.synth_read("Here:\n```json\n{\"overall\": \"fix the disk\"}\n```"), "fix the disk")
         self.assertEqual(A.synth_read({"message": "BEGIN_ACT_ANALYSIS {\"overall\": \"x\"} END_ACT_ANALYSIS"}), "x")
         self.assertEqual(A.synth_read("no verdict"), "")
+
+
+class ReviewRound2(unittest.TestCase):
+    setUp, tearDown, ask, models = (ReviewRound1Codex.setUp, ReviewRound1Codex.tearDown, ReviewRound1Codex.ask,
+                                    ReviewRound1Codex.models)
+
+    def plan_raw(self, task, items, model="worker-model"):
+        return {model + "|" + task: ["BEGIN_ACT_ANALYSIS " + json.dumps({"overall": "o", "items": items}) + " END_ACT_ANALYSIS"]}
+
+    def test_capacity_and_right_sizing_answers_stand(self):
+        self.rig.set_plan(self.plan_raw("t", [{"id": "P1", "estimate": "60 days", "estimate_days": 60, "recommendation": "add a host",
+                                               "reasoning": "4% a week", "confidence": 90}]))
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        self.assertEqual(self.models(), [("worker-model", "t")])
+        self.assertEqual(r["tiers"]["items"]["worker"], 1)
+
+    def test_redacted_before_it_is_cut(self):
+        cause = "x" * 290 + " via http://user:ALICE123@proxy.example.mil:8080 and more"
+        plan = self.plan_raw("t", [{"id": "P1", "cause": cause, "fix": "f", "confidence": 90}])
+        plan["smart-model|" + A.SYNTH_TASK] = ["overall:see https://gw.example.mil/x?sig=SECRET-9 first"]
+        self.rig.set_plan(plan)
+        r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}])
+        syn = [c for c in self.rig.calls() if c["task"] == A.SYNTH_TASK][0]["stdin"]
+        self.assertNotIn("ALICE123", syn)
+        self.assertNotIn("SECRET-9", r["tiers"]["synth"]["overall"])
+
+    def test_a_partial_worker_answer_is_not_lost_to_smart_prose(self):
+        plan = self.plan_raw("t", [{"id": "P1", "cause": "c", "fix": "f", "confidence": 90}])
+        plan["smart-model|t"] = ["just prose"]
+        self.rig.set_plan(plan)
+        r = self.ask([{"items": _items("P1", "P2"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        q0 = r["questions"][0]
+        self.assertEqual((q0["tier"], q0["escalated"]), ("worker", "unreadable"))
+        self.assertEqual((q0["model"], q0["ran"]), ("worker-model", True))
+        self.assertEqual(r["tiers"]["items"], {"worker": 1, "smart": 0, "escalated": 0, "none": 1})
+
+    def test_the_answer_that_answers_more_stands(self):
+        plan = self.plan_raw("t", [{"id": "P1", "cause": "c", "fix": "f", "confidence": 90},
+                                   {"id": "P2", "cause": "c", "fix": "f", "confidence": 90},
+                                   {"id": "P3", "cause": "c", "fix": "f", "confidence": 30}])
+        plan.update(self.plan_raw("t", [{"id": "P3", "cause": "disk", "fix": "f", "confidence": 90, "critical": True}], "smart-model"))
+        self.rig.set_plan(plan)
+        r = self.ask([{"items": _items("P1", "P2", "P3"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        self.assertEqual(r["questions"][0]["tier"], "worker")
+        self.assertEqual(r["tiers"]["items"]["worker"], 3)
+
+    def test_a_worker_never_asked_is_not_re_asked(self):
+        qs = [{"items": _items("P1"), "evidence": "e1", "task": "a"}]
+        self.rig.set_plan({"*": ["items:P1=90"]})
+        self.ask(copy.deepcopy(qs), tiers={}, cache=self.rig.cache())                           # the smart model's answer kept
+        r = self.ask(copy.deepcopy(qs), tiers=tiers(synth=False), cache=self.rig.cache(), env_extra={"VMWARE_PASSWORD": "x"})
+        q0 = r["questions"][0]
+        self.assertFalse(q0["ran"])
+        self.assertNotIn("escalated", q0)
+        self.assertEqual(r["tiers"]["escalated_why"], {})
+
+    def test_capacitys_critical_status_goes_to_the_smart_model(self):
+        self.rig.set_plan({"*": ["items:P1=90"]})
+        r = self.ask([{"items": _items("P1", status="critical"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+        self.assertEqual(r["questions"][0]["tier"], "smart")
+
+    def test_the_provider_in_any_case(self):
+        self.rig.set_plan({"*": ["items:P1=90"]})
+        self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(worker="one-worker", synth=False),
+                 env_extra={"ACT_PROVIDER": "AskSage", "ASKSAGE_MODEL": "sage-smart", "ASKSAGE_URL": "<url>", "GENAI_MODEL": None})
+        c = self.rig.calls()[0]
+        self.assertEqual((c["env"]["ASKSAGE_MODEL"], c["model"]), ("one-worker", "one-worker"))
+
+    def test_an_empty_model_setting_holds(self):
+        os.environ["GENAI_MODEL"] = "worker-model"
+        try:
+            r = self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False), model="",
+                         env_extra={"GENAI_MODEL": ""})
+        finally:
+            del os.environ["GENAI_MODEL"]
+        self.assertTrue(r["tiers"]["on"])                                  # ACT's default is the smart model, not the EE's
+        self.assertEqual(r["tiers"]["smart"], "")
+
+    def test_a_kept_smart_answer_whatever_time_the_worker_took(self):
+        qs = [{"items": _items("P1"), "evidence": "e1", "task": "u"}]
+        self.rig.set_plan({"worker-model|u": ["items:P1=30"], "smart-model|u": ["items:P1=95"]})
+        self.ask(copy.deepcopy(qs), tiers=tiers(synth=False), cache=self.rig.cache())
+        self.rig.db.rows = dict((k, v) for k, v in self.rig.db.rows.items() if v[2] == "smart-model")   # only the smart one kept
+        self.rig.set_plan({"worker-model|u": ["items:P1=30"]})
+        A_run, t0 = A.run_act, A.time.time
+        clock = [1000.0]
+        def run_slow(*a, **k):
+            clock[0] += 29                                   # the worker takes nearly all of the question's time
+            return A_run(*a, **k)
+        A.run_act, A.time.time = run_slow, (lambda: clock[0])
+        try:
+            r = self.ask(copy.deepcopy(qs), tiers=tiers(synth=False), cache=self.rig.cache(), timeout=30)
+        finally:
+            A.run_act, A.time.time = A_run, t0
+        q0 = r["questions"][0]
+        self.assertEqual((q0["tier"], q0["model"]), ("escalated", "smart-model"))
+        self.assertTrue(q0["cached"])
 
 
 def make_golden(engine, path):
