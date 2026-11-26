@@ -910,7 +910,8 @@ def summary(m, now):
                     bad.append("%s: %s" % (f.get("name") or k, f.get("why") or {"never": "not read yet", "auth": "login refused",
                                                                                      "error": "not answering", "paused": "login paused"}.get(f.get("state"), "not read")))
                 elif _feed_fresh(m, k, now) != "ok":
-                    bad.append("%s: last read %d min ago" % (f.get("name") or k, int((now - float(f["asof"])) // 60)))
+                    bad.append(("%s: last read %d min ago" % (f.get("name") or k, int((now - float(f["asof"])) // 60))) if f.get("asof") is not None
+                               else "%s: not read yet" % (f.get("name") or k))
             if not bad and a.get("complete") is not True:
                 bad = list(a.get("incomplete") or [])[:2] or ["read not whole"]
             why = " · ".join(bad[:2])

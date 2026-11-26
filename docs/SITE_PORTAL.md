@@ -1093,11 +1093,13 @@ The **wall** (`/portal/wall`; its tab is named by `portal_wall_title`, by defaul
 Stage 1 has **VMware** (live) and **Storage** (NetApp); VDI, Active Directory, Outages & problems and Network show as
 grey tiles "Not on the wall yet".
 
-- **Three styles of one model:** Lights (one big light per area), **Cockpit** (the default: gauges, counters, the Now
-  strip) and Map (the sites, the last 4 hours, the Now list). The choice is kept per viewer (this browser).
-  Links: `?style=lights|cockpit|map`, `?area=overview|storage|vmware|watch`, `?kiosk=1` (full screen, controls
+- **Six styles of one model:** Lights (one big light per area), **Cockpit** (gauges, counters, the Now strip), Map (the
+  sites, the last 4 hours, the Now list) and, since 1.135.0, three styles for a room's screen - **Strata**, **Relay** and
+  **Metro** (see *The room's styles* below). The style a page starts with is the address's `?style=`, else the one this
+  viewer picked last (kept in this browser), else `portal_wall_style` (default `cockpit`, as before).
+  Links: `?style=lights|cockpit|map|strata|relay|metro`, `?area=overview|storage|vmware|watch`, `?kiosk=1` (full screen, controls
   hidden), `?rotate=styles|areas&every=30|60|120` (pauses on mouse or keyboard use, starts again after 60 s idle),
-  `?theme=dark|light`. Keys: 1 2 3 (styles), K (kiosk), T (light/dark), R (rotate), Esc.
+  `?theme=dark|light`. Keys: 1 to 6 (styles), K (kiosk), T (light/dark), R (rotate), Esc.
 - **Every gauge, tile, counter, light and row opens a detail card:** what is wrong, since when and for how long, the
   value against its threshold, what it touches (the VMs and datastores on a host that is down, the hosts of a
   cluster, the datastores on an aggregate), the source and its age, and where to check it (the vSphere Client or ONTAP
@@ -1113,9 +1115,71 @@ grey tiles "Not on the wall yet".
 - **One portal, one enclave:** `portal_wall_enclave` (default: `site_enclave`) is shown beside the title. There is no
   enclave switch on the page; each enclave's portal has its own wall.
 
+### The room's styles: Strata, Relay, Metro (1.135.0)
+
+Three styles made for a TV in the operations room. Each is drawn on a 1920 x 1080 board that fills the screen - 720p,
+1080p or 4K - in kiosk mode (`?kiosk=1`), and fits the page beside the portal's bar otherwise. They read the same model,
+thresholds, freshness rule and detail cards as the other styles; nothing new reads your systems.
+
+- **Strata** - a console. The header has your logo (`portal_logo_src`; else the letter badge), `portal_wall_title`,
+  `portal_wall_enclave`, the areas counted Crit / Warn / OK / Not current, and the clock. A banner names the worst open
+  condition with **Inspect**. Area tiles (VMware: hosts up; Storage: the fullest aggregate against
+  `portal_wall_aggr_warn` / `_crit`), a **Threshold watch** (each value against its limit, worst first) and a
+  **spotlight** on the right that steps through the areas with problems first every 10 s (*next in 8 s · problems first*;
+  ‹ › step by hand and pause it for 60 s; a tile's *Click: on stage* puts that area there). The spotlight shows the
+  capacity rows (Storage), or the sustained-high rows with their last hour and the hosts as squares (VMware).
+- **Relay** - an annunciator. System bays with a lamp plate per area (CRITICAL / WARNING / NORMAL ... in words and an
+  icon), the active events worst first, and a **Capacity watch** (the fullest datastore and aggregate, the busiest
+  cluster CPU) with each value against its warn / crit limit.
+- **Metro** - live tiles. A critical area takes four tiles and a warning two; every few seconds one tile turns over to
+  its worst items (*Tiles turn over every 8 s*; with reduced motion, hovering turns it). The **Now** list has
+  **Share to Teams** on each condition; *Last 4 hours* counts what opened and cleared; a capacity strip at the bottom.
+
+In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network) is a grey tile "Not on the
+wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
+critical bands, labelled dashed limit lines and one sentence, for example *91% · 6 pts over warn 85 · crit at 97*. With
+`?area=storage` or `?area=vmware` the board keeps every tile, and its banner, events, spotlight and capacity rows are that
+area's.
+
+### Share to Teams (1.135.0)
+
+Every condition's detail card, in every style, has **Share to Teams…**:
+
+- **Copy text** puts the message on the clipboard formatted (the word in its colour, bold, the link back to the wall)
+  and as plain text: severity, area, what, since when, the value against its limits, the source and its age, where to
+  check, the wall's link.
+- **Copy picture** puts a PNG alert card on the clipboard, drawn from the wall's data (not a screen grab): the severity,
+  the object, the value against its warn / crit bar, the last hour when the wall has it (sustained high), the source and
+  its age, where to check.
+- **Copy both** puts the text and the picture on together; **Save picture** downloads the PNG when the browser keeps
+  pictures off the clipboard. Each says what happened ("Text copied - in Teams press Ctrl+V", or what to do when the
+  browser blocked it).
+
+In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTPS address (it has one).
+
+### Make a screen the ops wall (1.135.0)
+
+1. **The screen:** a TV (1080p or 4K) and a small PC or thin client on the network; its power plan never sleeps and
+   never turns the screen off.
+2. **Edge opens the wall full screen at start-up** - one address per screen picks its style, area and rotation:
+
+   ```
+   msedge --kiosk "https://<portal>/portal/wall?style=strata&kiosk=1&theme=dark" --edge-kiosk-type=fullscreen --no-first-run
+   ```
+
+   For example: screen 1 the overview (`?style=strata&kiosk=1`), screen 2 Storage only
+   (`?style=relay&area=storage&kiosk=1`), screen 3 the Map (`?style=map&kiosk=1`), or one screen that cycles
+   (`?style=metro&kiosk=1&rotate=areas&every=60`).
+3. **Your logo and name:** `portal_logo_src` (kept in your own site files, never in the repository),
+   `portal_wall_title` (for example "Ops center") and `portal_wall_enclave`; `portal_wall_style` is the style when an
+   address names none. Run **Site portal - deploy**.
+4. **Who the screen signs in as:** an operator signs in with their card at the start of a shift; the wall needs view
+   access (`portal_viewers` / `portal_view_groups`).
+5. **What it shows:** rotation pauses on a key and starts again after 20 s idle; Esc leaves kiosk mode.
+
 ### The preview banner (portal_wall_preview)
 
-While `portal_wall_preview` is `true` (the default), every wall style - Lights, Cockpit, Map, and the kiosk / full screen -
+While `portal_wall_preview` is `true` (the default), every wall style - Lights, Cockpit, Map, Strata, Relay, Metro, and the kiosk / full screen -
 shows a thin amber banner that cannot be closed: *"Preview - a light may show OK when data is missing or late. Check
 vCenter / NetApp before acting."* The wall is built never to show green on missing, old or failed data, but until your teams
 have used it for a while, treat a green light as a hint, not a proof. Set `portal_wall_preview: false` and run the portal's
@@ -1616,11 +1680,37 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 
 ## The look
 
-The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow
-`report_web_theme` (`ops`, `atlas` or `brief`; the default is `atlas`), so the portal and the reports are one product.
+Since 1.135.0 the portal has **seven looks**, each in light and dark: **Strata Console** (the default), **Metro Live
+Tiles**, **Relay Panel**, **Chroma Perspex**, **Signal Press**, **Contour Atlas** and **Timing Tower**. `portal_look`
+(`strata`, `metro`, `relay`, `chroma`, `press`, `atlas`, `tower`) is the look every viewer starts with; each viewer may
+pick another in the bar's **Look** list (kept in their browser, beside the Auto / Light / Dark switch), and a link may
+carry `?look=metro` (that page only). The report palette (`report_web_theme`) stays underneath.
 
-- **The bar** has the portal's pages (*Actions*, *Reports*, *Approvals*), the person's name from the card, and the
-  **Auto / Light / Dark** switch. The choice is kept in the browser and is the same on the report pages.
+Each look has its own shape, on the real data of the page:
+
+| Look | Its shape |
+|---|---|
+| Strata Console | square tiles with lamp modules, a **spotlight stage** that steps through the wall's areas, worst first |
+| Metro Live Tiles | flat colour tiles; the area tiles **turn over** to their worst items (*tiles turn over every 8 s*) |
+| Relay Panel | an annunciator: a **lamp plate** and lamps per area, a colour per area on the cards |
+| Chroma Perspex | extruded plates and chamfered tiles, a strong accent |
+| Signal Press | a newspaper: the **top rule**, the areas as a **ledger** |
+| Contour Atlas | an **"Asset status by area"** map: each area an island, its contour rings its state |
+| Timing Tower | a **ranking**: the areas worst first, each with its position and the gap to its limit |
+
+**The Ops center section (Actions page).** With the wall on (`portal_wall`), the Actions page opens with the wall's
+areas in short, in the viewer's look: how many need a look, each area's state in a word and an icon, its main value
+against its limit (bands, labelled dashed limit lines and one sentence such as *91% · 6 pts over warn 85 · crit at 97*,
+from `portal_wall_aggr_warn` / `_crit`, `portal_wall_datastore_warn` / `_crit` and `portal_wall_high_pct`), and a link
+to that area on the wall. It follows the wall's rule: grey when a source is LATE or not current, never green; an area not
+on the wall yet stays grey. It reads `/portal/api/wall/summary` every 60 s.
+
+**Cues.** Anything that can be clicked says so (*Open on the wall ›*, *Next ›*), anything that moves says how often
+(*spotlight steps every 8 s*, *tiles turn over every 8 s*), and nothing moves when the system asks for reduced motion
+(`portal_motion`).
+
+- **The bar** has the portal's pages (*Actions*, *Reports*, *Approvals*), the person's name from the card, the **Look**
+  list and the **Auto / Light / Dark** switch. The choices are kept in the browser; Auto / Light / Dark is the same on the report pages.
 - **The header** has the site's logo when you set one (see *Your logo* below), else a letter badge.
 - **Actions** are cards by area, a heading for each. A card has the action's title and one line, an *Approval* badge where an approver
   decides, and, when the action is off, a muted card that says why.
@@ -1630,10 +1720,13 @@ The portal's pages look like the report website: the same colours, cards, tables
 - **Approvals** are a table with **Approve** and **Deny**. Refused and not-found pages are a card that says why.
 
 The pages run under the same strict content security policy as before: no inline script and no inline style, only the
-portal's own files. Nothing is loaded from outside, and the fonts are the system's. `static/portal.css` is made from
-`roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`.
+portal's own files. Nothing is loaded from outside: the looks' fonts (Chakra Petch, Inter, IBM Plex Mono, Figtree, Fira
+Code, Barlow Semi Condensed, Chivo Mono, Manrope) are bundled as woff2 files with their SIL Open Font License beside them
+(`roles/site_portal_stack/files/static/fonts/`). `static/portal.css` is made from
+`roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`;
+`static/portal-looks.css` from `portal-looks.css.in` by `scripts/gen_portal_looks.py`.
 
-Run **Site portal - deploy** again after you change `report_web_theme`.
+Run **Site portal - deploy** again after you change `report_web_theme`, `portal_look` or `portal_wall_style`.
 
 ### The Christmas theme (1.115.0)
 
@@ -1835,6 +1928,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_launches_per_hour` | 20 | one person's launches in an hour, at most |
 | `portal_aap_ui` | AAP's address | the address of AAP's pages, for the *Open in AAP* links |
 | `portal_own_nginx` | false | its own nginx (TLS, the cards) instead of STIG Manager's |
+| `portal_look` | `strata` | the look every viewer starts with: `strata`, `metro`, `relay`, `chroma`, `press`, `atlas` or `tower` (*The look*) |
+| `portal_wall_style` | `cockpit` | the wall's style when the address names none: `lights`, `cockpit`, `map`, `strata`, `relay` or `metro` |
 
 ## When something is wrong
 

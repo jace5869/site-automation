@@ -71,6 +71,13 @@ portal_public_url: https://stigman.example.mil/portal/
 ## still in every mode. auto | always | off
 # portal_motion: auto
 
+## 1.135.0: the portal's look - the one every viewer starts with; each viewer may pick another in
+## the bar's Look list (kept in their browser), and a link may carry ?look=KEY. strata (Strata
+## Console, the default) | metro (Metro Live Tiles) | relay (Relay Panel) | chroma (Chroma Perspex)
+## | press (Signal Press) | atlas (Contour Atlas) | tower (Timing Tower). Light and dark in every
+## look; the fonts are bundled (offline, SIL OFL).
+# portal_look: strata
+
 ## 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas |
 ## auto (Dec 1 to Jan 6, decided on each page). Default: the report website's report_theme_season,
 ## so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle,
@@ -416,6 +423,11 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is
 ## missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
 # portal_wall_preview: true
+
+## 1.135.0: the wall's style when the address names none (?style=) and the viewer picked none -
+## lights | cockpit (the default, as before) | map | strata | relay | metro. Strata, Relay and Metro
+## fill the screen (720p to 4K) for a room's TV; every style has Share to Teams on its detail cards.
+# portal_wall_style: cockpit
 
 ## shown beside the title; one portal serves one enclave
 # portal_wall_enclave: "{{ site_enclave | default('', true) }}"

@@ -141,7 +141,9 @@ def look_tokens():
 
 def build():
     head = "/* made by scripts/gen_portal_looks.py from portal-looks.css.in - do not edit static/portal-looks.css */\n"
-    return head + open(SRC).read().replace("@@FONTS@@", font_faces()).replace("@@TOKENS@@", look_tokens())
+    with open(SRC) as fh:
+        src = fh.read()
+    return head + src.replace("@@FONTS@@", font_faces()).replace("@@TOKENS@@", look_tokens())
 
 
 def check_contrast():
@@ -166,7 +168,10 @@ if __name__ == "__main__":
         print("\n".join(b) or "ok: every look's text and status colours are readable")
         sys.exit(1 if b else 0)
     if "--check" in sys.argv:
-        have = open(OUT).read() if os.path.exists(OUT) else ""
+        have = ""
+        if os.path.exists(OUT):
+            with open(OUT) as fh:
+                have = fh.read()
         if have != want:
             print("roles/site_portal_stack/files/static/portal-looks.css is out of date: python scripts/gen_portal_looks.py")
             sys.exit(1)
