@@ -16,7 +16,7 @@ import site_portal as sp
 
 STATIC = Path(sp.__file__).parent / "static"
 OUTSIDER = 'UNLISTED.<reader>&"'
-MESSAGE = "You are not on the portal's readers list."
+MESSAGE = "You are not on the list of people who may view the portal."
 
 
 def router_paths(dispatch):
@@ -78,6 +78,7 @@ class Readers(unittest.TestCase):
         self.assertEqual(self.request(cn=None)[0], 403)
         self.assertEqual(self.cfg.reader_match(OUTSIDER), "any verified card")
         self.assertEqual(self.portal.mine(OUTSIDER), [])
+        self.assertIn("<b>Access</b> &mdash; view (any verified card)", self.request("/approvals")[1])
 
     def test_a_viewer_sees_actions_but_never_runs_them(self):
         """1.130.0: run groups set, no reader list - a viewer opens an action: 200, no Run button; a launch POST is refused"""
@@ -169,11 +170,11 @@ class Readers(unittest.TestCase):
 
     def test_named_access_and_implied_roles(self):
         self.configure(PORTAL_READERS=["reader"], PORTAL_REQUESTERS=["admin"], PORTAL_APPROVERS=["approver"])
-        for cn, setting in [("reader", "portal_viewers"), ("admin", "portal_runners"), ("approver", "portal_approvers")]:
+        for cn, grant in [("reader", "view (portal_viewers)"), ("admin", "run (portal_runners)"), ("approver", "approve (portal_approvers)")]:
             self.assertEqual(self.request(cn=cn)[0], 200)
             code, page = self.request("/approvals", cn)
             self.assertEqual(code, 200)
-            self.assertIn("Your reader access comes from <b>%s</b>" % setting, page)
+            self.assertIn("<b>Access</b> &mdash; " + grant, page)
         self.assertEqual(self.portal.mine("reader"), [])
         self.assertNotIn("reader", self.cfg.approvers)
         self.assertEqual(self.request(cn="action-only")[0], 403)
@@ -204,7 +205,16 @@ class Readers(unittest.TestCase):
                     self.assertEqual(self.cfg.reader_match(cn), setting if state == "fresh" else "")
                 code, page = self.request(cn="EXAMPLE.PERSON.5678901234")  # disabled even if returned by the DC
                 self.assertEqual(code, 403)
+                self.assertIn("<b>Access</b> &mdash; checked", page)
+                ad = {"startup": "AD not read.", "fresh": "AD read.", "expired": "The last AD read expired.",
+                      "failed": "The last AD read failed."}
+                self.assertIn(ad[state], page)
                 self.assertEqual("Only card names" in page, state != "fresh")
+                if state == "fresh":
+                    own = self.request("/approvals", "EXAMPLE.PERSON.6789012345")[1]
+                    self.assertIn("view (portal_view_groups / %s)" % dn("Platform-Leads"), own)
+                    self.assertIn("approve (portal_approve_groups / AAP-Approvers)", own)
+                    self.assertNotIn("run (portal_run_groups / AAP-Operators)", own)
 
     def test_group_only_and_implied_approver_group(self):
         self.configure(PORTAL_READER_GROUPS=["AAP-Operators"], PORTAL_APPROVER_GROUPS=["AAP-Approvers"])
@@ -256,6 +266,10 @@ class Readers(unittest.TestCase):
             self.assertIn(MESSAGE + " Ask &lt;Example Desk&gt; to add you.", page)
             self.assertIn("UNLISTED.&lt;reader&gt;&amp;&quot;", page)
             self.assertNotIn(OUTSIDER, page)
+            for lists in ("view (portal_viewers, portal_view_groups)", "run (portal_runners, portal_run_groups)",
+                          "approve (portal_approvers, portal_approve_groups)", "admin (portal_admins, portal_admin_groups)",
+                          "template run and approve groups", "AD not read."):
+                self.assertIn(lists, page)
             self.request("/api/me")
             self.request(cn="OTHER.1111111111")
             self.request(cn="RENAMED.1111111111")
@@ -278,8 +292,10 @@ class LdapAssert(unittest.TestCase):
         self.assertNotIn("when", t)                                   # Check and Run alike
         self.assertIn("no domain controller to ask", t["ansible.builtin.assert"]["fail_msg"])
         cond = jinja2.Environment().compile_expression(t["ansible.builtin.assert"]["that"].strip())
-        base = {"portal_view_groups": [], "portal_approve_groups": [], "portal_run_groups": [], "_portal_ldap_servers": [], "portal_ldap_domain": ""}
-        cases = [({}, True), ({"portal_run_groups": ["Ops"]}, False), ({"portal_view_groups": ["R"]}, False),
+        # 1.133.0: the new names (the old ones are mapped to them before this check), and the admin groups too
+        base = {"portal_view_groups": [], "portal_approve_groups": [], "portal_run_groups": [], "portal_admin_groups": [],
+                "_portal_ldap_servers": [], "portal_ldap_domain": ""}
+        cases = [({}, True), ({"portal_run_groups": ["Ops"]}, False), ({"portal_view_groups": ["R"]}, False), ({"portal_admin_groups": ["Adm"]}, False),
                  ({"portal_approve_groups": ["A"], "portal_ldap_domain": "corp.example.mil"}, True),
                  ({"portal_approve_groups": ["A"], "_portal_ldap_servers": [{"name": "dc01.corp.example.mil"}]}, True),
                  ({"portal_approve_groups": ["A"], "portal_ldap_domain": "  "}, False)]

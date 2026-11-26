@@ -31,8 +31,8 @@ The portal starts only what the actions file lists, only with values its rules a
 3. **No template braces.** AAP renders Jinja in extra vars when a playbook reads them. So the portal refuses `{{`,
    `{%` and `{#` in every value - also with spaces or invisible characters between, and in look-alike (full-width)
    braces.
-4. **Access by role.** The reader lists control who can enter the portal. The requester lists and each action's
-   own `who` control Run. The approver lists control decisions.
+4. **Access by role.** The view lists control who can enter the portal. The run lists and each action's
+   own `who` control Run. The Admin page adds per-template run and approval groups.
 5. **The portal's own AAP account.** It needs Execute on the listed workflows and templates, Approve on those with
    an approval node, and Read on `portal_inventory`. To list the findings of the report jobs (*Pick a host, then a
    finding*) it also needs **Auditor** on the organization. Never a write role (step 2).
@@ -46,23 +46,85 @@ Every person needs a verified card. Each role accepts exact card CNs and members
 
 | Role | Settings | Access |
 |---|---|---|
-| Viewers | `portal_viewers`, `portal_view_groups` | Open portal pages and APIs, including reports, AD, NetApp, jobs and approvals. The wall’s kiosk mode also requires reader access. Individual job visibility still applies. |
-| Runners | `portal_runners`, `portal_run_groups` | Read automatically and run actions. An action's own `who` overrides its requester rule. When both requester lists are empty, any reader can run actions that use the default rule. |
-| Approvers | `portal_approvers`, `portal_approve_groups` | Read automatically and approve or deny eligible workflows. With both approver lists empty, nobody may decide in the portal. |
+| View | `portal_viewers`, `portal_view_groups` | Open portal pages and APIs, including reports and the wall in kiosk mode. Individual job visibility still applies. |
+| Run | `portal_runners`, `portal_run_groups` | View the portal and run every action that has no `who` list of its own. An action with a `who` list runs only for those people and the template’s own run groups - the general run lists never override it. |
+| Approve | `portal_approvers`, `portal_approve_groups` | View the portal and approve or deny eligible workflows. A workflow can also grant approval through its own AD groups. |
+| Admin | `portal_admins`, `portal_admin_groups` | View the portal and manage template access. With both lists empty, nobody may open the Admin page. |
+
+With both view lists empty, any verified card may view the portal. Set either list to restrict entry to people
+with view, run, approve or admin access, including members of a template’s own groups. With both run lists empty,
+the default run rule allows anyone with view access. Set a run list and check each action’s `who` to give people view-only access.
 
 **1.133.0 names.** `portal_viewers`, `portal_view_groups`, `portal_runners`, `portal_run_groups` and
 `portal_approve_groups` replace `portal_readers`, `portal_reader_groups`, `portal_requesters`, `portal_requester_groups`
 and `portal_approver_groups`. The old names still work. Setting both names of one list to different values stops the
 deploy. Each list must be a list of nonblank strings: a blank entry, `false` or `null` stops the deploy too.
 
-With both **view** lists empty (the default), any verified card may view the portal. Set either list to
-restrict viewing to the readers, requesters and approvers. If your site used requester lists to restrict entry,
-set a reader list when you deploy this version. To give people view-only access, also configure
-who may run actions and check any action-specific `who` settings. The Approvals page shows which list grants your card access.
+**Access** on the Approvals and Admin pages shows the lists and AD groups that grant your card access.
+A person refused entry sees their card CN, the lists checked, whether AD was read, and the contact in
+`portal_access_contact` (default “your portal administrator”). The portal returns HTTP 403 and logs one refusal per person per hour.
 
-Attach **LDAP Bind Account** to **Site portal - deploy** when using groups. The portal reads all three roles
-together every `portal_ad_groups_seconds` and keeps the result between reads. Before the first read, after a failed
-read, or after the result expires, only explicitly named card CNs grant entry to a restricted portal.
+Attach **LDAP Bind Account** to **Site portal - deploy** when using groups. The portal reads the configured groups
+together every `portal_ad_groups_seconds`. Before the first read, after a failed read, or after the result expires,
+only explicitly named card CNs grant entry to a restricted portal.
+
+### Renamed in 1.133.0
+
+| New setting | Old setting |
+|---|---|
+| `portal_run_groups` | `portal_requester_groups` |
+| `portal_runners` | `portal_requesters` |
+| `portal_approve_groups` | `portal_approver_groups` |
+| `portal_view_groups` | `portal_reader_groups` |
+| `portal_viewers` | `portal_readers` |
+
+The deploy uses the new name when set, otherwise the old name. If you set both, their lists must match exactly,
+including order. A difference stops the deploy and names both settings.
+
+## Admin page
+
+Open **Admin** at `/portal/admin`. Set the administrator lists in `all.yml`, attach **LDAP Bind Account** when using groups, and run **Site portal - deploy**.
+
+```yaml
+portal_admin_groups: ["<admins group>"]
+portal_admins: []  # Optional exact card CNs for access during an LDAP outage
+```
+
+Either list grants admin access. With both empty, nobody may open the Admin page.
+
+**Template access** lists the job templates and workflows visible to the portal account, including those without Execute or the portal label. The default groups shown at the top come from `all.yml`. Save additional run groups on individual templates and additional approval groups on workflows with approval nodes. People on the default run and approve lists retain access when you edit or remove a template group. An empty template group list adds nobody. If the existing default Run rule allows anyone with view access, adding a group preserves that access. That open default, an action's `who` list, and seeing your own or others' runs as 1.133.0 did count only for people the view, run and approve lists let in - someone who gets in only as an admin or through a template's saved group gets exactly that: the Admin page, or that template (its form and launch, its jobs, its approvals) - the reports, AD, NetApp, wall, network map and host search stay for the view lists. Configure a default run group in `all.yml` to limit Run to named cards and granted groups. A failed directory read never substitutes “anyone with view access” for an unreadable grant. The same template ID applies to built-in actions, discovery cards and direct form submissions. Approval uses the ID of the waiting workflow, including a run started in AAP. Existing self-approval and AAP permission checks still apply. A placement change also checks the helper job’s run permission.
+
+Type a group name or choose an LDAP suggestion. Untick a group to remove it and select **Save access**. New groups take effect after the next AD read. **Ask once more before launch** requests a second confirmation for the submitted values. Reading, filtering, editing and pasting an import all work with JavaScript disabled.
+
+| Template status | Meaning |
+|---|---|
+| Ready | AAP has the required permissions and its current label matches the saved visibility. |
+| No Execute | The portal account needs Execute to launch this template. |
+| No Approve | The portal account needs Approve to decide a pending approval in this workflow. |
+| Label pending | **Show on the portal** differs from the label in AAP. Discovery picks up the actual label on its next refresh. |
+
+Use **Export for AAP - set up portal actions** to download the publish and unpublish lists. Review the exact template names and organization, paste the variables into **AAP - set up portal actions**, run in **Check**, then run to apply. The setup job applies the labels and grants Execute and, on published workflows with approval nodes, Approve to `portal_setup_portal_user` (Approve only from this export; a plain `portal_publish_templates` run grants Execute, as before). Unpublishing removes the label. Existing setup exclusions and the discovery checks for runnable templates still apply. Name patterns containing literal wildcards or ambiguous visible names require resolving the name before export. The export
+names the templates' organization (`portal_publish_organization`), so the setup job never matches a template of the same name in
+another organization; templates in more than one organization cannot be exported together.
+
+**Groups** shows the last AD read, enabled member counts and which grants use each group. **Ansible connection** shows the account, address, read time and inventory counts. **Activity** reads the portal audit log, including the person, time and settings changed.
+
+The named data volume holds `/data/access.json`. Each save replaces it atomically. A corrupt or unreadable file shows a banner and permits only the configured lists for their respective operations - the default run and approve lists in `all.yml` and an action's own `who` list (it comes from the actions file, not from `access.json`); no saved template group counts, and the open run default never applies. **Export as YAML (.txt)** downloads a versioned backup. **Import (.txt)** validates IDs, names, group lists and switches against the visible AAP inventory, then shows additions, edits and removals. **Apply import** replaces the saved settings after review. A concurrent save requires a fresh preview (every save counts, even one that puts a row back as it was).
+**One controller (1.134.0).** The file belongs to one AAP controller (the normalized `portal_aap_url`). Template
+numbers and names mean other templates on another controller, so when the portal is deployed for another controller the
+saved grants are **dropped** on the first read: the file is emptied for the new controller, every dropped row is listed in
+**Activity**, and the Admin page says how many were dropped and when. Save the templates again, or import a backup, to give
+access there. A reviewed import is bound to the controller it was previewed for. A saved grant applies only while AAP's
+template list - read every `portal_discover_seconds`, never older than 15 minutes from the START of that read - still has
+that template id under the saved name; a deleted or renamed template's grant is listed as **stale** and adds nobody (until
+the list has been read after a start, no saved grant applies). What a saved row restricts holds even then: **Ask once more
+before launch** still asks, and a placement helper with saved run groups or the switch is still checked. A damaged
+`access.json` keeps the rows last read whole for that (so does a file gone for a moment); damaged with none read whole since the
+portal started, nothing launches until an admin recovers it (import a backup). Every launch checks the template's live name. A run's job page and its approval count a
+saved grant only for the template key and name the run was started under; a run recorded with another controller is never
+shown or matched by its job number. A run recorded before 1.134.0 is shown as in 1.133.0 (its starter, the approvers, the
+action's run rule), with no saved grant. A file whose rows differ from its last
+recorded change is treated as damaged (banner, defaults only). The default groups stay in `all.yml`. Behind an existing reverse proxy, updating its generated nginx include enables imports larger than 64 KiB.
 
 A refused reader receives HTTP 403 with their card CN and the contact in `portal_access_contact` (default
 “your portal administrator”). The refusal page explains when AD groups are unavailable. The portal logs one
@@ -605,14 +667,14 @@ Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `c
 one that has timed out is left out. Each shows the workflow, who or what started it, the approval's name and description, the time left before it times out,
 the check's plan (*What it will change*, below) and the report the steps before it left (a job artifact `site_report_url`) as a button: **Open the full report**.
 
-- **Approve** and **Deny** are there only for the approvers - `portal_approvers`, and since 1.120.0 the members of
-  `portal_approve_groups` (*Approvers from AD groups*, below) - and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
+- **Approve** and **Deny** are available to people on the approve lists (`portal_approvers`, `portal_approve_groups`)
+  or in the workflow’s own approve groups. The portal account also needs the **Approve** role on that approval. The buttons ask once more, in place
   (*Sure? Yes, approve / Back*).
   - A decision AAP refuses (1.110.0) shows its message. Decided already, timed out or not allowed: the list is read
     again after 3 seconds. Anything else: **Approve** and **Deny** are back, to try again. The list keeps updating.
 - **Everyone else sees why, in words to act on**, with the setting's name:
-  - *You are not an approver* (`portal_approvers`, `portal_approve_groups`) - only the approvers decide.
-  - *You started this run* - another approver decides (`portal_allow_self_approval`).
+  - *You are not on the list of people who may approve this workflow* (`portal_approvers`, `portal_approve_groups`).
+  - *You started this run* - someone else must approve or deny it (`portal_allow_self_approval`).
   - *The portal's account has no Approve role on this workflow* - give it Approve in AAP, or decide there.
 - **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
   A new one for you to decide brings a toast: *Approval waiting: the workflow*, with a link to its job page.
@@ -620,20 +682,20 @@ the check's plan (*What it will change*, below) and the report the steps before 
   - Two at a time (*+N more*); one closes after 8 seconds, and waits while the pointer or the keyboard is on it.
   - Never over the page's main column: 1500 px and wider in a gutter on the right; the Jobs page over its job list;
     other pages under the heading; 900 px and narrower at the bottom, in the middle.
-- **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it. The portal refuses such a decision and logs it.
+- **Not your own run.** An approver who started a run - through the portal, or in AAP under an AAP user whose name is the
+  card's CN - does not get Approve and Deny for it. The portal refuses such a decision and logs it.
   `portal_allow_self_approval: true` allows it.
 - **AAP records the decision as the portal's own account.** The portal's log keeps who decided: the name on the
   card, the decision and the time. The page says so.
 - **At 900 px and narrower** each approval is a card: its name and who started it, the run and its plan, the time, the decision.
 - AAP's own approval page works as before.
 
-- **Who may decide** (1.120.0): one line under the heading - *AAP-Approvers (AD), 6 people · 1 named in
-  `portal_approvers`*, and when AD was last read. When AD cannot be read: *AD not read - only the named approvers may
-  decide*, with the reason and when it is tried again.
+- **Who can approve** (1.120.0): one line under the heading - *AAP-Approvers (AD), 6 people · 1 named in
+  `portal_approvers`*, and when AD was last read. When AD cannot be read: *AD not read - only people on the named list can approve*, with the reason and when it is tried again.
 
-### Approvers from AD groups (1.120.0)
+### Access from AD groups (1.120.0)
 
-Readers, approvers and requesters can be AD groups as well as names. Each person still needs a verified card.
+AD groups and card names can grant view, run, approve and admin access. Each person still needs a verified card.
 
 ```yaml
 portal_approve_groups: [AAP-Approvers]           # a group's name (cn or sAMAccountName) or its DN
@@ -641,7 +703,7 @@ portal_run_groups: []                            # the same for who may run the 
 ```
 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
-  account never counts. The named lists (`portal_viewers`, `portal_approvers`, `portal_runners`) count as well.
+  account never counts. The named lists (`portal_viewers`, `portal_approvers`, `portal_runners`, `portal_admins`) count as well.
 - **A card and its AD account (1.133.0).** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). The portal
   finds the person's ONE AD account by `portal_ad_card_matches`, a closed list of five forms. Default: `{edipi}@mil`
   (userPrincipalName, as 1.132.0); add others with `portal_ad_card_matches`:
@@ -676,7 +738,7 @@ portal_run_groups: []                            # the same for who may run the 
 - **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
   failed read it tries again in a minute.
 - **AD down: the named lists only.** When AD cannot be read, or before the first read, nobody counts as a group member. Only
-  `portal_viewers`, `portal_approvers` and `portal_runners` count for restricted roles. The Approvals page says so, and so does the portal's log
+  `portal_viewers`, `portal_approvers`, `portal_runners` and `portal_admins` count for restricted roles. The Approvals page says so, and so does the portal's log
   (`ad-groups` events). It never falls open: with `portal_run_groups` set, an empty `portal_runners` means nobody,
   not everyone.
 - **`portal_allow_self_approval`** is unchanged. A new card of the same person (the same EDIPI under a new name) is the same
@@ -751,12 +813,15 @@ An approver can approve the plan with that warning or deny it.
 
 Choose **Change placement...** to select a VM, its cluster, a datastore mounted by that cluster and a folder in its datacenter.
 The propose job lists the candidates and explains why a greyed-out choice cannot fit.
-Only a member of `portal_approvers` who can decide this approval can save a placement.
+A placement can be saved by a person who may decide this approval (`portal_approvers`, `portal_approve_groups`, or the
+workflow's own approval groups on the Admin page). Only when the placement job **VM - deploy placement change** is
+restricted on its own - a `who` list on its action, or run groups / **Ask once more** saved for its template on the Admin
+page - must that person also be allowed to run it.
 The portal account needs Approve on the workflow. Someone else must decide your run unless `portal_allow_self_approval` is enabled.
 
 Review the work note and choose **Save the new placement**. The portal launches **VM - deploy placement change** with its AAP account.
 The job rechecks the ticket and the fit before writing the `[AAP] Placement changed` note on the change and its CTASKs.
-If the job refuses the placement, the card shows its reason. After success, review the rows marked **Changed by the approver**
+If the job refuses the placement, the card shows its reason. After success, review the rows marked **Changed during approval**
 and choose **Approve with the new placement** to continue the workflow.
 
 On **Approvals**, expand **What will be built** to read the values before deciding. The propose job also shows a read-only copy.
@@ -1821,10 +1886,11 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it (an air-gapped host loads it: [ENCLAVES.md](ENCLAVES.md), section 5) |
 | `portal_reports_dir` | `/srv/reports` | the folder the report jobs write to, on this server |
 | `portal_inventory` | | the AAP inventory an action's host must be in |
-| `portal_viewers`, `portal_view_groups` | `[]` | (were `portal_readers`, `portal_reader_groups`) viewer card CNs and AD group names or DNs. Both empty allows any verified card. |
-| `portal_access_contact` | `""` | contact to ask for reader access |
-| `portal_runners`, `portal_run_groups` | `[]` | (were `portal_requesters`, `portal_requester_groups`) card CNs and AD groups allowed to run actions. Both empty allows any viewer, subject to the action's own `who`. |
-| `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
+| `portal_viewers`, `portal_view_groups` | `[]` | card CNs and AD group names or DNs. Both empty allows any verified card. |
+| `portal_access_contact` | `""` | contact to ask for view access |
+| `portal_runners`, `portal_run_groups` | `[]` | card CNs and AD groups allowed to run actions. Both run lists empty allows anyone with view access, subject to the action's own `who`. |
+| `portal_approvers`, `portal_approve_groups` | `[]` | card CNs and AD groups allowed to approve or deny eligible workflows. |
+| `portal_admins`, `portal_admin_groups` | `[]` | card CNs and AD groups allowed to manage template access. Both empty: nobody may open the Admin page. |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
 | `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches`, `portal_pick_max_hosts` | 7, 5, 10, 50 | *Pick a host, then a finding* |
@@ -1849,7 +1915,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `/portal/` says *502 Bad Gateway* | the service is not running (`sudo systemctl status site-portal-app`), or it is on another network than nginx |
 | *404 Not Found* for `/portal/` | the lines are not loaded: step 5's `grep -c`, then `nginx -s reload` |
 | *Not accepted. No client certificate was accepted* | nginx asked for no card (`ssl_verify_client`), or the browser sent none |
-| *You are not on the portal's readers list* | Ask the contact shown to check your card CN or group membership. If the page says AD is unavailable, check the LDAP Bind Account on the deploy template. |
+| *You are not on the list of people who may view the portal* | Ask the contact shown to check your card CN or group membership. If the page says AD is unavailable, check the LDAP Bind Account on the deploy template. |
 | *Refused: send it from the portal's page* | the page is older than 8 hours, or was opened from another address: reload it |
 | A value *holds {{ - braces that start a template are not allowed* | the value holds template braces; take them out |
 | *Reports* answers *Not found* | `portal_reports_dir`, or the folder's SELinux label (*The report folder and SELinux*) |

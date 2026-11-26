@@ -2,9 +2,9 @@ location = {{ portal_path | regex_replace('/$', '') }} {
     absolute_redirect off;
     return 301 {{ portal_path }};
 }
-{% for static in [false, true] %}
-location {{ portal_path }}{{ "static/" if static else "" }} {
-{% if static %}
+{% for section in ["portal", "static", "admin"] %}
+location {{ "= " if section == "admin" else "" }}{{ portal_path }}{{ {"static": "static/", "admin": "admin"}.get(section, "") }} {
+{% if section == "static" %}
     limit_except GET { deny all; }
     gzip on;
     gzip_types text/css text/javascript application/javascript;
@@ -24,6 +24,6 @@ location {{ portal_path }}{{ "static/" if static else "" }} {
     proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
     proxy_set_header X-SSL-Client-S-DN   $ssl_client_s_dn;
     proxy_read_timeout 60s;
-    client_max_body_size 64k;
+    client_max_body_size {{ "4m" if section == "admin" else "64k" }};
 }
 {% endfor %}
