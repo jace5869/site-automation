@@ -30,9 +30,15 @@ description:
   - Deletes only this job's own dated files (sw-inventory-YYYYMMDD-HHMM.csv / .json) older than keep_days.
 options:
   work_dir: {description: The folder of the hosts' reads., type: str, required: true}
-  hosts: {description: "[{host, reason, skipped}] - every host of the play.", type: list, elements: dict, required: true}
-  read_at: {description: When this run started (UTC)., type: str, required: true}
+  hosts: {description: "[{host, reason, skipped}] - every host of the play.", type: list, elements: dict, default: []}
+  read_at: {description: "When this run started (UTC); needed unless result_from.", type: str, default: ''}
   job: {description: This job's ID., type: int, default: 0}
+  result_from:
+    description: "1.139.0: <work_dir>/result.json - return the first call's result (that call runs with no_log: its
+      arguments hold the share passwords; ansible-core 2.16 would mask them inside its result)."
+    type: str
+    default: ''
+
   outputs: {description: "Any of shield, csv, json.", type: list, elements: str, default: [shield, csv, json]}
   dir: {description: "The folder the files are written in ('' = a folder in work_dir, gone after the job).", type: str, default: ''}
   shield_subdir: {description: The shield files' folder under dir and under the share's folder., type: str, default: shield}
@@ -63,6 +69,7 @@ author: site automation
 '''
 
 RETURN = r'''
+result_file: {description: "1.139.0: <work_dir>/result.json - everything below, read by the next task (never in this result).", type: str}
 report: {description: "The report (roles/site_email's _report).", type: dict}
 sheets_file: {description: "The workbook's sheets as JSON (roles/site_email's _report_xlsx); '' when it could not be made.", type: str}
 attachments: {description: "[{path, filename, desc}] for the email (each within email_max_mb).", type: list}
@@ -125,6 +132,9 @@ def again(what, retry, wait=None):
 
 # ---- the share: smbprotocol, as roles/site_email/library/site_report_web.py writes the report website's share ----------
 
+BAD_SMB = re.compile(r'[<>:"|?*\x00-\x1f]')      # not in a Windows share or folder name (a URL's ?query never taken)
+
+
 def smb_path(dest):
     """\\\\server\\share\\folder, //server/share/folder or smb://server/share/folder -> (server, UNC), or None (not a share).
     A user or password in it (smb://user:pw@server/...) is refused and never repeated."""
@@ -136,15 +146,19 @@ def smb_path(dest):
         return None
     parts = [x for x in re.split(r"[\\/]+", d) if x]
     if parts and "@" in parts[0]:
-        raise Fail("SA-SWI-20", "sw_inventory_share has a user or password in it (user@server) - not used, not shown",
+        raise Fail("SA-SWI-20", "the share address has a user or password in it (user@server) - not used, not shown",
                    "write only \\\\fileserver.yourdomain.mil\\share\\folder; the login comes from the Windows file share credential")
     if len(parts) < 2:
-        raise Fail("SA-SWI-20", "sw_inventory_share is not \\\\server\\share\\folder",
+        raise Fail("SA-SWI-20", "the share address is not \\\\server\\share\\folder (not shown)",
                    "write it as \\\\fileserver.yourdomain.mil\\share\\folder")
+    if not re.match(r"^[A-Za-z0-9._-]+\Z", parts[0]) or any(BAD_SMB.search(x) or x in (".", "..") for x in parts[1:]):
+        raise Fail("SA-SWI-20", "the share address has a character a Windows share or folder name cannot have (not shown)",
+                   "write only \\\\fileserver.yourdomain.mil\\share\\folder: no ? : * \" < > | in it")
     return parts[0], "\\\\" + "\\".join(parts)
 
 
 NO_SPACE = "free space on the share's disk, or raise the account's quota there"
+FULL_STATUS = (0xC000007F, 0xC0000044, 0xC0000802)    # disk full, quota exceeded, disk quota exceeded
 
 
 def why_smb(what, e, auth, port, secret=""):
@@ -172,7 +186,9 @@ def why_smb(what, e, auth, port, secret=""):
     if "md4" in low or "unsupported hash" in low:
         return "SA-SWI-24", line, ("NTLM needs MD4, which FIPS does not have: negotiate, user@YOURDOMAIN.MIL and the server's "
                                    "full name, so Kerberos is used")
-    if any(w in low for w in ("0xc000007f", "0xc0000044", "disk_full", "disk full", "quota", "no space left", "not enough space")):
+    if getattr(e, "ntstatus", None) in FULL_STATUS or getattr(e, "errno", None) in (errno.ENOSPC, errno.EDQUOT) or any(
+            w in low for w in ("0xc000007f", "0xc0000044", "0xc0000802", "status_disk_full", "status_quota_exceeded",
+                               "status_disk_quota_exceeded", "no space left on device", "not enough space on the disk")):
         return "SA-SWI-35", line, NO_SPACE
     if "failed to connect" in low or "timed out" in low or "refused" in low or "name or service" in low:
         return "SA-SWI-25", line, "open TCP %d from the execution nodes to the file server (a firewall), or correct its name" % port
@@ -286,12 +302,16 @@ class LocalFolder(object):
             raise Fail("SA-SWI-30", "%s is neither an absolute path nor \\\\server\\share\\folder" % what,
                        "give the full path (/var/lib/...), or the share as \\\\fileserver.yourdomain.mil\\share\\folder")
         if not make:
+            if os.path.realpath(root) == os.sep:
+                raise Fail("SA-SWI-30", "%s is the root folder /" % what, "give the share's own folder (/mnt/inventory)")
             if not os.path.isdir(root):
                 raise Fail("SA-SWI-28", "the folder %s is not there" % root, "make it once by hand, or mount the share")
         elif not check:
             try:
                 os.makedirs(root, exist_ok=True)
             except OSError as e:
+                if getattr(e, "errno", None) in (errno.ENOSPC, errno.EDQUOT):
+                    raise Fail("SA-SWI-35", "cannot make %s: %s" % (root, e.strerror or e), NO_SPACE.replace("share's", "folder's"))
                 raise Fail("SA-SWI-31", "cannot make %s: %s" % (root, e.strerror or e),
                            "a folder the job's user may write (in the EE: a path AAP exposes to jobs), or sw_inventory_share")
 
@@ -403,12 +423,13 @@ REFUSED = ("a user or password in the address (user@server) - not used, not show
 def dest_key(path, subdir):
     """One destination's identity: \\\\FS01\\it\\inv\\, //fs01/it/inv and smb://fs01/it/inv are one (Windows names have
     no case); a mounted folder keeps its case."""
-    p = (path or "").strip()
-    m = re.match(r"(?i)^smb:/+(.+)$", p)
+    p = path or ""
+    m = re.match(r"(?i)^smb:/+(.+)$", p.strip())
     if m:
         p = "//" + m.group(1)
     sub = "/".join(x for x in re.split(r"[\\/]+", (subdir or "").strip()) if x)
-    if p.startswith("\\\\") or p.startswith("//"):
+    if p.strip().startswith("\\\\") or p.strip().startswith("//"):
+        p = p.strip()
         return ("smb", "/".join(x for x in re.split(r"[\\/]+", p) if x).lower(), sub.lower())
     return ("dir", re.sub(r"/+", "/", p).rstrip("/") or p, sub)   # never normpath: /mnt/gone/../inv may not be /mnt/inv
 
@@ -424,7 +445,7 @@ def destinations(p):
     Names: share when there is one, else share 1, share 2, ..."""
     raw = []
     if p.get("share") or p.get("share_refused"):
-        path = str(p.get("share") or "").strip()
+        path = str(p.get("share") or "")             # as written: a mounted folder's name may end in a space
         refused = bool(p.get("share_refused")) or "@" in path
         raw.append({"path": "" if refused else path, "subdir": str(p.get("share_subdir") or ""),
                     "user": "", "password": "", "auth": p.get("share_auth") or "negotiate",
@@ -432,10 +453,14 @@ def destinations(p):
                     "what": "sw_inventory_share"})
     for i, e in enumerate(p.get("shares") or [], 1):
         e = e if isinstance(e, dict) else {"path": e}
-        path = str(e.get("path") or "").strip()
+        path = str(e.get("path") or "")
+        path = path if path.strip() else ""
         refused = bool(e.get("refused")) or "@" in path
         enc, bad = e.get("encrypt"), None
-        if enc is None or (isinstance(enc, str) and not enc.strip()):
+        if e.get("unresolved"):                 # 2.22: a key given whose value is an undefined variable (never a default)
+            bad = ("its %s could not be read (an undefined variable)" % "/".join(sorted(e["unresolved"])),
+                   "define the variable, or take that key out of the entry")
+        elif enc is None or (isinstance(enc, str) and not enc.strip()):
             enc = bool(p.get("share_encrypt"))
         elif isinstance(enc, bool):
             pass
@@ -587,28 +612,9 @@ def run(p, check=False, warn=lambda m: None):
         if multi and kw.get("error") and not d["show"].startswith(d["what"]):   # a hidden one names itself already
             kw["error"] = "%s: %s" % (d["show"], kw["error"])
         return said(d["name"], state, dest=d["show"], **kw)
-    for d in dests if want else []:            # each destination on its own: one that fails never stops the next
-        if d["refused"]:
-            dest_said(d, "failed", code="SA-SWI-20", error="%s has %s" % (d["what"], REFUSED[0]), fix=REFUSED[1])
-            continue
-        if d["bad"]:
-            dest_said(d, "failed", code="SA-SWI-20", error="%s: %s" % (d["what"], d["bad"][0]), fix=d["bad"][1])
-            continue
-        if not d["path"]:
-            dest_said(d, "failed", code="SA-SWI-20", error="%s has no path (empty, or an undefined variable)" % d["what"],
-                      fix="write it as \\\\fileserver.yourdomain.mil\\share\\folder")
-            continue
-        try:
-            sub = safe_sub(d["subdir"], "sw_inventory_share_subdir" if d["legacy"] else d["what"] + " subdir")
-            if smb_path(d["path"]):
-                folder = SmbFolder(d["path"], d["auth"], d["encrypt"], p["share_port"], user=d["user"], password=d["password"])
-            else:
-                folder = LocalFolder(d["path"], make=False, check=check, what=d["what"])
-        except Fail as e:
-            dest_said(d, "failed", code=e.code, error=e.what, fix=e.fix)
-            continue
-        shares.append((d, folder, sub))
     try:
+        for d in dests if want else []:        # each destination on its own: one that fails never stops the next
+            open_dest(p, check, d, dest_said, shares)
         return finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_outs, local, shield_sub, dests,
                       multi, shares)
     finally:
@@ -616,43 +622,86 @@ def run(p, check=False, warn=lambda m: None):
             folder.close()
 
 
+def open_dest(p, check, d, dest_said, shares):
+    """One destination checked and opened (added to shares), or said failed."""
+    if d["refused"]:
+        dest_said(d, "failed", code="SA-SWI-20", error="%s has %s" % (d["what"], REFUSED[0]), fix=REFUSED[1])
+        return
+    if d["bad"]:
+        dest_said(d, "failed", code="SA-SWI-20", error="%s: %s" % (d["what"], d["bad"][0]), fix=d["bad"][1])
+        return
+    if not d["path"]:
+        dest_said(d, "failed", code="SA-SWI-20", error="%s has no path (empty, or an undefined variable)" % d["what"],
+                  fix="write it as \\\\fileserver.yourdomain.mil\\share\\folder")
+        return
+    try:
+        sub = safe_sub(d["subdir"], "sw_inventory_share_subdir" if d["legacy"] else d["what"] + " subdir")
+        if smb_path(d["path"]):
+            folder = SmbFolder(d["path"], d["auth"], d["encrypt"], p["share_port"], user=d["user"], password=d["password"])
+        else:
+            folder = LocalFolder(d["path"], make=False, check=check, what=d["what"])
+    except Fail as e:
+        dest_said(d, "failed", code=e.code, error=e.what, fix=e.fix)
+        return
+    shares.append((d, folder, sub))
+
+
 def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_outs, local, shield_sub, dests, multi, shares):
     """run(), after the destinations are open: the baseline, the files, each share, the report."""
-    # ---- the baseline: sw-inventory-state.json (dir, else the first share that has it) ----
+    # ---- the baseline: sw-inventory-state.json here and on each share, each host's newest list of them all ----
     state_doc, base_from, baseline, damaged, state_ok = None, "", {}, [], True
     state_bad = set()                           # shares whose state file could not be read: never written over there
     if want:
-        raw, src = None, "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
+        found, broken = [], []                  # [(where, doc)] read whole; where a file was not JSON
+        here = "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
         try:
             raw = local.read(STATE) if local else None
-        except Fail as e:                       # not "missing": never written over, said
-            state_ok = False
+        except Fail as e:                       # not "missing": never written over anywhere, said (as in 1.134.0)
+            state_ok, raw = False, None
             said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
-        if state_ok and raw is None:
-            errs = []
-            for d, folder, sub in shares:       # each share on its own: one that cannot be read never hides the next
-                try:
-                    got = folder.read(join(sub, STATE))
-                except Fail as e:
-                    state_bad.add(d["name"])
-                    errs.append((d, e))
-                    continue
-                if got is not None and raw is None:
-                    raw, src = got, "sw-inventory-state.json on the share" + (" %s" % d["show"] if multi else "")
-            if errs and raw is None:            # none found and one unreadable: the only last list may be there
-                state_ok = False
-                e = errs[0][1]
-                said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
-            for d, e in (errs if raw is not None else []):
-                res["lines"].append("%s: sw-inventory-state.json could not be read (%s %s) - left as it is there"
-                                    % (d["name"], e.code, e.what))
-        if raw is not None:
+        sources = [(here, raw)] if raw is not None else []
+        errs = []
+        for d, folder, sub in shares if state_ok else []:   # each share on its own: one that cannot be read hides none
             try:
-                state_doc = json.loads(raw.decode("utf-8"))
-                baseline, damaged = sw.state_hosts(state_doc)
-                base_from = src
+                got = folder.read(join(sub, STATE))
+            except Fail as e:
+                state_bad.add(d["name"])
+                errs.append((d, e))
+                continue
+            if got is not None:
+                sources.append(("sw-inventory-state.json on the share" + (" %s" % d["show"] if multi else ""), got))
+        for where, body in sources:
+            try:
+                doc = json.loads(body.decode("utf-8"))
+                if not isinstance(doc, dict):
+                    raise ValueError("not an object")
+                found.append((where, doc))
             except (ValueError, AttributeError, UnicodeDecodeError):
-                state_doc, damaged = None, ["(the whole file)"]
+                broken.append(where)
+        if state_ok and errs and not found:     # none read and one unreadable: the only last list may be there
+            state_ok = False
+            e = errs[0][1]
+            said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
+        for d, e in (errs if state_ok else []):
+            res["lines"].append("%s: sw-inventory-state.json could not be read (%s %s) - left as it is there"
+                                % (d["name"], e.code, e.what))
+        if found:
+            merged, bad_hosts = {}, set()       # each host: the newest list of every copy read (a stale copy never wins)
+            for _where, doc in found:
+                good, bad_here = sw.state_hosts(doc)
+                bad_hosts.update(bad_here)
+                for h in good:
+                    entry = doc["hosts"][h]
+                    if h not in merged or str(entry.get("read_at") or "") > str(merged[h].get("read_at") or ""):
+                        merged[h] = entry
+            state_doc = {"format": "sw-inventory-state/1", "hosts": merged}
+            baseline, _ = sw.state_hosts(state_doc)
+            damaged = sorted(bad_hosts - set(merged))
+            base_from = found[0][0] + (" (and %d more copies: each host's newest)" % (len(found) - 1) if len(found) > 1 else "")
+        elif broken:
+            damaged = ["(the whole file)"]
+        for where in (broken if found else []):
+            res["lines"].append("%s could not be read (not JSON) - the other copies used" % where)
     chg, first = {}, []
     for h in ok:
         if h["host"] in baseline:
@@ -833,8 +882,9 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
 
 def main():
     module = AnsibleModule(
-        argument_spec=dict(work_dir=dict(type="str", required=True), hosts=dict(type="list", elements="dict", required=True),
-                           read_at=dict(type="str", required=True), job=dict(type="int", default=0),
+        argument_spec=dict(work_dir=dict(type="str", required=True), hosts=dict(type="list", elements="dict", default=[]),
+                           read_at=dict(type="str", default=""), job=dict(type="int", default=0),
+                           result_from=dict(type="str", default=""),
                            outputs=dict(type="list", elements="str", default=["shield", "csv", "json"]),
                            dir=dict(type="str", default=""), shield_subdir=dict(type="str", default="shield"),
                            share=dict(type="str", default=""), share_subdir=dict(type="str", default=""),
@@ -847,14 +897,29 @@ def main():
                                                     password=dict(type="str", default="", no_log=True),
                                                     auth=dict(type="str"),       # none: share_auth
                                                     encrypt=dict(type="raw"),    # none or '': share_encrypt; checked here
-                                                    refused=dict(type="bool", default=False))),
+                                                    refused=dict(type="bool", default=False),
+                                                    unresolved=dict(type="list", elements="str", default=[]))),
                            shares_error=dict(type="str", default=""),
                            xlsx_max_rows=dict(type="int", default=20000), email_max_mb=dict(type="float", default=10),
                            top=dict(type="int", default=15)),
         supports_check_mode=True)
+    if module.params["result_from"]:            # the second call: the first one's result, as this task's own
+        want = os.path.join(module.params["work_dir"], "result.json")
+        if os.path.realpath(module.params["result_from"]) != os.path.realpath(want):
+            module.fail_json(msg="result_from is only <work_dir>/result.json")
+        with open(want) as f:
+            module.exit_json(**json.load(f))
+    if not module.params["read_at"]:
+        module.fail_json(msg="read_at is required")
     res = run(module.params, module.check_mode, module.warn)
     res["changed"] = not module.check_mode and any(x["state"] == "ok" for x in res["outputs"])
-    module.exit_json(**res)
+    # 1.139.0: the result in a file of this run's own folder, read by the next task - never through exit_json, which
+    # (ansible-core 2.16) masks every no_log value inside it: a password "fail" would turn "failed" into "********ed"
+    out = os.path.join(module.params["work_dir"], "result.json")
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(res, f)
+    module.exit_json(changed=res["changed"], result_file=out)      # no_log call: only that it worked
 
 
 if __name__ == "__main__":

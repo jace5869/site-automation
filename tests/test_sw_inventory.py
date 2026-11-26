@@ -6,6 +6,7 @@ size limit, every export on its own, the review's fixes), the catalog entry. tes
 playbook on UBI containers. Placeholders only.
   python3 tests/test_sw_inventory.py"""
 import datetime
+import errno
 import importlib.util
 import io
 import json
@@ -966,6 +967,115 @@ class MoreSharesReview(ModuleBase):
         self.assertEqual(self.state(res, "share 1")["state"], "skipped")
         self.assertIn("nothing to copy", sec["rows"][0][2])
         self.assertEqual(sec["row_status"], ["info", "info", "critical"])
+
+
+class MoreSharesReview2(ModuleBase):
+    """1.139.0 review (Codex r2): a test per finding."""
+    U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
+    U2 = "\\\\fs02.corp.example.mil\\security\\inventory"
+
+    def test_r2_01_a_query_or_odd_character_in_a_share_address_is_refused_never_shown(self):
+        for bad in ("\\\\fs01.corp.example.mil\\it?password=Secret-Value\\x", "smb://fs01.corp.example.mil/it/a*Secret-Value",
+                    "\\\\fs01.corp.example.mil:445\\it\\Secret-Value"):
+            self.assertRaises(mod.Fail, mod.smb_path, bad)
+            with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=(self.U1,))}):
+                res = mod.run(self.params(shares=[{"path": bad}, {"path": self.U1}], outputs=["csv"]))
+            self.assertNotIn("Secret-Value", json.dumps(res), bad)
+            self.assertEqual((self.state(res, "share 1")["code"], self.state(res, "share 2")["state"]), ("SA-SWI-20", "ok"))
+        self.assertEqual(mod.smb_path("\\\\fs01.corp.example.mil\\it #1\\inv%")[1], "\\\\fs01.corp.example.mil\\it #1\\inv%")
+
+    def test_r2_02_an_undefined_key_refuses_its_entry(self):
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=(self.U1, self.U2))}):
+            fake = sys.modules["smbclient"]
+            res = mod.run(self.params(shares=[{"path": self.U1, "subdir": "", "unresolved": ["subdir"]}, {"path": self.U2}],
+                                      outputs=["csv"]))
+        s1 = self.state(res, "share 1")
+        self.assertEqual((s1["state"], s1["code"]), ("failed", "SA-SWI-20"))
+        self.assertIn("its subdir could not be read (an undefined variable)", s1["error"])
+        self.assertFalse([k for k in fake.files if k.startswith(self.U1)])           # never the share's own folder
+        self.assertEqual(self.state(res, "share 2")["state"], "ok")
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        self.assertIn("if k in e and e[k] is not defined", task)
+        self.assertIn("is not ansible.builtin.vault_encrypted", task)
+
+    def test_r2_03_the_root_folder_is_never_a_share(self):
+        res = mod.run(self.params(shares=[{"path": "/"}, {"path": "//"}], outputs=["csv"]))
+        self.assertEqual(self.state(res, "share 1")["code"], "SA-SWI-30")
+        self.assertEqual(self.state(res, "share 2")["code"], "SA-SWI-20")
+
+    def test_r2_04_each_host_from_its_newest_copy(self):
+        fake = FakeSmb(folders=(self.U1, self.U2))
+
+        def doc(host, at):
+            return {"format": "sw-inventory-state/1", "hosts": {host: {"read_at": at, "packages": [["bash", "0", "5.1", "1", "x86_64"]]}}}
+        old = doc("old01.corp.example.mil", "2026-11-01T02:00:00Z")
+        old["hosts"]["rhel-db01.corp.example.mil"] = {"read_at": "2026-11-01T02:00:00Z", "packages": []}
+        new = doc("only-here01.corp.example.mil", "2026-11-24T02:00:00Z")
+        new["hosts"]["rhel-db01.corp.example.mil"] = {"read_at": "2026-11-24T02:00:00Z", "packages": [["which", "0", "2.21", "1", "x86_64"]]}
+        fake.files[self.U1 + "\\sw-inventory-state.json"] = json.dumps(old).encode()
+        fake.files[self.U2 + "\\sw-inventory-state.json"] = json.dumps(new).encode()
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(dir="", shares=[{"path": self.U1}, {"path": self.U2}], outputs=["csv"]))
+        self.assertEqual(res["failed_outputs"], [])
+        for u in (self.U1, self.U2):
+            hosts = json.loads(fake.files[u + "\\sw-inventory-state.json"])["hosts"]
+            self.assertIn("only-here01.corp.example.mil", hosts)                     # never dropped by a stale copy
+            self.assertIn("old01.corp.example.mil", hosts)
+        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
+        self.assertTrue(any("and 1 more copies: each host's newest" in n for n in notes), notes)
+        # the db01 change compared with the newer list (which removed)
+        self.assertIn("rhel-db01.corp.example.mil", [r[0] for s in res["report"]["sections"] if s["title"] == "Software changes (last night)" for r in s["rows"]])
+
+    def test_r2_04b_a_local_list_never_overwrites_an_unreadable_share_copy(self):
+        out = os.path.join(self.tmp, "out")
+        os.makedirs(out)
+        with open(os.path.join(out, "sw-inventory-state.json"), "w") as f:
+            json.dump({"format": "sw-inventory-state/1", "hosts": {}}, f)
+        fake = FakeSmb(folders=(self.U1,))
+        fake.files[self.U1 + "\\sw-inventory-state.json"] = b"theirs"
+        real = fake.open_file
+
+        def open_file(p, mode="rb", **kw):
+            if p.endswith("state.json") and "r" in mode:
+                raise OSError("[NtStatus 0xc0000022] STATUS_ACCESS_DENIED")
+            return real(p, mode, **kw)
+        fake.open_file = open_file
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(share=self.U1, outputs=["csv"]))
+        self.assertEqual(fake.files[self.U1 + "\\sw-inventory-state.json"], b"theirs")
+        self.assertTrue(any(l.startswith("share: sw-inventory-state.json could not be read") for l in res["lines"]), res["lines"])
+        self.assertEqual(self.state(res, "share")["state"], "ok")
+
+    def test_r2_07_a_mounted_folder_as_written(self):
+        a, b = os.path.join(self.tmp, "inv "), os.path.join(self.tmp, "inv")
+        os.makedirs(a)
+        os.makedirs(b)
+        res = mod.run(self.params(share=a, outputs=["csv"]))
+        self.assertEqual(self.state(res, "share")["state"], "ok")
+        self.assertTrue(os.path.isfile(os.path.join(a, "sw-inventory-latest.csv")))
+        self.assertFalse(os.path.exists(os.path.join(b, "sw-inventory-latest.csv")))
+        self.assertNotEqual(mod.dest_key(a, ""), mod.dest_key(b, ""))
+
+    def test_r2_08_full_disk_and_quota_by_status(self):
+        class E(Exception):
+            ntstatus = 0xC0000802
+        self.assertEqual(mod.why_smb("w", E("Received unexpected status from the server"), "negotiate", 445)[0], "SA-SWI-35")
+        self.assertEqual(mod.why_smb("w", OSError("[NtStatus 0xc0000034] STATUS_OBJECT_NAME_NOT_FOUND \\\\fs\\quota\\x"),
+                                     "negotiate", 445)[0], "SA-SWI-29")
+        with unittest.mock.patch.object(mod.os, "makedirs", side_effect=OSError(errno.EDQUOT, "Disk quota exceeded")):
+            try:
+                mod.LocalFolder(os.path.join(self.tmp, "new"))
+                self.fail("no Fail")
+            except mod.Fail as e:
+                self.assertEqual(e.code, "SA-SWI-35")
+
+    def test_r2_05_the_result_through_a_file_and_a_second_call(self):
+        lib = text(os.path.join(ROOT, "roles", "sw_inventory", "library", "site_sw_inventory.py"))
+        self.assertIn('module.exit_json(changed=res["changed"], result_file=out)', lib)
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        self.assertIn("result_from: \"{{ _sw_run.result_file }}\"", task)
+        self.assertIn("register: _sw_run\n          no_log: true", task)
+        self.assertIn("rescue:\n        - name: Software inventory | the controller step failed", task)
 
 
 class Catalog(unittest.TestCase):

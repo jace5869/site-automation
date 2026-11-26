@@ -14,7 +14,8 @@
 - Check logs in to each destination and looks at its folder; nothing is written. A path with a user in it is refused per
   entry and never shown; a password is never in the job output nor the execution node's log (the step runs `no_log`).
   Two destinations on one server keep their own logins. A list that cannot be read (an undefined variable) is said as
-  **shares** not written; the rest still goes. A full disk or quota is its own code, SA-SWI-35.
+  **shares** not written; the rest still goes. A full disk or quota is its own code, SA-SWI-35. What changed uses each
+  host's newest list of every copy of `sw-inventory-state.json`; a copy that cannot be read is never written over.
 - Docs: `docs/LINUX_SW_INVENTORY.md` (*More than one share*). Tests: `tests/test_sw_inventory.py` (MoreShares),
   `tests/swinv/run_sw_inventory_test.sh` (runs 1c, 1d, 1e, 3).
 

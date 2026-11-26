@@ -138,7 +138,8 @@ play --limit 'rhel9*' -e "@$work/vars1d.json"; rc=$?
 check "run 1d: the job fails at its end" "$([ $rc -ne 0 ] && echo failed)" failed
 has "run 1d: the first one's code and fix" "share 1 NOT WRITTEN: SA-SWI-28"
 has "run 1d: the user@ entry refused" "share 3 NOT WRITTEN: SA-SWI-20"
-check "run 1d: the user@ entry never shown" "$(grep -c -F 'svc:pw@' "$work/run.txt")" 0
+printf '%s\n' 'svc:pw@' > "$work/refused.txt"
+check "run 1d: the user@ entry never shown" "$(grep -c -F -f "$work/refused.txt" "$work/run.txt")" 0
 has "run 1d: the assert names both" "Not done: share 1; share 3"
 check "run 1d: the second still written" "$(test -s "$work/share2/inv1d/sw-inventory-latest.csv" && echo yes)" yes
 check "run 1d: an empty encrypt is the default (written)" "$(test -s "$work/share2/inv1e/sw-inventory-latest.csv" && echo yes)" yes
