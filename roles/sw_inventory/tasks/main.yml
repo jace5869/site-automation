@@ -26,7 +26,7 @@
           {%-   for k in ['path', 'subdir', 'user', 'password', 'auth', 'encrypt'] if k in e and e[k] is not defined -%}
           {%-     set _ = unres.append(k) -%}
           {%-   endfor -%}
-          {%-   set pth = ('' if e.path is not defined or e.path is none else e.path | string).strip() -%}
+          {%-   set pth = '' if e.path is not defined or e.path is none else e.path | string -%}
           {%-   set _ = out.append({'path': '' if pth is search('@') else pth, 'refused': pth is search('@'),
                                     'subdir': '' if e.subdir is not defined or e.subdir is none else e.subdir | string,
                                     'user': '' if e.user is not defined or e.user is none else e.user | string,
@@ -86,17 +86,15 @@
         - name: Software inventory | the result (no password in it)
           site_sw_inventory:
             work_dir: "{{ _sw_work_made.path }}"
-            result_from: "{{ _sw_run.result_file }}"
+            result_from: true
           register: _sw
       rescue:
         - name: Software inventory | the controller step failed
           ansible.builtin.fail:
             msg: >-
-              The software inventory's controller step failed before its report ({{ (ansible_failed_result.exception
-              | default(ansible_failed_result.module_stderr | default('')) | string | regex_search('[A-Za-z]+(Error|Exception)'))
-              | default('no error name', true) }}, rc {{ ansible_failed_result.rc | default('-') }}). Its output is hidden: it
-              holds the share logins. Check the execution environment (Python 3, smbprotocol) and sw_inventory_shares, then
-              run it again; docs/LINUX_SW_INVENTORY.md, When something fails.
+              The software inventory's controller step failed before its report. Its output is hidden: it holds the
+              share logins. Check the execution environment (Python 3, smbprotocol) and sw_inventory_shares, then run it
+              again; docs/LINUX_SW_INVENTORY.md, When something fails.
 
     - name: Software inventory | {{ _sw.report.title }}
       ansible.builtin.debug:

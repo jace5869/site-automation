@@ -34,10 +34,10 @@ options:
   read_at: {description: "When this run started (UTC); needed unless result_from.", type: str, default: ''}
   job: {description: This job's ID., type: int, default: 0}
   result_from:
-    description: "1.135.2: <work_dir>/result.json - return the first call's result (that call runs with no_log: its
-      arguments hold the share passwords; ansible-core 2.16 would mask them inside its result)."
-    type: str
-    default: ''
+    description: "1.135.2: true = return the first call's result from <work_dir>/result.json and delete it (that call
+      runs with no_log: its arguments hold the share passwords; ansible-core 2.16 would mask them inside its result)."
+    type: bool
+    default: false
 
   outputs: {description: "Any of shield, csv, json.", type: list, elements: str, default: [shield, csv, json]}
   dir: {description: "The folder the files are written in ('' = a folder in work_dir, gone after the job).", type: str, default: ''}
@@ -69,7 +69,7 @@ author: site automation
 '''
 
 RETURN = r'''
-result_file: {description: "1.135.2: <work_dir>/result.json - everything below, read by the next task (never in this result).", type: str}
+# 1.135.2: the first call (no_log) returns only changed; everything below comes from the second call (result_from)
 report: {description: "The report (roles/site_email's _report).", type: dict}
 sheets_file: {description: "The workbook's sheets as JSON (roles/site_email's _report_xlsx); '' when it could not be made.", type: str}
 attachments: {description: "[{path, filename, desc}] for the email (each within email_max_mb).", type: list}
@@ -141,6 +141,9 @@ def smb_path(dest):
     d = (dest or "").strip()
     m = re.match(r"(?i)^smb:/+(.+)$", d)
     if m:
+        if "#" in m.group(1) or "?" in m.group(1):      # a URL's fragment or query: never a folder name
+            raise Fail("SA-SWI-20", "the share address has a URL part (# or ?) in it (not shown)",
+                       "write only \\\\fileserver.yourdomain.mil\\share\\folder")
         d = "//" + m.group(1)
     if not (d.startswith("\\\\") or d.startswith("//")):
         return None
@@ -159,6 +162,10 @@ def smb_path(dest):
 
 NO_SPACE = "free space on the share's disk, or raise the account's quota there"
 FULL_STATUS = (0xC000007F, 0xC0000044, 0xC0000802)    # disk full, quota exceeded, disk quota exceeded
+STATUS_CODES = dict([(x, ("SA-SWI-35", NO_SPACE)) for x in FULL_STATUS] + [
+    (0xC000006D, ("SA-SWI-21", 'the user name or password is wrong, or the account is locked: the "Windows file share" '
+                               'credential, user@YOURDOMAIN.MIL')),
+    (0xC0000022, ("SA-SWI-22", "give the account Modify on the folder (the share and NTFS)"))])
 
 
 def why_smb(what, e, auth, port, secret=""):
@@ -166,8 +173,14 @@ def why_smb(what, e, auth, port, secret=""):
     text = str(e)
     if secret:
         text = text.replace(secret, "[redacted]")
-    low = text.lower()
+    low = re.sub(r"'[^']*'|\"[^\"]*\"|\\\\\S+", " ", text).lower()   # the words only: a path never decides the code
     line = "%s: %s" % (what, text.splitlines()[0][:300] if text else type(e).__name__)
+    status = getattr(e, "ntstatus", None) or getattr(e, "status", None)
+    status = status if isinstance(status, int) else None
+    if status in STATUS_CODES:                  # the server's own status first
+        return STATUS_CODES[status][0], line, STATUS_CODES[status][1]
+    if getattr(e, "errno", None) in (errno.ENOSPC, errno.EDQUOT):
+        return "SA-SWI-35", line, NO_SPACE
     if "logon_failure" in low or "logon failure" in low or "status_logon" in low or "invalid credentials" in low:
         return "SA-SWI-21", line, ('the user name or password is wrong, or the account is locked: the "Windows file share" '
                                    'credential, user@YOURDOMAIN.MIL')
@@ -560,6 +573,27 @@ def scrub(x, secrets):
     return x
 
 
+def scrub_report(report, secrets):
+    """The report's words with every secret replaced (its notes too); its statuses, columns and kinds untouched."""
+    r = dict(report)
+    for k in ("title", "subtitle", "footer", "head_name"):
+        if isinstance(r.get(k), str):
+            r[k] = scrub(r[k], secrets)
+    r["head_scope"] = scrub(r.get("head_scope") or [], secrets)
+    r["head_counts"] = [[c[0], scrub(c[1], secrets)] + list(c[2:]) for c in r.get("head_counts") or []]
+    r["sections"] = []
+    for sec in report.get("sections") or []:
+        sec = dict(sec)
+        for k in ("title", "text"):
+            if isinstance(sec.get(k), str):
+                sec[k] = scrub(sec[k], secrets)
+        for k in ("lines", "rows"):
+            if k in sec:
+                sec[k] = scrub(sec[k], secrets)
+        r["sections"].append(sec)
+    return r
+
+
 def run(p, check=False, warn=lambda m: None):
     now = sw.stamp(p["read_at"]) or datetime.datetime.utcnow().replace(microsecond=0)
     outputs = [o for o in (p["outputs"] or []) if o]
@@ -686,17 +720,20 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
             res["lines"].append("%s: sw-inventory-state.json could not be read (%s %s) - left as it is there"
                                 % (d["name"], e.code, e.what))
         if found:
-            merged, bad_hosts = {}, set()       # each host: the newest list of every copy read (a stale copy never wins)
+            merged, bad_hosts, kept_bad = {}, set(), {}   # each host: the newest list of every copy (a stale copy never wins)
             for _where, doc in found:
                 good, bad_here = sw.state_hosts(doc)
                 bad_hosts.update(bad_here)
+                for h in bad_here:              # a damaged entry is kept as it is (never dropped from the copies)
+                    kept_bad.setdefault(h, doc["hosts"][h])
                 for h in good:
                     entry = doc["hosts"][h]
                     if h not in merged or str(entry.get("read_at") or "") > str(merged[h].get("read_at") or ""):
                         merged[h] = entry
-            state_doc = {"format": "sw-inventory-state/1", "hosts": merged}
-            baseline, _ = sw.state_hosts(state_doc)
+            baseline, _ = sw.state_hosts({"hosts": merged})
             damaged = sorted(bad_hosts - set(merged))
+            state_doc = {"format": "sw-inventory-state/1",
+                         "hosts": dict([(h, kept_bad[h]) for h in damaged] + list(merged.items()))}
             base_from = found[0][0] + (" (and %d more copies: each host's newest)" % (len(found) - 1) if len(found) > 1 else "")
         elif broken:
             damaged = ["(the whole file)"]
@@ -730,7 +767,11 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
                                        [dict(c, host=h) for h in sorted(chg) for c in chg[h]]), indent=1) + "\n").encode("utf-8")
         files["json"] = [{"rel": "sw-inventory-%s.json" % stamp, "body": body}, {"rel": "sw-inventory-latest.json", "body": body}]
     if want and ok and state_ok:                # every host's last list: a host not read this run keeps its own
-        files["state"] = [{"rel": STATE, "body": json.dumps(sw.state_merge(state_doc, ok), separators=(",", ":")).encode("utf-8")}]
+        # a host whose kept list is newer than this read (an older job finishing late) keeps the newer one
+        stored = (state_doc or {}).get("hosts") or {}
+        newer = [h for h in ok if not (isinstance(stored.get(h["host"]), dict)
+                                       and str(stored[h["host"]].get("read_at") or "") > str(h.get("read_at") or ""))]
+        files["state"] = [{"rel": STATE, "body": json.dumps(sw.state_merge(state_doc, newer), separators=(",", ":")).encode("utf-8")}]
     kept_here = bool(p["dir"])
     done_here = set()                           # the files really written here (the email says where)
     for o in want:
@@ -872,8 +913,9 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
         else:
             res["report"]["sections"].append({"title": "Notes", "lines": notes})
     res["failed_outputs"] = [x["name"] for x in res["outputs"] if x["state"] == "failed"]
-    if secrets:
+    if secrets:                                 # the words only: every state, status and path left as it is
         res["lines"] = scrub(res["lines"], secrets)
+        res["report"] = scrub_report(res["report"], secrets)
     res["hosts_read"], res["hosts_not_read"] = len(ok), len(bad)
     res["packages"] = sum(len(h["packages"]) for h in ok)
     res["hosts_changed"] = len([h for h in chg if chg[h]])
@@ -884,7 +926,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(work_dir=dict(type="str", required=True), hosts=dict(type="list", elements="dict", default=[]),
                            read_at=dict(type="str", default=""), job=dict(type="int", default=0),
-                           result_from=dict(type="str", default=""),
+                           result_from=dict(type="bool", default=False),
                            outputs=dict(type="list", elements="str", default=["shield", "csv", "json"]),
                            dir=dict(type="str", default=""), shield_subdir=dict(type="str", default="shield"),
                            share=dict(type="str", default=""), share_subdir=dict(type="str", default=""),
@@ -904,22 +946,41 @@ def main():
                            top=dict(type="int", default=15)),
         supports_check_mode=True)
     if module.params["result_from"]:            # the second call: the first one's result, as this task's own
-        want = os.path.join(module.params["work_dir"], "result.json")
-        if os.path.realpath(module.params["result_from"]) != os.path.realpath(want):
-            module.fail_json(msg="result_from is only <work_dir>/result.json")
-        with open(want) as f:
-            module.exit_json(**json.load(f))
+        try:
+            module.exit_json(**result_take(module.params["work_dir"]))
+        except (IOError, OSError, ValueError):
+            module.fail_json(msg="the controller step's result could not be read (see the step before)")
     if not module.params["read_at"]:
         module.fail_json(msg="read_at is required")
     res = run(module.params, module.check_mode, module.warn)
     res["changed"] = not module.check_mode and any(x["state"] == "ok" for x in res["outputs"])
     # 1.135.2: the result in a file of this run's own folder, read by the next task - never through exit_json, which
     # (ansible-core 2.16) masks every no_log value inside it: a password "fail" would turn "failed" into "********ed"
-    out = os.path.join(module.params["work_dir"], "result.json")
-    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    result_put(module.params["work_dir"], res)
+    module.exit_json(changed=res["changed"])    # no_log call: only that it worked (no path: 2.16 would mask it too)
+
+
+RESULT = "result.json"
+
+
+def result_put(work_dir, res):
+    """The result in <work_dir>/result.json: made new (never through a link or an old file), owner only."""
+    out = os.path.join(work_dir, RESULT)
+    if os.path.lexists(out):
+        os.unlink(out)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(res, f)
-    module.exit_json(changed=res["changed"], result_file=out)      # no_log call: only that it worked
+
+
+def result_take(work_dir):
+    """<work_dir>/result.json read (never through a link) and deleted at once."""
+    out = os.path.join(work_dir, RESULT)
+    fd = os.open(out, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "r") as f:
+        res = json.load(f)
+    os.unlink(out)
+    return res
 
 
 if __name__ == "__main__":

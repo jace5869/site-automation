@@ -1070,12 +1070,86 @@ class MoreSharesReview2(ModuleBase):
                 self.assertEqual(e.code, "SA-SWI-35")
 
     def test_r2_05_the_result_through_a_file_and_a_second_call(self):
-        lib = text(os.path.join(ROOT, "roles", "sw_inventory", "library", "site_sw_inventory.py"))
-        self.assertIn('module.exit_json(changed=res["changed"], result_file=out)', lib)
         task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
-        self.assertIn("result_from: \"{{ _sw_run.result_file }}\"", task)
         self.assertIn("register: _sw_run\n          no_log: true", task)
         self.assertIn("rescue:\n        - name: Software inventory | the controller step failed", task)
+
+
+class MoreSharesReview3(ModuleBase):
+    """1.135.2 review (Codex r3): a test per finding."""
+    U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
+
+    def test_r3_01_the_handoff_names_no_path_and_the_file_is_private_and_gone(self):
+        lib = text(os.path.join(ROOT, "roles", "sw_inventory", "library", "site_sw_inventory.py"))
+        self.assertIn("module.exit_json(changed=res[\"changed\"])", lib)
+        self.assertNotIn("result_file=", lib)
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        self.assertIn("result_from: true", task)
+        mod.result_put(self.work, {"outputs": [{"state": "failed"}]})
+        out = os.path.join(self.work, "result.json")
+        self.assertEqual(os.stat(out).st_mode & 0o777, 0o600)
+        mod.result_put(self.work, {"x": 2})                              # made new, never an old file's mode
+        self.assertEqual(mod.result_take(self.work), {"x": 2})
+        self.assertFalse(os.path.exists(out))                            # read once, then gone
+        victim = os.path.join(self.tmp, "victim.json")
+        with open(victim, "w") as f:
+            f.write('{"y": 1}')
+        os.symlink(victim, out)
+        self.assertRaises(OSError, mod.result_take, self.work)           # never read through a link
+        mod.result_put(self.work, {"z": 3})                              # the link replaced, the victim untouched
+        self.assertEqual(text(victim), '{"y": 1}')
+        self.assertFalse(os.path.islink(out))
+
+    def test_r3_02_an_smb_url_fragment_is_refused(self):
+        for bad in ("smb://fs01.corp.example.mil/it/inv#token=Secret-Value", "smb://fs01.corp.example.mil/it?x=Secret-Value"):
+            self.assertRaises(mod.Fail, mod.smb_path, bad)
+            with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=(self.U1,))}):
+                res = mod.run(self.params(shares=[{"path": bad}, {"path": self.U1}], outputs=["csv"]))
+            self.assertNotIn("Secret-Value", json.dumps(res))
+        self.assertEqual(mod.smb_path("\\\\fs01.corp.example.mil\\it\\a#1")[1], "\\\\fs01.corp.example.mil\\it\\a#1")
+
+    def test_r3_03_the_report_notes_never_carry_a_password(self):
+        marker = "Marker-Only-pw"
+        mounted = os.path.join(self.tmp, "m-" + marker)
+        os.makedirs(mounted)
+        res = mod.run(self.params(dir="", shares=[{"path": mounted, "user": "u@CORP.EXAMPLE.MIL", "password": marker},
+                                                  {"path": mounted, "subdir": "b"}],
+                                  outputs=["csv", "json"], email_max_mb=0.000001))
+        self.assertNotIn(marker, json.dumps(res["report"]))
+        self.assertNotIn(marker, json.dumps(res["lines"]))
+        self.assertTrue(os.path.isfile(os.path.join(mounted, "sw-inventory-latest.csv")))    # the copy itself as written
+        self.assertEqual([x["state"] for x in res["outputs"] if x.get("dest")], ["ok", "ok"])
+        notes = [s for s in res["report"]["sections"] if s["title"] == "Notes"][0]["lines"]
+        self.assertTrue(any("[redacted]" in n for n in notes), notes)
+
+    def test_r3_04_the_rescue_says_fixed_words_only(self):
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        resc = task[task.index("- name: Software inventory | the controller step failed"):task.index("- name: Software inventory | {{ _sw.report.title }}")]
+        self.assertNotIn("{{", resc)
+
+    def test_r3_05_a_newer_kept_list_and_a_damaged_one_stay(self):
+        out = os.path.join(self.tmp, "out")
+        os.makedirs(out)
+        newer = {"read_at": "2026-12-01T00:00:00Z", "packages": [["which", "0", "2.21", "1", "x86_64"]]}
+        damaged = {"read_at": "2026-11-01T00:00:00Z", "packages": "not a list"}
+        with open(os.path.join(out, "sw-inventory-state.json"), "w") as f:
+            json.dump({"format": "sw-inventory-state/1", "hosts": {"rhel-db01.corp.example.mil": newer,
+                                                                    "gone01.corp.example.mil": damaged}}, f)
+        mod.run(self.params(outputs=["csv"]))
+        with open(os.path.join(out, "sw-inventory-state.json")) as f:
+            hosts = json.load(f)["hosts"]
+        self.assertEqual(hosts["rhel-db01.corp.example.mil"], newer)       # an older read never replaces a newer list
+        self.assertEqual(hosts["gone01.corp.example.mil"], damaged)        # kept as it is until it is read again
+        self.assertIn("rhel-app01.corp.example.mil", hosts)
+
+    def test_r3_07_the_status_decides_never_a_path(self):
+        class E(Exception):
+            ntstatus = 0xC0000802
+        self.assertEqual(mod.why_smb("w", E("access_denied in \\\\fs\\access_denied\\x"), "negotiate", 445)[0], "SA-SWI-35")
+        self.assertEqual(mod.why_smb("w", OSError("[NtStatus 0xc0000034] No such file: '\\\\fs\\status_disk_full\\x'"),
+                                     "negotiate", 445)[0], "SA-SWI-29")
+        self.assertEqual(mod.why_smb("w", OSError("[NtStatus 0xc0000034] No such file: \\\\fs\\access_denied\\x"),
+                                     "negotiate", 445)[0], "SA-SWI-29")
 
 
 class Catalog(unittest.TestCase):

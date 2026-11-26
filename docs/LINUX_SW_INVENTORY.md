@@ -142,7 +142,8 @@ sw_inventory_shares:
 - **Check** logs in to each one and looks at its folder; nothing is written.
 - An entry with a user or password in its path (`user@server`) is refused and never shown. A path or sub folder that
   is not valid is never repeated either: the entry is named by its number. A password is never in the job output nor
-  in the execution node's log (the step runs with `no_log`).
+  in the execution node's log (the step runs with `no_log`; its result reaches the next task through a private file
+  in the job's own folder, deleted when read). A password is taken out of the report's words too.
 - An entry with an undefined variable in any of its keys is not copied (SA-SWI-20); it is never taken as empty. A list that cannot be read at all (not a list; on
   ansible-core 2.16 also an undefined variable in any entry) is said as **shares** not written (SA-SWI-20): none of its
   folders gets the files, `sw_inventory_share` and the exports still do, and the job fails at its end.
