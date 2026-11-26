@@ -4,6 +4,37 @@
 # its last list and writes the exports (shield, CSV, JSON) and the share. Then the website and the email, each on its
 # own (one that fails never stops the other), and - with sw_inventory_fail_on_output_error - a failed job when an
 # export or a delivery failed. The hosts' reads are deleted at the end, whatever happened.
+# 1.139.0: sw_inventory_shares read on its own, never shown (no_log: a template error could quote an entry's password).
+# Each entry: path (a user@ in it: refused, never handed on), subdir, user, password, auth, encrypt - each kept as it is
+# written (empty = the credential's / sw_inventory_share_auth / sw_inventory_share_encrypt); the module checks each.
+# A list that cannot be read (an undefined variable in it, or not a list): said as a failed output, the rest still goes.
+- name: Software inventory | sw_inventory_shares (more file shares)
+  block:                                # no "when": a list that cannot be read is said, never taken for none
+    - name: Software inventory | read sw_inventory_shares (never shown)
+      ansible.builtin.set_fact:
+        _sw_shares_error: "{{ '' if (sw_inventory_shares is sequence and sw_inventory_shares is not string and sw_inventory_shares is not mapping) or sw_inventory_shares is none else 'not a list' }}"
+        _sw_shares: >-
+          {%- set out = [] -%}
+          {%- set given = sw_inventory_shares if sw_inventory_shares is sequence and sw_inventory_shares is not string
+                                                 and sw_inventory_shares is not mapping else [] -%}
+          {%- for x in given -%}
+          {%-   set e = x if x is mapping else {'path': x} -%}
+          {%-   set pth = ('' if e.path is not defined or e.path is none else e.path | string).strip() -%}
+          {%-   set _ = out.append({'path': '' if pth is search('@') else pth, 'refused': pth is search('@'),
+                                    'subdir': '' if e.subdir is not defined or e.subdir is none else e.subdir | string,
+                                    'user': '' if e.user is not defined or e.user is none else e.user | string,
+                                    'password': '' if e.password is not defined or e.password is none else e.password | string,
+                                    'auth': '' if e.auth is not defined or e.auth is none else e.auth | string,
+                                    'encrypt': '' if e.encrypt is not defined or e.encrypt is none else e.encrypt | string}) -%}
+          {%- endfor -%}
+          {{ out }}
+      no_log: true
+  rescue:
+    - name: Software inventory | sw_inventory_shares could not be read
+      ansible.builtin.set_fact:
+        _sw_shares: []
+        _sw_shares_error: could not be read (an undefined variable in it?)
+
 - name: Software inventory | the controller step
   block:
     - name: Software inventory | parse, compare with the last run, write the exports ({{ sw_inventory_outputs | join(', ') }})
@@ -29,27 +60,16 @@
         share_subdir: "{{ sw_inventory_share_subdir | default('', true) }}"
         share_auth: "{{ sw_inventory_share_auth }}"
         share_encrypt: "{{ sw_inventory_share_encrypt | bool }}"
-        # 1.139.0: more destinations, each on its own; the same guard per entry (a user or password in the address:
-        # refused, never handed on); a password goes to the module only (no_log there), never on a command line
-        shares: >-
-          {%- set out = [] -%}
-          {%- for x in sw_inventory_shares | default([], true) -%}
-          {%-   set e = x if x is mapping else {'path': x} -%}
-          {%-   set pth = (e.path | default('', true) | string).strip() -%}
-          {%-   set _ = out.append({'path': '' if pth is search('@') else pth, 'refused': pth is search('@'),
-                                    'subdir': e.subdir | default('', true) | string,
-                                    'user': e.user | default('', true) | string,
-                                    'password': e.password | default('', true) | string,
-                                    'auth': e.auth | default(sw_inventory_share_auth, true) | string,
-                                    'encrypt': (e.encrypt | bool) if e.encrypt is defined and e.encrypt is not none
-                                               else (sw_inventory_share_encrypt | bool)}) -%}
-          {%- endfor -%}
-          {{ out }}
+        # 1.139.0: more destinations (sw_inventory_shares, read above - never shown); no_log on this task: an entry's
+        # password never in the job output nor in the execution node's log (ansible-core 2.16 logs the arguments)
+        shares: "{{ _sw_shares | default([]) }}"
+        shares_error: "{{ _sw_shares_error | default('') }}"
         keep_days: "{{ sw_inventory_keep_days | int }}"
         xlsx_max_rows: "{{ sw_inventory_xlsx_max_rows | int }}"
         email_max_mb: "{{ sw_inventory_email_max_mb | float }}"
         top: "{{ sw_inventory_report_top | int }}"
       register: _sw
+      no_log: true                      # the report and every line come in the next task (the module's own, no secret)
 
     - name: Software inventory | {{ _sw.report.title }}
       ansible.builtin.debug:

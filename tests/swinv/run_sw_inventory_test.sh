@@ -6,7 +6,8 @@
 #   1. the default exports (shield, csv, json) here and on a "share" folder, the unreachable host listed with why;
 #   1b. a share folder that is not there: SA-SWI-28 and the fix, the files still written here, the job fails at its end;
 #   1c. 1.139.0: two destinations (sw_inventory_share + sw_inventory_shares), the same folder twice copied once, an entry's
-#       password never in the output (-vvv); 1d. one destination failing never stops the next;
+#       password never in the output (-vvv); 1d. one destination failing never stops the next; 1e. a list that cannot be
+#       read is said, sw_inventory_share still written, no secret shown;
 #   2. which removed on the UBI 9 host: the second run's change list says so (removed);
 #   2b. the email (a fake relay): the CSV, the JSON and the shield zip; each over sw_inventory_email_max_mb left off;
 #   2c. the website and the email on their own: no sender set - the website written, the email said failed;
@@ -110,27 +111,60 @@ has "run 1b: the assert names it" "Not done: share"
 check "run 1b: the files still written here" "$(ls "$work/out1b" | grep -c latest)" 2
 
 # 1c. 1.139.0: two more destinations (sw_inventory_shares) beside sw_inventory_share, one the same folder again (copied
-#     once), one with its own user and password (never in the output, even at -vvv)
+#     once), one with its own user and password - in a vars file (never on a command line), never in the output (-vvv)
 mkdir -p "$work/share2"
-vars="{\"sw_inventory_dir\": \"$work/out1c\", \"sw_inventory_share\": \"$share\", \"sw_inventory_share_subdir\": \"inv1c\", \"sw_inventory_shares\": [{\"path\": \"$share\", \"subdir\": \"inv1c\"}, {\"path\": \"$work/share2\", \"subdir\": \"inv\", \"user\": \"svc_aap_inv@CORP.EXAMPLE.MIL\", \"password\": \"E2e-Only-pw\"}]}"
-play --limit 'rhel9*' -vvv; rc=$?
+pw="E2e-$$-Only-pw"; printf '%s\n' "$pw" > "$work/pw.txt"
+cat > "$work/vars1c.json" <<EOV
+{"sw_inventory_dir": "$work/out1c", "sw_inventory_share": "$share", "sw_inventory_share_subdir": "inv1c",
+ "sw_inventory_shares": [{"path": "$share", "subdir": "inv1c"},
+                         {"path": "$work/share2", "subdir": "inv", "user": "svc_aap_inv@CORP.EXAMPLE.MIL", "password": "$pw"}]}
+EOV
+vars='{}'
+play --limit 'rhel9*' -vvv -e "@$work/vars1c.json"; rc=$?
 check "run 1c (two shares): green" "$rc" 0
 check "run 1c: latest csv on the first share" "$(test -s "$share/inv1c/sw-inventory-latest.csv" && echo yes)" yes
 check "run 1c: latest csv on the second share" "$(test -s "$work/share2/inv/sw-inventory-latest.csv" && echo yes)" yes
 check "run 1c: shield on the second share" "$(ls "$work/share2/inv/shield" | wc -l)" 1
 has "run 1c: the same folder copied once" "sw_inventory_shares entry 1 is the same folder as one before it - copied once"
 has "run 1c: the File shares section" "File shares"
-check "run 1c: the entry's password never in the output" "$(grep -c -F 'E2e-Only-pw' "$work/run.txt")" 0
+check "run 1c: the entry's password never in the output" "$(grep -c -F -f "$work/pw.txt" "$work/run.txt")" 0
 
 # 1d. one destination that fails (its folder not there) never stops the next; the job fails at its end
-vars="{\"sw_inventory_dir\": \"$work/out1d\", \"sw_inventory_shares\": [{\"path\": \"$work/nowhere\"}, {\"path\": \"$work/share2\", \"subdir\": \"inv1d\"}, {\"path\": \"svc:pw@fs01.corp.example.mil/it\"}]}"
-play --limit 'rhel9*'; rc=$?
+cat > "$work/vars1d.json" <<EOV
+{"sw_inventory_dir": "$work/out1d", "sw_inventory_shares": [{"path": "$work/nowhere"}, {"path": "$work/share2", "subdir": "inv1d"},
+ {"path": "svc:pw@fs01.corp.example.mil/it"}, {"path": "$work/share2", "subdir": "inv1e", "encrypt": ""}]}
+EOV
+play --limit 'rhel9*' -e "@$work/vars1d.json"; rc=$?
 check "run 1d: the job fails at its end" "$([ $rc -ne 0 ] && echo failed)" failed
 has "run 1d: the first one's code and fix" "share 1 NOT WRITTEN: SA-SWI-28"
 has "run 1d: the user@ entry refused" "share 3 NOT WRITTEN: SA-SWI-20"
 check "run 1d: the user@ entry never shown" "$(grep -c -F 'svc:pw@' "$work/run.txt")" 0
 has "run 1d: the assert names both" "Not done: share 1; share 3"
 check "run 1d: the second still written" "$(test -s "$work/share2/inv1d/sw-inventory-latest.csv" && echo yes)" yes
+check "run 1d: an empty encrypt is the default (written)" "$(test -s "$work/share2/inv1e/sw-inventory-latest.csv" && echo yes)" yes
+
+# 1e. an entry with an undefined variable: said (never shown), sw_inventory_share still written; a sibling's password
+#     never in the output
+cat > "$work/vars1e.json" <<EOV
+{"sw_inventory_dir": "$work/out1f", "sw_inventory_share": "$share", "sw_inventory_share_subdir": "inv1f",
+ "sw_inventory_shares": [{"path": "$work/share2", "password": "$pw"}, {"path": "{{ sa_swinv_not_defined }}"}]}
+EOV
+play --limit 'rhel9*' -vvv -e "@$work/vars1e.json"; rc=$?
+check "run 1e: the job fails at its end" "$([ $rc -ne 0 ] && echo failed)" failed
+# ansible-core 2.22 resolves each entry (that entry: no path); 2.16 the whole list (said as shares not written)
+has "run 1e: the bad entry or the list said" "NOT WRITTEN: SA-SWI-20 sw_inventory_shares"
+check "run 1e: sw_inventory_share still written" "$(test -s "$share/inv1f/sw-inventory-latest.csv" && echo yes)" yes
+check "run 1e: the password never in the output" "$(grep -c -F -f "$work/pw.txt" "$work/run.txt")" 0
+check "run 1e: the variable's name never quoted" "$(grep -c -F 'sa_swinv_not_defined' "$work/run.txt")" 0
+# 1f. the whole list an undefined variable: said as shares not written, sw_inventory_share still written
+cat > "$work/vars1f.json" <<EOV
+{"sw_inventory_dir": "$work/out1g", "sw_inventory_share": "$share", "sw_inventory_share_subdir": "inv1g",
+ "sw_inventory_shares": "{{ sa_swinv_not_defined }}"}
+EOV
+play --limit 'rhel9*' -e "@$work/vars1f.json"; rc=$?
+check "run 1f: the job fails at its end" "$([ $rc -ne 0 ] && echo failed)" failed
+has "run 1f: the list said" "shares NOT WRITTEN: SA-SWI-20 sw_inventory_shares could not be read"
+check "run 1f: sw_inventory_share still written" "$(test -s "$share/inv1g/sw-inventory-latest.csv" && echo yes)" yes
 
 # 2. which removed on the UBI 9 host
 "$engine" exec "$c9" rpm -e --nodeps which >/dev/null 2>&1

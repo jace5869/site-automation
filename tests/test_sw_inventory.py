@@ -231,6 +231,7 @@ class FakeSmb(object):
 
     def open_file(self, p, mode="rb", **kw):
         me = self
+        self.calls.append(("open", p, kw.get("username"), kw.get("password"), id(kw.get("connection_cache"))))
         if "r" in mode:
             if p not in self.files:
                 raise OSError(2, "no such file")
@@ -254,7 +255,7 @@ class FakeSmb(object):
         return [k[len(p) + 1:] for k in self.files if k.startswith(p + "\\") and "\\" not in k[len(p) + 1:]]
 
     def reset_connection_cache(self, **kw):
-        pass
+        self.calls.append(("close", id(kw.get("connection_cache"))))
 
 
 class ModuleBase(unittest.TestCase):
@@ -367,7 +368,7 @@ class Module(ModuleBase):
         fake2 = FakeSmb()
         with unittest.mock.patch.dict(sys.modules, {"smbclient": fake2}):
             res = mod.run(self.params(share=unc, outputs=["shield", "csv"], dir=os.path.join(self.tmp, "chk")), check=True)
-        self.assertEqual([c[0] for c in fake2.calls], ["login"])
+        self.assertEqual([c[0] for c in fake2.calls if c[0] in ("login", "write", "remove")], ["login"])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "chk")))
         self.assertIn("check mode", self.state(res, "share")["where"])
 
@@ -777,13 +778,29 @@ class MoreShares(ModuleBase):
 
         def replace(a, b, **kw):
             if b.startswith(self.U1):
-                raise OSError("[Error 3221225599] STATUS_DISK_FULL: there is not enough space on the disk")
+                raise OSError("[Error 28] [NtStatus 0xc000007f] No space left on device: '%s'" % b)
             return real(a, b, **kw)
         fake.replace = replace
         with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}), unittest.mock.patch.object(mod, "WAIT", (0,)):
             res = mod.run(self.params(shares=[{"path": self.U1}, {"path": self.U2}], outputs=["csv"]))
         self.assertEqual((self.state(res, "share 1")["state"], self.state(res, "share 2")["state"]), ("failed", "ok"))
         self.assertIn("3 of 3 files not copied", self.state(res, "share 1")["error"])
+        self.assertEqual(self.state(res, "share 1")["code"], "SA-SWI-35")
+        self.assertIn("free space on the share's disk", self.state(res, "share 1")["fix"])
+        for msg in ("STATUS_DISK_FULL", "[NtStatus 0xc0000044] STATUS_QUOTA_EXCEEDED", "There is not enough space on the disk"):
+            self.assertEqual(mod.why_smb("writing x", OSError(msg), "negotiate", 445)[0], "SA-SWI-35", msg)
+        # a mounted share that is full: the same code, its own fix
+        full = os.path.join(self.tmp, "full")
+        os.makedirs(full)
+        real_mkstemp = mod.tempfile.mkstemp
+
+        def mkstemp(*a, **kw):
+            if kw.get("dir", "").startswith(full):
+                raise OSError(28, "No space left on device")
+            return real_mkstemp(*a, **kw)
+        with unittest.mock.patch.object(mod.tempfile, "mkstemp", mkstemp):
+            res = mod.run(self.params(shares=[{"path": full}, {"path": mounted}], outputs=["csv"]))
+        self.assertEqual((self.state(res, "share 1")["code"], self.state(res, "share 2")["state"]), ("SA-SWI-35", "ok"))
         self.assertIn(self.U2 + "\\sw-inventory-latest.csv", fake.files)
 
     def test_check_mode_logs_in_to_each_writes_nothing(self):
@@ -791,7 +808,7 @@ class MoreShares(ModuleBase):
         with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
             res = mod.run(self.params(shares=[{"path": self.U1}, {"path": self.U2}, {"path": "\\\\fs03.corp.example.mil\\x\\y"}],
                                       outputs=["csv"], dir=os.path.join(self.tmp, "chk")), check=True)
-        self.assertEqual([c[0] for c in fake.calls], ["login", "login", "login"])
+        self.assertEqual([c[0] for c in fake.calls if c[0] in ("login", "write", "remove")], ["login", "login", "login"])
         self.assertEqual(fake.files, {})
         self.assertIn("check mode", self.state(res, "share 1")["where"])
         self.assertIn("check mode", self.state(res, "share 2")["where"])
@@ -811,8 +828,8 @@ class MoreShares(ModuleBase):
         st = dict((x["name"], x["code"]) for x in res["outputs"] if x.get("dest"))
         self.assertEqual(st, {"share 1": "", "share 2": "SA-SWI-20", "share 3": "SA-SWI-21", "share 4": "SA-SWI-30",
                               "share 5": "SA-SWI-20"})
-        self.assertIn("sw_inventory_shares entry 1 (refused, not shown)", dump)
-        self.assertIn("sw_inventory_shares entry 4 has no path", dump)
+        self.assertIn("sw_inventory_shares entry 1 (not shown)", dump)
+        self.assertIn("sw_inventory_shares entry 4 has no path (empty, or an undefined variable)", dump)
         # the task: the @ guard per entry; the module: the password no_log, never in argv
         task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
         self.assertIn("'path': '' if pth is search('@') else pth, 'refused': pth is search('@')", task)
@@ -820,6 +837,136 @@ class MoreShares(ModuleBase):
         lib = text(os.path.join(ROOT, "roles", "sw_inventory", "library", "site_sw_inventory.py"))
         self.assertIn('password=dict(type="str", default="", no_log=True)', lib)
         self.assertEqual(mod.scrub({"a": ["x pw y"], "b": "pw"}, ["pw"]), {"a": ["x [redacted] y"], "b": "[redacted]"})
+
+class MoreSharesReview(ModuleBase):
+    """1.139.0 review (Codex r1): a test per finding."""
+    U1 = "\\\\fs01.corp.example.mil\\it\\inventory"
+    U2 = "\\\\fs01.corp.example.mil\\security\\inventory"          # the same server, another share and login
+
+    def test_r1_03_a_value_not_valid_is_never_repeated(self):
+        shares = [{"path": "//server-only"}, {"path": self.U1, "subdir": "svc:Secret-Value@x"}, {"path": "relative/Secret-Value"}]
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=(self.U1,))}):
+            res = mod.run(self.params(shares=shares, outputs=["csv"]))
+        dump = json.dumps(res)
+        self.assertNotIn("Secret-Value", dump)
+        self.assertNotIn("server-only", dump)
+        self.assertEqual([self.state(res, "share %d" % n)["dest"] for n in (1, 2, 3)],
+                         ["sw_inventory_shares entry %d (not shown)" % n for n in (1, 2, 3)])
+        self.assertRaises(mod.Fail, mod.safe_sub, "a b", "s")
+        try:
+            mod.safe_sub("svc:pw@x", "s")
+        except mod.Fail as e:
+            self.assertNotIn("pw@x", e.what)
+
+    def test_r1_04_a_list_that_cannot_be_read_is_said_the_rest_goes(self):
+        mounted = os.path.join(self.tmp, "m")
+        os.makedirs(mounted)
+        for err, words in (("not a list", "could not be read (not a list"), ("could not be read (an undefined variable in it?)", "could not be read")):
+            res = mod.run(self.params(share=mounted, shares=[], shares_error=err, outputs=["csv"]))
+            self.assertEqual((self.state(res, "shares")["state"], self.state(res, "shares")["code"]), ("failed", "SA-SWI-20"))
+            self.assertIn(words, self.state(res, "shares")["error"])
+            self.assertEqual((self.state(res, "share")["state"], self.state(res, "csv")["state"]), ("ok", "ok"))
+            self.assertIn("shares", res["failed_outputs"])
+        task = text(os.path.join(ROOT, "roles", "sw_inventory", "tasks", "main.yml"))
+        block = task[task.index("- name: Software inventory | sw_inventory_shares (more file shares)"):task.index("- name: Software inventory | the controller step")]
+        self.assertNotIn("when:", block)                              # never skipped (an unreadable list is not "none")
+        self.assertNotIn("default([], true)", block)
+        self.assertIn("rescue:", block)
+        self.assertEqual(block.count("no_log: true"), 1)
+        call = task[task.index("site_sw_inventory:"):task.index("- name: Software inventory | {{ _sw.report.title }}")]
+        self.assertIn("no_log: true", call)                            # the module call: no argument ever shown or logged
+
+    def test_r1_06_a_password_that_is_a_state_word_changes_no_state(self):
+        fake = FakeSmb(fail_login="STATUS_LOGON_FAILURE", folders=(self.U1, self.U2), fail_servers=("fs09.corp.example.mil",))
+        shares = [{"path": "\\\\fs09.corp.example.mil\\x\\y", "user": "u@CORP.EXAMPLE.MIL", "password": "fail"}, {"path": self.U1}]
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(shares=shares, outputs=["csv"]))
+        self.assertEqual(self.state(res, "share 1")["state"], "failed")
+        self.assertEqual(res["failed_outputs"], ["share 1"])
+        self.assertTrue(all(os.path.isfile(a["path"]) for a in res["attachments"]))
+
+    def test_r1_07_encrypt_empty_inherits_false_stays_typo_refused(self):
+        p = self.params(share_encrypt=True, shares=[{"path": self.U1, "encrypt": ""}, {"path": self.U2, "encrypt": "false"},
+                                                    {"path": "\\\\fs03.corp.example.mil\\a\\b", "encrypt": "ture"},
+                                                    {"path": "\\\\fs04.corp.example.mil\\a\\b", "encrypt": "True", "auth": ""}])
+        dests, _ = mod.destinations(p)
+        self.assertEqual([(d["encrypt"], d["bad"] is None) for d in dests], [(True, True), (False, True), (False, False), (True, True)])
+        self.assertEqual(dests[3]["auth"], "negotiate")
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=(self.U1, self.U2))}):
+            res = mod.run(dict(p, outputs=["csv"]))
+        s3 = self.state(res, "share 3")
+        self.assertEqual((s3["state"], s3["code"]), ("failed", "SA-SWI-20"))
+        self.assertNotIn("ture", json.dumps(res))
+
+    def test_r1_08_one_unreadable_baseline_never_stops_the_others(self):
+        fake = FakeSmb(folders=(self.U1, self.U2))
+        good = json.dumps(sw.state_merge(None, [{"host": "rhel-db01.corp.example.mil", "os": "rhel 9.4", "kernel": "k",
+                                                  "read_at": "2026-11-24T02:00:00Z", "packages": []}])).encode()
+        fake.files[self.U2 + "\\sw-inventory-state.json"] = good
+        real = fake.open_file
+
+        def open_file(p, mode="rb", **kw):
+            if p == self.U1 + "\\sw-inventory-state.json" and "r" in mode:
+                raise OSError("[NtStatus 0xc0000022] STATUS_ACCESS_DENIED")
+            return real(p, mode, **kw)
+        fake.open_file = open_file
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(dir="", shares=[{"path": self.U1}, {"path": self.U2}], outputs=["csv"]))
+        self.assertNotIn("baseline", [x["name"] for x in res["outputs"]])
+        self.assertTrue(any(l.startswith("share 1: sw-inventory-state.json could not be read (SA-SWI-22") for l in res["lines"]), res["lines"])
+        self.assertNotIn(self.U1 + "\\sw-inventory-state.json", fake.files)            # never written over there
+        self.assertNotEqual(fake.files[self.U2 + "\\sw-inventory-state.json"], good)       # updated on the one read
+        self.assertEqual(res["first_seen"], ["rhel-app01.corp.example.mil"])                # db01 compared with share 2's list
+        # none found and one unreadable: nothing written over anywhere, said (as with one share)
+        shutil.rmtree(os.path.join(self.work, "files"))                 # the job's own folder of the run above
+        fake2 = FakeSmb(folders=(self.U1, self.U2))
+        fake2.open_file = lambda p, mode="rb", **kw: (_ for _ in ()).throw(OSError("STATUS_ACCESS_DENIED")) if (
+            p.endswith("state.json") and "r" in mode and p.startswith(self.U1)) else FakeSmb.open_file(fake2, p, mode, **kw)
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake2}):
+            res = mod.run(self.params(dir="", shares=[{"path": self.U1}, {"path": self.U2}], outputs=["csv"]))
+        self.assertEqual(self.state(res, "baseline")["state"], "failed")
+        self.assertFalse([k for k in fake2.files if k.endswith("state.json")])
+
+    def test_r1_09_each_call_carries_its_destinations_login(self):
+        fake = FakeSmb(folders=(self.U1, self.U2))
+        shares = [{"path": self.U1}, {"path": self.U2, "user": "svc_aap_sec@CORP.EXAMPLE.MIL", "password": "Entry-Only-pw"}]
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(shares=shares, outputs=["csv"]))
+        self.assertEqual(res["failed_outputs"], [])
+        opens = [c for c in fake.calls if c[0] == "open"]
+        for c in opens:
+            want = ("svc_aap_sec@CORP.EXAMPLE.MIL", "Entry-Only-pw") if c[1].startswith(self.U2) else ("svc_aap_inv@CORP.EXAMPLE.MIL", "Test-Only-pw")
+            self.assertEqual((c[2], c[3]), want, c[1])
+        caches = set((c[1].startswith(self.U2), c[4]) for c in opens)
+        self.assertEqual(len(caches), 2)                               # one server, two logins, two caches
+        self.assertEqual(len([c for c in fake.calls if c[0] == "close"]), 2)
+
+    def test_r1_10_a_folder_with_dot_dot_is_never_taken_for_another(self):
+        there = os.path.join(self.tmp, "inv")
+        os.makedirs(there)
+        shares = [{"path": os.path.join(self.tmp, "gone", "..", "inv")}, {"path": there}]
+        res = mod.run(self.params(shares=shares, outputs=["csv"]))
+        self.assertEqual(self.state(res, "share 2")["state"], "ok", res["outputs"])
+        self.assertFalse([l for l in res["lines"] if "copied once" in l])
+        self.assertEqual(mod.dest_key("/mnt/inv/", ""), mod.dest_key("/mnt//inv", ""))
+
+    def test_r1_11_a_failed_login_closes_its_connections(self):
+        fake = FakeSmb(fail_login="STATUS_LOGON_FAILURE", folders=(self.U1,))
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            mod.run(self.params(shares=[{"path": self.U1}, {"path": self.U2}], outputs=["csv"]))
+        self.assertEqual(len([c for c in fake.calls if c[0] == "close"]), 2)
+
+    def test_r1_12_every_share_in_order_also_with_nothing_to_copy(self):
+        fake = FakeSmb(folders=(self.U1, self.U2))
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(shares=[{"path": self.U1}, {"path": self.U2}, {"path": "relative"}], outputs=["shield"],
+                                      hosts=[{"host": "gone01.corp.example.mil", "reason": "NOT REACHED - x"}]))
+        sec = [x for x in res["report"]["sections"] if x["title"] == "File shares"][0]
+        self.assertEqual([r[0] for r in sec["rows"]], ["share 1", "share 2", "share 3"])
+        self.assertEqual(self.state(res, "share 1")["state"], "skipped")
+        self.assertIn("nothing to copy", sec["rows"][0][2])
+        self.assertEqual(sec["row_status"], ["info", "info", "critical"])
+
 
 class Catalog(unittest.TestCase):
     def test_the_template(self):

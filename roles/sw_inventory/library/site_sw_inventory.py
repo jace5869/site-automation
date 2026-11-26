@@ -45,11 +45,16 @@ options:
   shares:
     description:
       - "1.139.0: more destinations, after share: [{path, subdir, user, password, auth, encrypt, refused}]. user / password
-        empty = the Windows file share credential's (SMB_SHARE_USERNAME / _PASSWORD). The same path and subdir as one
-        before it is left out (copied once)."
+        empty = the Windows file share credential's (SMB_SHARE_USERNAME / _PASSWORD); auth / encrypt empty = share_auth /
+        share_encrypt. The same path and subdir as one before it is left out (copied once). The task calls this module
+        with no_log (ansible-core 2.16 logs a module's arguments)."
     type: list
     elements: dict
     default: []
+  shares_error:
+    description: "The task could not read sw_inventory_shares: 'not a list', or any other text = could not be read."
+    type: str
+    default: ''
   keep_days: {description: "The dated files kept, here and on the share (0 = all).", type: int, default: 90}
   xlsx_max_rows: {description: The workbook's Packages sheet at most (0 = all)., type: int, default: 20000}
   email_max_mb: {description: Each email attachment at most (MB)., type: float, default: 10}
@@ -69,6 +74,7 @@ lines: {description: What happened, a line each (the job output)., type: list}
 '''
 
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -138,6 +144,9 @@ def smb_path(dest):
     return parts[0], "\\\\" + "\\".join(parts)
 
 
+NO_SPACE = "free space on the share's disk, or raise the account's quota there"
+
+
 def why_smb(what, e, auth, port, secret=""):
     """An SMB error as (code, what, fix) - the same hints as the report website's share; the password never in it."""
     text = str(e)
@@ -163,6 +172,8 @@ def why_smb(what, e, auth, port, secret=""):
     if "md4" in low or "unsupported hash" in low:
         return "SA-SWI-24", line, ("NTLM needs MD4, which FIPS does not have: negotiate, user@YOURDOMAIN.MIL and the server's "
                                    "full name, so Kerberos is used")
+    if any(w in low for w in ("0xc000007f", "0xc0000044", "disk_full", "disk full", "quota", "no space left", "not enough space")):
+        return "SA-SWI-35", line, NO_SPACE
     if "failed to connect" in low or "timed out" in low or "refused" in low or "name or service" in low:
         return "SA-SWI-25", line, "open TCP %d from the execution nodes to the file server (a firewall), or correct its name" % port
     return "SA-SWI-29", line, "see the error; docs/LINUX_SW_INVENTORY.md, When something fails"
@@ -183,26 +194,32 @@ class SmbFolder(object):
             raise Fail("SA-SWI-26", "this execution environment has no smbprotocol",
                        "use the all-in-one EE of ee/ (it has smbprotocol), or a mounted folder as sw_inventory_share")
         self.cache = {}
-        self.smb, self.kw = smbclient, {"port": port, "connection_cache": self.cache}
+        self.smb = smbclient
         user = user or os.environ.get("SMB_SHARE_USERNAME") or os.environ.get("REPORT_WEB_USERNAME") or ""
         self.secret = password or os.environ.get("SMB_SHARE_PASSWORD") or os.environ.get("REPORT_WEB_PASSWORD") or ""
         if auth not in ("negotiate", "ntlm", "kerberos"):
-            raise Fail("SA-SWI-20", "sw_inventory_share_auth is %s" % auth, "negotiate, kerberos or ntlm")
+            raise Fail("SA-SWI-20", "the share's auth is not negotiate, kerberos or ntlm",
+                       "sw_inventory_share_auth (or the entry's auth): negotiate, kerberos or ntlm")
         if not user and auth != "kerberos":
             raise Fail("SA-SWI-27", "no login for the share %s" % self.root,
                        'attach the "Windows file share" credential (user@YOURDOMAIN.MIL and its password) to the template')
+        # every call with this destination's own login and cache: a reconnect or a DFS referral keeps them (1.139.0)
+        self.kw = {"port": port, "connection_cache": self.cache, "username": user or None, "password": self.secret or None,
+                   "encrypt": encrypt or None, "auth_protocol": auth, "connection_timeout": timeout}
         try:
-            smbclient.register_session(self.server, username=user or None, password=self.secret or None, port=port,
-                                       encrypt=encrypt or None, auth_protocol=auth, connection_timeout=timeout,
-                                       connection_cache=self.cache)
-        except Exception as e:                  # noqa: BLE001
-            raise Fail(*why_smb("logging in to %s" % self.server, e, auth, port, self.secret))
-        try:
-            ok = smbclient.path.isdir(self.root, **self.kw)
-        except Exception as e:                  # noqa: BLE001
-            raise Fail(*why_smb("opening %s" % self.root, e, auth, port, self.secret))
-        if not ok:
-            raise Fail("SA-SWI-28", "the folder %s is not there" % self.root, "make it once by hand (the job never makes it)")
+            try:
+                smbclient.register_session(self.server, **self.kw)
+            except Exception as e:              # noqa: BLE001
+                raise Fail(*why_smb("logging in to %s" % self.server, e, auth, port, self.secret))
+            try:
+                ok = smbclient.path.isdir(self.root, **self.kw)
+            except Exception as e:              # noqa: BLE001
+                raise Fail(*why_smb("opening %s" % self.root, e, auth, port, self.secret))
+            if not ok:
+                raise Fail("SA-SWI-28", "the folder %s is not there" % self.root, "make it once by hand (the job never makes it)")
+        except Fail:
+            self.close()                        # this destination's connections never left open
+            raise
 
     def path(self, rel):
         return self.root + ("\\" + rel.replace("/", "\\") if rel else "")
@@ -251,6 +268,9 @@ class SmbFolder(object):
             return False
 
     def close(self):
+        if getattr(self, "closed", False):
+            return
+        self.closed = True
         try:
             self.smb.reset_connection_cache(connection_cache=self.cache)
         except Exception:                       # noqa: BLE001
@@ -316,6 +336,8 @@ class LocalFolder(object):
                     os.remove(tmp)
             except OSError:
                 pass
+            if getattr(e, "errno", None) in (errno.ENOSPC, errno.EDQUOT):
+                raise Fail("SA-SWI-35", "cannot write %s: %s" % (p, e.strerror or e), NO_SPACE.replace("share's", "folder's"))
             raise Fail("SA-SWI-31", "cannot write %s: %s" % (p, e.strerror or e),
                        "give the job's user write access there, or another sw_inventory_dir")
 
@@ -348,7 +370,7 @@ def safe_sub(name, what):
         return ""
     parts = re.split(r"[\\/]+", n)
     if any(x in (".", "..") or not re.match(r"^[A-Za-z0-9._-]+\Z", x) for x in parts):
-        raise Fail("SA-SWI-30", "%s %r is not a plain folder name" % (what, name),
+        raise Fail("SA-SWI-30", "%s is not a plain folder name (not shown)" % what,
                    "letters, digits . _ - only (e.g. shield, or linux/inventory)")
     return "/".join(parts)
 
@@ -388,32 +410,49 @@ def dest_key(path, subdir):
     sub = "/".join(x for x in re.split(r"[\\/]+", (subdir or "").strip()) if x)
     if p.startswith("\\\\") or p.startswith("//"):
         return ("smb", "/".join(x for x in re.split(r"[\\/]+", p) if x).lower(), sub.lower())
-    return ("dir", os.path.normpath(p) if p else "", sub)
+    return ("dir", re.sub(r"/+", "/", p).rstrip("/") or p, sub)   # never normpath: /mnt/gone/../inv may not be /mnt/inv
+
+
+TRUE, FALSE = ("true", "yes", "on", "1"), ("false", "no", "off", "0")
 
 
 def destinations(p):
     """Every share destination, in order: sw_inventory_share (share, share_subdir, ...) first when set, then each
-    sw_inventory_shares entry -> ([{name, path, subdir, user, password, auth, encrypt, refused, legacy, what, n}], lines).
-    The same folder as one before it is left out (said in the job output). Names: share when there is one, else
-    share 1, share 2, ..."""
+    sw_inventory_shares entry -> ([{name, path, subdir, user, password, auth, encrypt, refused, bad, legacy, what,
+    show, n}], lines). An entry's empty auth / encrypt = share_auth / share_encrypt; an encrypt that is not true or
+    false makes the entry bad (never repeated). The same folder as one before it is left out (said in the job output).
+    Names: share when there is one, else share 1, share 2, ..."""
     raw = []
     if p.get("share") or p.get("share_refused"):
         path = str(p.get("share") or "").strip()
         refused = bool(p.get("share_refused")) or "@" in path
         raw.append({"path": "" if refused else path, "subdir": str(p.get("share_subdir") or ""),
                     "user": "", "password": "", "auth": p.get("share_auth") or "negotiate",
-                    "encrypt": bool(p.get("share_encrypt")), "refused": refused, "legacy": True, "what": "sw_inventory_share"})
+                    "encrypt": bool(p.get("share_encrypt")), "refused": refused, "bad": None, "legacy": True,
+                    "what": "sw_inventory_share"})
     for i, e in enumerate(p.get("shares") or [], 1):
         e = e if isinstance(e, dict) else {"path": e}
         path = str(e.get("path") or "").strip()
         refused = bool(e.get("refused")) or "@" in path
+        enc, bad = e.get("encrypt"), None
+        if enc is None or (isinstance(enc, str) and not enc.strip()):
+            enc = bool(p.get("share_encrypt"))
+        elif isinstance(enc, bool):
+            pass
+        elif str(enc).strip().lower() in TRUE:
+            enc = True
+        elif str(enc).strip().lower() in FALSE:
+            enc = False
+        else:
+            bad, enc = ("its encrypt is not true or false (not shown)", "encrypt: true, or false, or leave it out"), False
         raw.append({"path": "" if refused else path, "subdir": str(e.get("subdir") or ""), "user": str(e.get("user") or ""),
-                    "password": str(e.get("password") or ""), "auth": str(e.get("auth") or p.get("share_auth") or "negotiate"),
-                    "encrypt": bool(e.get("encrypt")) if e.get("encrypt") is not None else bool(p.get("share_encrypt")),
-                    "refused": refused, "legacy": False, "what": "sw_inventory_shares entry %d" % i})
+                    "password": str(e.get("password") or ""),
+                    "auth": str(e.get("auth") or "").strip() or p.get("share_auth") or "negotiate", "encrypt": enc,
+                    "refused": refused, "bad": bad, "legacy": False, "what": "sw_inventory_shares entry %d" % i})
     out, seen, lines = [], set(), []
     for d in raw:
-        key = None if d["refused"] or not d["path"] else dest_key(d["path"], d["subdir"])
+        d["show"] = shown(d)
+        key = None if d["refused"] or d["bad"] or not d["path"] else dest_key(d["path"], d["subdir"])
         if key is not None and key in seen:
             lines.append("share: %s is the same folder as one before it - copied once" % d["what"])
             continue
@@ -426,13 +465,19 @@ def destinations(p):
 
 
 def shown(d):
-    """What a destination is called in the report: its folder, never a refused address."""
-    if d["refused"]:
-        return "%s (refused, not shown)" % d["what"]
-    p = d["path"].strip()
-    if not (p.startswith("\\\\") or p.startswith("//") or re.match(r"(?i)^smb:/", p) or os.path.isabs(p)):
-        return "%s (not a folder, not shown)" % d["what"]   # never repeated: it could carry a login
-    return d["path"] + (" (sub folder %s)" % d["subdir"] if d["subdir"] else "")
+    """What a destination is called in the report: its folder only when the whole of it is valid (a share address
+    with a server and a share, or an absolute folder, and a plain sub folder); else only which setting it is - a value
+    not valid is never repeated (it could carry a login)."""
+    hidden = "%s (not shown)" % d["what"]
+    if d["refused"] or not d["path"]:
+        return hidden
+    try:
+        sub = safe_sub(d["subdir"], "subdir")
+        if smb_path(d["path"]) is None and not os.path.isabs(d["path"]):
+            return hidden
+    except Fail:
+        return hidden
+    return d["path"] + (" (sub folder %s)" % sub if sub else "")
 
 
 # ---- the run -------------------------------------------------------------------------------------------------------
@@ -513,7 +558,7 @@ def run(p, check=False, warn=lambda m: None):
     want = [o for o in ("shield", "csv", "json") if o in outputs]
 
     # ---- where the files go: dir (here), and the share ----
-    shield_sub, share_sub, local, share = None, "", None, None
+    shield_sub, local = None, None
     if "shield" in want:
         try:
             shield_sub = safe_sub(p["shield_subdir"], "sw_inventory_shield_subdir") or "shield"
@@ -532,17 +577,25 @@ def run(p, check=False, warn=lambda m: None):
     multi = len(dests) > 1
     res["lines"].extend(dup_lines)
     shares = []                                 # the destinations open: [(d, folder, sub)], in order
+    if p.get("shares_error") and want:          # the task's own words only (the list itself is never shown)
+        said("shares", "failed", code="SA-SWI-20",
+             error="sw_inventory_shares could not be read (not a list, or an undefined variable in it) - none of its folders written",
+             fix="a list of {path: '\\\\fileserver.yourdomain.mil\\share\\folder', ...} (docs/LINUX_SW_INVENTORY.md); "
+                 "define every variable it uses, or take that entry out")
 
     def dest_said(d, state, **kw):
-        if multi and kw.get("error"):
-            kw["error"] = "%s: %s" % (shown(d), kw["error"])
-        return said(d["name"], state, dest=shown(d), **kw)
+        if multi and kw.get("error") and not d["show"].startswith(d["what"]):   # a hidden one names itself already
+            kw["error"] = "%s: %s" % (d["show"], kw["error"])
+        return said(d["name"], state, dest=d["show"], **kw)
     for d in dests if want else []:            # each destination on its own: one that fails never stops the next
         if d["refused"]:
             dest_said(d, "failed", code="SA-SWI-20", error="%s has %s" % (d["what"], REFUSED[0]), fix=REFUSED[1])
             continue
+        if d["bad"]:
+            dest_said(d, "failed", code="SA-SWI-20", error="%s: %s" % (d["what"], d["bad"][0]), fix=d["bad"][1])
+            continue
         if not d["path"]:
-            dest_said(d, "failed", code="SA-SWI-20", error="%s has no path" % d["what"],
+            dest_said(d, "failed", code="SA-SWI-20", error="%s has no path (empty, or an undefined variable)" % d["what"],
                       fix="write it as \\\\fileserver.yourdomain.mil\\share\\folder")
             continue
         try:
@@ -555,21 +608,44 @@ def run(p, check=False, warn=lambda m: None):
             dest_said(d, "failed", code=e.code, error=e.what, fix=e.fix)
             continue
         shares.append((d, folder, sub))
-    share, share_sub = (shares[0][1], shares[0][2]) if shares else (None, "")
+    try:
+        return finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_outs, local, shield_sub, dests,
+                      multi, shares)
+    finally:
+        for _d, folder, _sub in shares:         # every destination's connections closed, whatever happened
+            folder.close()
 
-    # ---- the baseline: sw-inventory-state.json (dir, else the share) ----
+
+def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_outs, local, shield_sub, dests, multi, shares):
+    """run(), after the destinations are open: the baseline, the files, each share, the report."""
+    # ---- the baseline: sw-inventory-state.json (dir, else the first share that has it) ----
     state_doc, base_from, baseline, damaged, state_ok = None, "", {}, [], True
+    state_bad = set()                           # shares whose state file could not be read: never written over there
     if want:
         raw, src = None, "sw-inventory-state.json in %s" % (p["dir"] or "the job's folder")
         try:
             raw = local.read(STATE) if local else None
-            for d, folder, sub in shares:       # the first destination that has it (an error stops here: never "missing")
-                if raw is not None:
-                    break
-                raw, src = folder.read(join(sub, STATE)), "sw-inventory-state.json on the share" + (" %s" % shown(d) if multi else "")
         except Fail as e:                       # not "missing": never written over, said
             state_ok = False
             said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
+        if state_ok and raw is None:
+            errs = []
+            for d, folder, sub in shares:       # each share on its own: one that cannot be read never hides the next
+                try:
+                    got = folder.read(join(sub, STATE))
+                except Fail as e:
+                    state_bad.add(d["name"])
+                    errs.append((d, e))
+                    continue
+                if got is not None and raw is None:
+                    raw, src = got, "sw-inventory-state.json on the share" + (" %s" % d["show"] if multi else "")
+            if errs and raw is None:            # none found and one unreadable: the only last list may be there
+                state_ok = False
+                e = errs[0][1]
+                said("baseline", "failed", code=e.code, error=e.what + " - no changes this run, the file is left as it is", fix=e.fix)
+            for d, e in (errs if raw is not None else []):
+                res["lines"].append("%s: sw-inventory-state.json could not be read (%s %s) - left as it is there"
+                                    % (d["name"], e.code, e.what))
         if raw is not None:
             try:
                 state_doc = json.loads(raw.decode("utf-8"))
@@ -650,7 +726,7 @@ def run(p, check=False, warn=lambda m: None):
     # ---- the shares: each destination on its own, each file on its own ----
     done_shares = []                            # [(d, where, the files copied)] (the email says where)
     for d, folder, sub in shares:
-        todo = [f for o in want for f in files[o]] + files["state"]
+        todo = [f for o in want for f in files[o]] + (files["state"] if d["name"] not in state_bad else [])
         where = folder.path(sub) if sub else folder.root
         done = set()
         if check:
@@ -675,15 +751,23 @@ def run(p, check=False, warn=lambda m: None):
                                                                            "; ".join(e.what for e in failed[:50]), more), fix=failed[0].fix)
             else:
                 dest_said(d, "ok", where="%d files in %s%s" % (len(todo), where, ("; %d old dated files deleted" % gone) if gone else ""))
+        else:
+            dest_said(d, "skipped", why="no host read: nothing to copy")
         done_shares.append((d, where, done))
         folder.close()
 
     # ---- the report, the workbook, the email's and the website's files ----
+    secrets = [d["password"] for d in dests if d["password"]]
+    if secrets:                                 # an entry's password never in the words (each SMB error has it out already);
+        for x in res["outputs"]:                # the states untouched - the report is made from these words
+            for k in ("where", "error", "fix", "why", "dest"):
+                x[k] = scrub(x.get(k, ""), secrets)
     res["not_read"], res["first_seen"] = bad, first
     view = {"hosts": [{"host": h["host"], "packages": len(h["packages"])} for h in ok], "not_read": bad,
             "outputs": res["outputs"], "changes_by_host": chg, "first_seen": first, "read_at": p["read_at"],
             "repo_notes": [h["host"] for h in ok if h["repo_note"]], "baseline": base_from, "state_damaged": damaged,
-            "shares": [x for x in res["outputs"] if x.get("dest")] if multi else []}
+            "shares": sorted([x for x in res["outputs"] if x.get("dest")], key=lambda x: [d["name"] for d in dests].index(x["name"]))
+            if multi else []}
     res["report"] = sw.report_doc(view, {"top": p["top"]})
     notes = []
     work = p["work_dir"]
@@ -738,10 +822,9 @@ def run(p, check=False, warn=lambda m: None):
                 break
         else:
             res["report"]["sections"].append({"title": "Notes", "lines": notes})
-    secrets = [d["password"] for d in dests if d["password"]]
-    if secrets:                                 # an entry's password never in the result (no_log masks it too)
-        res = scrub(res, secrets)
     res["failed_outputs"] = [x["name"] for x in res["outputs"] if x["state"] == "failed"]
+    if secrets:
+        res["lines"] = scrub(res["lines"], secrets)
     res["hosts_read"], res["hosts_not_read"] = len(ok), len(bad)
     res["packages"] = sum(len(h["packages"]) for h in ok)
     res["hosts_changed"] = len([h for h in chg if chg[h]])
@@ -762,9 +845,10 @@ def main():
                                        options=dict(path=dict(type="str", default=""), subdir=dict(type="str", default=""),
                                                     user=dict(type="str", default=""),
                                                     password=dict(type="str", default="", no_log=True),
-                                                    auth=dict(type="str", default="negotiate"),
-                                                    encrypt=dict(type="bool", default=False),
+                                                    auth=dict(type="str"),       # none: share_auth
+                                                    encrypt=dict(type="raw"),    # none or '': share_encrypt; checked here
                                                     refused=dict(type="bool", default=False))),
+                           shares_error=dict(type="str", default=""),
                            xlsx_max_rows=dict(type="int", default=20000), email_max_mb=dict(type="float", default=10),
                            top=dict(type="int", default=15)),
         supports_check_mode=True)

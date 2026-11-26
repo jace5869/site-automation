@@ -380,9 +380,10 @@ def report_doc(res, opts=None):
                          "columns": ["Share", "Folder", "Result", "The fix"], "kinds": ["", "wrap", "wrap", "wrap"],
                          "rows": [[x["name"], x.get("dest", ""),
                                    ("%s %s" % (x.get("code", ""), x.get("error", ""))).strip() if x.get("state") == "failed"
-                                   else "ok - " + x.get("where", ""),
+                                   else "ok - " + x.get("where", "") if x.get("state") == "ok"
+                                   else "skipped - " + x.get("why", ""),
                                    x.get("fix", "") if x.get("state") == "failed" else ""] for x in shares],
-                         "row_status": ["critical" if x.get("state") == "failed" else "ok" for x in shares]})
+                         "row_status": [{"failed": "critical", "ok": "ok"}.get(x.get("state"), "info") for x in shares]})
     if changed_hosts:
         per = sorted(([h, sum(1 for c in chg[h] if c["change"] == "added"), sum(1 for c in chg[h] if c["change"] == "removed"),
                        sum(1 for c in chg[h] if c["change"] == "updated"),

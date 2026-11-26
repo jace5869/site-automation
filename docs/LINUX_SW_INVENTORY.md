@@ -121,7 +121,7 @@ sw_inventory_shares:
     subdir: linux
   - path: '\\otherserver.corp.example.mil\security\inventory'
     user: svc_aap_sec@CORP.EXAMPLE.MIL
-    password: "{{ vault_sw_inventory_sec_password }}"
+    password: "{{ vault_sw_inventory_sec_password | string }}"
 ```
 
 | Key | Default | What it does |
@@ -129,9 +129,9 @@ sw_inventory_shares:
 | `path` | (needed) | `\\server\share\folder` or a mounted folder, in single quotes. The folder must be there |
 | `subdir` | `''` | A folder under it |
 | `user` | the credential's | Another account for this share, `user@YOURDOMAIN.MIL` |
-| `password` | the credential's | Its password: vault it. Set `user` and `password` together |
+| `password` | the credential's | Its password: vault it, and write `\| string` in the reference (as above) so ansible-core 2.16 keeps it as written. Set `user` and `password` together |
 | `auth` | `sw_inventory_share_auth` | `negotiate`, `kerberos` or `ntlm` |
-| `encrypt` | `sw_inventory_share_encrypt` | SMB 3 encryption always |
+| `encrypt` | `sw_inventory_share_encrypt` | `true` or `false`; empty: the setting. Anything else: that entry is not copied (SA-SWI-20) |
 
 - `sw_inventory_share`, when set, is the first destination. Both may be set. The same folder twice (same path and
   `subdir`, any case for a share) is copied once.
@@ -140,8 +140,13 @@ sw_inventory_shares:
   the fix. They are named `share 1`, `share 2`, ... (with one destination: `share`, as before).
 - `sw_inventory_fail_on_output_error` (true) fails the job at its end when one of them failed, after the others.
 - **Check** logs in to each one and looks at its folder; nothing is written.
-- An entry with a user or password in its path (`user@server`) is refused and never shown. A password is never in the
-  job output.
+- An entry with a user or password in its path (`user@server`) is refused and never shown. A path or sub folder that
+  is not valid is never repeated either: the entry is named by its number. A password is never in the job output nor
+  in the execution node's log (the step runs with `no_log`).
+- An entry with an undefined variable is not copied (SA-SWI-20). A list that cannot be read at all (not a list; on
+  ansible-core 2.16 also an undefined variable in any entry) is said as **shares** not written (SA-SWI-20): none of its
+  folders gets the files, `sw_inventory_share` and the exports still do, and the job fails at its end.
+- A share whose `sw-inventory-state.json` cannot be read keeps it as it is; the others are compared and updated.
 
 ## The email and the report
 
@@ -196,6 +201,7 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | SA-SWI-32 | the state file cannot be read (no access, an I/O error) | read access for the job's user; it is left as it is |
 | SA-SWI-33 | the state file cannot be written | write access for the job's user |
 | SA-SWI-34 | a folder under `sw_inventory_dir` or a mounted share is a link that leads outside it | a real folder: nothing is written or deleted through a link |
+| SA-SWI-35 | no space on the share's disk (or the folder's), or the account's quota is full | free space there, or a larger quota |
 
 A host that cannot be reached is listed with a reason in plain words (never the connection's own text) and never fails
 the job; `site_unreachable_fails: true` fails it after the report has gone. The report goes out even when no host was

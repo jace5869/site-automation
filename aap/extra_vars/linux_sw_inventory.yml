@@ -49,9 +49,9 @@
 ## folder, space) never stops the next; the report lists each with ok or failed and the fix. A list
 ## of {path, subdir, user, password, auth, encrypt}: path as sw_inventory_share (single quotes; the
 ## folder must be there), the rest optional - user and password empty = the "Windows file share"
-## credential's (set both; vault the password), auth and encrypt empty = the two above.
-## sw_inventory_share, when set, is the first; the same folder twice is copied once. [] = only
-## sw_inventory_share
+## credential's (set both; vault the password: "{{ vault_x | string }}"), auth and encrypt (true /
+## false) empty = the two above. sw_inventory_share, when set, is the first; the same folder twice
+## is copied once. [] = only sw_inventory_share
 # sw_inventory_shares: []
 
 ## Days the dated files (sw-inventory-YYYYMMDD-HHMMSS-job<ID>.csv / .json) are kept, here and on the
