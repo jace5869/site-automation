@@ -27,6 +27,13 @@ def when(stamp):
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(stamp)) if stamp else "Awaiting first read"
 
 
+# 1.135.2 (display only): describe the age of the last good AAP read.
+def not_current(error, mono, at, every):
+    age = time.monotonic() - mono if mono is not None else 0
+    reason = error or ("read %d min ago" % (age // 60) if age > every else "")
+    return "Not current - last read %s: %s" % (when(at) if at else "never", reason) if reason else ""
+
+
 class Catalog:
     """All templates visible to the account, independently of the filtered launch catalog."""
     def __init__(self, aap, cfg):
@@ -45,6 +52,11 @@ class Catalog:
         """(rows, error, mono) as one consistent set (Neon r2 #13: never a torn read)"""
         with self.lock:
             return self.rows, self.error, self.mono
+
+    def state(self):
+        # 1.135.2 (display only): include both clocks in the page's snapshot.
+        with self.lock:
+            return self.rows, self.error, self.at, self.mono
 
     def read(self, force=False):
         with self.lock:
@@ -67,9 +79,11 @@ class Catalog:
             ids = lambda rows_: {r["id"] for r in rows_ if isinstance(r, dict) and type(r.get("id")) is int}      # noqa: E731
             execute = ids(self.list(kind + "/?role_level=execute_role"))
             approve, approval = set(), set()
+            unknown_steps = collections.defaultdict(list)  # 1.135.2 (display only): separate from approval detection
             if prefix == "wf":
                 approve = ids(self.list(kind + "/?role_level=approval_role"))
-                for node in self.list("workflow_job_template_nodes/"):
+                nodes = self.list("workflow_job_template_nodes/")
+                for node in nodes:
                     # 1.133.0 (Codex r2 #15): one odd node (summary_fields null ...) is left out, never the whole list
                     if not isinstance(node, dict) or type(node.get("workflow_job_template")) is not int:
                         continue
@@ -77,6 +91,27 @@ class Catalog:
                     ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
                     if ujt.get("unified_job_type") == "workflow_approval":
                         approval.add(node["workflow_job_template"])
+                known_types = {"job", "project_update", "inventory_update", "workflow_job", "workflow_approval", "system_job", "ad_hoc_command"}
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    parent = node.get("workflow_job_template")
+                    if isinstance(parent, str) and parent.isascii() and parent.isdigit():
+                        try:
+                            parent = int(parent.lstrip("0") or "0")
+                        except ValueError:
+                            continue
+                    if type(parent) is not int:
+                        continue
+                    sf = node.get("summary_fields") if isinstance(node.get("summary_fields"), dict) else {}
+                    ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
+                    job_type = ujt.get("unified_job_type")
+                    if isinstance(job_type, str) and job_type in known_types:
+                        continue
+                    node_id = node.get("id")
+                    if type(node_id) is not int:
+                        node_id = node.get("unified_job_template")
+                    unknown_steps[parent].append("node %d" % node_id if type(node_id) is int else "a node without an id")
             for r in templates:
                 # Codex #17: a row AAP sent without a usable id or name is left out (said), never a broken page
                 if not isinstance(r, dict) or type(r.get("id")) is not int or not isinstance(r.get("name"), str) or not r["name"].strip():
@@ -91,7 +126,8 @@ class Catalog:
                 rows[key] = {"name": r["name"], "description": desc if isinstance(desc, str) else "", "labels": labels,
                              "organization": org if isinstance(org, str) else "",
                              "survey": bool(r.get("survey_enabled")), "execute": tid in execute, "approve": tid in approve,
-                             "workflow": prefix == "wf", "approval": tid in approval, "published": self.cfg.label in labels}
+                             "workflow": prefix == "wf", "approval": tid in approval, "published": self.cfg.label in labels,
+                             "unknown_steps": ", ".join(unknown_steps.get(tid, ()))}
         return dict(sorted(rows.items(), key=lambda item: (item[1]["name"].casefold(), item[0])))
 
 
@@ -107,6 +143,9 @@ def issues(row, intent):
         problems.append(("No Approve", "The portal account cannot decide this workflow’s approval steps."))
     if row["published"] != intent["on_portal"]:
         problems.append(("Label pending", "The saved visibility differs from the label in AAP."))
+    # 1.135.2 (display only): list workflows with unrecognized steps under Needs AAP.
+    if row["unknown_steps"]:
+        problems.append(("Approval unknown", "Could not tell whether this workflow has an approval step - check %s in AAP." % row["unknown_steps"]))
     return problems
 
 
@@ -181,17 +220,28 @@ def group_box(field, label, own, defaults, groups, key):
             (ident, label, chips, ident, field, ": " + e(", ".join(defaults)) if defaults else ""))
 
 
-def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved):
+def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved, stale=""):
     title, icon, desc, changing, tint = metadata
     checks = issues(row, intent)
     style = "bad" if not row["execute"] else "warn" if checks else "ok"
-    status = " ".join("<b>%s.</b> %s" % pair for pair in checks) + " Apply with AAP - set up portal actions." if checks else (
-        "<b>Ready.</b> The portal account has the required permissions. " + ("The portal label is present." if row["published"] else "Visibility is off."))
+    # 1.135.2 (display only): warn when readiness cannot be confirmed.
+    if checks:
+        status = " ".join("<b>%s.</b> %s" % (e(label), e(detail)) for label, detail in checks)
+        if any(label != "Approval unknown" for label, _ in checks):
+            status += " Apply with AAP - set up portal actions."
+    else:
+        status = ("<b>Ready.</b> The portal account has the required permissions. "
+                  + ("The portal label is present." if row["published"] else "Visibility is off."))
+    if row["unknown_steps"] or stale:
+        style = "warn"
+    if stale:
+        status = "<b>%s</b> What AAP said then: %s" % (e(stale), status.replace("<b>Ready.</b>", "ready."))
     own = bool(intent["run_groups"] or intent["approve_groups"])
     badges = ('<span class="ty">%s</span>' % ("Workflow" if row["workflow"] else "Job template")
               + ('<span class="badge">Approval</span>' if row["approval"] else "")
+              + ('<span class="badge">Approval?</span>' if row["unknown_steps"] and not row["approval"] else "")
               + ('<span class="changes-servers">%s Changes servers</span>' % glyph("changes") if changing else "")
-              + '<span class="chip %s">%s</span>' % (("s-ok", "Own groups") if own else ("s-info", "Default only")))
+              + '<span class="chip %s">%s</span>' % ("s-ok" if own and style == "ok" else "s-info", "Own groups" if own else "Default only"))
     toggles = "".join('<label class="tgl"><input type="checkbox" name="%s"%s><span>%s<small>%s</small></span></label>' %
                       (field, " checked" if intent[field] else "", label, e(hint)) for field, label, hint in
                       (("on_portal", "Show on the portal", "The AAP label " + cfg.label),
@@ -216,7 +266,7 @@ FILTERS = (("all", "All", "templates the account can see"), ("default", "Default
            ("needs", "Needs AAP", "Execute, Approve or label pending"))
 
 
-def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata):
+def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=""):
     defaults = ""
     for label, attr, setting in (("Run everything", "requester_groups", "portal_run_groups"),
                                  ("Approve everything", "approver_groups", "portal_approve_groups"),
@@ -251,7 +301,7 @@ def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata)
         meta = metadata(row)
         hay = [row["name"], meta[0], row["description"], *row["labels"], *intent["run_groups"], *intent["approve_groups"]]
         if term.casefold() in " ".join(hay).casefold():
-            cards.append(template_card(cfg, key, row, intent, groups, fields, meta, key in entries))
+            cards.append(template_card(cfg, key, row, intent, groups, fields, meta, key in entries, stale=stale))
     return ('<div class="card dflt"><span class="ico">%s</span><div><h3>Default access from all.yml</h3>'
             '<dl class="rows">%s</dl><p class="muted-line">Each template’s groups add to these defaults. Edit the defaults in all.yml.</p>'
             '</div><a class="btn" href="?tab=groups">Groups</a></div><div class="ftiles five">%s</div>'
@@ -339,13 +389,24 @@ def button(fields, op, title):
 
 def render(portal, cn, query, metadata):
     cfg = portal.cfg
-    rows, error, at = portal.admin_catalog.read()
+    # 1.135.2 (display only): use one catalog snapshot across all tabs.
+    portal.admin_catalog.read()
+    rows, error, at, mono = portal.admin_catalog.state()
+    stale_read = not_current(error, mono, at, min(int(cfg.discover_seconds or 300), 900))
+    unknown = [(row["name"], row["unknown_steps"]) for row in rows.values() if row["unknown_steps"]]
+    if error:
+        status = '<span class="chip s-critical">Disconnected</span>'
+    elif stale_read:
+        status = '<span class="chip s-warning">Not current</span>'
+    elif unknown:
+        status = '<span class="chip s-warning">Approval unknown</span>'
+    else:
+        status = '<span class="chip s-ok">Connected</span>'
     doc, warning = cfg.access.read()
     entries = doc["portal_template_access"]
     roles, groups, suggestions, ad_at = directory(cfg, entries)
     fields = hidden("portal-token", portal.token(cn)) + hidden("revision", cfg.access.revision(doc, warning))
     tab = query.get("tab", "access")
-    status = '<span class="chip s-critical">Disconnected</span>' if error else '<span class="chip s-ok">Connected</span>'
     tabs = (("conn", "connect", "Ansible connection"), ("access", "admin", "Template access"), ("groups", "users", "Groups"), ("activity", "report", "Activity"))
     count = {"access": len(rows), "groups": len(roles)}
     nav = "".join('<a href="?tab=%s"%s>%s%s%s</a>' % (k, ' aria-current="page"' if k == tab else "", glyph(icon), label,
@@ -360,9 +421,15 @@ def render(portal, cn, query, metadata):
               'and approve its steps. The portal checks these groups before it launches.</p><p><b>Access</b> &mdash; %s</p></div>'
               '<div class="card strip"><div class="l">%s <span><b>%d templates</b>, <b>%d</b> with default groups only. Last read: %s.</span></div>'
               '<div class="r hdr-btns">%s%s</div></div><nav class="atabs" aria-label="Admin">%s</nav>' %
-              (e(cfg.access_description(cn)), status, len(rows), default_count, e(when(at)), button(fields, "refresh", "Refresh from AAP"), button(fields, "export", "Export (.txt)"), nav))
+              (e(cfg.access_description(cn)), status, len(rows), default_count, e(when(at)),
+               button(fields, "refresh", "Refresh from AAP"), button(fields, "export", "Export (.txt)"), nav))
     if error:
         header += '<p class="note bad">AAP read failed. %s</p>' % e(error)
+    elif stale_read:
+        header += '<p class="note warn">%s</p>' % e(stale_read)
+    if unknown:
+        header += '<div class="note warn"><b>Approval unknown</b><ul>%s</ul></div>' % "".join(
+            "<li>%s: %s</li>" % (e(name), e(steps)) for name, steps in unknown[:50])
     # 1.134.0: ONE controller - grants saved for another one were dropped when the portal read them (said, and in Activity)
     dropped = getattr(store_of(cfg), "dropped", None)
     if dropped:
@@ -386,6 +453,7 @@ def render(portal, cn, query, metadata):
     elif tab == "conn":
         facts = [("Seen", len(rows)), ("Job templates", sum(not r["workflow"] for r in rows.values())),
                  ("Workflows", sum(r["workflow"] for r in rows.values())), ("With approval", sum(r["approval"] for r in rows.values())),
+                 ("Approval unknown", len(unknown)),
                  ("On the portal", sum(r["published"] for r in rows.values())), ("Execute", sum(r["execute"] for r in rows.values())),
                  ("Approve", sum(r["approval"] and r["approve"] for r in rows.values())),
                  ("Cards off", sum(r["published"] and not r["execute"] for r in rows.values()))]
@@ -404,7 +472,7 @@ def render(portal, cn, query, metadata):
                 '<label hidden id="import-picker">Or load a .txt file <input type="file" accept=".txt" id="import-file"></label>'
                 '<button name="op" value="preview">Preview changes</button></form>' % fields)
     else:
-        body = access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata) + transfer
+        body = access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=stale_read) + transfer
     return header + body
 
 
