@@ -1354,6 +1354,23 @@ class Fix1352(Admin):
         self.assertEqual(self.http("/admin", form=export)[:2], baseline)
         self.assertIn("Could not tell whether this workflow has an approval step", after)
 
+    def test_gate_c_one_undescribed_step_holds_every_card(self):
+        for parent in ("2", "\uff12", None, "x"):          # ASCII and fullwidth digits; no or another parent: every workflow
+            with self.subTest(parent=parent):
+                node = {"unified_job_template": 42, "summary_fields": {}}
+                if parent is not None:
+                    node["workflow_job_template"] = parent
+                self.api.nodes = [node]
+                rows = self.portal.admin_catalog.read(force=True)[0]
+                self.assertTrue(rows["wf_2"]["unknown_steps"])
+                page = self.http("/admin")[1]
+                self.assertNotIn('chip s-ok">Connected', page)
+                for key in ("jt_1", "wf_2", "jt_3", "jt_4"):
+                    self.assertNotIn("<b>Ready.</b>", self.card(page, key))
+                    self.assertNotIn("arow ok", self.card(page, key))
+        self.api.nodes = ["odd"]
+        self.assertTrue(self.portal.admin_catalog.read(force=True)[0]["wf_2"]["unknown_steps"])
+
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(Fix1352, _n, None)

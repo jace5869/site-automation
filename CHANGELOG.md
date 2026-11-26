@@ -10,7 +10,8 @@
   or *Not current* on every tab.
 - **A workflow step AAP did not describe** (its type missing, blank or not exactly one of AAP's types) is shown: the
   card says *Could not tell whether this workflow has an approval step - check node … in AAP* and is never Ready, the
-  workflow is listed under *Needs AAP*, and the header says *Approval unknown*. Display only: saving, import, export
+  workflow is listed under *Needs AAP*, the header says *Approval unknown*, and no other card says Ready until AAP
+  describes every step. Display only: saving, import, export
   and who may run or approve work exactly as in 1.135.1.
 
 ## 1.135.1 — 2026-11-26

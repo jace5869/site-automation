@@ -92,16 +92,10 @@ class Catalog:
                     if ujt.get("unified_job_type") == "workflow_approval":
                         approval.add(node["workflow_job_template"])
                 known_types = {"job", "project_update", "inventory_update", "workflow_job", "workflow_approval", "system_job", "ad_hoc_command"}
+                orphans = []                   # 1.135.2 (display only): undescribed steps AAP sent without a usable workflow id
                 for node in nodes:
                     if not isinstance(node, dict):
-                        continue
-                    parent = node.get("workflow_job_template")
-                    if isinstance(parent, str) and parent.isascii() and parent.isdigit():
-                        try:
-                            parent = int(parent.lstrip("0") or "0")
-                        except ValueError:
-                            continue
-                    if type(parent) is not int:
+                        orphans.append("a node AAP sent without its workflow")
                         continue
                     sf = node.get("summary_fields") if isinstance(node.get("summary_fields"), dict) else {}
                     ujt = sf.get("unified_job_template") if isinstance(sf.get("unified_job_template"), dict) else {}
@@ -111,7 +105,18 @@ class Catalog:
                     node_id = node.get("id")
                     if type(node_id) is not int:
                         node_id = node.get("unified_job_template")
-                    unknown_steps[parent].append("node %d" % node_id if type(node_id) is int else "a node without an id")
+                    name = "node %d" % node_id if type(node_id) is int else "a node without an id"
+                    parent = node.get("workflow_job_template")
+                    if isinstance(parent, str) and parent.isdecimal():
+                        parent = int(parent)            # "2" (any decimal digits) names workflow 2
+                    if type(parent) is int:
+                        unknown_steps[parent].append(name)
+                    else:
+                        orphans.append(name + " (its workflow not named)")
+                for name in orphans:                    # it may belong to any workflow: every workflow is in doubt
+                    for r in templates:
+                        if isinstance(r, dict) and type(r.get("id")) is int:
+                            unknown_steps[r["id"]].append(name)
             for r in templates:
                 # Codex #17: a row AAP sent without a usable id or name is left out (said), never a broken page
                 if not isinstance(r, dict) or type(r.get("id")) is not int or not isinstance(r.get("name"), str) or not r["name"].strip():
@@ -220,7 +225,7 @@ def group_box(field, label, own, defaults, groups, key):
             (ident, label, chips, ident, field, ": " + e(", ".join(defaults)) if defaults else ""))
 
 
-def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved, stale=""):
+def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved, stale="", doubt=""):
     title, icon, desc, changing, tint = metadata
     checks = issues(row, intent)
     style = "bad" if not row["execute"] else "warn" if checks else "ok"
@@ -236,6 +241,9 @@ def template_card(cfg, key, row, intent, groups, form_fields, metadata, saved, s
         style = "warn"
     if stale:
         status = "<b>%s</b> What AAP said then: %s" % (e(stale), status.replace("<b>Ready.</b>", "ready."))
+    elif doubt and style == "ok":
+        # 1.135.2 (display only): AAP did not describe every workflow step - no card is confirmed ready meanwhile
+        style, status = "warn", "<b>%s</b> %s" % (e(doubt), status.replace("<b>Ready.</b>", "ready."))
     own = bool(intent["run_groups"] or intent["approve_groups"])
     badges = ('<span class="ty">%s</span>' % ("Workflow" if row["workflow"] else "Job template")
               + ('<span class="badge">Approval</span>' if row["approval"] else "")
@@ -266,7 +274,7 @@ FILTERS = (("all", "All", "templates the account can see"), ("default", "Default
            ("needs", "Needs AAP", "Execute, Approve or label pending"))
 
 
-def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=""):
+def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale="", doubt=""):
     defaults = ""
     for label, attr, setting in (("Run everything", "requester_groups", "portal_run_groups"),
                                  ("Approve everything", "approver_groups", "portal_approve_groups"),
@@ -301,7 +309,7 @@ def access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata,
         meta = metadata(row)
         hay = [row["name"], meta[0], row["description"], *row["labels"], *intent["run_groups"], *intent["approve_groups"]]
         if term.casefold() in " ".join(hay).casefold():
-            cards.append(template_card(cfg, key, row, intent, groups, fields, meta, key in entries, stale=stale))
+            cards.append(template_card(cfg, key, row, intent, groups, fields, meta, key in entries, stale=stale, doubt=doubt))
     return ('<div class="card dflt"><span class="ico">%s</span><div><h3>Default access from all.yml</h3>'
             '<dl class="rows">%s</dl><p class="muted-line">Each template’s groups add to these defaults. Edit the defaults in all.yml.</p>'
             '</div><a class="btn" href="?tab=groups">Groups</a></div><div class="ftiles five">%s</div>'
@@ -472,7 +480,8 @@ def render(portal, cn, query, metadata):
                 '<label hidden id="import-picker">Or load a .txt file <input type="file" accept=".txt" id="import-file"></label>'
                 '<button name="op" value="preview">Preview changes</button></form>' % fields)
     else:
-        body = access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=stale_read) + transfer
+        body = access_tab(cfg, rows, entries, groups, suggestions, query, fields, metadata, stale=stale_read,
+                          doubt="Not confirmed - AAP did not describe every workflow step (Approval unknown, above)." if unknown else "") + transfer
     return header + body
 
 
