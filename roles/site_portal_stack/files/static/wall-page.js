@@ -1149,7 +1149,7 @@
     if (!b) return;
     // the room below the stage's top, less the lower classification banner (report_banner) that follows the page
     var low = document.querySelector("main ~ .banner"), lowH = low ? low.getBoundingClientRect().height : 0;
-    var top = stage.getBoundingClientRect().top + window.scrollY, w = Math.max(320, stage.clientWidth), hh = Math.max(240, innerHeight - Math.max(0, top) - lowH);
+    var top = stage.getBoundingClientRect().top + window.scrollY, w = Math.max(320, stage.clientWidth), hh = Math.max(240, Math.floor(innerHeight - Math.ceil(Math.max(0, top)) - Math.ceil(lowH)));     // whole pixels: never a 1 px scroll
     var k = Math.min(w / 1920, hh / 1080);
     b.style.width = (w / k) + "px";
     b.style.height = (hh / k) + "px";

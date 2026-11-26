@@ -148,9 +148,12 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 :root[data-skin="metro"] .ft{border:0;border-radius:0;color:#fff;min-height:96px;display:flex;flex-direction:column;justify-content:space-between}
 :root[data-skin="metro"] .ft .k{color:#fff;opacity:.95;text-transform:none;letter-spacing:0;font-size:13px;font-weight:600}
 :root[data-skin="metro"] .ft .v{font-weight:300;font-size:40px}
-:root[data-skin="metro"] .ftiles .ft:nth-child(1){background:#0f6f94}
-:root[data-skin="metro"] .ftiles .ft:nth-child(2){background:#5b41c4}
-:root[data-skin="metro"] .ftiles .ft:nth-child(3){background:#127a50}
+:root[data-skin="metro"] .ftiles .ft:nth-child(5n+1){background:#0f6f94}
+:root[data-skin="metro"] .ftiles .ft:nth-child(5n+2){background:#5b41c4}
+:root[data-skin="metro"] .ftiles .ft:nth-child(5n+3){background:#127a50}
+:root[data-skin="metro"] .ftiles .ft:nth-child(5n+4){background:#a8327a}
+:root[data-skin="metro"] .ftiles .ft:nth-child(5n){background:#4a5568}
+:root[data-skin="metro"] .ft *{color:#fff}
 :root[data-skin="metro"] .ftiles .ft.bad{background:#b2431b}
 :root[data-skin="metro"] .ftiles .ft .v,:root[data-skin="metro"] .ftiles .ft.bad .v{color:#fff}
 :root[data-skin="metro"] .ft[aria-current="true"]{outline:3px solid var(--ink);outline-offset:-3px}
