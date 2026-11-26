@@ -1125,6 +1125,19 @@ class Codex1340R2(Codex1340):
             self.http("/api/approvals/7/placement", APPROVE, body={"vms": [vm]})
         self.assertEqual(len(calls), 1)
 
+    def test_neon_1_a_discovered_helper_gets_the_live_name_check(self):
+        vm = self.placement()
+        self.api.names[3] = "Harmless job"
+        self.portal.admin_catalog.read(force=True)
+        self.save("jt_3", add_run_groups=GROUP)                                  # a grant saved for "Harmless job" (id 3)
+        self.api.names[3] = PLACEMENT                                            # renamed in AAP; the catalog not read again yet
+        self.portal.actions["jt_3"] = {"title": PLACEMENT, "aap": {"type": "job", "name": PLACEMENT}, "vars": {},
+                                       "discovered": True, "tid": 3, "sig": "s"}
+        self.cfg.approvers.append(RUN)
+        code, out, _ = self.http("/api/approvals/7/placement", RUN, body={"vms": [vm]})
+        self.assertEqual(code, 409, out)
+        self.assertFalse(self.api.writes)
+
 
 for _n in [n for n in vars(Admin) if n.startswith("test_")]:
     setattr(OneController1340, _n, None)            # (only their own tests run there)

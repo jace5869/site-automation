@@ -3419,7 +3419,8 @@ class Portal(object):
             return 503, {"error": "Not started: the portal's access settings (access.json) cannot be read. An admin can recover "
                                   "them on the Admin page (import a backup)."}
         entry = access_entry(self.cfg, action, key)
-        if not action.get("discovered") and isinstance(key, str) and re.fullmatch(r"(jt|wf)_[0-9]+", key):
+        # Neon 1340 #1: every guarded launch, a discovered action's too (the placement path makes no same_template read)
+        if isinstance(key, str) and re.fullmatch(r"(jt|wf)_[0-9]+", key):
             # Codex r3 #8, #9: one live name check for every launch: a built-in here, a discovered one in same_template (the
             # same read it makes) - AAP must still name the template as the action does and as a saved grant on it does
             kind = "workflow_job_templates" if key.startswith("wf_") else "job_templates"
