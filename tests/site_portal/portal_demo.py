@@ -119,7 +119,9 @@ class Front(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def fit_page(self, q):
         """Every page at each width, light and dark, in frames of this site; the script measures what overflows and writes it as JSON."""
-        widths = [int(x) for x in (dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv).get("w") or "1280,800").split(",")]
+        qd = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+        widths = [int(x) for x in (qd.get("w") or "1280,800").split(",")]
+        skin = qd.get("skin", "")                     # 1.135.0: a portal look (portal_look) on every frame: ?look=KEY
         long_id = "disk_full:/var/lib/containers/storage/overlay/0123456789abcdef0123456789abcdef0123456789abcdef/merged/very-long-name"
         pages = [("home", "/portal/"), ("confirm", "/portal/actions/disk_cleanup?target=web01.example.mil&report_job=907&finding_id=" + long_id),
                  ("job-done", "/portal/jobs/%d" % ids["clean"]), ("job-waiting", "/portal/jobs/%d" % ids["restart"]),
@@ -138,8 +140,8 @@ class Front(BaseHTTPRequestHandler):
         frames = [(n, u, th, w) for w in widths for th in ("light", "dark") for n, u in pages]
         html_ = ["<!doctype html><meta charset=utf-8><body>"]
         for i, (n, u, th, w) in enumerate(frames):
-            html_.append('<iframe id="f%d" data-n="%s" data-th="%s" data-w="%d" src="%s%s__theme=%s" width="%d" height="1500"></iframe>'
-                         % (i, n, th, w, u, "&" if "?" in u else "?", th, w))
+            html_.append('<iframe id="f%d" data-n="%s" data-th="%s" data-w="%d" src="%s%s__theme=%s%s" width="%d" height="1500"></iframe>'
+                         % (i, n, th, w, u, "&" if "?" in u else "?", th, ("&look=" + skin) if skin else "", w))
         html_.append('<pre id="fitres">waiting</pre><script src="/__fit.js"></script>')
         return "".join(html_).encode()
 
@@ -158,7 +160,7 @@ class Front(BaseHTTPRequestHandler):
     var motion = {icons: d.querySelectorAll(".ic-run").length, icon: ic ? gs(ic).animationName : "", ring: ring ? gs(ring).animationName : "",
                   stripe: pb ? gs(pb, "::-webkit-progress-value").animationName : "", pbvalue: pb ? pb.hasAttribute("value") : null, now: !!d.querySelector(".now .nl .ic-run")};
     return {page: f.dataset.n, motion: motion, theme: f.dataset.th, width: w, bad: bad, bg: cs.getPropertyValue("color-scheme"),
-            look: d.documentElement.getAttribute("data-look"), h1: (d.querySelector("h1") || {}).textContent || ""};
+            look: d.documentElement.getAttribute("data-look"), skin: d.documentElement.getAttribute("data-skin"), h1: (d.querySelector("h1") || {}).textContent || ""};
   }
   var t = setInterval(function () {      // every frame drawn (its page loaded): a moment more for the live pages' first answer
     var ready = fr.every(function (f) { var d = f.contentDocument; return d && d.readyState === "complete" && d.querySelector("h1"); });

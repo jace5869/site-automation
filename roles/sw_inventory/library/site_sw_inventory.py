@@ -9,7 +9,7 @@ SA-SWI code) and the fix, and the others are still written.
   csv, json  sw-inventory-YYYYMMDD-HHMM.csv / .json and sw-inventory-latest.csv / .json in dir
   share      every file above also on a Windows file share over SMB (smbprotocol; the "Windows file share" credential),
              or a folder mounted on the execution node; each file on its own
-  shares     1.139.0: more destinations (sw_inventory_shares), each on its own - one that fails (login, folder, space)
+  shares     1.135.2: more destinations (sw_inventory_shares), each on its own - one that fails (login, folder, space)
              never stops the next; sw_inventory_share is the first when set; the same folder twice is copied once
 
 The package lists never come back in the result (AAP keeps every task's result): counts, the report, file names.
@@ -34,7 +34,7 @@ options:
   read_at: {description: "When this run started (UTC); needed unless result_from.", type: str, default: ''}
   job: {description: This job's ID., type: int, default: 0}
   result_from:
-    description: "1.139.0: <work_dir>/result.json - return the first call's result (that call runs with no_log: its
+    description: "1.135.2: <work_dir>/result.json - return the first call's result (that call runs with no_log: its
       arguments hold the share passwords; ansible-core 2.16 would mask them inside its result)."
     type: str
     default: ''
@@ -50,7 +50,7 @@ options:
   share_port: {description: SMB's port., type: int, default: 445}
   shares:
     description:
-      - "1.139.0: more destinations, after share: [{path, subdir, user, password, auth, encrypt, refused}]. user / password
+      - "1.135.2: more destinations, after share: [{path, subdir, user, password, auth, encrypt, refused}]. user / password
         empty = the Windows file share credential's (SMB_SHARE_USERNAME / _PASSWORD); auth / encrypt empty = share_auth /
         share_encrypt. The same path and subdir as one before it is left out (copied once). The task calls this module
         with no_log (ansible-core 2.16 logs a module's arguments)."
@@ -69,7 +69,7 @@ author: site automation
 '''
 
 RETURN = r'''
-result_file: {description: "1.139.0: <work_dir>/result.json - everything below, read by the next task (never in this result).", type: str}
+result_file: {description: "1.135.2: <work_dir>/result.json - everything below, read by the next task (never in this result).", type: str}
 report: {description: "The report (roles/site_email's _report).", type: dict}
 sheets_file: {description: "The workbook's sheets as JSON (roles/site_email's _report_xlsx); '' when it could not be made.", type: str}
 attachments: {description: "[{path, filename, desc}] for the email (each within email_max_mb).", type: list}
@@ -198,7 +198,7 @@ def why_smb(what, e, auth, port, secret=""):
 class SmbFolder(object):
     """A folder on a Windows file share (smbprotocol; no mount). The login: user / password (a sw_inventory_shares
     entry's own), each empty = SMB_SHARE_USERNAME / _PASSWORD (the "Windows file share" credential), else
-    REPORT_WEB_USERNAME / _PASSWORD (the "Report website" credential). Each folder its own connections (1.139.0): two
+    REPORT_WEB_USERNAME / _PASSWORD (the "Report website" credential). Each folder its own connections (1.135.2): two
     destinations on one server with two logins never share a session."""
 
     def __init__(self, dest, auth="negotiate", encrypt=False, port=445, timeout=30, user="", password=""):
@@ -219,7 +219,7 @@ class SmbFolder(object):
         if not user and auth != "kerberos":
             raise Fail("SA-SWI-27", "no login for the share %s" % self.root,
                        'attach the "Windows file share" credential (user@YOURDOMAIN.MIL and its password) to the template')
-        # every call with this destination's own login and cache: a reconnect or a DFS referral keeps them (1.139.0)
+        # every call with this destination's own login and cache: a reconnect or a DFS referral keeps them (1.135.2)
         self.kw = {"port": port, "connection_cache": self.cache, "username": user or None, "password": self.secret or None,
                    "encrypt": encrypt or None, "auth_protocol": auth, "connection_timeout": timeout}
         try:
@@ -913,7 +913,7 @@ def main():
         module.fail_json(msg="read_at is required")
     res = run(module.params, module.check_mode, module.warn)
     res["changed"] = not module.check_mode and any(x["state"] == "ok" for x in res["outputs"])
-    # 1.139.0: the result in a file of this run's own folder, read by the next task - never through exit_json, which
+    # 1.135.2: the result in a file of this run's own folder, read by the next task - never through exit_json, which
     # (ansible-core 2.16) masks every no_log value inside it: a password "fail" would turn "failed" into "********ed"
     out = os.path.join(module.params["work_dir"], "result.json")
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)

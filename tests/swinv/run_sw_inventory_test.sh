@@ -5,7 +5,7 @@
 #   0b. the same with site_unreachable_fails: the report first, then the job fails;
 #   1. the default exports (shield, csv, json) here and on a "share" folder, the unreachable host listed with why;
 #   1b. a share folder that is not there: SA-SWI-28 and the fix, the files still written here, the job fails at its end;
-#   1c. 1.139.0: two destinations (sw_inventory_share + sw_inventory_shares), the same folder twice copied once, an entry's
+#   1c. 1.135.2: two destinations (sw_inventory_share + sw_inventory_shares), the same folder twice copied once, an entry's
 #       password never in the output (-vvv); 1d. one destination failing never stops the next; 1e. a list that cannot be
 #       read is said, sw_inventory_share still written, no secret shown;
 #   2. which removed on the UBI 9 host: the second run's change list says so (removed);
@@ -110,7 +110,7 @@ has "run 1b: the share's code and fix" "share NOT WRITTEN: SA-SWI-28"
 has "run 1b: the assert names it" "Not done: share"
 check "run 1b: the files still written here" "$(ls "$work/out1b" | grep -c latest)" 2
 
-# 1c. 1.139.0: two more destinations (sw_inventory_shares) beside sw_inventory_share, one the same folder again (copied
+# 1c. 1.135.2: two more destinations (sw_inventory_shares) beside sw_inventory_share, one the same folder again (copied
 #     once), one with its own user and password - in a vars file (never on a command line), never in the output (-vvv)
 mkdir -p "$work/share2"
 pw="E2e-$$-Only-pw"; printf '%s\n' "$pw" > "$work/pw.txt"

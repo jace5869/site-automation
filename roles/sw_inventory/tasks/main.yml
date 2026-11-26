@@ -4,7 +4,7 @@
 # its last list and writes the exports (shield, CSV, JSON) and the share. Then the website and the email, each on its
 # own (one that fails never stops the other), and - with sw_inventory_fail_on_output_error - a failed job when an
 # export or a delivery failed. The hosts' reads are deleted at the end, whatever happened.
-# 1.139.0: sw_inventory_shares read on its own, never shown (no_log: a template error could quote an entry's password).
+# 1.135.2: sw_inventory_shares read on its own, never shown (no_log: a template error could quote an entry's password).
 # Each entry: path (a user@ in it: refused, never handed on), subdir, user, password, auth, encrypt - each kept as it is
 # written (empty = the credential's / sw_inventory_share_auth / sw_inventory_share_encrypt); the module checks each.
 # A list that cannot be read (an undefined variable in it, or not a list): said as a failed output, the rest still goes.
@@ -45,7 +45,7 @@
 
 - name: Software inventory | the controller step
   block:
-    # 1.139.0: the module's own report and lines come from its result file (no secret in them); a crash before that
+    # 1.135.2: the module's own report and lines come from its result file (no secret in them); a crash before that
     # file is said in fixed words (its own output is hidden: its arguments hold the share passwords)
     - name: Software inventory | the controller step (output hidden - the report follows)
       block:
@@ -72,7 +72,7 @@
             share_subdir: "{{ sw_inventory_share_subdir | default('', true) }}"
             share_auth: "{{ sw_inventory_share_auth }}"
             share_encrypt: "{{ sw_inventory_share_encrypt | bool }}"
-            # 1.139.0: more destinations (sw_inventory_shares, read above - never shown); no_log on this task: an entry's
+            # 1.135.2: more destinations (sw_inventory_shares, read above - never shown); no_log on this task: an entry's
             # password never in the job output nor in the execution node's log (ansible-core 2.16 logs the arguments)
             shares: "{{ _sw_shares | default([]) }}"
             shares_error: "{{ _sw_shares_error | default('') }}"

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.139.0 — 2026-11-26
+## 1.135.2 — 2026-11-26
 
 **To set up:** optional `sw_inventory_shares` for more destinations; nothing to change for one share.
 
@@ -18,6 +18,48 @@
   host's newest list of every copy of `sw-inventory-state.json`; a copy that cannot be read is never written over.
 - Docs: `docs/LINUX_SW_INVENTORY.md` (*More than one share*). Tests: `tests/test_sw_inventory.py` (MoreShares),
   `tests/swinv/run_sw_inventory_test.sh` (runs 1c, 1d, 1e, 3).
+
+## 1.135.0 — 2026-11-26
+
+**To set up:** run **Site portal - deploy**. Nothing to change: the pages start in the **Strata Console** look and the
+wall keeps **Cockpit** as its default style. Optional: `portal_look` (the look every viewer starts with) and
+`portal_wall_style` (the wall's style when the address names none).
+
+- **Seven looks for the portal's pages**, each in light and dark, picked in the bar's new **Look** list (kept per
+  browser, beside Auto / Light / Dark) or with `?look=` on a link: **Strata Console** (default), **Metro Live Tiles**,
+  **Relay Panel**, **Chroma Perspex**, **Signal Press**, **Contour Atlas**, **Timing Tower**. `portal_look`: `strata`,
+  `metro`, `relay`, `chroma`, `press`, `atlas` or `tower` (any other word stops the deploy and says so). Each look has its
+  own shape - Strata's spotlight stage and lamp modules, Metro's colour tiles that turn over, Relay's lamps and colour per
+  area, Press's top rule and ledger, Atlas's "Asset status by area" map, Tower's ranking. The report palette
+  (`report_web_theme`) stays underneath.
+- **The Actions page opens with the Ops center** (with `portal_wall` on): the wall's areas in short, in the viewer's look -
+  how many need a look, each area's state in a word and an icon, its main value against its limit and a link to the wall.
+  It follows the wall's rule (LATE or not current is grey, never green; an area not on the wall yet stays grey) and
+  reads the new `/portal/api/wall/summary`.
+- **Charts say where a value is:** every limit chart has its warning and critical bands, labelled dashed limit lines,
+  the value grey while OK and amber / red where it crosses, and one sentence (*91% · 6 pts over warn 85 · crit at 97*),
+  from `portal_wall_aggr_warn` / `_crit`, `portal_wall_datastore_warn` / `_crit` and `portal_wall_high_pct`.
+- **Three wall styles for a room's screen:** **Strata** (a console with a threshold watch and a spotlight that steps
+  through the areas, problems first), **Relay** (an annunciator: system bays, active events, capacity watch) and
+  **Metro** (live tiles; a critical area takes four tiles, a warning two; tiles turn over to their worst items). They
+  fill the screen at 720p, 1080p and 4K in kiosk mode, show your logo (`portal_logo_src`) or the letter badge with
+  `portal_wall_title` and `portal_wall_enclave`, and use the wall's model, thresholds, freshness rule and detail cards.
+  `?style=strata|relay|metro`, keys 4 5 6; `portal_wall_style` (default `cockpit`).
+- **Share to Teams** on every condition's detail card, in every wall style: **Copy text** (formatted and plain),
+  **Copy picture** (a PNG alert card drawn from the wall's data: severity, object, the value against its limits, the
+  last hour when there is one, source and age, where to check), **Copy both**, **Save picture**; each says what happened,
+  and what to do when the browser blocks the clipboard. Everything in the text and picture is the wall's own data, escaped.
+- **Cues:** whatever can be clicked says so, whatever moves says how often (*spotlight steps every 8 s*, *tiles turn
+  over every 8 s*); nothing moves with reduced motion (`portal_motion`).
+- **Offline fonts:** Chakra Petch, Inter, IBM Plex Mono, Figtree, Fira Code, Barlow Semi Condensed, Chivo Mono and Manrope
+  are bundled as woff2 files with their SIL Open Font License (`roles/site_portal_stack/files/static/fonts/`); no
+  CDN. The content security policy is unchanged (no inline script or style).
+- The wall's feedback area "Lights / Cockpit / Map" is now "The wall's styles". A SnapMirror lag condition carries its
+  lag in hours (for its chart).
+- The Admin page (1.134.0) follows the look like every page.
+- Docs: docs/SITE_PORTAL.md (*The look*, *The room's styles*, *Share to Teams*, *Make a screen the ops wall*).
+- Tests: `tests/test_portal_looks.py`; `tests/test_wall.py` walks the new styles for green on stale data; the portal e2e
+  loads every look and wall style with no script error or CSP violation.
 
 ## 1.134.0 — 2026-11-26
 

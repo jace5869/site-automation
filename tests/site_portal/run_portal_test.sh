@@ -522,6 +522,16 @@ if echo "$r" | grep -q 'id=\\"wall\\"' && echo "$a" | jq_ 'd["json"]["areas"][1]
     pass "the ops-center wall: its page, its answer and its files, from the container (no vCenter login: VMware not on)"
 else fail "the ops-center wall" "$(echo "$r" | head -c 600)
 $(echo "$a" | head -c 600)"; fi
+# 1.135.0: the looks and the room's wall styles deployed - their files, a font, the areas in short (grey: no vCenter here, never green)
+lk="$(c "$k/jdoe" get /portal/static/portal-looks.css)"; ws="$(c "$k/jdoe" get /portal/static/wall-styles.js)"; sh="$(c "$k/jdoe" get /portal/static/wall-share.js)"
+fo="$(c "$k/jdoe" get /portal/static/fonts/figtree-latin-400-normal.woff2)"; bad="$(c "$k/jdoe" get /portal/static/fonts/..%2Fsite_portal.py)"
+sm="$(c "$k/jdoe" get /portal/api/wall/summary)"; home="$(c "$k/jdoe" get /portal/)"
+if echo "$lk" | grep -q 'data-skin=\\"strata\\"' && echo "$ws" | jq_ 'd["code"]' | grep -q 200 && echo "$sh" | jq_ 'd["code"]' | grep -q 200 \
+    && echo "$fo" | jq_ 'd["code"]' | grep -q 200 && echo "$bad" | jq_ 'd["code"]' | grep -q 404 \
+    && echo "$sm" | jq_ '[a["state"] for a in d["json"]["areas"]]' | grep -q "off" && ! echo "$sm" | jq_ '[a["state"] for a in d["json"]["areas"]]' | grep -q "'ok'" \
+    && echo "$home" | grep -q 'id=\\"look\\"' && echo "$home" | grep -q 'api/wall/summary'; then
+    pass "the looks (portal_look) and the wall's room styles: their files, a bundled font, the Look list, the Ops center section, the areas in short (none green here)"
+else fail "the looks and the wall's room styles" "$(echo "$lk" | head -c 200) | $(echo "$fo" | head -c 100) | $(echo "$bad" | head -c 100) | $(echo "$sm" | head -c 400)"; fi
 for _ in $(seq 1 20); do a="$(c "$k/jdoe" get /portal/api/ad)"; echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -q . && break; sleep 1; done
 if echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -Eq "PyMySQL is not in the portal's image|Can't connect|refused"; then
     pass "the database not read (here: $(echo "$a" | jq_ 'd["json"]["db"]["stale"]' | cut -c1-60)): said, no rows shown as current"
@@ -576,8 +586,15 @@ if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head
             "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$fix" "jobs-triage=jobs/$job" "approvals=approvals" \
             "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" "jobs-index=jobs" "details=actions/disk_cleanup/details" \
             "pick-host=actions/disk_cleanup" "pick-finding=actions/disk_cleanup?hosts=web01.example.mil" \
-            "pick-many=actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv") > "$work/shots.txt" 2>&1; then
-        pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"
+            "pick-many=actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv" \
+            "look-strata=?look=strata" "look-metro=?look=metro" "look-relay=?look=relay" "look-chroma=?look=chroma" "look-press=?look=press" \
+            "look-atlas=?look=atlas" "look-tower=?look=tower" "jobs-look-press=jobs?look=press" "approvals-look-metro=approvals?look=metro" \
+            "wall-lights=wall?style=lights" "wall-cockpit=wall?style=cockpit" "wall-map=wall?style=map" \
+            "wall-strata=wall?style=strata" "wall-relay=wall?style=relay" "wall-metro=wall?style=metro" \
+            "wall-strata-kiosk=wall?style=strata&kiosk=1@1920x1080" "wall-relay-kiosk=wall?style=relay&kiosk=1@1920x1080" "wall-metro-kiosk=wall?style=metro&kiosk=1@1920x1080" \
+            "wall-strata-720=wall?style=strata&kiosk=1@1280x720" "wall-relay-720=wall?style=relay&kiosk=1@1280x720" "wall-metro-720=wall?style=metro&kiosk=1@1280x720") > "$work/shots.txt" 2>&1 \
+        && (for k in strata metro relay chroma press atlas tower; do grep -q "look-$k-800-light.png.*\"look\": \"$k\"" "$work/shots.txt" || exit 1; done); then
+        pass "screenshots: jobs, approvals, the confirm page, home, the seven looks, the six wall styles (1.135.0) - 1280 and 800, light and dark, the room's styles at 1920x1080 and 1280x720 - no script error, no CSP violation, no side scroll ($shots)"
     else fail "screenshots" "$(cat "$work/shots.txt")"; fi
 else echo "SKIP  screenshots: no Chrome or Chromium here"; fi
 

@@ -38,6 +38,10 @@ portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if po
 # moves, toasts slide in, panels open smoothly. auto: unless the system asks for reduced motion (as now); always: even then (their image may turn animations off
 # by policy - use it only if the site agrees); off: never. Print is still in every mode.
 portal_motion: auto                              # auto | always | off
+# 1.135.0: the portal's look - the one every viewer starts with; each viewer may pick another in the bar's Look list (kept in their browser),
+# and a link may carry ?look=KEY. strata (Strata Console, the default) | metro (Metro Live Tiles) | relay (Relay Panel) | chroma (Chroma Perspex)
+# | press (Signal Press) | atlas (Contour Atlas) | tower (Timing Tower). Light and dark in every look; the fonts are bundled (offline, SIL OFL).
+portal_look: strata
 # 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas | auto (Dec 1 to Jan 6, decided on each page). Default: the
 # report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow, _sleigh.
 portal_theme_season: "{{ report_theme_season | default('none') }}"
@@ -237,6 +241,9 @@ portal_netapp_old_minutes: 60                       # a run older than this is s
 portal_wall: true
 portal_wall_title: "{{ outage_ops_center | default('Ops center', true) }}"   # the tab's and the page's name: what your site calls its operations center
 portal_wall_preview: true                           # a thin banner on every wall style (kiosk too): "Preview - a light may show OK when data is missing or late. Check vCenter / NetApp before acting." - set false once the wall is trusted
+# 1.135.0: the wall's style when the address names none (?style=) and the viewer picked none - lights | cockpit (the default, as before) | map
+# | strata | relay | metro. Strata, Relay and Metro fill the screen (720p to 4K) for a room's TV; every style has Share to Teams on its detail cards.
+portal_wall_style: cockpit
 portal_wall_enclave: "{{ site_enclave | default('', true) }}"              # shown beside the title; one portal serves one enclave
 portal_wall_seconds: 60                             # the collector reads vCenter (and ONTAP) every this many seconds (30 to 3600), whether or not anyone looks
 portal_wall_auth_retry_minutes: 15                  # kept for the settings check (5 to 1440); 1.130.0: any unclear or refused login answer STOPS every wall login until the next Site portal - deploy

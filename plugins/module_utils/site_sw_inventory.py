@@ -374,7 +374,7 @@ def report_doc(res, opts=None):
                          "rows": [[x["name"], x.get("error", ""), x.get("fix", "")] for x in failed_out],
                          "row_status": ["critical"] * len(failed_out)})
     shares = res.get("shares") or []
-    if shares:                                  # 1.139.0: more than one share - every destination, ok or not
+    if shares:                                  # 1.135.2: more than one share - every destination, ok or not
         sections.append({"title": "File shares", "counted": False,         # a failed one is counted in Outputs not written
                          "status": "critical" if any(x.get("state") == "failed" for x in shares) else "ok",
                          "columns": ["Share", "Folder", "Result", "The fix"], "kinds": ["", "wrap", "wrap", "wrap"],
