@@ -60,12 +60,15 @@ def state():
     return {}
 
 
-def node_rows(cols, alias):
+def node_rows(cols, alias, where, params):
+    cursor = re.fullmatch(r"%s\.NodeID > @(\w+)" % alias, where or "")
     st = state()
     down, up = set(st.get("down") or []), set(st.get("up") or [])
     pts = dict((p["NodeID"], p) for p in fx["points"])
     out = []
     for n in sorted(fx["nodes"], key=lambda x: x["NodeID"]):
+        if cursor and n["NodeID"] <= params[cursor.group(1)]:
+            continue
         r = {}
         for c in cols:
             m = re.match(r"^(?:%s\.)?(\w+)(?:\.(\w+))?(?: AS (\w+))?$" % alias, c.strip())
@@ -193,7 +196,7 @@ def run(q, params):
     elif ent == "Orion.Engines":
         rows = [dict((c, x.get(c)) for c in cols) for x in fx["engines"]]
     elif ent == "Orion.Nodes":
-        rows = node_rows(cols, alias or "Nodes")
+        rows = node_rows(cols, alias or "Nodes", where, params)
     elif ent in ("Orion.TopologyConnections", "Orion.TopologyData"):
         for c in cols:
             if c not in ("SrcNodeID", "SrcInterfaceID", "DestNodeID", "DestInterfaceID") + (("LayerType",) if ent.endswith("Connections") else ()):

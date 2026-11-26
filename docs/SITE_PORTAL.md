@@ -1200,8 +1200,7 @@ thresholds, freshness rule and detail cards as the other styles; nothing new rea
   its worst items (*Tiles turn over every 8 s*; with reduced motion, hovering turns it). The **Now** list has
   **Share to Teams** on each condition; *Last 4 hours* counts what opened and cleared; a capacity strip at the bottom.
 
-In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network - with Ops monitor on,
-its tile takes Network's place) is a grey tile "Not on the wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
+In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network) is a grey tile "Not on the wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
 critical bands, labelled dashed limit lines and one sentence, for example *91% · 6 pts over warn 85 · crit at 97*. With
 `?area=storage` or `?area=vmware` the board keeps every tile, and its banner, events, spotlight and capacity rows are that
 area's.
@@ -1235,22 +1234,20 @@ styles (720p to 4K, kiosk too). The earlier link `?area=fleet` also opens Ops mo
 - **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the server shows the group verdict
   (*1 down*, *1 warn*, *all up*, *no monitored nodes*, or *not current*) and the true member count. Click a tile: that group in the Spotlight.
 - **Every node, by service group** - one square a node: green up, amber with a dark centre warning (packet loss or slow
-  answers), red with a ring and its name down, a hollow grey square powered off in vCenter or unmanaged in SolarWinds, grey
+  answers), red with a ring and its name down, a hollow grey square unmanaged in SolarWinds, grey
   no current data. Nodes in no group are under **Workloads (no group)**; VMs vCenter has and SolarWinds does not watch are
-  under **vCenter only**, with vCenter's status (powered on with its Tools heartbeat green is up; heartbeat lost is down).
+  under **vCenter only**, always grey and labelled as information.
   The squares shrink to fit (3,000 nodes fit at 1080p). Hover for the name, click for the node's card, **Ctrl** or
   **Shift + click** to select several, click a group's name for the Spotlight.
 - **Not up · worst first** - down then warning, the longest first, each with its service, IP, why and since when; tick the
   boxes, or **Select all down**, then **Share selected to Teams**. *+N more · open the full list* lists them all.
-- **SolarWinds vs vCenter** - VMs in vCenter not monitored in SolarWinds; SolarWinds VMs not found in vCenter (a node is a VM
-  by its Vendor or MachineType, `portal_wall_monitor_vm_match`); **Disagree** - down in SolarWinds while vCenter has the VM
-  running with its heartbeat green (likely the network path, not the VM); down in SolarWinds but powered off in vCenter.
-  Click a line for its list.
+- **SolarWinds vs vCenter** lists VMs seen only in vCenter and SolarWinds VMs without an inventory match
+  (identified by Vendor or MachineType using `portal_wall_monitor_vm_match`). Click a count to see its list.
 - **Spotlight** - one group at a time, problems first, every 20 s (a bar fills, *next in 14 s*; ◀ ▶ or the arrow keys step
   and pause it for 60 s; it holds while a card is open).
 
 **The node card** (a square, a row or a Spotlight chip): service (and the other groups it is in), IP, status and why, since
-when and how long, response time and loss, vCenter's state and host, what SolarWinds says and when it last polled, the
+when and how long, response time and loss, a dated vCenter note when matched, what SolarWinds says and when it last polled, the
 source and its age, where to check - and **Copy text**, **Copy picture**, **Copy both**, **Save picture** (as Share to Teams
 below) and **Add to selection**. **Share selected** puts one line a node on the clipboard, for example
 
@@ -1269,26 +1266,25 @@ on the portal's data volume through a restart).
 
 - The server computes one verdict per node. SolarWinds Status must be an integer. Unrecognized codes, strings,
   fractions, booleans and missing values give an unknown verdict. Each page of nodes carries its own arrival time.
-- A verdict expires at the earliest of the page arrival plus LATE, the node's LastSync plus
-  `portal_wall_monitor_poll_stale_minutes` (default 15 minutes), and the vCenter read plus LATE when the row uses
-  current VM evidence. LastSync must be readable and at most 120 seconds in the future. A stale or missing poll
-  makes a down or warning observation *last known*. The card and Teams share show the poll time when available.
-- A current powered-off or suspended VM can explain a current SolarWinds down observation. An unmanaged node also
-  counts as off. The card dates VM evidence when its vCenter is late or unavailable.
-- Match the full caption or DNS name to the full VM name or guest host name, ignoring case and trailing dots.
-  Different known IPs rule out a match. Without a matching name, a unique matching guest IP establishes identity.
-  Ambiguous candidates are excluded from comparisons and from the vCenter-only list. A guest name like `localhost`
-  is ignored. Templates and vCLS VMs are excluded.
+- SolarWinds alone determines status. A down node stays down even when vCenter reports it powered off or suspended.
+  An unmanaged node counts as off. A verdict expires at page arrival plus LATE or LastSync plus
+  `portal_wall_monitor_poll_stale_minutes` (default 15 minutes), whichever comes first. A missing LastSync or one
+  more than 120 seconds after page arrival is unusable for that read. A failed SolarWinds feed greys the board.
+- A unique exact FQDN match between caption or DNS and VM name or guest host name, or a unique matching unicast IP,
+  adds **vCenter says: &lt;state&gt;, as of HH:MM** to the card and Teams output. Matching ignores case and trailing dots.
+  Unspecified, loopback, link-local and multicast addresses cannot identify a VM. Ambiguous identities have no note.
+  The note adds **(LATE)** or **(NOT CURRENT)** as its inventory ages. Templates and vCLS VMs are excluded.
 - Each service uses the earliest member deadline and counts every listed member, including missing members beyond
   the display limit. Any unknown member makes the service stale. All up or off with at least one up is OK.
-  All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The overview,
+  Group membership expires 15 minutes plus two monitor read intervals after it was read. Expired membership makes
+  the services stale and blocks recovery. All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The overview,
   Actions tiles, dialogs and shares age the server verdict on their own clocks between refreshes.
 - A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
   a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
   square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
   `portal_wall_monitor_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only
-  squares follow vCenter's own read; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
+  squares are always informational; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
   the side searched (else "not counted", said).
 - **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
   per node; a node in two groups counts in both. A group's condition clears only when the group verdict is current and OK. They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only

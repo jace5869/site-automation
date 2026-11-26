@@ -140,7 +140,11 @@
     var blob = function () { return new Promise(function (res, rej) { o.canvas().toBlob(function (bl) { if (bl) res(bl); else rej(new Error("no picture")); }, "image/png"); }); };
     var can = function () { return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext); };
     var blocked = function (e) { return e && (e.name === "NotAllowedError" || e.name === "SecurityError"); };
-    var b = function (t, cls, fn, title) { var x = el("button", cls || "", [t], {type: "button", title: title}); x.addEventListener("click", fn); return x; };
+    var b = function (t, cls, fn, title) {
+      var x = el("button", cls || "", [t], {type: "button", title: title});
+      x.addEventListener("click", function () { if (o.prepare) o.prepare(); fn(); });
+      return x;
+    };
     var write = function (items, ok, no) {
       try {
         navigator.clipboard.write([new ClipboardItem(items)]).then(function () { say.textContent = ok; }, function (e) { say.textContent = no(e); });
@@ -223,7 +227,7 @@
   var PIC_MAX = 40, TEXT_MAX = 200;
   function nline(n) { return n.st + "  " + n.name + " - " + (n.svc || "no group") + " - " + (n.ip || "no IP") + " - " + n.phrase; }
   function nhead(L, ctx) {
-    var down = L.filter(function (n) { return n.st === "DOWN"; }).length, allBad = L.every(function (n) { return !n.up; });
+    var down = L.filter(function (n) { return n.st === "DOWN"; }).length, allBad = L.every(function (n) { return !n.up && n.st !== "INFO"; });
     return L.length === 1 ? "[" + L[0].st + "] " + L[0].name + " - " + (L[0].svc || "no group") :
       L.length + (allBad ? " nodes not up" : " nodes") + (down && down < L.length ? " (" + down + " down)" : "") + (ctx.site ? " - " + ctx.site : "") + " - " + ctx.stamp;
   }
@@ -234,10 +238,10 @@
     if (L.length === 1) {
       var n = L[0];
       out.push("IP " + (n.ip || "none") + " · " + n.phrase + (n.loss ? " · " + n.loss + "% loss" : ""));
-      if (n.vc) out.push("vCenter: " + n.vc + (n.host ? " · host " + n.host : ""));
+      if (n.vc) out.push("vCenter says: " + n.vc);
       out.push("Source: " + ctx.src + " · as of " + (ctx.asof || ctx.stamp) + (ctx.site ? " · " + ctx.site : ""));
     } else {
-      L.slice(0, TEXT_MAX).forEach(function (n) { out.push(nline(n)); });
+      L.slice(0, TEXT_MAX).forEach(function (n) { out.push(nline(n) + (n.vc ? " · vCenter says: " + n.vc : "")); });
       if (L.length > TEXT_MAX) out.push("+" + (L.length - TEXT_MAX) + " more on the wall");
     }
     if (ctx.stale) out.push("Not current: " + ctx.stale);
@@ -248,11 +252,11 @@
     var rows = L.slice(0, TEXT_MAX).map(function (n) {
       var c = (NSEV[n.sev] || NSEV.stale).c;
       return "<tr>" + td(n.st, "color:" + c + ";font-weight:700;padding-right:10px") + "<td style=\"padding-right:10px\"><b>" + esc(n.name) + "</b></td>" +
-        td(n.svc || "no group", "padding-right:10px") + td(n.ip || "no IP", "padding-right:10px") + td(n.phrase) + "</tr>";
+        td(n.svc || "no group", "padding-right:10px") + td(n.ip || "no IP", "padding-right:10px") + td(n.phrase + (L.length > 1 && n.vc ? " · vCenter says: " + n.vc : "")) + "</tr>";
     }).join("");
     var one = L.length === 1 ? L[0] : null;
     return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (one && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
-      (one && one.vc ? "<p>vCenter: " + esc(one.vc) + (one.host ? " · host " + esc(one.host) : "") + "</p>" : "") +
+      (one && one.vc ? "<p>vCenter says: " + esc(one.vc) + "</p>" : "") +
       (one ? "<p>Source: " + esc(ctx.src) + " · as of " + esc(ctx.asof || ctx.stamp) + "</p>" : "") +
       (L.length > TEXT_MAX ? "<p>+" + (L.length - TEXT_MAX) + " more on the wall</p>" : "") +
       (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
@@ -260,14 +264,14 @@
   }
   function npicture(L, ctx) {
     var cv = document.createElement("canvas"), x = cv.getContext("2d"), Wd = 1000, shown = L.slice(0, PIC_MAX), more = L.length - shown.length;
-    var one = L.length === 1, Hh = one ? 330 : 150 + shown.length * 44 + (more ? 40 : 0);
+    var one = L.length === 1, Hh = one ? 330 : 150 + shown.length * 62 + (more ? 40 : 0);
     var sans = "Figtree, 'Segoe UI', Arial, sans-serif", mono = "'Fira Code', Consolas, monospace";
     cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
     x.fillStyle = "#15181d"; x.fillRect(0, 0, Wd, Hh);
     var worst = L.length === 1 ? L[0].sev : L.some(function (n) { return n.sev === "crit"; }) ? "crit" : L.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
     x.fillStyle = NSEV[worst].c; x.fillRect(0, 0, 12, Hh);
     x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
-    x.fillText(fit(x, one ? L[0].name : L.length + (L.every(function (n) { return !n.up; }) ? " nodes not up" : " nodes"), 560), 36, 52);
+    x.fillText(fit(x, one ? L[0].name : L.length + (L.every(function (n) { return !n.up && n.st !== "INFO"; }) ? " nodes not up" : " nodes"), 560), 36, 52);
     x.font = "600 16px " + mono; x.fillStyle = "#9aa3ae"; x.textAlign = "right";
     x.fillText(fit(x, (ctx.site ? ctx.site + " · " : "") + ctx.day + " " + ctx.stamp + " " + ctx.zone, 360), Wd - 30, 50);
     x.textAlign = "left"; x.fillStyle = "#c9d0d8"; x.font = "500 18px " + sans;
@@ -280,27 +284,28 @@
       x.fillStyle = "#f3f5f7"; x.font = "700 26px " + sans; x.fillText(fit(x, n.phrase, Wd - 120 - bw), 70 + bw, 134);
       x.fillStyle = "#c9d0d8"; x.font = "500 19px " + sans;
       x.fillText(fit(x, n.said || "", Wd - 110), 58, 170);
-      x.fillText(fit(x, n.vc ? "vCenter: " + n.vc + (n.host ? " · host " + n.host : "") : "vCenter: not a VM it knows", Wd - 110), 58, 202);
+      x.fillText(fit(x, n.vc ? "vCenter says: " + n.vc : "", Wd - 110), 58, 202);
       if (ctx.stale) { x.fillStyle = "#f3c46a"; x.font = "600 17px " + sans; x.fillText(fit(x, "NOT CURRENT: " + ctx.stale, Wd - 110), 58, 236); }
     } else {
       shown.forEach(function (n, i) {
-        var y = 118 + i * 44, s = NSEV[n.sev] || NSEV.stale;
-        x.fillStyle = "#1e232a"; x.fillRect(30, y - 26, Wd - 60, 38);
+        var y = 118 + i * 62, s = NSEV[n.sev] || NSEV.stale;
+        x.fillStyle = "#1e232a"; x.fillRect(30, y - 26, Wd - 60, 56);
         x.fillStyle = s.c; x.fillRect(42, y - 18, 100, 24);
         x.fillStyle = s.ink; x.font = "700 13px " + mono; x.fillText(fit(x, n.st, 88), 50, y - 1);
         x.fillStyle = "#f3f5f7"; x.font = "700 16px " + mono; x.fillText(fit(x, n.name, 205), 154, y);
         x.font = "500 15px " + sans; x.fillStyle = "#c9d0d8"; x.fillText(fit(x, n.svc || "no group", 190), 370, y);
         x.font = "500 14px " + mono; x.fillText(fit(x, n.ip || "no IP", 135), 570, y);
         x.fillStyle = n.sev === "crit" ? "#ff8a8e" : n.sev === "warn" ? "#f3c46a" : "#c9d0d8"; x.fillText(fit(x, n.phrase, 270), 712, y);
+        if (n.vc) x.fillText(fit(x, "vCenter says: " + n.vc, Wd - 100), 42, y + 21);
       });
-      if (more) { x.fillStyle = "#f3f5f7"; x.font = "600 17px " + sans; x.fillText("+" + more + " more - the full list on the wall", 42, 118 + shown.length * 44 + 4); }
+      if (more) { x.fillStyle = "#f3f5f7"; x.font = "600 17px " + sans; x.fillText("+" + more + " more - the full list on the wall", 42, 118 + shown.length * 62 + 4); }
     }
     x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono;
     x.fillText(fit(x, "Source " + ctx.src + (one && ctx.asof ? " · as of " + ctx.asof : "") + " · Ops center wall", Wd - 72), 36, Hh - 18);
     return cv;
   }
   // the share panel for nodes, built node by node: the message as it pastes, the buttons, what happened, the picture
-  function nodesPanel(L, ctx, extra) {
+  function nodesPanel(L, ctx, extra, current) {
     var say = el("p", "shd", [""], {role: "status", "aria-live": "polite"});
     var tb = el("table", "fl-msgt", null);
     L.slice(0, TEXT_MAX).forEach(function (n) {
@@ -317,7 +322,10 @@
       Promise.all([document.fonts.load("700 30px Figtree"), document.fonts.load("600 16px 'Fira Code'")])
         .then(function () { CV = npicture(L, ctx); img.src = CV.toDataURL("image/png"); }, function () { /* the system font stays */ });
     }
-    var acts = actions({text: function () { return ntext(L, ctx); }, html: function () { return nhtml(L, ctx); }, canvas: function () { return CV; },
+    var content;
+    var acts = actions({prepare: function () { content = current(); },
+                        text: function () { return ntext.apply(null, content); }, html: function () { return nhtml.apply(null, content); },
+                        canvas: function () { return npicture.apply(null, content); },
                         file: (L.length === 1 ? L[0].name : "nodes-not-up").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) + "-" + String(ctx.stamp || "").replace(/[^0-9]/g, "") + ".png",
                         say: say, pic: "The picture on the right, as a PNG"});
     var panel = el("div", "fl-share", [

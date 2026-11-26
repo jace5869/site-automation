@@ -14,6 +14,7 @@
   var TEST = root.getAttribute("data-test") === "1";
   var FREEZE = TEST && QS.get("freeze") === "1";
   var MIN = 60000;
+  var monitorTransit = 0;
   var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false;
   // the portal itself not answering (a restart, the network): after FAILS_MAX failed reads every source counts as not current
   var FAILS = 0, FAILS_MAX = 1, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
@@ -161,7 +162,7 @@
     var f = feed(k);
     if (!f) return "stale";                                         // a feed the answer does not have: not current
     if (f.state !== "ok") return "stale";        // only a feed whose latest read worked is current (never, error, refused, paused, missing: not)
-    return fstate(ageS(f.asof), f);
+    return fstate(ageS(f.asof), k === "sw:fleet" ? f : null);
   }
   function areaOf(id) { return W.areaById[id]; }
   function areaOn(id) { var a = areaOf(id); return !!(a && a.on); }
@@ -223,7 +224,7 @@
     if (!areaOn(id)) return "off";
     if (id === "monitor") {
       var f = W.fleet;
-      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f && NOW() < f.valid_until * 1000 ? f.state : "stale";
+      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f && feedFresh("sw:fleet") === "ok" && NOW() + monitorTransit < f.valid_until * 1000 ? f.state : "stale";
     }
     if (W.noConds) return "stale";
     var n = areaCounts(id);
@@ -252,7 +253,7 @@
   }
   // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
   // of its feeds is current (one vCenter not read, one host without a state: nothing of VMware is green)
-  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk.indexOf("sw:") === 0 ? "monitor" : ""; }
+  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk === "sw:fleet" ? "monitor" : ""; }
   function homeOk(fk) {
     var a = homeOf(fk);
     if (!a) return true;
@@ -299,7 +300,7 @@
     return {st: st, t: "as of " + hms(asof) + " (" + ago(a) + ")"};
   }
   function freshK(fk, cls) {          // the cockpit's mono line: [STALE] as of 14:20:35 (11 min ago)
-    var f = feed(fk), x = freshTxt(f ? f.asof : null, f);
+    var f = feed(fk), x = freshTxt(f ? f.asof : null, fk === "sw:fleet" ? f : null);
     var e = h("span", (cls || "fresh") + (x.st === "ok" ? "" : " " + x.st), [x.st === "ok" ? null : h("span", "tag", [x.st === "stale" ? "STALE" : "LATE"]), x.t],
               {title: (f ? f.name + (f.why ? " - " + f.why : "") + ". " : "") + FRESH_TITLE});
     e.__fk = fk;
@@ -315,7 +316,7 @@
   function repaintFresh() {
     if (!W) return;
     root.querySelectorAll("[data-fresh]").forEach(function (e) {
-      var f = feed(e.getAttribute("data-fresh")), x = freshTxt(f ? f.asof : null, f), last = e.lastChild;
+      var fk = e.getAttribute("data-fresh"), f = feed(fk), x = freshTxt(f ? f.asof : null, fk === "sw:fleet" ? f : null), last = e.lastChild;
       if (last && last.nodeType === 3) last.nodeValue = x.t;
     });
     root.querySelectorAll("[data-fresh-area]").forEach(function (e) {
@@ -797,7 +798,7 @@
     feed: function (k) {
       var f = feed(k);
       if (!f) return null;
-      var x = freshTxt(f.asof, f), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
+      var x = freshTxt(f.asof, k === "sw:fleet" ? f : null), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
       if (!homeOf(k)) st = "off";                        // information only (the report database): never a status, never green
       return {title: f.name, st: st, chips: ["Data source"], fk: k, rows: [
         ["State", f.why || (f.state === "ok" ? "answering" : f.state === "never" ? "not read yet" : f.state || "unknown")],
@@ -1635,20 +1636,31 @@
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;
   })();
   function load(first) {
+    var sent = Date.now(), tag = "";
     var hd = {Accept: "application/json"};
     if (ETAG && !first) hd["If-None-Match"] = ETAG;
     return fetch(SRC, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      if (res.status === 304) return null;
+      if (res.status === 304) {
+        if (!ETAG || hd["If-None-Match"] !== ETAG) throw new Error("unconfirmed cached response");
+        return undefined;
+      }
       if (!res.ok) throw new Error("HTTP " + res.status);
-      ETAG = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
+      tag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (a) {
-      FAILS = 0;
-      if (UNREACH) { UNREACH = false; if (!a && W) { render(); return; } }
-      if (!a) return;
+      if (a === undefined) return;
+      if (!a || !Number.isFinite(a.now)) throw new Error("invalid wall response");
+      if (W && a.now < W.now) return;
       var keepScroll = window.scrollY;
-      if (a.now && !FREEZE) SKEW = a.now * 1000 - Date.now();
       W = adapt(a);
+      ETAG = tag;
+      FAILS = 0;
+      UNREACH = false;
+      if (!FREEZE) {
+        var received = Date.now();
+        SKEW = a.now * 1000 - received;
+        monitorTransit = received - sent;
+      }
       setZone(W.zone || "UTC");
       if (!LOADED) {
         LOADED = true;
@@ -1661,6 +1673,7 @@
       window.scrollTo(0, keepScroll);
       root.setAttribute("data-ready", "1");
     }).catch(function (e) {
+      ETAG = "";
       if (!LOADED) { clear(root); root.appendChild(h("p", "note warn", ["The wall could not be read: " + e.message + ". It tries again in 30 s."])); }
       else {
         try { console.error("wall: " + (e && e.stack || e)); } catch (x) { /* no console */ }

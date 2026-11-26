@@ -54,7 +54,7 @@ NOT_ON_WALL = {
 # 1.136.0: Ops monitor (wall_fleet.py) - on the wall only with portal_wall_monitor (auto: when SolarWinds is configured)
 FLEET_AREA = {"id": "monitor", "name": "Ops monitor", "short": "Monitor", "sub": "SolarWinds", "team": "Service owners"}
 FLEET_KINDS = {
-    "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds (powered off in vCenter: never down)", "grp": "fleet"},
+    "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds", "grp": "fleet"},
     "fleetwarn": {"area": "monitor", "sev": "warn", "label": "A node of a service group warning in SolarWinds (packet loss or slow answers)", "grp": "fleet"},
 }
 
@@ -789,7 +789,7 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         c.update(area=k["area"], sev=c.get("sev", k["sev"]), end=None)
         c["seen"] = (fall.get(c.get("feed")) or {}).get("asof") or c.get("start")     # when its data was read (a last-known one: last seen)
     # what clears a condition: its object seen OK in a fresh read (its feed's latest read worked, within the stale limit)
-    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= (f.get("stale") or o["stale"])) for k, f in fall.items())
+    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= ((f.get("stale") or o["stale"]) if k == "sw:fleet" else o["stale"])) for k, f in fall.items())
     ok_ids = set(cid for fk, cid in ok1 + ok2 if cur.get(fk))
     if tracker is not None:
         for src in ((view or {}).get("sources") or {}).values():
@@ -815,9 +815,9 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             d["cond"] = cid
     feeds = dict(f1)
     feeds.update(f2)
-    for f in feeds.values():
+    for key, f in feeds.items():
         # the state at this answer (the page works the age out itself every second - no age here: the ETag stays until a change)
-        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o, f)
+        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o, f if key == "sw:fleet" else None)
     area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run" and k != "sw:fleet") + sorted(f1)) if st["configured"] else [],
                   "monitor": ["sw:fleet"] if fleet is not None else []}
     areas = []
@@ -854,11 +854,11 @@ def _feed_fresh(m, k, now):
     f = (m.get("feeds") or {}).get(k)
     if not isinstance(f, dict) or f.get("state") != "ok" or f.get("asof") is None:
         return "stale"
-    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S}, f)
+    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S}, f if k == "sw:fleet" else None)
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "monitor" if k.startswith("sw:") else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "monitor" if k == "sw:fleet" else ""
 
 
 def _home_ok(m, k, now, by):
@@ -1001,13 +1001,11 @@ def summary(m, now):
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
         # own - a vCenter or cluster not answering - stays until the next read says otherwise)
         late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
-        fd = m.get("feeds") or {}
-        lims = [float(fd[k]["asof"]) + float(fd[k].get("late") or late_s) for k in feeds if isinstance(fd.get(k), dict) and fd[k].get("asof") is not None]
-        ok_until = min(lims) if st == "ok" and asofs and len(asofs) == len(feeds) else None
+        ok_until = (min(asofs) + late_s) if st == "ok" and asofs and len(asofs) == len(feeds) else None
         live = []                                  # each current condition: its severity, until when (None: until the next read)
         for c in cur:
-            f = fd.get(c.get("feed")) if c.get("feed") else None
-            live.append([c.get("sev"), (float(f["asof"]) + float(f.get("stale") or stale_s)) if isinstance(f, dict) and f.get("asof") is not None else None])
+            f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None
+            live.append([c.get("sev"), (float(f["asof"]) + stale_s) if isinstance(f, dict) and f.get("asof") is not None else None])
         if fs:
             until = fs.get("valid_until")
             ok_until = until if st == "ok" else None

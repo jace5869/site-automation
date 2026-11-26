@@ -101,20 +101,19 @@
     if (st === "stale") n = {crit: 0, warn: 0};
     return {id: "monitor", word: st === "off" && f.state === "off" ? f.label : sevWord(st), st: st, n: n, m: null, big: st !== "stale" && tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: st === "stale" ? "no current data" : tot ? "nodes up" : "no value read",
             sub: st === "stale" ? "" : st === "off" ? f.label : n.crit + n.warn ? A.nowList("monitor").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
-              tot ? (+c.d || 0) + " down · " + ((+c.p || 0) + (+c.m || 0)) + " off or unmanaged · " + (f.groups || 0) + " groups" : ""};
+              tot ? (+c.d || 0) + " down · " + (+c.m || 0) + " unmanaged · " + (f.groups || 0) + " groups" : ""};
   }
   function fleetOn() { return (W().areas || []).some(function (a) { return a.id === "monitor" && a.built; }); }
   function areas() {
     var out = [];
     if ((W().areas || []).some(function (a) { return a.id === "storage" && a.built; })) out.push(storageInfo());
     if ((W().areas || []).some(function (a) { return a.id === "vmware" && a.built; })) out.push(vmwareInfo());
-    if (fleetOn()) out.push(fleetInfo());
     OFF_AREAS.forEach(function (o) {
       var a = A.areaOf(o[0]);
       if (a && a.built) return;
-      if (o[0] === "network" && fleetOn()) return;     // SolarWinds is on the wall: its tile is Ops monitor
       out.push({id: o[0], st: "off", name: a ? a.name : o[1], sub: (a && a.sub) || o[2], n: {crit: 0, warn: 0}, m: null, big: "", unit: "", off: true});
     });
+    if (fleetOn()) out.push(fleetInfo());
     out = out.map(function (x) {
       if (x.off || A.areaOn(x.id)) return x;
       var a = A.areaOf(x.id) || {};                 // built but no source set (no vCenter / ONTAP here): grey, "Not on the wall yet"

@@ -667,7 +667,6 @@ class Config(object):
         # {user, password}), read every netmap_live_seconds (30 at least) while someone has the page open
         self.netmap = flag(g("PORTAL_NETMAP", "0"))
         self.netmap_seconds = max(30, min(3600, int(g("PORTAL_NETMAP_SECONDS", "60"))))
-        self.wall_monitor_swis_url = g("PORTAL_WALL_MONITOR_SWIS_URL").strip()
         self.swis_url = g("PORTAL_SWIS_URL").strip()
         self.swis_verify = flag(g("PORTAL_SWIS_VERIFY", "1"))
         self.swis_timeout = max(5, min(300, int(g("PORTAL_SWIS_TIMEOUT", "60"))))
@@ -736,7 +735,8 @@ class Config(object):
         # 1.136.0: the wall's Ops monitor area (PORTAL_WALL_MONITOR: the deploy's portal_wall_monitor, auto resolved there - on with
         # a SolarWinds credential) - SolarWinds read with the network map's address and read-only login; its settings in PORTAL_WALL_OPTS
         self.wall_fleet = self.wall and flag(g("PORTAL_WALL_MONITOR", "0"))
-        self.wall_fleet_opts, fleet_bad = (wall_fleet.opts_of(wo if isinstance(wo, dict) else {}) if wall_fleet is not None
+        self.wall_monitor_swis_url = g("PORTAL_WALL_MONITOR_SWIS_URL").strip() if self.wall_fleet else ""
+        self.wall_fleet_opts, fleet_bad = (wall_fleet.opts_of(wo if isinstance(wo, dict) else {}) if self.wall_fleet and wall_fleet is not None
                                            else ({"seconds": 60}, []))
         self.wall_fleet_notes = fleet_bad
         self.wall_fleet_why = ("" if not self.wall_fleet else
@@ -7355,7 +7355,8 @@ class WallLive(object):
         while True:
             time.sleep(self.cfg.wall_opts["seconds"])
             try:
-                self.viewed()
+                if self.nal is not None:
+                    self.nal.viewed()
                 self.model()
             except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said in the log
                 _safe_add(self.log, {"event": "wall", "model": "not made", "why": clean(str(e), 200)})

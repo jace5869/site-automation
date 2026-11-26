@@ -11,18 +11,16 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 - **Ops monitor on the ops wall** (`?area=monitor`, in every wall style and in *rotate areas*): every node SolarWinds
   watches as one square, up or down, grouped by service group; the services strip (one verdict per group), *Not up · worst
   first*, *SolarWinds vs vCenter* and a Spotlight that steps through the groups, problems first. 3,000 nodes fit at 1080p.
-- **Compared with vCenter:** down in SolarWinds but powered off in vCenter shows *Powered off* (never down); down in
-  SolarWinds while vCenter runs the VM with its heartbeat green is flagged *Disagree - likely the network path*; VMs
-  SolarWinds does not watch show under *vCenter only* with vCenter's status; SolarWinds VMs vCenter does not have are
-  counted. Only from a current vCenter read; grey is no current data, never green.
+- **vCenter inventory is information only.** SolarWinds determines node, service and area status. A unique FQDN
+  or guest IP match adds a dated vCenter note to the node card and its Teams share. VMs seen only in vCenter
+  appear in grey and are excluded from the monitored totals.
 - **A card for each node** (click a square, a row or a chip): service, IP, status and why, since when, response and
-  loss, vCenter's state and host, the source and its age, where to check - with **Copy text / Copy picture / Copy both /
+  loss, a dated vCenter note, the source and its age, where to check - with **Copy text / Copy picture / Copy both /
   Save picture** for Teams. **Several at once:** tick them (or Ctrl+click squares, or *Select all down*) and **Share
   selected to Teams** - one line a node (*DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since
   05:21)*), a table and a picture of up to 40 lines.
 - **What lights the wall:** one condition per service group with a node down (critical) or warning - in every style's
-  Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile where *Network (SolarWinds)* said
-  "not on the wall yet".
+  Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile alongside the existing areas.
 - SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
   60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
   vCenter read now also takes each VM's guest IP and host name (for the match). The SolarWinds login and its CA are
@@ -31,10 +29,20 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 - Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
   stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
 
-- **Known limits (to 1.136.1)** — Large Teams previews can rebuild as outage durations change. When many VMs share a name, the portal can leave their SolarWinds
-  coverage unresolved. A service displays at most 200 missing-member placeholders even when its total is larger.
-  After one vCenter reconnects, its outage start can appear exact while another vCenter kept answering. A delivered
-  Actions tile can turn grey when its VM evidence expires, until the next SolarWinds verdict arrives.
+### Known limits (to 1.136.1)
+
+- **P2 #1.** A large Teams preview can redraw as the displayed outage durations change.
+- **P2 #2.** In review, many VMs sharing a short name could hide another VM from the inventory-only list.
+  The monitor now ignores short names. Shared FQDNs or IPs can still leave coverage unresolved.
+- **P2 #3.** A VM outage start could appear exact after one vCenter reconnected while another kept answering.
+  The inventory-only group no longer reports outage start times.
+- **P2 #4.** An Actions tile could turn grey when a vCenter observation expired. Monitor deadlines now follow SolarWinds.
+- **P2 #7.** Refreshing an open list can move keyboard focus away from its controls.
+- **P2 #8.** A node card or share can show the end of the SolarWinds read as its source time even when its page arrived earlier.
+- **P2 #9.** After a fleet request fails, Overview can stay grey until someone opens the board and its request succeeds.
+- **P2 #10.** The comparison could keep counting unmonitored VMs after a SolarWinds poll expired.
+  The count now shows a dash when the read expires. An open list can retain rows until its next redraw.
+- **P2 #11.** In the Atlas Actions map, an all-unmanaged monitor area can appear unconfigured and link to Overview.
 
 ## 1.135.1 — 2026-11-26
 

@@ -114,7 +114,7 @@
   }
   function back(a) {
     var rows = (a.worst || []).map(function (c) { return h("div", "r", [h("span", "", [c.t]), h("b", "", [(c.sev === "crit" ? "CRIT" : "WARN") + (c.start ? " · " + ago(c.start * 1000) : "")])]); });
-    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? a.unit || "Not on the wall yet" : "No current data"]),
+    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? (a.id === "monitor" && a.unit || "Not on the wall yet") : "No current data"]),
                                              h("b", "", [a.asof ? "read " + hm(a.asof * 1000) : ""])])];
     return h("div", "ot-back", [h("h4", "", [a.name + " · worst first"])].concat(rows), {"aria-hidden": "true"});
   }
@@ -222,7 +222,7 @@
     D.areas = D0.areas.map(function (a0) {
       var a = JSON.parse(JSON.stringify(a0));
       if (a.id === "monitor" && (a.state !== "off" || a.valid_until != null)) {
-        if (FAIL || a.valid_until == null || t >= a.valid_until * 1000) {
+        if (FAIL || a.valid_until == null || t + monitorTransit >= a.valid_until * 1000) {
           Object.assign(a, {state: "stale", big: "–", unit: "no current data", note: "", crit: 0, warn: 0, worst: [], why: "not current"});
         }
         return a;
@@ -232,8 +232,8 @@
         var ma = a.metric.asof ? t - a.metric.asof * 1000 : Infinity;
         if (old || (a.metric.state === "ok" && ma > late) || ma > stale) a.metric.state = "stale";
       }
-      if (old) { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the wall's answer is older than " + Math.round(stale / 60000) + " min"; }
-      if (a.state === "ok" && (a.ok_until == null || t >= a.ok_until * 1000)) {
+      if (old) { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the wall's answer is older than " + Math.round(stale / 60000) + " min"; return a; }
+      if (a.state === "ok" && (a.ok_until == null || t > a.ok_until * 1000)) {
         a.state = "stale"; a.why = a.why || "a source of this area passed LATE (" + Math.round(late / 60000) + " min) since the page read it";
       }
       if (a.state === "crit" || a.state === "warn") {
@@ -243,7 +243,6 @@
         if (!n.crit && !n.warn) { a.state = "stale"; a.worst = []; a.why = "its open conditions' sources passed STALE (" + Math.round(stale / 60000) + " min) - last known, not current"; }
         else a.state = n.crit ? "crit" : "warn";
       }
-      if (a.state === "stale" && (a0.state !== "stale" || FAIL)) { a.big = "–"; a.unit = "no current data"; a.note = ""; }
       return a;
     });
   }
@@ -293,10 +292,10 @@
     sec.appendChild(h("p", "ops-note", ["The wall's areas could not be read (" + msg + "). They are tried again in 60 s; the wall itself: ", h("a", "", ["open it"], {href: WALL}), "."]));
     sec.hidden = false;
   }
-  var SEQ = 0;
+  var SEQ = 0, monitorTransit = 0;
   function load() {
-    var mine = ++SEQ;
-    fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
+    var mine = ++SEQ, sent = Date.now();
+    return fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
       if (mine !== SEQ) return null;                                         // an older read that answered late: dropped
       if (r.status === 404) { D = D0 = null; sec.hidden = true; return null; }  // the wall is off here: nothing kept to show again
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -305,7 +304,11 @@
       if (!a || mine !== SEQ) return;                                        // an older read that answered late: dropped
       if (!Array.isArray(a.areas)) throw new Error("no areas in the answer");
       FAIL = 0;
-      if (a.now) SKEW = a.now * 1000 - Date.now();
+      if (a.now) {
+        var received = Date.now();
+        SKEW = a.now * 1000 - received;
+        monitorTransit = received - sent;
+      }
       D0 = a;
       D = JSON.parse(JSON.stringify(a));
       render();
