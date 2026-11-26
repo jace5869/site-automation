@@ -104,8 +104,8 @@
     if (SIGC.k === k && t - SIGC.t < 200) return SIGC.v;
     if (F) {
       var now = NOW();
-      while (F.expired < F.deadlines.length && F.deadlines[F.expired] < now) F.expired++;
-      while (F.expired && F.deadlines[F.expired - 1] >= now) F.expired--;
+      while (F.expired < F.deadlines.length && F.deadlines[F.expired] <= now) F.expired++;
+      while (F.expired && F.deadlines[F.expired - 1] > now) F.expired--;
     }
     var x = [k, swFresh(), F && F.expired];
     (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); });
@@ -123,7 +123,7 @@
   }
   function shown0(n) {
     var f = fresh(n), old = n.flags.indexOf("o") >= 0, whole = !F.incomplete.length || n.vconly;
-    if (!n.vconly && (n.polled == null || NOW() / 1000 - n.polled > F.pollStale || n.polled > NOW() / 1000 + 120)) old = true;
+    if (!n.vconly && (n.polled == null || NOW() / 1000 >= n.polled + F.pollStale || n.polled > NOW() / 1000 + 120)) old = true;
     if (n.flags.indexOf("f") >= 0 && vcFreshI(n.vci) !== "ok") return "lastdown";
     if (n.c === "d") return f === "stale" ? "lastdown" : "down";                    // red beats grey: an old poll's down stays down
     if (n.c === "w") return f === "stale" || old ? "lastwarn" : "warn";
@@ -273,7 +273,7 @@
     pills(); banner(); services(); notUp(); compare(); spotlight(); footer();
     if (OV && OV.kind !== "list") {
       var current = OV.keys.map(function (k) { return F.by[k]; }).filter(Boolean);
-      if (current.length) openCard(current, OV.kind);
+      if (current.length) openCard(current, OV.kind, true);
       else closeOv();
     }
     soon(drawGrid);
@@ -588,12 +588,34 @@
     spotlight();
     return true;
   }
-  function openCard(L, kind) {
+  function cardDetails(n, s) {
+    var g = F.groups[n.g] || {}, also = (n.also || []).map(function (i) { return (F.groups[i] || {}).name; }).filter(Boolean);
+    var fr = fresh(n), sr = srcOf(n);
+    return [
+      ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
+      ["IP", n.ip || "none known", "mono"],
+      ["Status", statusWord(n, s).toLowerCase() + (n.why && !(s === "lastdown" && n.c === "p") ? " · " + n.why : "") + (fr === "stale" ? " · NOT CURRENT (last known)" : fr === "late" ? " · LATE" : ""), sevOf(s)],
+      ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
+      n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
+      ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (vcFreshI(n.vci) !== "ok" ? " · not current - not compared" : "") :
+        n.flags.indexOf("a") >= 0 ? "more than one VM (or SolarWinds node) of this name - not compared (the IP did not settle it)" :
+        n.flags.indexOf("c") >= 0 ? "a VM of this name in vCenter is another machine (another domain or IP) - not compared" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
+      n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.hms(n.polled * 1000) : "")],
+      ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
+      ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]];
+  }
+  function openCard(L, kind, refreshing) {
     L = L.filter(Boolean);
     if (!L.length) return;
-    OV = {kind: kind || "card", keys: L.map(function (n) { return n.key; })};
-    clear(P.ov);
     var one = L.length === 1 && kind !== "bulk", n = L[0], s = shown(n);
+    var keys = L.map(function (m) { return m.key; }), rows = L.map(share), context = ctx(L);
+    var details = one ? cardDetails(n, s) : null;
+    // The share's creation time is stamped when it opens. Only changes to the selected content need a new preview.
+    var signature = JSON.stringify([keys, rows, details, context.stale, context.site, context.src, context.zone]);
+    if (refreshing && signature === OV.signature) return;
+    var focusIndex = refreshing ? Array.prototype.indexOf.call(P.ov.querySelectorAll("button"), document.activeElement) : -1;
+    OV = {kind: kind || "card", keys: keys, signature: signature};
+    clear(P.ov);
     var x = h("button", "x", ["×"], {type: "button", title: "Close (Esc)", "aria-label": "Close"});
     x.addEventListener("click", closeOv);
     var head = one ? h("h2", "", [h("span", "tag " + sevOf(s), [statusWord(n, s)]), h("span", "nm", [n.name]), h("small", "", [svcOf(n)]), x]) :
@@ -605,26 +627,14 @@
       as.addEventListener("click", function () { if (SEL[n.key]) delete SEL[n.key]; else SEL[n.key] = 1; as.textContent = SEL[n.key] ? "Remove from selection" : "Add to selection"; notUp(); drawGrid(); });
       extra.push(as);
     }
-    var sh = window.SAWallShare && window.SAWallShare.nodes ? window.SAWallShare.nodes.panel(L.map(share), ctx(one ? [n] : L), extra) :
+    var sh = window.SAWallShare && window.SAWallShare.nodes ? window.SAWallShare.nodes.panel(rows, context, extra) :
       h("p", "note warn", ["Share to Teams (wall-share.js) did not load - reload the page."]);
-    var g = F.groups[n.g] || {}, also = (n.also || []).map(function (i) { return (F.groups[i] || {}).name; }).filter(Boolean);
-    var fr = fresh(n), sr = srcOf(n);
-    var body = one ? kv([
-      ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
-      ["IP", n.ip || "none known", "mono"],
-      ["Status", statusWord(n, s).toLowerCase() + (n.why && !(s === "lastdown" && n.c === "p") ? " · " + n.why : "") + (fr === "stale" ? " · NOT CURRENT (last known)" : fr === "late" ? " · LATE" : ""), sevOf(s)],
-      ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
-      n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
-      ["vCenter", n.vm ? n.vm + (n.host ? " · host " + n.host : "") + (n.vc ? " · " + n.vc : "") + (vcFreshI(n.vci) !== "ok" ? " · not current - not compared" : "") :
-        n.flags.indexOf("a") >= 0 ? "more than one VM (or SolarWinds node) of this name - not compared (the IP did not settle it)" :
-        n.flags.indexOf("c") >= 0 ? "a VM of this name in vCenter is another machine (another domain or IP) - not compared" : n.flags.indexOf("n") >= 0 ? "a VM by SolarWinds' Vendor / MachineType, not found in vCenter" : "not a VM vCenter has (or no vCenter on the wall)"],
-      n.vconly ? null : ["SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.hms(n.polled * 1000) : "")],
-      ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
-      ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]]) : null;
-    var card = h("div", "fl-card" + (one ? "" : " bulk"), [head, body ? h("div", "fl-cb", [body]) : null, sh], {role: "dialog", "aria-modal": "true", "aria-label": one ? n.name : "Share to Teams"});
+    var card = h("div", "fl-card" + (one ? "" : " bulk"), [head, details ? h("div", "fl-cb", [kv(details)]) : null, sh], {role: "dialog", "aria-modal": "true", "aria-label": one ? n.name : "Share to Teams"});
     P.ov.appendChild(card);
     P.ov.classList.add("on");
-    if (sh.__focus) sh.__focus.focus();
+    var focus = focusIndex >= 0 ? P.ov.querySelectorAll("button")[focusIndex] : null;
+    if (focus) focus.focus();
+    else if (!refreshing && sh.__focus) sh.__focus.focus();
     spotlight();
   }
   // the full list (from "+N more") and the comparison's lists: rows with checkboxes, Share these

@@ -20,6 +20,7 @@ The rules, one place for all of them:
     MachineType says VM (portal_wall_monitor_vm_match) not found in vCenter: counted "not found in vCenter";
   - a stale source (the wall's LATE / STALE) is grey on the page, never green; a read cut short is not whole: never green."""
 import fnmatch
+import heapq
 import ipaddress
 import json
 import os
@@ -107,10 +108,13 @@ def epoch(v):
     if not m:
         return None
     import calendar
-    y, mo, d, hh, mi, ss = (int(x) for x in m.groups()[:6])
+    fields = tuple(int(x) for x in m.groups()[:6])
     try:
-        sec = calendar.timegm((y, mo, d, hh, mi, ss, 0, 0, 0)) + (float(m.group(7)) if m.group(7) else 0.0)
-    except (ValueError, OverflowError):
+        sec = calendar.timegm(fields + (0, 0, 0))
+        if time.gmtime(sec)[:6] != fields:
+            return None
+        sec += float(m.group(7) or 0)
+    except (ValueError, OverflowError, OSError):
         return None
     z = m.group(8)
     if z and z != "Z":
@@ -444,7 +448,7 @@ def match(nodes, vms):
         for f in v["_full"]:
             byfull.setdefault(f, []).append(i)
     out, crowded = {}, set()
-    MAXC = 50                                   # more candidates than this for one node: ambiguous at once (no pair-by-pair work)
+    MAXC = 50                                   # more candidates than this for one name: ambiguous at once (no pair-by-pair work)
 
     def pair(nn, vn):
         """one SolarWinds name and one vCenter name of the same machine: the short names match and, when both are FQDNs,
@@ -456,16 +460,11 @@ def match(nodes, vms):
         return not (fa and fb) or fa == fb
 
     def candidates(keys, index):
-        result = set()
-        for key in keys:
-            bucket = index.get(key, ())
-            if len(bucket) > MAXC:
-                return None
-            for i in bucket:
-                if len(result) == MAXC and i not in result:
-                    return None
-                result.add(i)
-        return result
+        over = {key for key in keys if len(index.get(key, ())) > MAXC}
+        if over:
+            crowded.update(over)
+            return None
+        return {i for key in keys for i in index.get(key, ())}
 
     for ni, n in enumerate(nodes):
         nnames = [x for x in (n["name"], n["dns"]) if x]
@@ -477,7 +476,6 @@ def match(nodes, vms):
             keys = set(x for x in (short(y) for y in nnames) if x)
             allc = candidates(keys, by)          # the short-name buckets include every exact candidate
         if allc is None:
-            crowded.update(keys)
             out[ni] = (None, "ambiguous: too many VMs of this name in vCenter", [])
             continue
         if not allc:
@@ -558,8 +556,9 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     if rows is None:
         out["incomplete"].append("SolarWinds not read yet" if feed["state"] == "never" else "SolarWinds: " + feed["why"])
         rows = []
-    if snap.get("cut"):
+    if snap.get("cut") or len(rows) > o["max_nodes"]:
         out["incomplete"].append("only the first %d nodes were read (portal_wall_monitor_max_nodes)" % o["max_nodes"])
+        rows = rows[:o["max_nodes"]]
     if rows == [] and feed["state"] == "ok":
         out["incomplete"].append("SolarWinds answered with no node (does the account see the nodes?)")
     prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
@@ -621,6 +620,9 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     at = snap.get("at")
     # SolarWinds whole and current: only then may a VM be said "not monitored in SolarWinds"
     sw_whole = rows is not None and not out["incomplete"] and feed["state"] == "ok" and at is not None and now - float(at) <= sw_late
+    deadlines = [float(v[2]) + late for v in vcs if v[1]]
+    if feed["state"] == "ok" and at is not None and now <= float(at) + sw_late:
+        deadlines.append(float(at) + sw_late)
     poll_stale = out["poll_stale"]
     pairs = match(nodes, vms) if vms else {}
     crowded = pairs.pop(None, set())
@@ -652,9 +654,10 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         elif mwhy:
             flags += "c"                        # a VM of the name is another machine: it stays "vCenter only"
         pa = now - n["polled"] if n["polled"] is not None else None
-        if c in (UP, WARN, DOWN) and (pa is None or pa < -120 or pa > poll_stale):
+        expired = pa is not None and now >= n["polled"] + poll_stale
+        if c in (UP, WARN, DOWN) and (pa is None or pa < -120 or expired):
             flags += "o"                        # Orion's own poll of it is old: its status is not current (never green)
-            why = (why + " · " if why else "") + ("SolarWinds last polled it %d min ago" % (pa // 60) if pa is not None and pa > poll_stale else
+            why = (why + " · " if why else "") + ("SolarWinds last polled it %d min ago" % (pa // 60) if expired else
                                                   "SolarWinds gives no reliable last poll time for it")
         if vi is not None:
             v = vms[vi]
@@ -678,12 +681,19 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             out["cmp"]["not_in_vc"] += 1
             if len(out["cmp"]["not_in_vc_names"]) < 20:
                 out["cmp"]["not_in_vc_names"].append(n["name"])
+        if c in (UP, WARN, DOWN) and n["polled"] is not None:
+            if "o" not in flags:
+                deadlines.append(n["polled"] + poll_stale)
+            elif pa < -120:
+                deadlines.append(n["polled"] - 120)   # a future poll becomes plausible on this clock
         codes["sw:" + n["id"]] = (c, at)
         built.append([gi, n["name"], n["ip"], c, None if n["rt"] is None or n["rt"] < 0 else round(n["rt"]), None if n["loss"] is None else round(n["loss"]),
                       0, 0, why, vcode, idx("hosts", host), vci, flags, n["id"], [x for x in gl if x != gi],
                       n["polled"], n["desc"] if c != UP else "",
                       idx("models", (n["vendor"] + " · " + n["model"]).strip(" ·"))])
-    for nid in sorted(missing):
+    out["next_expiry"] = min(deadlines, default=None)
+    room = min(200, o["max_nodes"] - len(built))
+    for nid in heapq.nsmallest(room, missing):
         gl = sorted({gi_of[k] for k in member[nid] if k in gi_of}) or [nog]
         built.append([gl[0], "Node " + nid, "", UNKNOWN, None, None, 0, 0, "group member not in the node read",
                       "", -1, -1, "", nid, gl[1:], None, "", -1])
@@ -693,9 +703,12 @@ def model(snap, view, o, now, since=None, late=LATE_S):
                                  (old, "" if old == 1 else "s", o["poll_stale_minutes"]))
         sw_whole = False
     # ---- vCenter only: VMs SolarWinds does not watch (their status from vCenter; not current there: grey on the page)
-    vco = []
+    vco, vc_count = [], 0
     for i, v in enumerate(vms if sw_whole else []):
         if i in used_vm or (crowded and (v["_full"] & crowded or short(v["name"]) in crowded or short(v["guest"]) in crowded)):
+            continue
+        vc_count += 1
+        if len(built) + len(vco) >= o["max_nodes"]:
             continue
         p, hb = v["power"], v["heartbeat"]
         if p in ("poweredOff", "suspended"):
@@ -713,12 +726,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         key = "vc:%s:%s" % (vcs[v["vc"]][0], v["id"])
         codes[key] = (c, vct.get(v["vc"]) or at)
         vco.append([nog + 1, v["name"], (v["ip"] or [""])[0], c, None, None, 0, 0, why, _vm_code(v), idx("hosts", v["host"]), v["vc"], "v" + ("" if v["current"] else "s"), key, [], None, "", -1])
+    if vc_count > len(vco):
+        out["incomplete"].append("%d vCenter-only VMs beyond the display limit" % (vc_count - len(vco)))
     if vco:
         groups.append([VC_ONLY, "v", ""])
-    out["cmp"]["vc_only"] = len(vco) if sw_whole else None        # None: SolarWinds not whole and current - not counted
+    out["cmp"]["vc_only"] = vc_count if sw_whole else None        # None: SolarWinds not whole and current - not counted
     built.extend(vco)
     # ---- since: when each left its last code (the tracker, each source by its own read's time), only for what is not up
-    whole = (("sw:",) if sw_whole else ()) + (("vc:",) if sw_whole and out["cmp"]["vc_read"] else ())
+    whole = (("sw:",) if sw_whole else ()) + (("vc:",) if sw_whole and out["cmp"]["vc_read"] and vc_count == len(vco) else ())
     sn = (since.update(codes, at, whole=whole, gaps={"sw": sw_stale, "vc": STALE_S}) if since is not None and at else {})
     for row in built:
         key = ("sw:" + row[13]) if "v" not in row[12] else row[13]
@@ -776,12 +791,16 @@ def summary(fm):
     """the area in short for the wall's own answer (/api/wall): counts and the worst groups - the page's Strata / Relay / Metro tiles"""
     if not fm:
         return None
-    bad = {}
+    bad, vc_sources = {}, set()
     for r in fm["nodes"]:
+        if "f" in r[12] or "v" in r[12]:
+            vc_sources.add(r[11])
         if r[3] in (DOWN, WARN) and "v" not in r[12]:       # vCenter-only VMs: the VMware area's, as in conds()
             for gi in [r[0]] + list(r[14] or []):            # every group it is in, as conds()
                 b = bad.setdefault(fm["groups"][gi][0], [0, 0])
                 b[0 if r[3] == DOWN else 1] += 1
     worst = sorted(bad.items(), key=lambda kv: (-kv[1][0], -kv[1][1], kv[0]))[:6]
-    return {"counts": fm["counts"], "groups": len([g for g in fm["groups"] if g[1] in ("g", "c")]), "worst": [[k, v[0], v[1]] for k, v in worst],
+    vc_asof = min((fm["vcs"][i][1] for i in vc_sources if fm["vcs"][i][1] is not None), default=None)
+    return {"counts": fm["counts"], "next_expiry": fm.get("next_expiry"), "vc_asof": vc_asof,
+            "groups": len([g for g in fm["groups"] if g[1] in ("g", "c")]), "worst": [[k, v[0], v[1]] for k, v in worst],
             "cmp": dict((k, fm["cmp"][k]) for k in ("vc_only", "not_in_vc", "disagree", "ambiguous", "off_in_vc")), "complete": fm.get("complete", False)}

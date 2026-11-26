@@ -702,7 +702,10 @@ const [dir, input, scenario] = process.argv.slice(1);
 const data = JSON.parse(input);
 let clock = data.now * 1000;
 function el(tag, cls, children) {
-  return {cls, children: (children || []).filter(x => x != null),
+  return {tag, cls, focus() { env.document.activeElement = this; },
+    querySelectorAll(tag) { return this.children.filter(x => x && x.querySelectorAll)
+      .flatMap(x => (x.tag === tag ? [x] : []).concat(x.querySelectorAll(tag))); },
+    children: (children || []).filter(x => x != null),
     get firstChild() { return this.children[0]; }, get lastChild() { return this.children.at(-1); },
     appendChild(x) { this.children.push(x); }, removeChild() { this.children.shift(); },
     classList: {add(){}, remove(){}, toggle(){}}, addEventListener(){}};
@@ -721,7 +724,9 @@ function script(name, setup) {
 script("wall-share.js", "");
 env.window.SAWallShare.nodes.panel = (rows, ctx) => {
   env.panel = {rows, ctx, text: env.window.SAWallShare.nodes.text(rows, ctx)};
-  return el();
+  const panel = el("div", "", [el("button"), el("button")]);
+  panel.__focus = panel.firstChild;
+  return panel;
 };
 script("wall-styles.js", "A = api; window.stage = st => stageOf({id:'monitor', st, name:'Ops monitor'});");
 script("wall-fleet.js", `
@@ -872,6 +877,101 @@ class Gate(unittest.TestCase):
         self.assertEqual((fm["cmp"]["ambiguous"], fm["cmp"]["vc_only"]), (10000, 0))
         self.assertLess(elapsed, 10)
         self.assertLess(peak, 150_000_000)
+
+
+class Gate2(unittest.TestCase):
+    setUp = Gate.setUp
+    live = Gate.live
+    js = Gate.js
+
+    def test_gate2_2_impossible_clock(self):
+        for stamp in ("2025-02-29T10:00:00", "2024-04-31T10:00:00", "2024-12-00T10:00:00",
+                      "2024-13-01T10:00:00", "2024-02-29T24:00:00", "2024-02-29T09:60:00",
+                      "2024-02-29T09:00:60", "2024-02-29T09:00:61"):
+            with self.subTest(stamp=stamp):
+                self.assertIsNone(wf.epoch(stamp + "Z"))
+        self.assertEqual(wf.epoch("2024-02-29T00:30:00.5+01:00"), wf.epoch("2024-02-28T23:30:00.5Z"))
+
+    def test_gate2_3_server_poll_deadline(self):
+        now = self.now - self.now % 30
+        for status in (1, 2, 3):
+            row = dict(self.rows[0], Status=status, LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 895)))
+            live = self.live(snap([row], now=now, age=0))
+            fm = live.fleet_of(None, now)
+            self.assertIs(fm, live.fleet_of(None, now + 4.99))
+            expired = live.fleet_of(None, now + 5)
+            self.assertIn("o", expired["nodes"][0][12])
+            self.assertFalse(wf.conds(expired, now + 5)[1])
+            self.assertEqual(fm["next_expiry"], now + 5)
+            self.assertIs(expired, live.fleet_of(None, now + 31))
+
+    def test_gate2_4_actions_earliest_deadline(self):
+        for poll_age, sw_age, vc_age, expected in ((40, 0, 179, 1), (898, 0, 20, 2), (40, 177, 20, 3)):
+            rows = [dict(self.rows[0], LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now - poll_age))),
+                    dict(self.rows[1], Status=2)]
+            vc = view([vm("DB", power="poweredOff"), vm("OTHER")], self.now, age=vc_age)
+            fm = wf.model(snap(rows, now=self.now, age=sw_age), vc, OPTS, self.now)
+            area, _ = StaleNeverGreen().area(fm, self.now)
+            self.assertEqual((area["state"], area["ok_until"]), ("ok", self.now + expected))
+
+        for age in (179, 181):
+            vc = view([vm("OTHER")], self.now, age=age)
+            fm = wf.model(snap(self.rows, now=self.now), vc, OPTS, self.now)
+            area, _ = StaleNeverGreen().area(fm, self.now)
+            self.assertEqual((area["state"], area["ok_until"]), ("ok", self.now + 1) if age == 179 else ("stale", None))
+
+    @unittest.skipUnless(shutil.which("node"), "no node")
+    def test_gate2_6_actions_aged_count(self):
+        script = r"""
+        const fs = require("fs"), assert = require("assert");
+        const document = {getElementById: () => ({getAttribute() {}})}, window = {fetch() {}};
+        const code = fs.readFileSync(process.argv[1], "utf8").split('  sec.addEventListener("click"')[0];
+        eval(code + `
+          const t = Date.now() / 1000;
+          for (const [state, age] of [["ok", 2], ["ok", 700], ["warn", 2]]) {
+            D0 = {now: t-age, areas: [{state, big:"2/2", unit:"nodes up", ok_until:t-1, live:[["warn", t-1]]}]};
+            D = JSON.parse(JSON.stringify(D0)); aged();
+            assert.deepEqual([D.areas[0].state, D.areas[0].big, D.areas[0].unit], ["stale","–","no current data"]);
+          }
+        })();`);
+        """
+        result = subprocess.run(["node", "-e", script, os.path.join(FILES, "static", "portal-looks.js")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_gate2_a_crowded_alias(self):
+        rows = [sw_row(1, "HOT", dns="db.prod.corp.example.mil")]
+        name = "db.test.corp.example.mil"
+        vms = [vm("HOT", mid=str(i)) for i in range(51)] + [vm(name, hb="red", ip="192.0.2.20")]
+        fm = wf.model(snap(rows, now=self.now), view(vms, self.now), OPTS, self.now)
+        self.assertEqual(fm["cmp"]["ambiguous"], 1)
+        self.assertEqual([(r[1], r[3]) for r in fm["nodes"] if "v" in r[12]], [(name, wf.DOWN)])
+
+    def test_gate2_b_placeholder_limits(self):
+        self.groups["members"] = {str(i): [1] for i in range(1, 305)}
+        for cap in (500, 20, 2):
+            fm = wf.model(snap(self.rows, self.groups, self.now), None, dict(OPTS, max_nodes=cap), self.now)
+            self.assertEqual(len(fm["nodes"]), min(cap, 202))
+            self.assertIn("302 group members not in the node read", fm["incomplete"])
+            self.assertFalse(wf.conds(fm, self.now)[1])
+
+        fm = wf.model(snap(self.rows, now=self.now), view([vm("EXTRA")], self.now), dict(OPTS, max_nodes=2), self.now)
+        self.assertEqual((len(fm["nodes"]), fm["cmp"]["vc_only"], fm["complete"]), (2, 1, False))
+
+    def test_gate2_c_card_refresh_and_focus(self):
+        fm = wf.model(snap(self.rows + [sw_row(3, "OTHER")], now=self.now), None, OPTS, self.now)
+        self.js(fm, """
+          for (const kind of ["bulk", "card"]) {
+            openCard(kind === "bulk" ? [F.by["1"], F.by["2"]] : [F.by["1"]], kind);
+            const initial = panel, button = P.ov.querySelectorAll("button")[2];
+            button.focus();
+            data.nodes[2][3] = "w"; F = adapt(data); refresh();
+            assert.strictEqual(panel, initial); assert.strictEqual(document.activeElement, button);
+            data.nodes[0][8] += " changed"; F = adapt(data); refresh();
+            assert.notStrictEqual(panel, initial);
+            assert.strictEqual(document.activeElement, P.ov.querySelectorAll("button")[2]);
+          }
+        """)
 
 
 NODE_JS = r"""

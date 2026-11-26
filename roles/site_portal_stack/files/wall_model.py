@@ -831,6 +831,8 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
                ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "monitor" else [])
         if a["id"] == "monitor" and fleet and not inc and not any(fleet["counts"][c] for c in ("u", "w", "d", "x")):
             inc = ["no monitored nodes"]
+        if a["id"] == "monitor" and fleet and any("v" in r[12] and "s" in r[12] for r in fleet["nodes"]):
+            inc = inc + ["a vCenter-only node's source is not current"]
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
@@ -1001,6 +1003,11 @@ def summary(m, now):
         late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
         fd = m.get("feeds") or {}
         lims = [float(fd[k]["asof"]) + float(fd[k].get("late") or late_s) for k in feeds if isinstance(fd.get(k), dict) and fd[k].get("asof") is not None]
+        if aid == "monitor" and st == "ok":
+            if fs.get("vc_asof") is not None:
+                lims.append(float(fs["vc_asof"]) + late_s)
+            if fs.get("next_expiry") is not None:
+                lims.append(fs["next_expiry"])
         ok_until = min(lims) if st == "ok" and asofs and len(asofs) == len(feeds) else None
         live = []                                  # each current condition: its severity, until when (None: until the next read)
         for c in cur:

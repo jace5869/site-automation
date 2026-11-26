@@ -225,8 +225,8 @@
         var ma = a.metric.asof ? t - a.metric.asof * 1000 : Infinity;
         if (old || (a.metric.state === "ok" && ma > late) || ma > stale) a.metric.state = "stale";
       }
-      if (old) { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the wall's answer is older than " + Math.round(stale / 60000) + " min"; return a; }
-      if (a.state === "ok" && (a.ok_until == null || t > a.ok_until * 1000)) {
+      if (old) { a.state = "stale"; a.crit = 0; a.warn = 0; a.worst = []; a.why = "the wall's answer is older than " + Math.round(stale / 60000) + " min"; }
+      if (a.state === "ok" && (a.ok_until == null || t >= a.ok_until * 1000)) {
         a.state = "stale"; a.why = a.why || "a source of this area passed LATE (" + Math.round(late / 60000) + " min) since the page read it";
       }
       if (a.state === "crit" || a.state === "warn") {
@@ -236,6 +236,7 @@
         if (!n.crit && !n.warn) { a.state = "stale"; a.worst = []; a.why = "its open conditions' sources passed STALE (" + Math.round(stale / 60000) + " min) - last known, not current"; }
         else a.state = n.crit ? "crit" : "warn";
       }
+      if (a.state === "stale" && (a0.state !== "stale" || FAIL)) { a.big = "–"; a.unit = "no current data"; a.note = ""; }
       return a;
     });
   }
