@@ -54,8 +54,7 @@ CLUSTER_PATHS = ("name", "host")
 DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible", "summary.type", "summary.multipleHostAccess", "host", "vm")
 VM_PATHS = ("name", "runtime.host", "runtime.powerState", "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
             "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus",
-            "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type",
-            "guest.ipAddress", "guest.hostName")     # 1.136.0: the Ops monitor area's name / IP match with SolarWinds
+            "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type")
 SPECS = (("HostSystem", HOST_PATHS), ("ClusterComputeResource", CLUSTER_PATHS), ("Datastore", DS_PATHS), ("VirtualMachine", VM_PATHS))
 
 
@@ -341,7 +340,10 @@ class VcenterSource(object):
         self.view = r.findtext("v:returnval", "", NS).strip()
 
     def _retrieve(self):
-        props = "".join("<propSet><type>%s</type>%s</propSet>" % (t, "".join("<pathSet>%s</pathSet>" % p for p in paths)) for t, paths in SPECS)
+        specs = SPECS
+        if getattr(self, "fleet", False):
+            specs = SPECS[:-1] + (("VirtualMachine", VM_PATHS + ("guest.ipAddress", "guest.hostName")),)
+        props = "".join("<propSet><type>%s</type>%s</propSet>" % (t, "".join("<pathSet>%s</pathSet>" % p for p in paths)) for t, paths in specs)
         spec = ('<specSet>%s<objectSet>%s<skip>true</skip><selectSet xsi:type="TraversalSpec"><name>view</name><type>ContainerView</type>'
                 '<path>view</path><skip>false</skip></selectSet></objectSet></specSet>' % (props, _mor("obj", "ContainerView", self.view)))
         objs = self._properties(spec)
@@ -399,14 +401,14 @@ class VcenterSource(object):
             except SoapFault as e:
                 err = e
             else:
-                return shape(objs)
+                return shape(objs, getattr(self, "fleet", False))
             if err.kind == "NoPermission":                         # the account lost its rights: stop, as a refused login
                 self._drop()
                 raise AuthError("the account may not read the inventory (NoPermission) - check its role")
             if err.kind == "ManagedObjectNotFound" and not fresh:
                 try:                                           # the view is gone: made again - with the session, if it is still there
                     self._make_view()
-                    return shape(self._retrieve())
+                    return shape(self._retrieve(), getattr(self, "fleet", False))
                 except SoapFault as e2:
                     err = e2
                 if err.kind == "NoPermission":
@@ -420,7 +422,7 @@ class VcenterSource(object):
                 raise AuthError("vCenter dropped the new session at once (a proxy or a broken role?) - held one window")
             self._login()                                      # the session is gone (vCenter restarted, timed out): one login
             try:
-                return shape(self._retrieve())
+                return shape(self._retrieve(), getattr(self, "fleet", False))
             except SoapFault as e3:
                 if e3.kind in ("NotAuthenticated", "NoPermission") or self._gone(e3):
                     self._drop()
@@ -432,7 +434,7 @@ class VcenterSource(object):
             self._logout()
 
 
-def shape(objs):
+def shape(objs, fleet=False):
     """the PropertyCollector's objects -> {hosts, clusters, datastores, vms} by name (references resolved)"""
     names = dict(((t, i), v.get("name", i)) for t, i, v in objs)
     nm = lambda ref: names.get(tuple(ref), ref[1]) if isinstance(ref, tuple) else ""     # noqa: E731
@@ -471,8 +473,9 @@ def shape(objs):
                         "name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
                         "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), v.get("summary.runtime.maxCpuUsage")) if on else None,
                         "mem_pct": _pct(v.get("summary.quickStats.guestMemoryUsage"), v.get("summary.config.memorySizeMB")) if on else None,
-                        "heartbeat": v.get("guestHeartbeatStatus") or None,      # not read: unknown
-                        "ip": v.get("guest.ipAddress") or "", "guest": v.get("guest.hostName") or ""})
+                        "heartbeat": v.get("guestHeartbeatStatus") or None})     # not read: unknown
+            if fleet:
+                vms[-1].update(ip=v.get("guest.ipAddress") or "", guest=v.get("guest.hostName") or "")
     for lst in (hosts, clusters, dss, vms):
         lst.sort(key=lambda x: x["name"])
     return {"hosts": hosts, "clusters": clusters, "datastores": dss, "vms": vms}
@@ -772,8 +775,12 @@ class Collector(object):
         twice. It is checked every cycle while stopped (no restart needed)."""
 
     def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time, state_file=None,
-                 mono=None, reset=None):
+                 mono=None, reset=None, fleet=False):
         self.sources = list(sources)
+        if fleet:
+            for source in self.sources:
+                if isinstance(source, VcenterSource):
+                    source.fleet = True
         self.seconds, self.auth_retry, self.keep = max(1, int(seconds)), max(1, int(auth_retry)), int(keep_seconds)
         raw_log = log or (lambda d: None)
 

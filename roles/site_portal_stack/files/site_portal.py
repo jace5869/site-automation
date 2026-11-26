@@ -24,7 +24,7 @@ and only the listed actions can be launched. Every launch, refusal and decision 
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
 import collections
 import copy
-from itertools import count, islice
+from itertools import islice
 import math
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -491,7 +491,7 @@ class Config(object):
         if e.get("PORTAL_SETTINGS"):
             with open(e["PORTAL_SETTINGS"]) as fh:
                 raw = json.load(fh)
-        e = dict({k: (v if isinstance(v, (list, dict)) or k.startswith("PORTAL_WALL_MONITOR") else str(v)) for k, v in raw.items()}, **e)
+        e = dict({k: (v if isinstance(v, (list, dict)) else str(v)) for k, v in raw.items()}, **e)
 
         def g(name, default=""):
             v = e.get(name)
@@ -668,7 +668,6 @@ class Config(object):
         self.netmap = flag(g("PORTAL_NETMAP", "0"))
         self.netmap_seconds = max(30, min(3600, int(g("PORTAL_NETMAP_SECONDS", "60"))))
         self.swis_url = g("PORTAL_SWIS_URL").strip()
-        self.swis_ca = g("PORTAL_SWIS_CA")
         self.swis_verify = flag(g("PORTAL_SWIS_VERIFY", "1"))
         self.swis_timeout = max(5, min(300, int(g("PORTAL_SWIS_TIMEOUT", "60"))))
         try:
@@ -732,30 +731,23 @@ class Config(object):
         except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
             self.wall, self.wall_logins = False, {}
-            wo = {}
-        switch = e.get("PORTAL_WALL_MONITOR", False)
-        switch_ok = isinstance(switch, bool) or (isinstance(switch, str) and switch.strip().lower() in
-                                                  ("0", "1", "true", "false", "yes", "no", "on", "off"))
-        self.wall_fleet = self.wall and switch_ok and flag(switch)
-        url = e.get("PORTAL_WALL_MONITOR_SWIS_URL", "") if self.wall_fleet else ""
-        self.wall_monitor_swis_url = url.strip() if isinstance(url, str) else ""
-        self.wall_fleet_opts, self.wall_fleet_notes = (wall_fleet.opts_of(wo) if self.wall_fleet and wall_fleet is not None
-                                                      else ({"seconds": 60}, []))
-        setting_error = ""
-        if self.wall and not switch_ok:
-            setting_error = "PORTAL_WALL_MONITOR needs a boolean; monitor off"
-        if not isinstance(url, str):
-            setting_error = "PORTAL_WALL_MONITOR_SWIS_URL needs a string; monitor off"
-        if setting_error:
-            self.wall_fleet = False
-            self.wall_fleet_notes.append(setting_error)
-        self.wall_fleet_why = (setting_error if not self.wall_fleet else
-                               "the wall's Ops monitor reader or the SolarWinds reader (site_swis.py) is missing from the service's files - deploy again"
-                               if wall_fleet is None or site_swis is None else
-                               "no SolarWinds address: a \"SolarWinds (read-only)\" credential on Site portal - deploy (or netmap_solarwinds_url)"
-                               if not self.wall_monitor_swis_url else
-                               "no SolarWinds login: a \"SolarWinds (read-only)\" credential on Site portal - deploy"
-                               if not (self.swis_user and self.swis_password) else "")
+        monitor = e.get("PORTAL_WALL_MONITOR_OPTS")
+        self.wall_fleet = self.wall and isinstance(monitor, dict)
+        self.wall_fleet_notes, self.wall_fleet_why = [], ""
+        if self.wall_fleet:
+            try:
+                if wall_fleet is None:
+                    raise ValueError("monitor reader is missing from the service files - deploy again")
+                self.wall_fleet_opts, self.wall_fleet_notes = wall_fleet.opts_of(monitor)
+                if not self.wall_fleet_opts["swis_url"]:
+                    self.wall_fleet_why = 'no SolarWinds address: attach the "SolarWinds (read-only)" credential on Site portal - deploy'
+                elif not (self.swis_user and self.swis_password):
+                    self.wall_fleet_why = 'no SolarWinds login: attach the "SolarWinds (read-only)" credential on Site portal - deploy'
+                elif site_swis is None:
+                    self.wall_fleet_why = "the SolarWinds reader is missing"
+            except Exception as err:
+                self.wall_fleet = False
+                self.wall_fleet_notes.append("Ops monitor off: " + clean(str(err), 120))
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -6118,7 +6110,7 @@ class SwisSource(object):
     def _client(self):
         c = self.cfg
         if self.client is None or self.client.url != site_swis.base_url(c.swis_url):     # https only, no login in it (else: said, stale)
-            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, ca_path=c.swis_ca, timeout=c.swis_timeout)
+            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
         return self.client
 
     def read_full(self):
@@ -6707,7 +6699,7 @@ class AdLive(ReportIndex):
     def _swis(self, live):
         c = self.cfg
         if self.client is None or self.client.url != site_swis.base_url(c.swis_url):
-            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, ca_path=c.swis_ca, timeout=c.swis_timeout)
+            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
         mx = (c.netmap_opts or {}).get("max_nodes") or 20000
         return site_ad_swis.from_live(live.get("dcs") or [], {"page": 1000, "max_nodes": mx, "by_node_id": True}, self.client)
 
@@ -7193,7 +7185,8 @@ def netapp_page(cfg, cn, statics, token=""):
 
 
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
-WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js", "wall-fleet.js", "wall-fleet.css")
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
+FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
 LOOKS_STATIC = ("portal-looks.js",)
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
@@ -7265,9 +7258,6 @@ def wall_sources(cfg, log=None, why=None):
     return src
 
 
-_wall_sequence = count(1)
-
-
 class WallLive(object):
     """The wall's answer: the live collector (wall_live.Collector: started here, reads every portal_wall_seconds whether or not
     anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
@@ -7278,24 +7268,12 @@ class WallLive(object):
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
-        # 1.136.0: Ops monitor - SolarWinds read by its own thread (never the vCenter collector's), while the wall is open
-        self.fleet, self.fleet_key, self.fleet_model, self.fleet_since = fleet, None, None, None
-        self.fleet_body = ""
+        self.fleet = None
         notes = getattr(cfg, "wall_fleet_notes", [])
         for note in notes if isinstance(notes, list) else []:
             _safe_add(log, {"event": "wall", "fleet": "setting", "why": note})
-        if getattr(cfg, "wall_fleet", False) is True and wall_fleet is not None:
-            if self.fleet is None and not cfg.wall_fleet_why:
-                box = {}
-
-                def client():
-                    c = box.get("c")
-                    if c is None or c.url != site_swis.base_url(cfg.wall_monitor_swis_url):
-                        c = box["c"] = site_swis.Client(cfg.wall_monitor_swis_url, cfg.swis_user, cfg.swis_password, verify=cfg.swis_verify, ca_path=cfg.swis_ca, timeout=cfg.swis_timeout)
-                    return c
-                self.fleet = wall_fleet.Reader(client, cfg.wall_fleet_opts, log=lambda d: _safe_add(log, d), auth_retry=cfg.wall_auth_retry)
-            if self.fleet is not None:
-                self.fleet_since = wall_fleet.Since(os.path.join(cfg.data, "wall-fleet-since.json"), log=lambda d: _safe_add(log, d))
+        if getattr(cfg, "wall_fleet", False) is True:
+            self.fleet = wall_fleet.Board(cfg, lambda d: _safe_add(log, d), reader=fleet)
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
         for k in (bad if isinstance(bad, list) else []):
@@ -7317,7 +7295,7 @@ class WallLive(object):
                 try:
                     self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
                                                          log=lambda d: _safe_add(log, dict({"event": "wall"}, **d)), keep_seconds=keep,
-                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"))
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), fleet=cfg.wall_fleet)
                     self.collector.start()
                 except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
                     why = "collector not started: " + clean(str(e), 200)
@@ -7331,46 +7309,13 @@ class WallLive(object):
     def viewed(self):
         if self.nal is not None:
             self.nal.viewed()
-        if self.fleet is not None:
-            self.fleet.viewed()
-
-    def fleet_of(self, view, now):
-        """Cache the join under self.lock until a source changes or the first freshness deadline."""
-        if self.fleet is None:
-            return None
-        snap = self.fleet.snapshot()
-        vcs = tuple(sorted((k, s.get("at"), s.get("state")) for k, s in ((view or {}).get("sources") or {}).items()
-                           if isinstance(s, dict) and s.get("kind") == "vcenter"))
-        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"),
-               snap.get("groups_why"), snap.get("groups_at"), snap.get("groups_tried"), vcs)
-        expiry = (self.fleet_model or {}).get("next_expiry")
-        if key != self.fleet_key or self.fleet_model is None or (expiry is not None and now >= expiry):
-            self.fleet_model = wall_fleet.model(snap, view, self.cfg.wall_fleet_opts, now, since=self.fleet_since)
-            self.fleet_key, self.fleet_body = key, ""
-        return self.fleet_model
-
-    def fleet_answer(self):
-        """/api/wall/fleet: the area's nodes (compact; static/wall-fleet.js reads it) as a full JSON response"""
-        with self.lock:
-            now = time.time()
-            view = self.collector.view() if self.collector is not None else None
-            fm = self.fleet_of(view, now)
-            seq = next(_wall_sequence)
-            if fm is None:
-                return 404, json.dumps({"seq": seq, "error": "The Ops monitor is off here: %s." % (self.cfg.wall_fleet_why or "portal_wall_monitor is false")})
-            if not self.fleet_body:
-                fields = dict(fm, zone=self.cfg.tz_name or "UTC", title=self.cfg.wall_title, enclave=self.cfg.wall_enclave)
-                del fields["now"]
-                self.fleet_body = json.dumps(fields, separators=(",", ":"), ensure_ascii=True, default=str)[1:]
-            return 200, '{"now":%s,"seq":%d,%s' % (now, seq, self.fleet_body)
 
     def follow(self):
         """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""
         while True:
             time.sleep(self.cfg.wall_opts["seconds"])
             try:
-                if self.nal is not None:
-                    self.nal.viewed()
+                self.viewed()
                 self.model()
             except Exception as e:  # pylint: disable=broad-except  - never kills the thread: said in the log
                 _safe_add(self.log, {"event": "wall", "model": "not made", "why": clean(str(e), 200)})
@@ -7390,37 +7335,39 @@ class WallLive(object):
         at = ad_when((m.get("run") or {}).get("read_at"))
         return m, at, stale or ""               # a failed refresh is said on the path card (the DB is never a light on the wall)
 
-    def model(self, now=None, sequenced=False):
+    def model(self, now=None, monitor=True):
+        nm, at, why = self.netapp()
         with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
-            nm, at, why = self.netapp()
             now = time.time() if now is None else now      # enters the tracker after a newer one
             view = self.collector.view() if self.collector is not None else None
-            fm = WallLive.fleet_of(self, view, now) if getattr(self, "fleet", None) is not None else None
-            model = wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
-                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None), fleet=fm,
-                                    fleet_why=(getattr(self.cfg, "wall_fleet_why", "") if getattr(self.cfg, "wall_fleet", False) is True and fm is None else ""))
-            if sequenced:
-                model["seq"] = next(_wall_sequence)
-            return model
+            if monitor and getattr(self, "fleet", None) is not None:
+                fm = self.fleet.model(view, now)
+                return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
+                                        title=self.cfg.wall_title, nm_why=why, off_why=self.no_source,
+                                        fleet=fm, fleet_why=self.cfg.wall_fleet_why)
+            return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
+                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
 
     def summary(self, now=None):
         """1.135.0: the areas in short (wall_model.summary) - the same rule as the wall: stale is never green"""
         now = time.time() if now is None else now
-        out = wall_model.summary(self.model(now), now)
+        base = self.model(now, monitor=False) if getattr(self, "fleet", None) is not None else self.model(now)
+        out = wall_model.summary(base, now)
         out["zone"] = self.cfg.tz_name or "UTC"
         return out
 
     def answer(self, etag_in="", cn=""):
-        m = self.model(sequenced=True)
+        m = self.model()
         m["me"] = {"feedback": wall_may_feedback(self.cfg, cn), "reader": wall_may_read_feedback(self.cfg, cn),
                    "areas": [list(x) for x in FEEDBACK_AREAS], "max": FEEDBACK_MAX}
         m["auth_retry"] = self.cfg.wall_auth_retry
         m["zone"] = self.cfg.tz_name or "UTC"
         m["poll"] = 30
         m["full"] = {"storage": (self.cfg.path + "netapp") if self.cfg.netapp else ""}
-        body = json.dumps(m, separators=(",", ":"), ensure_ascii=True, default=str)
-        tag = '"%s"' % hashlib.sha256(body.encode("utf-8")).hexdigest()[:20]
-        return 200, body, tag
+        body = json.dumps(m, separators=(",", ":"), ensure_ascii=False, default=str)
+        # the ETag leaves out "now" (it moves every second; the page works the ages out itself)
+        tag = '"%s"' % hashlib.sha256(re.sub(r'^\{"now":[0-9.]+,', "{", body).encode("utf-8")).hexdigest()[:20]
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
 
 
 FEEDBACK_AREAS = (("general", "The wall in general"), ("overview", "Overview"), ("storage", "Storage"), ("vmware", "VMware"), ("vdi", "VDI"),
@@ -7550,16 +7497,17 @@ def wall_page(cfg, cn, statics, token=""):
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
-            '<script src="%sstatic/wall-styles.js?v=%s" defer></script><script src="%sstatic/wall-fleet.js?v=%s" defer></script>'
-            '<script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-styles.js?v=%s" defer></script>%s<script src="%sstatic/wall-page.js?v=%s" defer></script>'
             % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
                (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
                ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
-               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"), cfg.path, v("wall-fleet.js"), cfg.path, v("wall-page.js")))
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"),
+               ('<script src="%sstatic/wall-fleet.js?v=%s" defer></script>' % (cfg.path, v("wall-fleet.js"))) if cfg.wall_fleet else "",
+               cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
                  head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s"><link rel="stylesheet" href="%sstatic/wall-styles.css?v=%s">'
-                 '<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">'
-                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css"), cfg.path, v("wall-fleet.css")))
+                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")) +
+                 (('<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">' % (cfg.path, v("wall-fleet.css"))) if cfg.wall_fleet else ""))
 
 
 def make_handler(cfg, portal, static_dir, wall=None):
@@ -7574,7 +7522,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + LOOKS_STATIC + ("admin.css", "admin.js"):
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + (FLEET_STATIC if cfg.wall_fleet else ()) + LOOKS_STATIC + ("admin.css", "admin.js"):
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -7833,28 +7781,24 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
                     return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
-            if path == "/api/wall/fleet":                   # 1.136.0: the Ops monitor area's nodes (static/wall-fleet.js)
-                if not wall:
-                    return self._send(404, {"seq": next(_wall_sequence), "error": "The wall is off here (portal_wall: false)."})
-                wall.viewed()
-                try:
-                    code, body = wall.fleet_answer()
-                except Exception as e:  # pylint: disable=broad-except  - the area says "not reachable", never a stale green
-                    portal.log.add({"event": "wall", "fleet": "not made", "why": clean(str(e), 200)})
-                    return self._send(503, {"seq": next(_wall_sequence), "error": "The Ops monitor area's answer could not be made (the portal's log says why)."})
+            if path == "/api/wall/fleet" and wall and getattr(wall, "fleet", None) is not None:
+                with wall.lock:
+                    code, body = wall.fleet.answer(wall.collector)
                 return self._send(code, body, "application/json")
             if path in ("/wall", "/api/wall"):
                 if not wall:
                     return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),
-                                      "text/html; charset=utf-8") if path == "/wall" else self._send(404, {"seq": next(_wall_sequence), "error": "The wall is off here (portal_wall: false)."})
+                                      "text/html; charset=utf-8") if path == "/wall" else self._send(404, {"error": "The wall is off here (portal_wall: false)."})
                 wall.viewed()
+                if getattr(wall, "fleet", None) is not None:
+                    wall.fleet.viewed()
                 if path == "/wall":
                     return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 try:
                     code, body, etag = wall.answer((self.headers.get("If-None-Match") or "").strip(), cn)
                 except Exception as e:  # pylint: disable=broad-except  - the page says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "answer": "not made", "why": clean(str(e), 200)})
-                    return self._send(503, {"seq": next(_wall_sequence), "error": "The wall's answer could not be made (the portal's log says why)."})
+                    return self._send(503, {"error": "The wall's answer could not be made (the portal's log says why)."})
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             if path == "/api/ad":
                 if not adl:

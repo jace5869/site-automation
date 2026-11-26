@@ -1225,6 +1225,8 @@ no longer in the latest read, they say when it was last seen.
 
 ### Ops monitor (1.136.0)
 
+**The preview is off by default.** The default deploy keeps the same files and answers as 1.135.1, apart from two wall script version hashes. The Actions page stays the same.
+
 **To set up** this opt-in preview, set `portal_wall_monitor: true` and run **Site portal - deploy** with the **SolarWinds (read-only)** credential.
 
 A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
@@ -1278,8 +1280,8 @@ on the portal's data volume through a restart).
 - Each service uses the earliest member deadline and counts every listed member, including missing members beyond
   the display limit. Any unknown member makes the service stale. All up or off with at least one up is OK.
   Group membership expires 15 minutes plus two monitor read intervals after it was read. Expired membership makes
-  the services stale and blocks recovery. All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The overview,
-  Actions tiles, dialogs and shares age the server verdict on their own clocks between refreshes.
+  the services stale and blocks recovery. All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The wall overview,
+  dialogs and node shares age the server verdict on their own clocks between refreshes.
 - A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
   a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
@@ -1294,14 +1296,14 @@ on the portal's data volume through a restart).
 **Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,
 SWQL SELECTs only (`Orion.Nodes`: NodeID, Caption, DNS, IPAddress, Status, StatusDescription, Vendor, MachineType,
 ResponseTime, PercentLoss, UnManaged, LastSync; `Orion.Container` and `Orion.ContainerMembers` for the groups, every
-15 min), every `portal_wall_monitor_seconds` while the wall or the Actions page is open, in a thread of its own (a refused
+15 min), every `portal_wall_monitor_seconds` while the wall is open, in a thread of its own (a refused
 SolarWinds login never stops a vCenter login, and waits `portal_wall_auth_retry_minutes` before the next try). vCenter: the
-wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.hostName`). The page reads
+wall's own collector (only with the monitor on does it read each VM's `guest.ipAddress` and `guest.hostName`). The page reads
 `/portal/api/wall/fleet` every 30 s.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `portal_wall_monitor` | `false` | Enable the preview with `true`. Explicit `auto` enables it when the SolarWinds credential is configured. |
+| `portal_wall_monitor` | `false` | Enable the preview with `true`. |
 | `portal_wall_monitor_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
 | `portal_wall_monitor_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
 | `portal_wall_monitor_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
@@ -1309,7 +1311,28 @@ wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.h
 | `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
 | `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
 
-The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* or *Ops monitor off (why)*.
+The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. It stays the same with the monitor off.
+The monitor's CA goes to its reader only. The shared trust bundle stays the same.
+
+#### Known limits until 1.136.1
+
+- Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
+- A slow node read gives an early observation extra time before it expires.
+- Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.
+- A large Teams preview can redraw when unrelated polls expire.
+- Refreshing a list can move keyboard focus off its controls.
+- A node card can show the last page's time for a node read on an earlier page.
+- After a board request fails, Overview can stay grey until someone reopens the board.
+- The Actions page and its Atlas map have no monitor tile. The wall shows an all-unmanaged group as *no monitored nodes*.
+- A shared group condition can still say critical after a member's poll expires.
+- A VM match can look unique while another vCenter is offline.
+- A container count exactly at the limit can mark a complete read as cut.
+- An expired comparison can leave a vCenter-only square on the canvas that still opens its card.
+- The board and Overview poll separately. A newer critical Overview response no longer makes the board stale by its sequence alone.
+- *What the wall watches* can label a SolarWinds monitor condition as vCenter.
+- The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
+- A cleared group share can still show recovery when the board has already seen the outage reopen.
+- On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
 
 ### Make a screen the ops wall (1.135.0)
 

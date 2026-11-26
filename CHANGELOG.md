@@ -2,6 +2,8 @@
 
 ## 1.136.0 — 2026-11-26
 
+**Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.
+
 **To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
 Network map uses - nothing new to create). Set `portal_wall_monitor: true` to enable the preview. Optional: group by a
 node custom property instead of SolarWinds' groups (`portal_wall_monitor_group_by: custom:ServiceGroup`), show only some
@@ -23,25 +25,31 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
   Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile alongside the existing areas.
 - SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
   60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
-  vCenter read now also takes each VM's guest IP and host name (for the match). The SolarWinds login and its CA are
-  deployed when the network map or the Ops monitor area is on.
-- The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* or *Ops monitor off (why)*.
+  vCenter read takes each VM's guest IP and host name only with the monitor on. The map and monitor share the login.
+  The monitor's CA goes to its reader only. The shared trust bundle stays the same.
+- The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. The line stays the same with the preview off.
 - Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
   stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
 
 ### Known limits (to 1.136.1)
 
-- **P1 #8.** Membership can lag a group change by 15 minutes plus two read intervals. A newly added down node can be missing from a green service during that time.
-- **P1 #9 and #10.** Treat SolarWinds and vCenter observations as of the read's start. A slow read can give an old node status extra time on the wall or make an old VM heartbeat look recent in Teams.
-- **P2 #1.** A large Teams preview can redraw repeatedly as unrelated polls expire.
-- **P2 #2.** Refreshing an open list can move keyboard focus away from its controls.
-- **P2 #3.** A node card or Teams share can give the last page's read time for a node on an earlier page.
-- **P2 #4.** After a fleet request fails, Overview can stay grey until the board is opened and its next request succeeds.
-- **P2 #5.** An all-unmanaged area can appear unconfigured on the Atlas map and link to Overview.
-- **P2 #6.** A shared group condition can still say critical after a member's poll expires.
-- **P2 #7.** When a vCenter is offline, a matching VM in another vCenter can appear unique even if both now contain it.
-- **P2 #8.** Exactly as many containers as the configured limit can make a complete read appear incomplete.
-- **P2 #9.** The canvas can still open a vCenter-only VM after an expired poll has cleared the comparison count.
+- Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
+- A slow node read gives an early observation extra time before it expires.
+- Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.
+- A large Teams preview can redraw when unrelated polls expire.
+- Refreshing a list can move keyboard focus off its controls.
+- A node card can show the last page's time for a node read on an earlier page.
+- After a board request fails, Overview can stay grey until someone reopens the board.
+- The Actions page and its Atlas map have no monitor tile. The wall shows an all-unmanaged group as *no monitored nodes*.
+- A shared group condition can still say critical after a member's poll expires.
+- A VM match can look unique while another vCenter is offline.
+- A container count exactly at the limit can mark a complete read as cut.
+- An expired comparison can leave a vCenter-only square on the canvas that still opens its card.
+- The board and Overview poll separately. A newer critical Overview response no longer makes the board stale by its sequence alone.
+- *What the wall watches* can label a SolarWinds monitor condition as vCenter.
+- The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
+- A cleared group share can still show recovery when the board has already seen the outage reopen.
+- On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
 
 ## 1.135.1 — 2026-11-26
 

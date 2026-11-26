@@ -14,11 +14,10 @@
   var TEST = root.getAttribute("data-test") === "1";
   var FREEZE = TEST && QS.get("freeze") === "1";
   var MIN = 60000;
-  var requestId = 0, lastOutcome = 0, lastFailure = 0, lastSeq = 0;
-  var W = null, receipt = 0, BY = {}, ETAG = "", LOADED = false;
+  var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false;
   // the portal itself not answering (a restart, the network): after FAILS_MAX failed reads every source counts as not current
   var FAILS = 0, FAILS_MAX = 1, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
-  function NOW() { return W ? W.now * 1000 + (FREEZE ? 0 : performance.now() - receipt) : Date.now(); }
+  function NOW() { return FREEZE && W ? W.now * 1000 : Date.now() + SKEW; }
 
   // ---------------------------------------------------------------- DOM helpers (text only, never HTML)
   var NS = "http://www.w3.org/2000/svg";
@@ -66,11 +65,9 @@
     ad: [["circle", {cx: 9, cy: 8, r: 3.2}], P("M3 20c.6-3.4 3-5.3 6-5.3s5.4 1.9 6 5.3"), ["circle", {cx: 17, cy: 9, r: 2.4}], P("M16.5 14.2c2.4.2 4 1.8 4.5 4.6")],
     vdi: [["rect", {x: 3, y: 4, width: 18, height: 12, rx: 1.5}], P("M8 20h8M12 16v4"), P("M7.5 10.5l2.5-2.5 2.5 2.5 4-4")],
     tickets: [P("M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 000 4v2a2 2 0 00-2 2H5a2 2 0 00-2-2v-2a2 2 0 000-4z"), P("M9.5 6v12", {"stroke-dasharray": "2 2"})],
-    list: [P("M4 6h16M4 12h16M4 18h10")],
-    monitor: [["rect", {x: 3, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 3, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 3, width: 5, height: 5, rx: 1}],
-            ["rect", {x: 3, y: 9.5, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 9.5, width: 5, height: 5, rx: 1}], ["circle", {cx: 18.5, cy: 12, r: 3}],
-            ["rect", {x: 3, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 16, width: 5, height: 5, rx: 1}]]
+    list: [P("M4 6h16M4 12h16M4 18h10")]
   };
+  if (globalThis.SAWallFleet) AREA_IC.monitor = globalThis.SAWallFleet.icon;
   function icon(list, vb, cls) {
     var e = s("svg", {viewBox: vb || "0 0 24 24", "aria-hidden": "true", "class": cls || null});
     list.forEach(function (x) { e.appendChild(s(x[0], x[1])); });
@@ -130,7 +127,6 @@
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
     function arr(x) { return Array.isArray(x) ? x : []; }
-    receipt = performance.now();
     a.noConds = !Array.isArray(a.conds);                  // Codex r5 #16: no condition list at all - nothing is known, nothing green
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
@@ -226,7 +222,7 @@
     if (id === "monitor") {
       var f = W.fleet;
       return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f &&
-        !(window.SAWallFleet && window.SAWallFleet.supersedes(W.seq, f.state)) && feedFresh("sw:fleet") === "ok" &&
+        feedFresh("sw:fleet") === "ok" &&
         Number.isFinite(f.valid_until) && NOW() < f.valid_until * 1000 ? f.state : "stale";
     }
     if (W.noConds) return "stale";
@@ -432,17 +428,15 @@
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
     de.classList.toggle("screen", screenOn());
-    de.classList.toggle("area-monitor", S.area === "monitor");
+    if (globalThis.SAWallFleet) de.classList.toggle("area-monitor", S.area === "monitor");
     if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
     // 1.136.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
-    if (S.area === "monitor") {
-      if (window.SAWallFleet) window.SAWallFleet.render(API, stage);
-      else stage.appendChild(h("p", "note warn", ["The Ops monitor area's script did not load - reload the page."]));
-    } else RENDER[S.style](stage);
+    if (monArea()) window.SAWallFleet.render(API, stage);
+    else RENDER[S.style](stage);
     if (screenOn()) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
       " since " + hms(UNREACH_SINCE) + " - every value below is the last known one and not current. The page keeps trying every " + ((W && W.poll) || 30) + " s."],
@@ -450,25 +444,23 @@
     LASTF = freshSig();
     if (openRef && openRef !== "fb:") openDetail(openRef, true);
     if (QS.get("check") === "1") setTimeout(function () {
-      var bx = stage.querySelector(".wx");
-      root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth,
-        sh: document.documentElement.scrollHeight, ih: innerHeight, stage: stage.clientHeight, board: bx ? bx.getBoundingClientRect().height : null,
-        btop: bx ? bx.getBoundingClientRect().top : null})); }, 300);
+      root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth})); }, 300);
   }
-  function canonicalArea(id) { return id === "fleet" ? "monitor" : id; }
+  function canonicalArea(id) { return id === "fleet" && globalThis.SAWallFleet ? "monitor" : id; }
   function setArea(id) {
     id = canonicalArea(id);
     if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview";
     S.area = id; S.site = ""; closePops(); closeDetail(); render();
   }
   // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
-  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || S.area === "monitor"); }
+  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || monArea()); }
+  function monArea() { return S.area === "monitor" && !!window.SAWallFleet; }   // only with the monitor on (its script loaded)
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
   function setKiosk(on, user) {
     document.body.classList.toggle("kiosk", on);
-    if (screenOn()) fitScreen();                         // 1.135.0: the board takes the room the page now leaves
+    if (SCREEN[S.style] || monArea()) fitScreen(); // 1.135.0: the board takes the room the page now leaves
     if (user) { try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* not allowed here */ } }
   }
   var ROT = {on: false, mode: "styles", every: 60, left: 60, resumeAt: 0}, IDLE_RESUME = 20;
@@ -565,8 +557,8 @@
       tip.classList.remove("on");
     });
     var rt;
-    document.addEventListener("fullscreenchange", function () { if (screenOn()) fitScreen(); });
-    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && S.area !== "monitor") render(); else if (screenOn()) fitScreen(); }, 150); });
+    document.addEventListener("fullscreenchange", function () { if (SCREEN[S.style] || monArea()) fitScreen(); });
+    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && !monArea()) render(); else if (SCREEN[S.style] || monArea()) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
     clear(tip);
@@ -830,8 +822,9 @@
   function dsFeed() { return vcFeed(); }
   function vcFeed() { return oldest(((W.vmware || {}).vcenters || []).map(function (x) { return x.feed; })); }
   function openDetail(ref, again) {
+    // 1.135.0: Share to Teams open: a refresh keeps it (its text and picture are a snapshot) - the card is redrawn on the next open
+    if (again && card.querySelector(".share")) return;
     var i = ref.indexOf(":"), kind = ref.slice(0, i), key = ref.slice(i + 1);
-    if (again && kind === "c" && BY[key] && card.querySelector(".share")) { openShare(key); return; }
     if (kind === "ds") { openDs(key, again); return; }
     var m = DET[kind] ? DET[kind](key) : null;
     clear(card);
@@ -1185,7 +1178,7 @@
     b.style.height = (hh / k) + "px";
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
-    if (S.area === "monitor" && window.SAWallFleet) window.SAWallFleet.fitted(k);
+    if (monArea()) window.SAWallFleet.fitted(k);
   }
   // Share to Teams over the detail card: a snapshot; closing it draws the card again from the latest read
   function openShare(id) {
@@ -1223,9 +1216,11 @@
     level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
     unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
     dsRef: dsRef, cond: function (id) { return BY[id] || null; }, condFeed: condFeed, lastKnown: lastKnown, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
-    src: SRC, test: TEST, frozen: function () { return FREEZE; }, qs: QS, idleResume: IDLE_RESUME, styleName: function () { return STYLE_NAME[S.style]; },
     share: function (id) { if (!BY[id]) return; openDetail("c:" + id); openShare(id); }
   };
+  if (globalThis.SAWallFleet) Object.assign(API, {
+    src: SRC, test: TEST, frozen: function () { return FREEZE; }, qs: QS, idleResume: IDLE_RESUME, styleName: function () { return STYLE_NAME[S.style]; }
+  });
   ["strata", "relay", "metro"].forEach(function (st) {
     RENDER[st] = function (r) {
       if (S.area === "watch") { add(r, [h("div", "kmain", [khead("What the wall watches"), h("div", "panel", [watchEl()])])]); return; }   // the setup list, as in Cockpit
@@ -1638,37 +1633,20 @@
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;
   })();
   function load(first) {
-    var mine = ++requestId, tag = "";
     var hd = {Accept: "application/json"};
     if (ETAG && !first) hd["If-None-Match"] = ETAG;
     return fetch(SRC, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      if (res.status === 304) {
-        if (mine < lastOutcome) return undefined;
-        if (!ETAG || hd["If-None-Match"] !== ETAG) throw new Error("unconfirmed cached response");
-        lastOutcome = mine;
-        return undefined;
-      }
-      if (!res.ok) {
-        var error = new Error("HTTP " + res.status);
-        if (!res.json) throw error;
-        return res.json().then(function (a) { error.seq = a && a.seq; throw error; });
-      }
-      tag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
+      if (res.status === 304) return null;
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      ETAG = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (a) {
-      if (a === undefined) return;
-      if (!a || !Number.isFinite(a.now)) throw new Error("invalid wall response");
-      if (mine < lastFailure) return;
-      if (Number.isSafeInteger(a.seq)) {
-        if (a.seq < lastSeq) return;
-        lastSeq = a.seq;
-      } else if (lastSeq || mine < lastOutcome) return;
-      lastOutcome = Math.max(lastOutcome, mine);
-      var keepScroll = window.scrollY;
-      W = adapt(a);
-      ETAG = tag;
       FAILS = 0;
-      UNREACH = false;
+      if (UNREACH) { UNREACH = false; if (!a && W) { render(); return; } }
+      if (!a) return;
+      var keepScroll = window.scrollY;
+      if (a.now && !FREEZE) SKEW = a.now * 1000 - Date.now();
+      W = adapt(a);
       setZone(W.zone || "UTC");
       if (!LOADED) {
         LOADED = true;
@@ -1681,13 +1659,6 @@
       window.scrollTo(0, keepScroll);
       root.setAttribute("data-ready", "1");
     }).catch(function (e) {
-      if (mine < lastOutcome) return;
-      if (e && Number.isSafeInteger(e.seq)) {
-        if (e.seq < lastSeq) return;
-        lastSeq = e.seq;
-      }
-      lastFailure = lastOutcome = mine;
-      ETAG = "";
       if (!LOADED) { clear(root); root.appendChild(h("p", "note warn", ["The wall could not be read: " + e.message + ". It tries again in 30 s."])); }
       else {
         try { console.error("wall: " + (e && e.stack || e)); } catch (x) { /* no console */ }

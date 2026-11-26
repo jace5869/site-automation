@@ -2,7 +2,7 @@
 SolarWinds watches, up or down, grouped by service, compared with what vCenter says of the same VM.
 
   Reader   reads SolarWinds itself (plugins/module_utils/site_swis.py: one SWQL SELECT per call, never anything else) every
-           portal_wall_monitor_seconds while the wall (or the Actions page's Ops center) is open: Orion.Nodes (status, response,
+           portal_wall_monitor_seconds while the wall is open: Orion.Nodes (status, response,
            loss, last poll) every read; the groups (Orion.Container, Orion.ContainerMembers) every GROUPS_EVERY s. Its own
            thread - never the vCenter collector's (a SolarWinds refusal never stops a vCenter login, a slow Orion never
            delays one). A refused login waits auth_retry s; any other failure backs off. The last good read is kept (grey).
@@ -48,17 +48,17 @@ ROW = ["group", "name", "ip", "code", "response_ms", "loss_pct", "since", "since
 
 
 def opts_of(o):
-    """the Ops monitor settings (PORTAL_WALL_OPTS monitor_*) with their defaults -> (opts, [what was wrong])"""
+    """the Ops monitor settings (PORTAL_WALL_MONITOR_OPTS) with their defaults -> (opts, [what was wrong])"""
     if not isinstance(o, dict):
         return dict(DEFAULTS), ["monitor settings need an object; defaults used"]
     out, bad = dict(DEFAULTS), []
     for key, low, high in (("seconds", 60, 3600), ("max_nodes", 100, 50000), ("poll_stale_minutes", 5, 1440)):
-        value = o.get("monitor_" + key, DEFAULTS[key])
+        value = o.get(key, DEFAULTS[key])
         if type(value) is int:
             out[key] = max(low, min(high, value))
         else:
             bad.append("portal_wall_monitor_%s needs an integer; default used" % key)
-    gb = o.get("monitor_group_by", "groups")
+    gb = o.get("group_by", "groups")
     gb = gb.strip() if isinstance(gb, str) else ""
     if gb.lower() == "groups":
         out["group_by"] = "groups"
@@ -66,13 +66,18 @@ def opts_of(o):
         out["group_by"] = "custom:" + gb.split(":", 1)[1].strip()
     else:
         bad.append("portal_wall_monitor_group_by is groups or custom:<a node custom property> (letters, digits and _): %r - groups used" % gb[:64])
-    for k, d in (("groups", "monitor_groups"), ("vm_match", "monitor_vm_match")):
-        v = o.get(d, DEFAULTS[k])
+    for k in ("groups", "vm_match"):
+        v = o.get(k, DEFAULTS[k])
         if isinstance(v, list) and all(isinstance(y, str) for y in v):
             seen = set()                        # once each, any case (a duplicate would draw an empty tile)
-            out[k] = [x for x in (y.strip()[:200] for y in v) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
+            out[k] = [x for x in (_txt(y, 200) for y in v) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
         else:
             bad.append("portal_wall_monitor_%s needs a list of strings; default used" % k)
+    for key in ("swis_url", "ca"):
+        value = o.get(key, "")
+        if not isinstance(value, str):
+            raise ValueError("%s needs a string" % key)
+        out[key] = value.strip()
     return out, bad
 
 
@@ -90,7 +95,12 @@ def _num(v):
 
 
 def _txt(v, n=MAX_TEXT):
-    return re.sub(r"[\x00-\x1f\x7f]+", " ", str(v if v is not None else "")).strip()[:n]
+    v = re.sub(r"[\ud800-\udfff]", "\ufffd", str(v if v is not None else ""))
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", v).strip()[:n]
+
+
+def valid_id(value):
+    return type(value) is int and value > 0 or isinstance(value, str) and bool(re.fullmatch(r"[1-9][0-9]{0,9}", value))
 
 
 def epoch(v):
@@ -116,6 +126,23 @@ def epoch(v):
     return float(sec)
 
 # ---- the reads ------------------------------------------------------------------------------------------------------------
+def _cap_rows(rows, cap):
+    if len(rows) <= cap:
+        return rows
+    kept = rows[:cap]
+    # Model inputs can also be supplied directly, without the SWQL paging reader.
+    owners = {str(r["NodeID"]): i for i, r in enumerate(kept) if isinstance(r, dict) and valid_id(r.get("NodeID"))}
+    for row in rows[cap:]:
+        if not isinstance(row, dict) or not valid_id(row.get("NodeID")):
+            continue
+        i = owners.get(str(row["NodeID"]))
+        if i is not None:
+            if kept[i] is rows[i]:
+                kept[i] = dict(kept[i], _duplicate=True, _claimed_groups=list(kept[i].get("_claimed_groups", ())))
+            kept[i]["_claimed_groups"].append(_txt(row.get("cp_group"), 120))
+    return kept
+
+
 def read_nodes(client, o, prop="", refused=None, clock=time.time):
     """-> (rows, cut, [not read]). Orion.Nodes, named columns only, paged; an optional column this Orion refuses is left out
     (said) - and, with refused (a set kept by the caller), not asked again at the next reads. prop: a node custom property
@@ -132,20 +159,39 @@ def read_nodes(client, o, prop="", refused=None, clock=time.time):
             extra.append(("N.CustomProperties.%s AS cp_group" % prop, "cp_group", "custom property %s" % prop))
     def pages(columns):
         fields = ", ".join(NODE_COLS + [x[0] for x in columns])
-        rows, last = [], -1
+        rows, last, overlap = [], -1, 0
         cap = o["max_nodes"]
         while True:
-            size = min(o["page"], cap + 1 - len(rows))
-            query = "SELECT TOP %d %s FROM Orion.Nodes N WHERE N.NodeID > @last ORDER BY N.NodeID" % (size, fields)
+            # Re-read the trailing ID. Its complete set may straddle the previous limit.
+            size = min(o["page"] + int(bool(overlap)), cap + 1 - len(rows) + overlap)
+            op = ">=" if overlap else ">"
+            query = "SELECT TOP %d %s FROM Orion.Nodes N WHERE N.NodeID %s @last ORDER BY N.NodeID" % (size, fields, op)
             page = client.query(query, {"last": last})
             at = clock()
+            if overlap and page and isinstance(page[0], dict) and str(page[0].get("NodeID")) == str(last):
+                del rows[-overlap:]
             rows.extend(dict(r, _read_at=at) if isinstance(r, dict) else r for r in page)
-            if len(rows) > cap or len(page) < size:
-                return rows[:cap], len(rows) > cap, notes
-            cursor = page[-1].get("NodeID") if isinstance(page[-1], dict) else None
-            if type(cursor) is not int or cursor <= last:
+            cursor = page[-1].get("NodeID") if page and isinstance(page[-1], dict) else None
+            boundary_only = overlap and valid_id(cursor) and int(cursor) == last
+            if boundary_only:
+                rows[-1]["_duplicate"] = True
+            if len(rows) > cap or (len(page) < size and not boundary_only):
+                return _cap_rows(rows, cap), len(rows) > cap, notes
+            if not valid_id(cursor) or int(cursor) < last:
                 return rows, True, notes
-            last = cursor
+            if boundary_only and len(page) == size and any(col[1] == "cp_group" for col in columns):
+                # Other rows with this same ID cannot be paged by ID. Only their group names
+                # can change the verdict: every service claimed by this duplicate is grey.
+                claims = client.query("SELECT DISTINCT N.CustomProperties.%s AS cp_group FROM Orion.Nodes N "
+                                      "WHERE N.NodeID = @last" % prop, {"last": last})
+                rows[-1]["_claimed_groups"] = [_txt(r.get("cp_group"), 120) for r in claims]
+            overlap = 0
+            if int(cursor) != last:
+                for row in reversed(page):
+                    if not isinstance(row, dict) or str(row.get("NodeID")) != str(cursor):
+                        break
+                    overlap += 1
+            last = int(cursor)
 
     try:
         return pages(extra)
@@ -173,9 +219,9 @@ def read_groups(client, o):
         raise site_swis.SwisError("this Orion has no groups (Orion.Container / Orion.ContainerMembers)", "query")
     cap = o["max_nodes"]
     groups, gcut = client.paged("SELECT ContainerID, Name, Status FROM Orion.Container", "ContainerID", None, o["page"], cap)
-    group_ids = {str(g.get("ContainerID")) for g in groups}
-    def valid_id(value):
-        return type(value) is int and value > 0 or isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,9}", value)
+    valid_groups = [g for g in groups if isinstance(g, dict) and valid_id(g.get("ContainerID"))]
+    gcut = gcut or len(valid_groups) != len(groups)
+    group_ids = {str(g["ContainerID"]) for g in valid_groups}
     members, mcut = [], False
     params = {"types": ["Orion.Nodes"]}
     predicate = ""
@@ -212,7 +258,7 @@ def read_groups(client, o):
         by.setdefault(str(nid), [])
         if gid not in by[str(nid)]:
             by[str(nid)].append(gid)
-    return {"list": [[g.get("ContainerID"), _txt(g.get("Name"), 120), g.get("Status")] for g in groups if g.get("ContainerID") is not None],
+    return {"list": [[g.get("ContainerID"), _txt(g.get("Name"), 120), g.get("Status")] for g in valid_groups],
             "members": by, "cut": bool(gcut or mcut)}
 
 
@@ -427,18 +473,18 @@ def vcenter_vms(view, now, late=LATE_S):
             continue
         at = _num(s.get("at"))
         cur = s.get("state") == "ok" and at is not None and now < at + late
-        vcs.append([_txt(s.get("name") or k, 120), bool(cur), at, s.get("state") or "never"])
+        vcs.append([_txt(s.get("name") or k, 120), bool(cur), at, _txt(s.get("state") or "never")])
         for v in ((s.get("snap") or {}).get("vms") or []):
             if not isinstance(v, dict) or v.get("template") is True or v.get("vcls") is True:
                 continue                        # a template, a vCLS agent: never a workload
-            if v.get("template") is not False and v.get("power") != "poweredOn":
-                continue                        # its template flag not read and not running: maybe a template - left out
             ips = v.get("ip")
-            ips = [x for x in (ips if isinstance(ips, list) else [ips]) if x]
-            vms.append({"vc": len(vcs) - 1, "current": bool(cur), "name": v.get("name") or "", "host": _txt(v.get("host"), 120),
-                        "power": v.get("power"), "heartbeat": v.get("heartbeat"), "tools": v.get("tools"), "tools_version": v.get("tools_version"),
-                        "tools_seen": v.get("tools_seen"), "ip": ips, "guest": "" if _generic(v.get("guest")) else v.get("guest") or "",
-                        "id": _txt(v.get("id") or v.get("name"), 120)})
+            fields = {key: _txt(v[key], None) if isinstance(v.get(key), str) else None
+                      for key in ("name", "host", "power", "heartbeat", "tools", "tools_version", "guest", "id")}
+            if _generic(fields["guest"]):
+                fields["guest"] = None
+            fields.update(vc=len(vcs) - 1, current=bool(cur),
+                          ip=[_txt(ip) for ip in (ips if isinstance(ips, list) else [ips]) if isinstance(ip, str)])
+            vms.append(fields)
     return vms, vcs
 
 
@@ -506,21 +552,21 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     at = _num(snap.get("at"))
     sw_late, sw_stale = limits(o["seconds"])
     rows = snap.get("nodes")
-    feed = {"name": "SolarWinds", "asof": at, "state": snap.get("state") or "never", "why": snap.get("why") or "",
+    feed = {"name": "SolarWinds", "asof": at, "state": snap.get("state") or "never", "why": _txt(snap.get("why"), 500),
             "src": "live, read every %d s while the wall is open" % o["seconds"], "fail_since": snap.get("fail_since"),
             "next_try": snap.get("next_try"), "late": sw_late, "stale": sw_stale}
     out = {"v": 1, "now": now, "seconds": o["seconds"], "late": sw_late, "stale": sw_stale, "feed": feed, "group_by": o["group_by"],
-           "poll_stale": o["poll_stale_minutes"] * 60, "row": ROW, "vmw": VMW, "groups": [], "nodes": [], "vcs": [], "hosts": [], "models": [], "incomplete": [], "notes": list(snap.get("notes") or []), "counts": {},
+           "poll_stale": o["poll_stale_minutes"] * 60, "row": ROW, "vmw": VMW, "groups": [], "nodes": [], "vcs": [], "hosts": [], "models": [], "incomplete": [], "notes": [_txt(note, 500) for note in snap.get("notes") or []], "counts": {},
            "cmp": {"vc_only": 0, "not_in_vc": 0, "not_in_vc_names": [], "ambiguous": 0, "matched": 0,
                    "vm_rule": ", ".join(o["vm_match"]) or "(none)", "vc_read": False}}
     if snap.get("groups_why"):
-        out["notes"].append(snap["groups_why"])
+        out["notes"].append(_txt(snap["groups_why"], 500))
     membership_until = None
     if rows is not None and o["group_by"] == "groups":       # the services need their members: not read or cut is not whole
         gat = _num(snap.get("groups_at"))
         membership_until = gat + GROUPS_EVERY + 2 * o["seconds"] if gat is not None else None
         if not snap.get("groups") or snap.get("groups_why"):
-            out["incomplete"].append(snap.get("groups_why") or "the SolarWinds groups were not read")
+            out["incomplete"].append(_txt(snap.get("groups_why"), 500) or "the SolarWinds groups were not read")
         elif snap["groups"].get("cut"):
             out["incomplete"].append("the group membership read was incomplete")
     out["membership_until"] = membership_until
@@ -533,14 +579,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     nodes_cut = snap.get("cut") or len(rows) > o["max_nodes"]
     if nodes_cut:
         out["incomplete"].append("only the first %d nodes were read (portal_wall_monitor_max_nodes)" % o["max_nodes"])
-        rows = rows[:o["max_nodes"]]
+        rows = _cap_rows(rows, o["max_nodes"])
     if rows == [] and feed["state"] == "ok":
         out["incomplete"].append("SolarWinds answered with no node (does the account see the nodes?)")
     prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
     by_id, odd = {}, 0
     lastsync = not any("LastSync" in x for x in snap.get("notes") or [])     # this Orion gives a node's last poll
     for r in rows:
-        if not isinstance(r, dict) or r.get("NodeID") is None:
+        if not isinstance(r, dict) or not valid_id(r.get("NodeID")):
             odd += 1
             continue
         rt, loss = _num(r.get("ResponseTime")), _num(r.get("PercentLoss"))
@@ -548,13 +594,15 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         c = sw_code(r.get("Status"), um is True or str(um).strip().lower() in ("true", "1"))
         nid = str(r["NodeID"])
         if nid in by_id:
-            if by_id[nid]["status"] != r.get("Status") or by_id[nid]["c"] != c:
-                by_id[nid].update(c=UNKNOWN, desc="")
+            by_id[nid].update(c=UNKNOWN, desc="")
+            by_id[nid]["cp"].add(_txt(r.get("cp_group"), 120))
+            by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
             continue
-        by_id[nid] = {"id": nid, "status": r.get("Status"), "name": r.get("Caption") or r.get("DNS") or "",
-                      "at": _num(r.get("_read_at", at)), "dns": r.get("DNS"), "ip": r.get("IPAddress") or "", "c": c, "rt": rt, "loss": loss,
+        by_id[nid] = {"id": nid, "name": _txt(r.get("Caption") or r.get("DNS"), None),
+                      "at": _num(r.get("_read_at", at)), "dns": _txt(r.get("DNS"), None), "ip": _txt(r.get("IPAddress")), "c": UNKNOWN if r.get("_duplicate") else c, "rt": rt, "loss": loss,
                       "desc": _txt(r.get("StatusDescription")), "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
-                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": _txt(r.get("cp_group"), 120) if prop else ""}
+                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": {_txt(r.get("cp_group"), 120)} if prop else set()}
+        by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
     nodes = list(by_id.values())
     if odd:
         out["incomplete"].append("%d SolarWinds rows without a NodeID" % odd)
@@ -568,18 +616,19 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     gnames, member = {}, {}
     if prop:
         for n in nodes:
-            if n["cp"]:
-                gnames.setdefault(n["cp"].casefold(), n["cp"])
-                member[n["id"]] = [n["cp"].casefold()]
+            for group in sorted(n["cp"] - {""}):
+                gnames.setdefault(group.casefold(), group)
+                member.setdefault(n["id"], []).append(group.casefold())
         swst = {}
     else:
         g = snap.get("groups") or {}
         swst = {}
-        for gid, name, st in g.get("list") or []:
+        group_list = [(gid, _txt(name, 120), st) for gid, name, st in g.get("list") or []]
+        for gid, name, st in group_list:
             if name:
                 gnames.setdefault(name.casefold(), name)
                 swst[name.casefold()] = sw_code(st, False)
-        idname = dict((str(gid), name.casefold()) for gid, name, st in g.get("list") or [] if name)
+        idname = dict((str(gid), name.casefold()) for gid, name, st in group_list if name)
         for nid, gids in (g.get("members") or {}).items():
             member[str(nid)] = [idname[str(x)] for x in gids if str(x) in idname]
     missing = member.keys() - {n["id"] for n in nodes}
@@ -792,3 +841,117 @@ def summary(fm):
     return {**fm["verdict"], "counts": fm["counts"],
             "groups": len([g for g in fm["groups"] if g[1] in ("g", "c")]), "worst": worst[:6],
             "cmp": dict((k, fm["cmp"][k]) for k in ("vc_only", "not_in_vc", "ambiguous")), "complete": fm.get("complete", False)}
+
+def extend(wall, fleet, why, tracker, now):
+    """Add the preview area after building the base wall. Track its conditions independently."""
+    from wall_model import Tracker, fstate
+    kinds = {
+        "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds", "grp": "fleet"},
+        "fleetwarn": {"area": "monitor", "sev": "warn", "label": "A node of a service group warning in SolarWinds", "grp": "fleet"},
+    }
+    inc = fleet["incomplete"] if fleet is not None else [why]
+    area = dict(id="monitor", name="Ops monitor", short="Monitor", sub="SolarWinds", team="Service owners",
+                on=fleet is not None, built=True, feeds=["sw:fleet"] if fleet is not None else [],
+                complete=not inc, incomplete=inc[:5], not_on_wall="Individual node alerts and SolarWinds events.")
+    wall["areas"].append(area)
+    wall["kinds"].update(kinds)
+    if fleet is None:
+        area["why"] = why
+        return
+    feed = dict(fleet["feed"])
+    feed["fresh"] = fstate(None if feed["asof"] is None else max(0, now - feed["asof"]), feed)
+    wall["feeds"]["sw:fleet"] = feed
+    wall["fleet"] = summary(fleet)
+    conditions, recovered = conds(fleet, now)
+    for c in conditions:
+        c.update(area="monitor", sev=kinds[c["kind"]]["sev"], seen=feed["asof"], end=None)
+    if tracker is not None:
+        if not hasattr(tracker, "fleet"):
+            tracker.fleet = Tracker()
+        conditions = tracker.fleet.update(conditions, now, set(recovered))
+    wall["conds"].extend(conditions)
+
+
+def ordering(data, log):
+    """Reserve a boot number before publishing the first board response."""
+    from itertools import count
+    import tempfile
+    path = os.path.join(data, "wall-fleet-boot")
+    import fcntl
+    try:
+        directory = os.open(data, os.O_RDONLY)
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX)
+            try:
+                with open(path) as source:
+                    boot = int(source.read()) + 1
+            except FileNotFoundError:
+                boot = 1
+            with tempfile.NamedTemporaryFile(mode="w", dir=data, delete=False) as target:
+                target.write(str(boot))
+            try:
+                os.replace(target.name, path)
+            finally:
+                if os.path.exists(target.name):
+                    os.unlink(target.name)
+        finally:
+            os.close(directory)
+    except (OSError, ValueError) as err:
+        boot = int(time.time())
+        log({"event": "wall", "fleet": "using clock for boot counter", "why": str(err)})
+    return boot, count(1)
+
+class Board:
+    """Monitor reader, cached join and ordered answers. The caller holds the wall lock for model and answer."""
+    def __init__(self, cfg, log, reader=None):
+        self.cfg, self.log, self.reader = cfg, log, reader
+        self.boot, self.seq = ordering(cfg.data, log)
+        self.cached, self.key, self.body, self.since = None, None, "", None
+        if reader is None and not cfg.wall_fleet_why:
+            opts = cfg.wall_fleet_opts
+            client = None
+
+            def get_client():
+                nonlocal client
+                if client is None:
+                    client = site_swis.Client(opts["swis_url"], cfg.swis_user, cfg.swis_password, verify=cfg.swis_verify,
+                                              ca_path=opts["ca"], timeout=cfg.swis_timeout)
+                return client
+            self.reader = Reader(get_client, opts, log=log, auth_retry=cfg.wall_auth_retry)
+        if self.reader is not None:
+            self.since = Since(os.path.join(cfg.data, "wall-fleet-since.json"), log=log)
+
+    def viewed(self):
+        if self.reader is not None:
+            self.reader.viewed()
+
+    def model(self, view, now):
+        """Cache the join under the wall lock until a source changes or the first freshness deadline."""
+        if self.reader is None:
+            return None
+        snap = self.reader.snapshot()
+        vcs = tuple(sorted((k, s.get("at"), s.get("state")) for k, s in ((view or {}).get("sources") or {}).items()
+                           if isinstance(s, dict) and s.get("kind") == "vcenter"))
+        key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"),
+               snap.get("groups_why"), snap.get("groups_at"), snap.get("groups_tried"), vcs)
+        expiry = (self.cached or {}).get("next_expiry")
+        if key != self.key or self.cached is None or (expiry is not None and now >= expiry):
+            self.cached = model(snap, view, self.cfg.wall_fleet_opts, now, since=self.since)
+            self.key, self.body = key, ""
+        return self.cached
+
+    def answer(self, collector):
+        now, seq = time.time(), next(self.seq)
+        try:
+            self.viewed()
+            fm = self.model(collector.view() if collector is not None else None, now)
+            if fm is None:
+                return 404, json.dumps(dict(boot=self.boot, seq=seq, error=self.cfg.wall_fleet_why))
+            if not self.body:
+                fields = dict(fm, zone=self.cfg.tz_name or "UTC", title=self.cfg.wall_title, enclave=self.cfg.wall_enclave)
+                del fields["now"]
+                self.body = json.dumps(fields, separators=(",", ":"), default=str)[1:]
+            return 200, '{"now":%s,"boot":%d,"seq":%d,%s' % (now, self.boot, seq, self.body)
+        except Exception as err:
+            self.log({"event": "wall", "fleet": "not made", "why": _txt(err, 200)})
+            return 503, json.dumps(dict(boot=self.boot, seq=seq, error="The Ops monitor answer could not be made."))

@@ -61,13 +61,14 @@ def state():
 
 
 def node_rows(cols, alias, where, params):
-    cursor = re.fullmatch(r"%s\.NodeID > @(\w+)" % alias, where or "")
+    cursor = re.fullmatch(r"%s\.NodeID (>=?) @(\w+)" % alias, where or "")
     st = state()
     down, up = set(st.get("down") or []), set(st.get("up") or [])
     pts = dict((p["NodeID"], p) for p in fx["points"])
     out = []
     for n in sorted(fx["nodes"], key=lambda x: x["NodeID"]):
-        if cursor and n["NodeID"] <= params[cursor.group(1)]:
+        if cursor and (n["NodeID"] < params[cursor.group(2)] or
+                       n["NodeID"] == params[cursor.group(2)] and cursor.group(1) == ">"):
             continue
         r = {}
         for c in cols:

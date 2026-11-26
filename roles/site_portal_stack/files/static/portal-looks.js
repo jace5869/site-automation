@@ -9,7 +9,7 @@
   if (!sec || !window.fetch) return;
   var SRC = sec.getAttribute("data-src"), WALL = sec.getAttribute("data-wall"), TITLE = sec.getAttribute("data-title") || "Ops center";
   var de = document.documentElement, NS = "http://www.w3.org/2000/svg";
-  var D = null, D0 = null, receipt = performance.now(), FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
+  var D = null, D0 = null, SKEW = 0, FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
   var EVERY = 8;                                  // seconds: the spotlight's step and a Metro tile's turn
 
   function h(tag, cls, kids, at) {
@@ -28,7 +28,7 @@
   function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
   function skin() { return de.getAttribute("data-skin") || "strata"; }
   function moves() { return de.classList.contains("moves"); }
-  function now() { return (D ? D.now * 1000 : 0) + (performance.now() - receipt); }
+  function now() { return Date.now() + SKEW; }
 
   var WORD = {crit: "Critical", warn: "Warning", ok: "OK", stale: "Not current", off: "Not on the wall yet"};
   var ICON = {
@@ -49,7 +49,7 @@
   function ic(d, cls) {
     return s("svg", {viewBox: "0 0 24 24", "aria-hidden": "true", class: cls || null, fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round"}, [s("path", {d: d})]);
   }
-  function word(st, label) { return h("span", "ow " + st, [ic(ICON[st] || ICON.off), label || WORD[st] || st]); }
+  function word(st) { return h("span", "ow " + st, [ic(ICON[st] || ICON.off), WORD[st] || st]); }
   function hm(t) {
     try { return new Intl.DateTimeFormat("en-GB", {hour: "2-digit", minute: "2-digit", timeZone: (D && D.zone) || "UTC"}).format(new Date(t)); }
     catch (e) { return new Date(t).toISOString().slice(11, 16); }
@@ -114,25 +114,24 @@
   }
   function back(a) {
     var rows = (a.worst || []).map(function (c) { return h("div", "r", [h("span", "", [c.t]), h("b", "", [(c.sev === "crit" ? "CRIT" : "WARN") + (c.start ? " · " + ago(c.start * 1000) : "")])]); });
-    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? (a.id === "monitor" && a.unit || "Not on the wall yet") : "No current data"]),
+    if (!rows.length) rows = [h("div", "r", [h("span", "", [a.state === "ok" ? "Nothing open" : a.state === "off" ? "Not on the wall yet" : "No current data"]),
                                              h("b", "", [a.asof ? "read " + hm(a.asof * 1000) : ""])])];
     return h("div", "ot-back", [h("h4", "", [a.name + " · worst first"])].concat(rows), {"aria-hidden": "true"});
   }
   function tile(a, i) {
-    var off = a.state === "off", monitoredOff = off && a.id === "monitor" && a.valid_until != null;
-    var href = WALL + (off && !monitoredOff ? "" : "?area=" + encodeURIComponent(a.id));
+    var href = WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id));
     var big = a.big ? h("div", "ot-big", [h("b", "", [a.big]), h("span", "", [a.unit])]) : a.state === "off" ? null : h("div", "ot-big", [h("b", "", ["–"]), h("span", "", ["no value read"])]);
     var face = h("div", "ot-face", [
       h("span", "ot-rank", [String(i + 1)], {"aria-hidden": "true"}),
-      h("div", "ot-h", [ic(AREA[a.id] || AREA.network), h("span", "", [a.short || a.name]), word(a.state, monitoredOff ? a.unit : "")]),
+      h("div", "ot-h", [ic(AREA[a.id] || AREA.network), h("span", "", [a.short || a.name]), word(a.state)]),
       big,
       a.note ? h("p", "ot-note", [a.note]) : null,
       a.metric ? chart(a.metric) : null,
-      monitoredOff ? null : a.state === "off" ? h("p", "ot-why", ["No live source on the wall yet - grey, never a guess."]) : a.why ? h("p", "ot-why", ["Why grey: " + a.why]) : (a.state !== "off" && (a.crit || a.warn) && a.worst && a.worst[0] ? h("p", "ot-why", ["Worst: " + a.worst[0].t]) : null),
+      a.state === "off" ? h("p", "ot-why", ["No live source on the wall yet - grey, never a guess."]) : a.why ? h("p", "ot-why", ["Why grey: " + a.why]) : (a.state !== "off" && (a.crit || a.warn) && a.worst && a.worst[0] ? h("p", "ot-why", ["Worst: " + a.worst[0].t]) : null),
       a.state === "off" ? null : lamps(a),
       h("span", "ot-cue", [a.state === "off" ? "Open the wall ›" : "Open on the wall ›"])
     ]);
-    var label = (a.name + ": " + (monitoredOff ? a.unit : WORD[a.state])) + (a.crit || a.warn ? ", " + a.crit + " critical, " + a.warn + " warning" : "") + ". Opens the wall.";
+    var label = (a.name + ": " + WORD[a.state]) + (a.crit || a.warn ? ", " + a.crit + " critical, " + a.warn + " warning" : "") + ". Opens the wall.";
     return h("li", "ot s-" + a.state, [h("a", "", [face, skin() === "metro" ? back(a) : null], {href: href, "aria-label": label})], {"data-id": a.id});
   }
   var RANK = {crit: 4, warn: 3, stale: 2, ok: 1, off: 0};
@@ -166,7 +165,7 @@
     ], {"aria-live": "off", "data-id": a.id});
   }
   // the status map: each area an island at a fixed place, its contour rings its state (a ring more for each open condition)
-  var PLACE = {storage: [150, 125], vmware: [400, 100], vdi: [640, 140], ad: [860, 100], tickets: [1070, 135], network: [1180, 100], monitor: [400, 212]};
+  var PLACE = {storage: [150, 125], vmware: [400, 100], vdi: [640, 140], ad: [860, 100], tickets: [1070, 135], network: [1180, 100]};
   function blob(cx, cy, r, seed) {
     var p = [], n = 10;
     for (var i = 0; i < n; i++) {
@@ -186,9 +185,8 @@
     for (var y = 30; y < 240; y += 40) kids.push(s("path", {class: "grid", d: "M0 " + y + " C 300 " + (y - 14) + ", 600 " + (y + 14) + ", 1220 " + y}));
     D.areas.forEach(function (a, i) {
       var p = PLACE[a.id] || [140 + i * 190, 110], rings = a.state === "off" ? 1 : 2 + Math.min(3, (a.crit || 0) + (a.warn || 0)), g = [];
-      var radius = a.id === "monitor" ? 18 : 36, step = a.id === "monitor" ? 3 : 10;
-      for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], radius + r * step, i + 1)}));
-      var below = p[1] + (radius + (rings - 1) * step) * 0.82 + (a.id === "monitor" ? 10 : 18);            // the state under the island, never across its rings
+      for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], 36 + r * 10, i + 1)}));
+      var below = p[1] + (36 + (rings - 1) * 10) * 0.82 + 18;            // the state under the island, never across its rings
       g.push(s("text", {x: p[0], y: p[1] + 5, "text-anchor": "middle"}, [a.short || a.name]));
       g.push(s("text", {class: "mts", x: p[0], y: below, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
       var link = s("a", {href: WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id)), class: "k-" + a.state, "aria-label": a.name + ": " + WORD[a.state]}, g);
@@ -222,12 +220,6 @@
     var t = now(), stale = (D.stale || 600) * 1000, late = (D.late || 180) * 1000, old = D.now && t - D.now * 1000 > stale;
     D.areas = D0.areas.map(function (a0) {
       var a = JSON.parse(JSON.stringify(a0));
-      if (a.id === "monitor" && (a.state !== "off" || Object.prototype.hasOwnProperty.call(a, "valid_until"))) {
-        if (FAIL || !Number.isFinite(a.valid_until) || t >= a.valid_until * 1000) {
-          Object.assign(a, {state: "stale", big: "–", unit: "no current data", note: "", crit: 0, warn: 0, worst: [], why: "not current"});
-        }
-        return a;
-      }
       if (a.state === "off") return a;
       if (a.metric) {
         var ma = a.metric.asof ? t - a.metric.asof * 1000 : Infinity;
@@ -296,17 +288,16 @@
   var SEQ = 0;
   function load() {
     var mine = ++SEQ;
-    return fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
+    fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
       if (mine !== SEQ) return null;                                         // an older read that answered late: dropped
       if (r.status === 404) { D = D0 = null; sec.hidden = true; return null; }  // the wall is off here: nothing kept to show again
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }).then(function (a) {
       if (!a || mine !== SEQ) return;                                        // an older read that answered late: dropped
-      if (!Number.isFinite(a.now)) throw new Error("missing wall time");
       if (!Array.isArray(a.areas)) throw new Error("no areas in the answer");
       FAIL = 0;
-      receipt = performance.now();
+      if (a.now) SKEW = a.now * 1000 - Date.now();
       D0 = a;
       D = JSON.parse(JSON.stringify(a));
       render();

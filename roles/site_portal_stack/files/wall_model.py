@@ -18,10 +18,6 @@ try:
     import site_swis                       # the network map's own matching (plugins/module_utils): one rule for both maps
 except ImportError:                        # pragma: no cover - the portal image has it
     site_swis = None
-try:
-    import wall_fleet                      # 1.136.0: the Ops monitor area's conditions and summary
-except ImportError:                        # pragma: no cover - an older deploy's files: no Ops monitor area
-    wall_fleet = None
 
 LATE_S = 180                     # amber (LATE) after 3 min
 STALE_S = 600                    # STALE (not current, never green) after 10 min
@@ -49,13 +45,6 @@ NOT_ON_WALL = {
     "storage": "EMS informational events, snapshot counts, autosupport.",
     "vmware": "vCenter informational alarms, short spikes (under the sustained window), snapshot age, tools out of date.",
     "vdi": "not on the wall yet.", "ad": "not on the wall yet.", "tickets": "not on the wall yet.",
-    "monitor": "a node's own alerts (CPU, disk, interfaces), SolarWinds events; a single node down lights its group, never a wall of its own.",
-}
-# 1.136.0: Ops monitor (wall_fleet.py) - on the wall only with portal_wall_monitor (auto: when SolarWinds is configured)
-FLEET_AREA = {"id": "monitor", "name": "Ops monitor", "short": "Monitor", "sub": "SolarWinds", "team": "Service owners"}
-FLEET_KINDS = {
-    "fleetdown": {"area": "monitor", "sev": "crit", "label": "A node of a service group down in SolarWinds", "grp": "fleet"},
-    "fleetwarn": {"area": "monitor", "sev": "warn", "label": "A node of a service group warning in SolarWinds (packet loss or slow answers)", "grp": "fleet"},
 }
 
 # 1.131.1 (Codex #11): vCenter's default hardware alarm definitions, by whole name (any case) - portal_wall_hw_alarms
@@ -133,12 +122,9 @@ def _n(x):
     return ("%d" % x) if float(x) == int(x) else ("%.1f" % x)
 
 
-def fstate(age, o=None, f=None):
-    """a feed's age (s, None = never read) -> ok | late | stale (f: the feed - 1.136.0: its own late / stale when it has them)"""
+def fstate(age, o=None):
+    """a feed's age (s, None = never read) -> ok | late | stale"""
     late, stale = (o or DEFAULTS)["late"], (o or DEFAULTS)["stale"]
-    if isinstance(f, dict):
-        late = f["late"] if isinstance(f.get("late"), (int, float)) and not isinstance(f.get("late"), bool) else late
-        stale = f["stale"] if isinstance(f.get("stale"), (int, float)) and not isinstance(f.get("stale"), bool) else stale
     if age is None:
         return "stale"
     return "stale" if age > stale else "late" if age > late else "ok"
@@ -766,22 +752,13 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
 
 
 def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why=""):
-    """-> the answer of /api/wall (times: epoch seconds). fleet: the Ops monitor area's model (wall_fleet.model) when that
-    area is on (portal_wall_monitor), with fleet_why when it is on but cannot read; None: the area is not on the wall."""
+    """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
     ks = kinds(o)
-    fleet_on = fleet is not None or bool(fleet_why)
-    if fleet_on:
-        ks.update(FLEET_KINDS)
     vm, c1, f1, ok1 = vmware_part(view, o, now)
     st, c2, f2, ok2 = storage_part(nm, nm_asof, vm, o, now, nm_why, view)
     if not st["configured"]:                   # Storage is not on the wall: none of its conditions (a datastore's fill) either
         c1 = [c for c in c1 if ks[c["kind"]]["area"] != "storage"]
-    if fleet is not None and wall_fleet is not None:
-        c3, ok3 = wall_fleet.conds(fleet, now)
-        f2 = dict(f2, **{"sw:fleet": dict(fleet["feed"])})
-        c2 = c2 + c3
-        ok2 = ok2 + [("sw:fleet", x) for x in ok3]
     fall = dict(f1)
     fall.update(f2)
     for c in c1 + c2:
@@ -789,7 +766,7 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         c.update(area=k["area"], sev=c.get("sev", k["sev"]), end=None)
         c["seen"] = (fall.get(c.get("feed")) or {}).get("asof") or c.get("start")     # when its data was read (a last-known one: last seen)
     # what clears a condition: its object seen OK in a fresh read (its feed's latest read worked, within the stale limit)
-    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= ((f.get("stale") or o["stale"]) if k == "sw:fleet" else o["stale"])) for k, f in fall.items())
+    cur = dict((k, f.get("state") == "ok" and f.get("asof") is not None and now - float(f["asof"]) <= o["stale"]) for k, f in fall.items())
     ok_ids = set(cid for fk, cid in ok1 + ok2 if cur.get(fk))
     if tracker is not None:
         for src in ((view or {}).get("sources") or {}).values():
@@ -815,36 +792,35 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             d["cond"] = cid
     feeds = dict(f1)
     feeds.update(f2)
-    for key, f in feeds.items():
+    for f in feeds.values():
         # the state at this answer (the page works the age out itself every second - no age here: the ETag stays until a change)
-        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o, f if key == "sw:fleet" else None)
-    area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run" and k != "sw:fleet") + sorted(f1)) if st["configured"] else [],
-                  "monitor": ["sw:fleet"] if fleet is not None else []}
+        f["fresh"] = fstate(None if not f.get("asof") else max(0, int(now - float(f["asof"]))), o)
+    area_feeds = {"vmware": sorted(f1), "storage": (sorted(k for k in f2 if k != "netapp-run") + sorted(f1)) if st["configured"] else []}
     areas = []
-    for a in AREAS + ((FLEET_AREA,) if fleet_on else ()):
+    for a in AREAS:
         x = dict(a)
-        x["on"] = (a["id"] in BUILT or a["id"] == "monitor") and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
-        x["built"] = a["id"] in BUILT or a["id"] == "monitor"
+        x["on"] = a["id"] in BUILT and (st["configured"] if a["id"] == "storage" else bool(area_feeds.get(a["id"])))
+        x["built"] = a["id"] in BUILT
         x["feeds"] = area_feeds.get(a["id"], [])
         x["not_on_wall"] = NOT_ON_WALL[a["id"]]
-        inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else
-               ((fleet or {}).get("incomplete") or [] if fleet is not None else [fleet_why]) if a["id"] == "monitor" else [])
+        inc = (vm["incomplete"] if a["id"] == "vmware" else st["incomplete"] if a["id"] == "storage" else [])
         x["complete"], x["incomplete"] = not inc, inc[:5] + (["... %d more" % (len(inc) - 5)] if len(inc) > 5 else [])
         off_why = off_why if isinstance(off_why, dict) else {}
         if a["id"] == "storage" and not st["configured"]:
             x["why"] = off_why.get("storage") or STORAGE_OFF          # 1.131.0: a login there but no cluster: that, not "no login"
         elif a["id"] == "vmware" and not vm["configured"]:
             x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
-        elif a["id"] == "monitor" and fleet is None:
-            x["why"] = fleet_why
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
-    return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
+    result = {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
-            "fleet": wall_fleet.summary(fleet) if fleet is not None and wall_fleet is not None else None,
             "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
+    if fleet is not None or fleet_why:
+        import wall_fleet
+        wall_fleet.extend(result, fleet, fleet_why, tracker, now)
+    return result
 
 
 # ---- 1.135.0: the areas in short, for the portal's looks (the Actions page's "Ops center" section) ---------------------------
@@ -854,11 +830,11 @@ def _feed_fresh(m, k, now):
     f = (m.get("feeds") or {}).get(k)
     if not isinstance(f, dict) or f.get("state") != "ok" or f.get("asof") is None:
         return "stale"
-    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S}, f if k == "sw:fleet" else None)
+    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S})
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "monitor" if k == "sw:fleet" else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else ""
 
 
 def _home_ok(m, k, now, by):
@@ -913,15 +889,9 @@ def summary(m, now):
         opened = [c for c in conds or [] if isinstance(c, dict) and c.get("end") is None and c.get("area") == aid]
         cur = [c for c in opened if not _cond_stale(m, c, now)]
         n = {"crit": sum(1 for c in cur if c.get("sev") == "crit"), "warn": sum(1 for c in cur if c.get("sev") == "warn")}
-        fs = m.get("fleet") if aid == "monitor" else None
-        if fs:
-            until = fs.get("valid_until")
-            if type(until) not in (float, int) or not -math.inf < until < math.inf:
-                until = None
-            st = fs["state"] if until is not None and now < until else "stale"
-        elif not a.get("on") or not a.get("built"):
+        if not a.get("on") or not a.get("built"):
             st = "off"
-        elif aid == "monitor" or conds is None:
+        elif conds is None:
             st = "stale"
         elif n["crit"]:
             st = "crit"
@@ -989,16 +959,6 @@ def summary(m, now):
                 w_ = max(busy, key=lambda x: x["cpu"])
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
-        elif fs:
-            if st == "stale":
-                big, unit = "–", "no current data"
-                cur, n = [], {"crit": 0, "warn": 0}
-                why = why or "not current"
-            elif st == "off":
-                big, unit, why = "–", fs["label"], fs["label"]
-            else:
-                big, unit = "%d/%d" % (fs["up"], fs["total"]), "nodes up"
-                note = "%d down · %d warning" % (fs["down"], fs["warn"])
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
         # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
@@ -1009,12 +969,8 @@ def summary(m, now):
         for c in cur:
             f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None
             live.append([c.get("sev"), (float(f["asof"]) + stale_s) if isinstance(f, dict) and f.get("asof") is not None else None])
-        if fs:
-            ok_until = until if st == "ok" else None
-            live = [[sev, until] for sev, _ in live]
         out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",
                     "ok_until": ok_until, "live": live,
-                    **({"valid_until": until} if fs else {}),
                     "state": st, "crit": n["crit"], "warn": n["warn"], "big": big, "unit": unit, "note": note, "metric": metric,
                     "worst": [{"t": c.get("t"), "sev": c.get("sev"), "start": c.get("start")} for c in worst],
                     "asof": min(asofs) if asofs else None, "why": why})

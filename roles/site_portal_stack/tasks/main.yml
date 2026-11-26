@@ -362,39 +362,13 @@
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
-# 1.136.0: the wall's Ops monitor area - on with the "SolarWinds (read-only)" credential (auto), or as portal_wall_monitor says;
-# it reads with the network map's login, so that login is deployed when either is on (_portal_swis)
 - name: Settings | the wall's Ops monitor area (portal_wall_monitor)
   ansible.builtin.set_fact:
-    _portal_wall_monitor: >-
-      {{ portal_wall | bool and ((portal_wall_monitor | default(false) | string | lower in ['true', 'yes', 'on', '1'])
-         or (portal_wall_monitor | default(false) | string | lower == 'auto' and portal_solarwinds_username | length > 0
-             and portal_solarwinds_password | length > 0 and portal_solarwinds_url | trim | length > 0)) }}
+    _portal_wall_monitor: "{{ portal_wall | bool and (portal_wall_monitor | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
 
-- name: Settings | SolarWinds' login is deployed for the map or the wall's Ops monitor area
+- name: Settings | SolarWinds login for the map or monitor
   ansible.builtin.set_fact:
     _portal_swis: "{{ _portal_netmap | bool or _portal_wall_monitor | bool }}"
-
-- name: Settings | the wall's Ops monitor settings
-  ansible.builtin.assert:
-    that:
-      - portal_wall_monitor | default(false) | string | lower in ['auto', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
-      - (portal_wall_monitor_seconds | string) is match('^[0-9]+$') and 60 <= portal_wall_monitor_seconds | int <= 3600
-      - (portal_wall_monitor_max_nodes | string) is match('^[0-9]+$') and 100 <= portal_wall_monitor_max_nodes | int <= 50000
-      - (portal_wall_monitor_poll_stale_minutes | string) is match('^[0-9]+$') and 5 <= portal_wall_monitor_poll_stale_minutes | int <= 1440
-      - portal_wall_monitor_group_by | string | lower == 'groups' or (portal_wall_monitor_group_by | string) is match('^custom:[A-Za-z_][A-Za-z0-9_]{0,63}$')
-      - portal_wall_monitor_groups is sequence and portal_wall_monitor_groups is not string and portal_wall_monitor_groups is not mapping
-      - portal_wall_monitor_groups | reject('string') | list | length == 0
-      - portal_wall_monitor_vm_match is sequence and portal_wall_monitor_vm_match is not string and portal_wall_monitor_vm_match is not mapping
-      - portal_wall_monitor_vm_match | reject('string') | list | length == 0
-      - not (_portal_wall_monitor | bool) or (portal_solarwinds_url | trim | length > 0 and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0)
-    fail_msg: >-
-      The wall's Ops monitor settings (docs/SITE_PORTAL.md, "Ops monitor"): portal_wall_monitor auto, true or false;
-      portal_wall_monitor_seconds 60 to 3600; portal_wall_monitor_max_nodes 100 to 50000; portal_wall_monitor_poll_stale_minutes 5 to 1440; portal_wall_monitor_group_by groups or
-      custom:<a node custom property> (letters, digits and _); portal_wall_monitor_groups and portal_wall_monitor_vm_match lists of names;
-      portal_wall_monitor true needs the "SolarWinds (read-only)" credential (its address and login) on this deploy - nothing was changed.
-    quiet: true
-  when: _portal_wall_monitor | bool
 
 # 1.130.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
 # deploy has their credentials); the thresholds are checked here, the service checks them again
@@ -628,12 +602,35 @@
     label: "{{ item.path }}"
   register: _portal_dirs
 
+- name: Settings | prepare the Ops monitor
+  ansible.builtin.include_tasks: wall_monitor.yml
+  when: _portal_wall_monitor | bool
+
+- name: Files | remove unused monitor CA
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/app/solarwinds-monitor.pem"
+    state: absent
+  when: not (_portal_wall_monitor | bool) or not portal_solarwinds_ca_file
+
+- name: Files | remove disabled monitor files
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/app/{{ item }}"
+    state: absent
+  loop: [wall_fleet.py, static/wall-fleet.js, static/wall-fleet.css]
+  when: not (_portal_wall_monitor | bool)
+
 - name: Files | the service, its pages, the actions' rules, AAP's client
   ansible.builtin.copy:
     src: "{{ item.src }}"
     dest: "{{ portal_config_dir }}/app/{{ item.dest }}"
     mode: "0644"
-  loop:
+  loop: "{{ _base_files + (_monitor_files if _portal_wall_monitor | bool else []) }}"
+  vars:
+    _monitor_files:
+      - {src: wall_fleet.py, dest: wall_fleet.py}
+      - {src: static/wall-fleet.js, dest: static/wall-fleet.js}
+      - {src: static/wall-fleet.css, dest: static/wall-fleet.css}
+    _base_files:
     - {src: portal_access.py, dest: portal_access.py}
     - {src: portal_admin.py, dest: portal_admin.py}
     - {src: static/admin.css, dest: static/admin.css}
@@ -687,15 +684,12 @@
     # 1.130.0: the ops-center wall - its model, its live collector (read-only), its page and the Map's land outlines
     - {src: wall_model.py, dest: wall_model.py}
     - {src: wall_live.py, dest: wall_live.py}
-    - {src: wall_fleet.py, dest: wall_fleet.py}                          # 1.136.0: the wall's Ops monitor area
     - {src: static/wall-page.js, dest: static/wall-page.js}
     - {src: static/wall-page.css, dest: static/wall-page.css}
     - {src: static/wall-land.js, dest: static/wall-land.js}
     - {src: static/wall-styles.js, dest: static/wall-styles.js}          # 1.135.0: the Strata, Relay and Metro styles
     - {src: static/wall-styles.css, dest: static/wall-styles.css}
     - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
-    - {src: static/wall-fleet.js, dest: static/wall-fleet.js}            # 1.136.0: Ops monitor
-    - {src: static/wall-fleet.css, dest: static/wall-fleet.css}
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}        # 1.135.0: the Actions page's Ops center section
   loop_control:
@@ -758,25 +752,19 @@
     portal_trust_host_cas | bool and _portal_host_bundle.stat.exists | default(false)
     and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
 
-- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map and the wall's Ops monitor area
+- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map
   ansible.builtin.copy:
     src: "{{ portal_solarwinds_ca_file }}"
-    dest: "{{ portal_config_dir }}/app/solarwinds.pem"
+    dest: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
     remote_src: true
     mode: "0644"
-  register: _portal_swis_ca
-  when: _portal_swis | bool and portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
-
-- name: Trust | remove the old SolarWinds fragment from the shared trust bundle
-  ansible.builtin.file:
-    path: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
-    state: absent
+  when: _portal_netmap | bool and portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
 
 - name: Trust | no SolarWinds CA any more
   ansible.builtin.file:
-    path: "{{ portal_config_dir }}/app/solarwinds.pem"
+    path: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
     state: absent
-  when: not (_portal_swis | bool and portal_solarwinds_ca_file | length > 0)
+  when: not (_portal_netmap | bool and portal_solarwinds_ca_file | length > 0)
 
 - name: Trust | which CAs
   ansible.builtin.find:
@@ -1137,7 +1125,7 @@
   ansible.builtin.copy:
     dest: "{{ portal_config_dir }}/settings.json"
     mode: "0644"
-    content: "{{ _settings | to_nice_json }}\n"
+    content: "{{ _settings | combine({'PORTAL_WALL_MONITOR_OPTS': _portal_wall_monitor_opts} if _portal_wall_monitor | bool else {}) | to_nice_json }}\n"
   vars:
     _settings:
       PORTAL_PATH: "{{ portal_path }}"
@@ -1228,15 +1216,8 @@
       PORTAL_WALL_FEEDBACK: "{{ '1' if portal_wall_feedback | bool else '0' }}"
       PORTAL_WALL_FEEDBACK_GROUPS: "{{ portal_wall_feedback_groups | default([], true) }}"
       PORTAL_WALL_FEEDBACK_READERS: "{{ portal_wall_feedback_readers | default([], true) }}"
-      PORTAL_WALL_MONITOR: "{{ _portal_wall_monitor | bool }}"     # 1.136.0: Ops monitor (its settings: monitor_* below)
       PORTAL_WALL_OPTS:
         seconds: "{{ portal_wall_seconds | int }}"
-        monitor_seconds: "{{ portal_wall_monitor_seconds | int }}"
-        monitor_group_by: "{{ portal_wall_monitor_group_by | string | trim }}"
-        monitor_groups: "{{ portal_wall_monitor_groups | default([], true) }}"
-        monitor_vm_match: "{{ portal_wall_monitor_vm_match | default([], true) }}"
-        monitor_max_nodes: "{{ portal_wall_monitor_max_nodes | int }}"
-        monitor_poll_stale_minutes: "{{ portal_wall_monitor_poll_stale_minutes | int }}"
         ds_warn: "{{ portal_wall_datastore_warn | float }}"
         ds_crit: "{{ portal_wall_datastore_crit | float }}"
         aggr_warn: "{{ portal_wall_aggr_warn | float }}"
@@ -1259,8 +1240,6 @@
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
-      PORTAL_SWIS_CA: "{{ '/app/solarwinds.pem' if _portal_swis | bool and portal_solarwinds_ca_file | length > 0 else '' }}"
-      PORTAL_WALL_MONITOR_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_wall_monitor | bool else '' }}"
       PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}"
       PORTAL_SWIS_VERIFY: "{{ '1' if portal_solarwinds_validate_certs | bool else '0' }}"
       PORTAL_SWIS_TIMEOUT: "{{ netmap_timeout | default(60) | string }}"
@@ -1492,7 +1471,7 @@
     _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
          or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
-         or _portal_swis_ca is changed or _portal_swis_set is changed or _portal_swis_gone is changed
+         or (_portal_swis_ca_mon | default({})) is changed or _portal_swis_set is changed or _portal_swis_gone is changed
          or _portal_rdb_set is changed or _portal_rdb_gone is changed
          or _portal_ldap_set is changed or _portal_ldap_gone is changed
          or _portal_wall_set is changed
@@ -1672,10 +1651,8 @@
           'vc_user': portal_wall_vcenter_username | default(''), 'vc_pass': portal_wall_vcenter_password | default('') | length > 0,
           'ontap_on': _portal_wall_ontap | bool, 'ontap_mode': portal_wall_ontap | string,
           'clusters': portal_wall_ontap_clusters | default([], true), 'ontap_user': portal_wall_ontap_username | default(''),
-          'ontap_pass': portal_wall_ontap_password | default('') | length > 0, 'netmap_sites': netmap_sites | default({}, true),
-          'monitor_on': _portal_wall_monitor | bool, 'monitor_mode': portal_wall_monitor | default(false) | string,
-          'sw_url': portal_solarwinds_url | trim | length > 0, 'sw_login': portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0,
-          'monitor_group_by': portal_wall_monitor_group_by | string}
+          'ontap_pass': portal_wall_ontap_password | default('') | length > 0, 'netmap_sites': netmap_sites | default({}, true)}
+         | combine({'monitor_on': true, 'monitor_group_by': portal_wall_monitor_group_by} if _portal_wall_monitor | bool else {})
          | site_portal_wall_summary }}
     _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-

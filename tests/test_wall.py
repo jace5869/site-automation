@@ -656,15 +656,12 @@ class Portal(unittest.TestCase):
         self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0] in (200, 304), True)
         self.assertIn('href="/portal/wall"', call("/")[1])
 
-    def test_etag_tracks_sequenced_answer(self):
+    def test_etag_holds_between_seconds(self):
         fixed = demo.view()                                   # a collector's read: the same until the next one
         _cfg, _p, call, _b = serve(self, view=lambda: fixed)
         _c, _body, h = call("/api/wall")
         time.sleep(1.2)
-        code, body, second = call("/api/wall", {"If-None-Match": h["ETag"]})
-        self.assertEqual(code, 200)
-        self.assertGreater(json.loads(body)["seq"], json.loads(_body)["seq"])
-        self.assertNotEqual(second["ETag"], h["ETag"])
+        self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0], 304)
 
     def test_csv_cells_are_never_formulas(self):
         cfg, p, call, base = serve(self, PORTAL_APPROVERS=json.dumps([JDOE_CN]))
@@ -792,7 +789,7 @@ class DeployCopiesEverything(unittest.TestCase):
         import yaml
         t = yaml.safe_load(open(os.path.join(ROLE, "tasks", "main.yml")))
         task = [x for x in t if x.get("name") == "Files | the service, its pages, the actions' rules, AAP's client"][0]
-        return dict((i["dest"], i["src"]) for i in task["loop"])
+        return dict((i["dest"], i["src"]) for i in task["vars"]["_base_files"] + task["vars"]["_monitor_files"])
 
     def local_modules(self):
         """every .py the service could import from this repo: the role's files and plugins/{module_utils,filter}"""

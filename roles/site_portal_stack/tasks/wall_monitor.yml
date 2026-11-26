@@ -1,0 +1,38 @@
+---
+- name: Settings | the wall's Ops monitor settings
+  ansible.builtin.assert:
+    that:
+      - (portal_wall_monitor_seconds | string) is match('^[0-9]+$') and 60 <= portal_wall_monitor_seconds | int <= 3600
+      - (portal_wall_monitor_max_nodes | string) is match('^[0-9]+$') and 100 <= portal_wall_monitor_max_nodes | int <= 50000
+      - (portal_wall_monitor_poll_stale_minutes | string) is match('^[0-9]+$') and 5 <= portal_wall_monitor_poll_stale_minutes | int <= 1440
+      - portal_wall_monitor_group_by | string | lower == 'groups' or (portal_wall_monitor_group_by | string) is match('^custom:[A-Za-z_][A-Za-z0-9_]{0,63}$')
+      - portal_wall_monitor_groups is sequence and portal_wall_monitor_groups is not string and portal_wall_monitor_groups is not mapping
+      - portal_wall_monitor_groups | reject('string') | list | length == 0
+      - portal_wall_monitor_vm_match is sequence and portal_wall_monitor_vm_match is not string and portal_wall_monitor_vm_match is not mapping
+      - portal_wall_monitor_vm_match | reject('string') | list | length == 0
+      - portal_solarwinds_url is string and portal_solarwinds_url | trim | length > 0
+      - portal_solarwinds_username is string and portal_solarwinds_username | length > 0
+      - portal_solarwinds_password is string and portal_solarwinds_password | length > 0
+    fail_msg: >-
+      The wall's Ops monitor settings (docs/SITE_PORTAL.md, "Ops monitor"): portal_wall_monitor true or false;
+      portal_wall_monitor_seconds 60 to 3600; portal_wall_monitor_max_nodes 100 to 50000; portal_wall_monitor_poll_stale_minutes 5 to 1440; portal_wall_monitor_group_by groups or
+      custom:<a node custom property> (letters, digits and _); portal_wall_monitor_groups and portal_wall_monitor_vm_match lists of names;
+      portal_wall_monitor true needs the "SolarWinds (read-only)" credential (its address and login) on this deploy - nothing was changed.
+    quiet: true
+
+- name: Trust | CA for the monitor reader
+  ansible.builtin.copy:
+    src: "{{ portal_solarwinds_ca_file }}"
+    dest: "{{ portal_config_dir }}/app/solarwinds-monitor.pem"
+    remote_src: true
+    mode: "0644"
+  when: portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
+  register: _portal_swis_ca_mon
+
+- name: Settings | monitor reader options
+  ansible.builtin.set_fact:
+    _portal_wall_monitor_opts: >-
+      {{ {'seconds': portal_wall_monitor_seconds | int, 'group_by': portal_wall_monitor_group_by | trim,
+          'groups': portal_wall_monitor_groups, 'vm_match': portal_wall_monitor_vm_match,
+          'max_nodes': portal_wall_monitor_max_nodes | int, 'poll_stale_minutes': portal_wall_monitor_poll_stale_minutes | int,
+          'swis_url': portal_solarwinds_url | trim, 'ca': '/app/solarwinds-monitor.pem' if portal_solarwinds_ca_file | length else ''} }}
