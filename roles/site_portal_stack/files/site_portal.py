@@ -113,6 +113,13 @@ def after_approval(nodes):
     return seen
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 LOOKS = ("atlas", "brief", "ops")            # the report website's looks made for a browser (report_web_theme)
+# 1.135.0: the portal's looks (portal_look; a viewer's own pick kept per browser) - html[data-skin], static/portal-looks.css on top
+# of the report palette above (html[data-look]). The order is the picker's.
+SKINS = (("strata", "Strata Console"), ("metro", "Metro Live Tiles"), ("relay", "Relay Panel"), ("chroma", "Chroma Perspex"),
+         ("press", "Signal Press"), ("atlas", "Contour Atlas"), ("tower", "Timing Tower"))
+SKIN_KEYS = tuple(k for k, _ in SKINS)
+# 1.135.0: the wall's styles (static/wall-page.js draws lights, cockpit, map; static/wall-styles.js strata, relay, metro)
+WALL_STYLES = ("lights", "cockpit", "map", "strata", "relay", "metro")
 PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
             "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'")
 # the report pages: their own script file (site-report.js), and their <style> blocks
@@ -530,6 +537,9 @@ class Config(object):
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
         self.look = self.look if self.look in LOOKS else "atlas"
+        # 1.135.0: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
+        self.skin = str(g("PORTAL_LOOK", "strata")).strip().lower()
+        self.skin = self.skin if self.skin in SKIN_KEYS else "strata"
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
         try:
@@ -648,6 +658,9 @@ class Config(object):
         self.wall = flag(g("PORTAL_WALL", "1"))
         self.wall_title = (str(g("PORTAL_WALL_TITLE", "Ops center")).strip() or "Ops center")[:40]
         self.wall_preview = flag(g("PORTAL_WALL_PREVIEW", "1"))
+        # 1.135.0: portal_wall_style - the wall's style when the address names none and the viewer picked none (cockpit, as before)
+        self.wall_style = str(g("PORTAL_WALL_STYLE", "cockpit")).strip().lower()
+        self.wall_style = self.wall_style if self.wall_style in WALL_STYLES else "cockpit"
         self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
         self.wall_why = ""                     # 1.130.0 (Codex r6 #15): settings that cannot be read turn the wall off - never a crash
         self.wall_opts = wall_model.opts_of({})
@@ -4148,6 +4161,24 @@ def icon(kind, turn=True):
     return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" and turn else "", ICONS[kind])
 
 
+_STATIC_V = {}
+
+
+def static_version(name):
+    """1.135.0: a short hash of a static file beside this one (a browser that keeps a copy takes the new one)"""
+    if name not in _STATIC_V:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", name), "rb") as fh:
+                _STATIC_V[name] = hashlib.sha1(fh.read()).hexdigest()[:10]
+        except OSError:
+            _STATIC_V[name] = "0"
+    return _STATIC_V[name]
+
+
+def looks_version():
+    return static_version("portal-looks.css")
+
+
 def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_end=""):
     """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
     scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style).
@@ -4166,6 +4197,9 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
                   % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
+    skin = getattr(cfg, "skin", "strata")
+    looks = ('<label class="lookpick" title="The portal\'s look - kept in this browser"><span>Look</span><select id="look" aria-label="Look">%s</select></label>'
+             % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == skin else "", esc(t)) for k, t in SKINS))
     # 1.115.0: the Christmas theme, when portal_theme_season has it on today (site_festive: the report website's decor and files)
     until = site_festive.season_until(cfg.season, datetime.datetime.now(cfg.tz or datetime.timezone.utc).date())
     fz = (lambda part: part) if until else (lambda part: "")
@@ -4173,22 +4207,22 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     if until:                                       # the snowman after the page's title (16-bit; the sleigh rides in the lights)
         body = body.replace("</h1>", site_festive.snowman(st) + "</h1>", 1)
     bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
-           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s'
+           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s%s'
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s%s</div>'
            % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
-              fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), seg,
+              fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), looks, seg,
               fz(until and site_festive.lights(st, "sleigh" in site_festive.parts_of(st, cfg.season_parts))), bar_end))
     festive_head = ('<link rel="stylesheet" href="%sstatic/festive.css?v=%s"><script src="%sstatic/festive.js?v=%s"></script>'
                     % (cfg.path, site_festive.version(site_festive.CSS), cfg.path, site_festive.version(site_festive.JS))) if until else ""
-    return ('<!doctype html><html lang="en" data-look="%s"%s%s><head><meta charset="utf-8">'
+    return ('<!doctype html><html lang="en" data-look="%s" data-skin="%s" data-skin-default="%s"%s%s><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
-            '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
+            '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/portal-looks.css?v=%s"><link rel="stylesheet" href="%sstatic/banner.css">'
             '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s%s</head>'
             '<body data-page="%s">%s%s%s%s<main>%s</main>%s</body></html>'
-            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
+            % (cfg.look, skin, skin, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
                site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
-               cfg.path, cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
+               cfg.path, cfg.path, looks_version(), cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -4232,12 +4266,12 @@ def reader_refusal_page(cfg, cn):
     if cfg.ad_groups_why or (cfg.ad_groups and not cfg.ad_groups.status("readers")["ok"]):
         note = ("<p>AD groups have not been read or are unavailable. Only card names listed in "
                 "portal_viewers, portal_runners or portal_approvers may view the portal.</p>")
-    return ("""<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">
+    return ("""<!doctype html><html lang="en" data-look="%s" data-skin="%s"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Portal access</title>
-<link rel="stylesheet" href="%sstatic/portal.css">%s</head><body>%s<main><h1>Portal access</h1>
+<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/portal-looks.css">%s</head><body>%s<main><h1>Portal access</h1>
 <div class="note bad"><p>You are not on the portal's readers list. Ask %s to add you.</p>
 <p>Card CN: <b>%s</b></p>%s</div>%s</main>%s</body></html>""" %
-            (cfg.look, esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
+            (cfg.look, getattr(cfg, "skin", "strata"), esc(cfg.path), esc(cfg.path), style, banner, esc(cfg.access_contact), esc(cn), note, ad_diag_html(ad_diag(cfg, cn)), banner))
 
 
 LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
@@ -4416,8 +4450,19 @@ def home_page(cfg, portal, cn, query=None):
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
-            % (strip, why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_runners and each action\'s who say who may run what.</p>'))
-    return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home")
+            % (strip + ops_section(cfg), why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_runners and each action\'s who say who may run what.</p>'))
+    return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home",
+                 head=('<script src="%sstatic/portal-looks.js?v=%s" defer></script>' % (cfg.path, static_version("portal-looks.js"))) if getattr(cfg, "wall", False) else "")
+
+
+def ops_section(cfg):
+    """1.135.0: the Actions page's Ops center section - the wall's areas in short, drawn by static/portal-looks.js from
+    /api/wall/summary in the viewer's look (each look its own shape: spotlight, live tiles, lamps, ledger, map, ranking).
+    Only with the wall on; hidden until its first answer (no answer: a muted line, never a made-up green)."""
+    if not getattr(cfg, "wall", False):
+        return ""
+    return ('<section class="ops" id="ops" data-src="%sapi/wall/summary" data-wall="%swall" data-title="%s" aria-labelledby="ops-h" hidden>'
+            '<h2 class="ops-h" id="ops-h">%s</h2></section>' % (cfg.path, cfg.path, esc(cfg.wall_title), esc(cfg.wall_title)))
 
 
 def details_html(cfg, portal, cn, name):
@@ -6562,7 +6607,10 @@ def netapp_page(cfg, cn, statics, token=""):
 
 
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
-WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js")
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
+# 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
+LOOKS_STATIC = ("portal-looks.js",)
+FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
 
 
 def _safe_add(log, rec):
@@ -6710,6 +6758,13 @@ class WallLive(object):
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
                                     title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
 
+    def summary(self, now=None):
+        """1.135.0: the areas in short (wall_model.summary) - the same rule as the wall: stale is never green"""
+        now = time.time() if now is None else now
+        out = wall_model.summary(self.model(now), now)
+        out["zone"] = self.cfg.tz_name or "UTC"
+        return out
+
     def answer(self, etag_in="", cn=""):
         m = self.model()
         m["me"] = {"feedback": wall_may_feedback(self.cfg, cn), "reader": wall_may_read_feedback(self.cfg, cn),
@@ -6725,7 +6780,7 @@ class WallLive(object):
 
 
 FEEDBACK_AREAS = (("general", "The wall in general"), ("overview", "Overview"), ("storage", "Storage"), ("vmware", "VMware"), ("vdi", "VDI"),
-                  ("ad", "Active Directory"), ("tickets", "Outages & problems"), ("network", "Network"), ("styles", "Lights / Cockpit / Map"))
+                  ("ad", "Active Directory"), ("tickets", "Outages & problems"), ("network", "Network"), ("styles", "The wall's styles"))
 FEEDBACK_MAX = 1000             # characters in one feedback
 FEEDBACK_KEEP = 5000            # the newest this many are kept
 
@@ -6847,14 +6902,18 @@ def wall_page(cfg, cn, statics, token=""):
     """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
     v = lambda n: statics.get(n, "")
     body = ((WALL_PREVIEW if getattr(cfg, "wall_preview", True) else "") +
-            '<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s"%s>'
+            '<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s" data-style="%s"%s%s>'
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
-            '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
-            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
-               cfg.path, v("wall-land.js"), cfg.path, v("wall-page.js")))
+            '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-styles.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
+               (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
+               ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"), cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
-                 head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s">' % (cfg.path, v("wall-page.css")))
+                 head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s"><link rel="stylesheet" href="%sstatic/wall-styles.css?v=%s">'
+                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")))
 
 
 def make_handler(cfg, portal, static_dir, wall=None):
@@ -6869,7 +6928,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC:
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + LOOKS_STATIC:
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -6985,13 +7044,20 @@ def make_handler(cfg, portal, static_dir, wall=None):
                                             cache="no-cache" if cfg.readers_restricted else "max-age=3600")
                 except OSError:
                     return self._send(404, b"", "text/plain")
-            if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js"):
+            if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js",
+                        "/static/portal-looks.css"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(name)[1]])
             if path in ("/static/festive.css", "/static/festive.js"):      # 1.115.0: the Christmas theme's files (site_festive.py)
                 css = path.endswith(".css")
                 return self._static((site_festive.CSS if css else site_festive.JS).encode("utf-8"), TYPES[".css" if css else ".js"])
+            if path.startswith("/static/fonts/") and FONT_NAME.match(path[8:]):     # 1.135.0: the looks' fonts (a name from the list only)
+                try:
+                    with open(os.path.join(static_dir, path[8:]), "rb") as fh:
+                        return self._static(fh.read(), "font/woff2")
+                except OSError:
+                    return self._send(404, b"", "text/plain")
             if path.startswith("/static/") and path[8:] in statics:          # 1.85.0: the network map's files
                 with open(os.path.join(static_dir, path[8:]), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(path)[1]])
@@ -7045,6 +7111,15 @@ def make_handler(cfg, portal, static_dir, wall=None):
                                       [("Content-Disposition", 'attachment; filename="wall-feedback.csv"')])
                 return self._send(200, feedback_page(cfg, cn, feedback, area), "text/html; charset=utf-8")
             # 1.130.0: the ops-center wall
+            if path == "/api/wall/summary":                 # 1.135.0: the areas in short, for the looks' Ops center section on Actions
+                if not wall:
+                    return self._send(404, {"error": "The wall is off here (portal_wall: false)."})
+                wall.viewed()
+                try:
+                    return self._send(200, wall.summary())
+                except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
+                    portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
+                    return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
             if path in ("/wall", "/api/wall"):
                 if not wall:
                     return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),

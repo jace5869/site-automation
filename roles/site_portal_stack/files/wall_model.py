@@ -813,3 +813,143 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
+
+
+# ---- 1.135.0: the areas in short, for the portal's looks (the Actions page's "Ops center" section) ---------------------------
+# The same rule as the wall page (static/wall-page.js areaState / status): green only when every feed of the area is current
+# (read OK, younger than LATE), its read whole and no condition open; a stale feed or a last-known condition is grey, never green.
+def _feed_fresh(m, k, now):
+    f = (m.get("feeds") or {}).get(k)
+    if not isinstance(f, dict) or f.get("state") != "ok" or f.get("asof") is None:
+        return "stale"
+    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S})
+
+
+def _home(k):
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else ""
+
+
+def _home_ok(m, k, now, by):
+    a = _home(k)
+    if not a:
+        return True
+    ar = by.get(a)
+    if not ar or ar.get("complete") is not True or k not in (ar.get("feeds") or []):
+        return False
+    feeds = m.get("feeds") or {}
+    return all(_feed_fresh(m, x, now) == "ok" for x in feeds if _home(x) == a) and \
+        all(x in feeds for x in (ar.get("feeds") or []) if _home(x) == a)
+
+
+def _status(m, st, k, now, by):
+    """the wall's one rule for a value from feed k: stale feed -> stale; ok only when the feed is current and its area whole"""
+    if not k:
+        return "off" if st == "ok" else st
+    fr = _feed_fresh(m, k, now)
+    if fr == "stale":
+        return "stale"
+    if st == "ok" and (not isinstance(m.get("conds"), list) or fr != "ok" or not _home_ok(m, k, now, by)):
+        return "stale"
+    return st
+
+
+def _cond_stale(m, c, now):
+    return bool(c.get("last_known")) or bool(c.get("feed") and _feed_fresh(m, c["feed"], now) == "stale")
+
+
+def _metric(label, obj, v, warn, crit, unit, feed, m, now, by):
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    st = "crit" if crit is not None and v >= crit else "warn" if warn is not None and v >= warn else "ok"
+    return {"label": label, "obj": obj, "v": round(float(v), 1), "warn": warn, "crit": crit, "unit": unit, "feed": feed,
+            "state": _status(m, st, feed, now, by)}
+
+
+def summary(m, now):
+    """the wall's model (build()) -> {"state", "areas": [{id, name, state, crit, warn, big, unit, note, metric, worst, asof, why}]}.
+    No value is made up: an area not on the wall is "off" ("Not on the wall yet"); a metric only from what the model read."""
+    areas = [a for a in (m.get("areas") or []) if isinstance(a, dict) and a.get("id")]
+    by = dict((a.get("id"), a) for a in m.get("areas") or [] if isinstance(a, dict))
+    conds = m.get("conds") if isinstance(m.get("conds"), list) else None
+    th = m.get("thresholds") or {}
+    rank = {"crit": 3, "warn": 2, "stale": 1, "ok": 0, "off": -1}
+    out, overall = [], "off"
+    for a in areas:
+        aid = a.get("id")
+        feeds = [k for k in (a.get("feeds") or []) if isinstance(k, str)]
+        opened = [c for c in conds or [] if isinstance(c, dict) and c.get("end") is None and c.get("area") == aid]
+        cur = [c for c in opened if not _cond_stale(m, c, now)]
+        n = {"crit": sum(1 for c in cur if c.get("sev") == "crit"), "warn": sum(1 for c in cur if c.get("sev") == "warn")}
+        if not a.get("on") or not a.get("built"):
+            st = "off"
+        elif conds is None:
+            st = "stale"
+        elif n["crit"]:
+            st = "crit"
+        elif n["warn"]:
+            st = "warn"
+        elif any(_cond_stale(m, c, now) for c in opened) or not feeds or a.get("complete") is not True or \
+                any(_feed_fresh(m, k, now) != "ok" or _status(m, "ok", k, now, by) != "ok" for k in feeds):
+            st = "stale"
+        else:
+            st = "ok"
+        asofs = [float((m.get("feeds") or {}).get(k, {}).get("asof")) for k in feeds
+                 if isinstance((m.get("feeds") or {}).get(k), dict) and (m.get("feeds") or {})[k].get("asof") is not None]
+        why = ""
+        if st == "stale":
+            bad = []
+            for k in feeds:
+                f = (m.get("feeds") or {}).get(k)
+                if not isinstance(f, dict):
+                    bad.append(k + ": source missing")
+                elif f.get("state") != "ok":
+                    bad.append("%s: %s" % (f.get("name") or k, f.get("why") or {"never": "not read yet", "auth": "login refused",
+                                                                                     "error": "not answering", "paused": "login paused"}.get(f.get("state"), "not read")))
+                elif _feed_fresh(m, k, now) != "ok":
+                    bad.append("%s: last read %d min ago" % (f.get("name") or k, int((now - float(f["asof"])) // 60)))
+            if not bad and a.get("complete") is not True:
+                bad = list(a.get("incomplete") or [])[:2] or ["read not whole"]
+            why = " · ".join(bad[:2])
+        elif st == "off":
+            why = a.get("not_on_wall") or "not on the wall yet."
+        big = unit = note = ""
+        metric = None
+        if st != "off" and aid == "storage":
+            st_ = m.get("storage") or {}
+            ag = [x for x in st_.get("aggr") or [] if isinstance(x, dict) and isinstance(x.get("v"), (int, float))]
+            aw, ac = (th.get("aggr") or [85, 97])[:2]
+            dw, dc = (th.get("ds") or [85, 95])[:2]
+            if ag:
+                w_ = max(ag, key=lambda x: x["v"])
+                metric = _metric("fullest aggregate", w_.get("n"), w_["v"], aw, ac, "%", w_.get("feed"), m, now, by)
+            else:
+                ds = [x for x in st_.get("ds") or [] if isinstance(x, dict) and isinstance(x.get("v"), (int, float)) and x.get("capacity_watched") is not False]
+                if ds:
+                    w_ = max(ds, key=lambda x: x["v"])
+                    metric = _metric("fullest datastore", w_.get("n"), w_["v"], dw, dc, "%", w_.get("feed"), m, now, by)
+            if metric:
+                big, unit = _n(metric["v"]), "% used · " + str(metric["obj"] or "")
+            nodes = st_.get("nodes") if isinstance(st_.get("nodes"), list) and len(st_.get("nodes")) == 2 else None
+            note = ("%d of %d storage nodes up" % (nodes[0], nodes[1])) if nodes else ""
+        elif st != "off" and aid == "vmware":
+            vm = m.get("vmware") or {}
+            cl = [x for x in vm.get("clusters") or [] if isinstance(x, dict)]
+            up = sum(int(x.get("up") or 0) for x in cl)
+            of = sum(int(x.get("of") or 0) for x in cl)
+            if of:
+                big, unit = "%d/%d" % (up, of), "hosts up"
+            hw = (th.get("high") or [90, 15])[0]
+            busy = [x for x in cl if isinstance(x.get("cpu"), (int, float))]
+            if busy:
+                w_ = max(busy, key=lambda x: x["cpu"])
+                metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
+            note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
+        worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
+        out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",
+                    "state": st, "crit": n["crit"], "warn": n["warn"], "big": big, "unit": unit, "note": note, "metric": metric,
+                    "worst": [{"t": c.get("t"), "sev": c.get("sev"), "start": c.get("start")} for c in worst],
+                    "asof": min(asofs) if asofs else None, "why": why})
+        if rank[st] > rank[overall]:
+            overall = st
+    return {"now": now, "state": overall, "areas": out, "late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S,
+            "title": m.get("title") or "", "enclave": m.get("enclave") or ""}
