@@ -76,8 +76,8 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 .olc .olb{position:absolute;top:0;font:600 10.5px/1.2 var(--mono);white-space:nowrap;padding-left:3px}
 .olc .olb.end{transform:translateX(-100%);padding:0 3px 0 0}
 .olc .olb.below{top:auto;bottom:0}
-.olc .olb.tw{color:var(--warning)}
-.olc .olb.tc{color:var(--critical)}
+.olc .olb.olw{color:var(--warning)}
+.olc .olb.olx{color:var(--critical)}
 .olc .tr{fill:var(--line)}
 .olc .bw{fill:var(--warning);opacity:.2}
 .olc .bc{fill:var(--critical);opacity:.22}
@@ -273,7 +273,8 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
 :root[data-skin="press"] .ot-note,:root[data-skin="press"] .ot-lamps{display:none}
 :root[data-skin="press"] .ot-why{grid-column:3}
 :root[data-skin="press"] .ot-cue{justify-self:end}
-@media (max-width:1000px){:root[data-skin="press"] .ot-face{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}:root[data-skin="press"] .ot-why{grid-column:auto}}
+@media (max-width:1000px){:root[data-skin="press"] .ot-face{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  :root[data-skin="press"] .ot-face>.olc,:root[data-skin="press"] .ot-why{grid-column:1/-1}:root[data-skin="press"] .ot-cue{justify-self:start}}
 
 /* ================================================================ atlas: Contour Atlas */
 :root[data-skin="atlas"] main{max-width:1760px}
@@ -300,7 +301,7 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
 .ops-map a{cursor:pointer}
 .ops-map a:focus-visible .c0,.ops-map a:hover .c0{stroke:var(--accent)}
 .ops-map text{font:700 14px var(--sans);fill:var(--ink)}
-.ops-map text.sub{font:600 10.5px var(--mono);fill:var(--muted)}
+.ops-map text.mts{font:600 10.5px var(--mono);fill:var(--muted)}
 :root[data-skin="atlas"] .ot>a{border-radius:16px}
 
 /* ================================================================ tower: Timing Tower */
@@ -328,7 +329,9 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
 :root[data-skin="tower"] .ot-note,:root[data-skin="tower"] .ot-lamps{display:none}
 :root[data-skin="tower"] .ot-why{grid-column:4}
 :root[data-skin="tower"] .ot-h{text-transform:uppercase;font-style:italic}
-@media (max-width:1000px){:root[data-skin="tower"] .ot-face{grid-template-columns:2.6em minmax(0,1fr) minmax(0,1fr)}:root[data-skin="tower"] .ot-why{grid-column:auto}}
+@media (max-width:1000px){:root[data-skin="tower"] .ot-face{grid-template-columns:2.6em minmax(0,1fr) minmax(0,1fr)}
+  :root[data-skin="tower"] .ot-face>.olc,:root[data-skin="tower"] .ot-why,:root[data-skin="tower"] .ot-cue{grid-column:2/-1}
+  :root[data-skin="tower"] .ot-rank{grid-row:span 3;align-self:start}}
 
 @media (prefers-reduced-motion:reduce){html:not(.motion-always) .ot>a,html:not(.motion-always) .ot-face,html:not(.motion-always) .ot-back{transition:none!important}}
 @media print{.ops,.lookpick{display:none}}

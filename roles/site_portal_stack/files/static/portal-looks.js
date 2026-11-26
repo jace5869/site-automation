@@ -90,8 +90,8 @@
       t.style.left = Math.max(0, Math.min(100, v)) + "%";
       labels.push(t);
     };
-    if (m.warn != null) lim(m.warn, "lw", "tw", (m.crit == null ? "high " : "warn ") + num(m.warn), false);
-    if (m.crit != null) lim(m.crit, "lcr", "tc", "crit " + num(m.crit), true);
+    if (m.warn != null) lim(m.warn, "lw", "olw", (m.crit == null ? "high " : "warn ") + num(m.warn), false);
+    if (m.crit != null) lim(m.crit, "lcr", "olx", "crit " + num(m.crit), true);
     var svg = s("svg", {viewBox: "0 0 " + W + " " + bh, preserveAspectRatio: "none", role: "img", class: big ? "big" : null,
                         "aria-label": m.label + " " + num(m.v) + m.unit + (m.warn != null ? ", warning at " + num(m.warn) : "") + (m.crit != null ? ", critical at " + num(m.crit) : "")}, kids);
     return h("div", "olc", [h("div", "lc-b" + (m.crit != null ? " lc2" : ""), [svg].concat(labels)), h("p", "", sentence(m))]);
@@ -179,7 +179,7 @@
       var p = PLACE[a.id] || [140 + i * 190, 110], rings = a.state === "off" ? 1 : 2 + Math.min(3, (a.crit || 0) + (a.warn || 0)), g = [];
       for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], 36 + r * 10, i + 1)}));
       g.push(s("text", {x: p[0], y: p[1] - 2, "text-anchor": "middle"}, [a.short || a.name]));
-      g.push(s("text", {class: "sub", x: p[0], y: p[1] + 15, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
+      g.push(s("text", {class: "mts", x: p[0], y: p[1] + 15, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
       var link = s("a", {href: WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id)), class: "k-" + a.state, "aria-label": a.name + ": " + WORD[a.state]}, g);
       kids.push(link);
     });

@@ -37,6 +37,7 @@ DOMAINS = (
     "designsystem.digital.gov", "carbondesignsystem.com", "design-system.service.gov", "nngroup.com",
     "developer.mozilla.org",                                        # the design guidance the report website follows (docs/WEB_REPORTS.md)
     "naturalearthdata.com", "solarwinds.github.io",                 # 1.85.0: the network map's land (Natural Earth, public domain); SolarWinds' OrionSDK schema
+    "sil.org",                                                      # 1.135.0: the SIL Open Font License, quoted verbatim in the bundled fonts' licences
 )
 # Dotted words of code, not host names (System.Net, $vm.guest.net ...; vCenter's event types esx.problem.net.redundancy.lost).
 CODE = ("system.io", "system.net", "guest.net", "g.net", "esx.problem.net", "esx.clear.net")
