@@ -70,6 +70,7 @@ act_triage_task: ""                      # override the whole prompt (templates/
 act_triage_extra_instructions: ""
 act_triage_max_steps: 30
 act_triage_timeout: 900                  # seconds for the whole ACT run
+act_worker_model: ""                     # 0.6.28: model for delegated sub-tasks (--worker-model); "" = the session model
 act_triage_poll: 10                      # unused since 1.104.0; kept for existing vars files
 
 # ---- Outcome handling ---------------------------------------------------------------------

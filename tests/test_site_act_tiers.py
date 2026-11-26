@@ -60,7 +60,7 @@ with open(log, "a") as fh:
                          "env": dict((n, os.environ.get(n)) for n in ("GENAI_MODEL", "ASKSAGE_MODEL", "GENAI_BETA_MODEL",
                                      "ACT_PROVIDER", "ACT_PSEUDO_NAMES", "ACT_PSEUDONYMIZE", "ACT_NO_BANNER", "GENAI_TIMEOUT",
                                      "GENAI_KEY", "ACT_AUTO", "ACT_ALLOW")),
-                         "envnames": sorted(os.environ)}) + "\n")
+                         "envnames": sorted(os.environ), "delegate": os.environ.get("ACT_DELEGATE")}) + "\n")
 fcntl.flock(lock, fcntl.LOCK_UN)
 rec = {"schema": "act.result/1", "status": "completed", "summary": "", "stop_reason": "", "model": model or "fake-model"}
 def pairs(s):
@@ -274,9 +274,11 @@ def capture(mod, url, extra=None):
                 res.append(rig.ask(copy.deepcopy(questions), **kw))
             runs = []
             for c in rig.calls():
+                # 1.137.0's one intended change to every ACT run: the launcher sets ACT_DELEGATE=0 (ACT 0.6.28's sub-agents
+                # off for the jobs) - checked in Delegate, left out of the comparison with 1.136.0
                 runs.append({"task": c["task"], "argv": [_norm(x, rig) for x in c["argv"]], "stdin": c["stdin"],
                              "env": dict((k, _norm(v, rig) if v else v) for k, v in c["env"].items()),
-                             "envnames": c["envnames"]})
+                             "envnames": [n for n in c["envnames"] if n != "ACT_DELEGATE"]})
             runs.sort(key=lambda r: json.dumps(r, sort_keys=True))
             for r in res:
                 r.pop("seconds", None)
@@ -873,6 +875,34 @@ class ReviewRound2(unittest.TestCase):
         q0 = r["questions"][0]
         self.assertEqual((q0["tier"], q0["model"]), ("escalated", "smart-model"))
         self.assertTrue(q0["cached"])
+
+
+class Delegate(unittest.TestCase):
+    """ACT 0.6.28's sub-agents (delegate) are off for the jobs: the launcher sets ACT_DELEGATE=0; site_act_env may turn
+    them on again. Both tiers, and the engine without tiers."""
+    setUp, tearDown, ask, models = (ReviewRound1Codex.setUp, ReviewRound1Codex.tearDown, ReviewRound1Codex.ask,
+                                    ReviewRound1Codex.models)
+
+    def test_off_for_every_run_unless_site_act_env_says(self):
+        self.rig.set_plan({"worker-model|t": ["items:P1=30"], "smart-model|t": ["items:P1=90"]})
+        os.environ["ACT_DELEGATE"] = "1"                   # the execution environment's own: not for the jobs
+        try:
+            self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers=tiers(synth=False))
+            self.assertEqual(sorted(c["delegate"] for c in self.rig.calls()), ["0", "0"])
+            self.rig.set_plan({"*": ["items:P1=90"]})
+            self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers={})
+            self.assertEqual([c["delegate"] for c in self.rig.calls()], ["0"])
+            self.rig.set_plan({"*": ["items:P1=90"]})
+            self.ask([{"items": _items("P1"), "evidence": "e", "task": "t"}], tiers={}, env_extra={"ACT_DELEGATE": "1"})
+            self.assertEqual([c["delegate"] for c in self.rig.calls()], ["1"])
+        finally:
+            del os.environ["ACT_DELEGATE"]
+
+    def test_the_vendored_act_is_0628_with_its_switch(self):
+        with open(os.path.join(REPO, "vendor", "act", "VERSION")) as fh:
+            self.assertEqual(fh.read().strip(), "0.6.28")
+        with open(os.path.join(REPO, "vendor", "act", "act")) as fh:
+            self.assertIn('DELEGATE = _env_flag("ACT_DELEGATE", True)', fh.read())
 
 
 def make_golden(engine, path):

@@ -36,6 +36,13 @@ all.yml - a cheaper, faster model for the per-item first pass. Without it, nothi
   cache key) that tiers off matches byte for byte; the ACT e2e with a stand-in of two models.
 - Not in it: the health check's `explain` level and fapolicyd (ACT runs on each host there, not through the engine).
 
+**ACT 0.6.28 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.28 (was 0.6.27): `delegate`, worker
+sub-agents with their own model, step budget and fresh context, for a person at the keyboard (`--worker-model`,
+`ACT_WORKER_MODEL`, `:delegate`); `act_triage` passes `act_worker_model` as `--worker-model`; the result file has
+`delegations`. The jobs do not use it: their launcher (`act_launch.py`) starts every job's ACT with `ACT_DELEGATE=0`
+(the engine's questions and the runs on the hosts alike); `site_act_env: {ACT_DELEGATE: "1"}` turns it on. The jobs'
+own tiers (above) pick the models. The site's changes to `act_triage` (1.104.0's launcher) are kept.
+
 ## 1.136.0 — 2026-11-26
 
 **To set up: nothing.** The answer cache needs the **Report database** credential (the writer, `report_writer`) on the

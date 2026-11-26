@@ -474,6 +474,10 @@ site_act_worker_models: {genai: <hydrogen model id>}       # the worker model
 # site_act_worker_model: <id>                              # or one worker for this run, whatever the provider
 ```
 
+ACT 0.6.28 has sub-agents of its own (`delegate`, `--worker-model`) for a person at the keyboard. The jobs do not use
+them: every job's ACT starts with `ACT_DELEGATE=0` (`site_act_env: {ACT_DELEGATE: "1"}` turns them on). The tiers above
+are how a job splits its work between two models.
+
 Each job can turn tiers off and stay on the smart model: `log_analysis_act_tiers`, `vm_alarm_act_tiers`,
 `vm_capacity_act_tiers`, `vm_rightsize_act_tiers`, `answer_keys_act_tiers` (all `true`). Without a worker model, or with
 the job's switch `false`, every question goes to the smart model, exactly as before 1.137.0. A worker that is the smart
