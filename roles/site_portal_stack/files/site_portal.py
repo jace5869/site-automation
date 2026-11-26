@@ -592,6 +592,8 @@ class Config(object):
             self.ad_groups = (site_ad_groups.Groups(groups, self.ldap_opts, self.card_match, self.ad_groups_seconds)
                               if site_ad_groups and any(groups.values()) else None)
         except ValueError as ex:                          # a card rule that is not one of the five forms: no group counts
+            if self.ldap_opts.get("matches") == "conflict":
+                ex = "portal_ad_card_matches and portal_ad_card_attribute / _match are both in the settings"
             self.ad_groups, card_why = None, "The card rules are not usable (%s) - deploy again; the named lists only." % ex
         if site_ad_groups and not card_why:
             self.approvers = site_ad_groups.People(self.approvers, "approvers", self.ad_groups)
@@ -732,6 +734,8 @@ def card_rules_of(e):
     not a list (null, empty, not JSON - Codex 1.133.0 #10): "unreadable", so no card is matched in AD (said in the log),
     never the five defaults. Not set (a settings file from 1.132.0 or before): its one attribute / match pair is the ONE
     rule, each at its 1.132.0 default when left out, exactly as 1.132.0 matched (Codex 1.133.0 #2). Neither: the five."""
+    if "PORTAL_AD_CARD_MATCHES" in e and ("PORTAL_AD_CARD_ATTRIBUTE" in e or "PORTAL_AD_CARD_MATCH" in e):
+        return "conflict"                                 # Codex 1.133.0 r2: both kinds set - AD off, said (as the deploy refuses it)
     if "PORTAL_AD_CARD_MATCHES" in e:
         cm = e.get("PORTAL_AD_CARD_MATCHES")
         if isinstance(cm, str):
@@ -742,7 +746,10 @@ def card_rules_of(e):
         return cm if isinstance(cm, list) else "unreadable"
     attr, match = e.get("PORTAL_AD_CARD_ATTRIBUTE"), e.get("PORTAL_AD_CARD_MATCH")
     if attr not in (None, "") or match not in (None, ""):
-        return [{"attribute": str(attr or "userPrincipalName").strip(), "match": str(match or "{edipi}@mil").strip()}]
+        a = str(attr or "userPrincipalName").strip()
+        if match in (None, "") and a.lower() == "userprincipalname":    # the attribute alone: 1.132.0's UPN forms, the 16-digit too
+            return [{"attribute": a, "match": "{edipi}@mil"}, {"attribute": a, "match": "{edipi}{digits6}@mil"}]
+        return [{"attribute": a, "match": str(match or "{edipi}@mil").strip()}]
     return None
 
 

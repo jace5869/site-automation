@@ -22,6 +22,18 @@
 
 - name: Preflight | resolve AD card matches
   block:
+    # Codex 1.133.0 r2: a 1.132.0 card setting that is set must say something - false, null or blank is refused, never a rule
+    - name: Preflight | the 1.132.0 card settings, when set, are text
+      ansible.builtin.assert:
+        that:
+          - portal_ad_card_attribute is not defined or (portal_ad_card_attribute is string and portal_ad_card_attribute | trim | length > 0)
+          - portal_ad_card_match is not defined or (portal_ad_card_match is string and portal_ad_card_match | trim | length > 0)
+        fail_msg: >-
+          portal_ad_card_attribute / portal_ad_card_match is set but empty (false, null or blank). Remove the line to use the
+          card forms in portal_ad_card_matches (all five by default), or give a value such as userPrincipalName and "{edipi}@mil".
+          Nothing was changed.
+        quiet: true
+
     - name: Preflight | check the AD card match settings
       ansible.builtin.assert:
         that:
@@ -36,8 +48,12 @@
     - name: Preflight | select the AD card match rules
       ansible.builtin.set_fact:
         _portal_ad_card_matches: >-
-          {{ [{'attribute': portal_ad_card_attribute | default('', true) | string | trim or 'userPrincipalName',
-               'match': portal_ad_card_match | default('', true) | string | trim or '{edipi}@mil'}] if _portal_legacy_card_rule else portal_ad_card_matches }}
+          {{ ([{'attribute': portal_ad_card_attribute | trim, 'match': '{edipi}@mil'},
+               {'attribute': portal_ad_card_attribute | trim, 'match': '{edipi}{digits6}@mil'}]
+              if portal_ad_card_match is not defined and (portal_ad_card_attribute | trim | lower) == 'userprincipalname'
+              else [{'attribute': (portal_ad_card_attribute | trim) if portal_ad_card_attribute is defined else 'userPrincipalName',
+                     'match': (portal_ad_card_match | trim) if portal_ad_card_match is defined else '{edipi}@mil'}])
+             if _portal_legacy_card_rule else portal_ad_card_matches }}
 
     - name: Preflight | every AD card match identifies the person
       ansible.builtin.assert:
@@ -1559,7 +1575,7 @@
     _card_line: >-
       {{ 'AD card lookups: the forms ' ~ (_portal_ad_card_matches | map(attribute='match') | join(', ') or 'none (no card is matched in AD)')
          ~ '; searched under ' ~ ((portal_ldap_domain | default('', true) | trim | length > 0)
-            | ternary((portal_ldap_domain | trim).split('.') | map('regex_replace', '^', 'DC=') | join(','), 'the answering DC''s domain root'))
+            | ternary((portal_ldap_domain | trim).strip('.').split('.') | map('regex_replace', '^', 'DC=') | join(','), 'the answering DC''s domain root'))
          ~ ' (the DC''s defaultNamingContext first). One domain only; the LDAP Bind Account must be able to read every user object in it.' }}
     # 1.131.0: the wall's on/off and why, and how many network-map places the Map uses (no secret: only whether one is set)
     _wall_line: >-

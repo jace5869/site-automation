@@ -108,13 +108,13 @@ portal_public_url: https://stigman.example.mil/portal/
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 
-## 1.132.0's setting. Set (alone or with portal_ad_card_match): exactly ONE rule, this attribute
-## (userPrincipalName when left out). Never with portal_ad_card_matches.
-# portal_ad_card_attribute: ""
+## 1.132.0's setting, unset by default. Set: the rule's attribute (userPrincipalName when left out;
+## set alone, its {edipi}@mil and {edipi}{digits6}@mil). Never with portal_ad_card_matches.
+# portal_ad_card_attribute: "{{ undef() }}"
 
-## 1.132.0's setting: the one rule's form ({edipi}@mil when left out). Never with
+## 1.132.0's setting, unset by default: the one rule's form ({edipi}@mil when left out). Never with
 ## portal_ad_card_matches.
-# portal_ad_card_match: ""
+# portal_ad_card_match: "{{ undef() }}"
 
 ## 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName
 ## {edipi}@mil or {edipi}{digits6}@mil (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ

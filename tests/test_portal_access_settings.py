@@ -71,7 +71,7 @@ class DeployAccess(unittest.TestCase):
             "empty": {"portal_ad_card_matches": [], "expected_rules": []},
             # Codex 1.133.0 #2: either 1.132.0 setting alone is ONE rule, the other at its 1.132.0 default - never the five
             "match_only_default": {"portal_ad_card_match": "{edipi}@mil", "expected_rules": [defaults[0]]},
-            "attribute_only_default": {"portal_ad_card_attribute": "userPrincipalName", "expected_rules": [defaults[0]]},
+            "attribute_only_default": {"portal_ad_card_attribute": "userPrincipalName", "expected_rules": [defaults[0], defaults[4]]},
             "attribute_only_sam": {"portal_ad_card_attribute": "sAMAccountName", "portal_ad_card_match": "{edipi}.civ",
                                    "expected_rules": [defaults[2]]},
             "both_defaults": {"portal_ad_card_attribute": "userPrincipalName", "portal_ad_card_match": "{edipi}@mil",
@@ -86,6 +86,15 @@ class DeployAccess(unittest.TestCase):
         self.assertNotEqual(run.returncode, 0)
         for host in ("legacy_defaults", "match_default"):
             self.assertRegex(run.stdout, rf"fatal: \[{host}\].*portal_ad_card_matches.*portal_ad_card_attribute or portal_ad_card_match")
+
+    def test_codex_1330s_r2_a_blank_132_card_setting_stops_deploy(self):
+        run = self.deploy({"match_false": {"portal_ad_card_match": False}, "match_blank": {"portal_ad_card_match": " "},
+                           "attr_null": {"portal_ad_card_attribute": None}, "attr_empty": {"portal_ad_card_attribute": ""},
+                           "ok": {"portal_ad_card_match": "{edipi}@mil"}})
+        self.assertNotEqual(run.returncode, 0)
+        for host in ("match_false", "match_blank", "attr_null", "attr_empty"):
+            self.assertRegex(run.stdout, rf"fatal: \[{host}\].*is set but empty \(false, null or blank\)\. Remove the line")
+        self.assertNotRegex(run.stdout, r"(failed|fatal): \[ok\]")
 
     def test_codex_1330s_16_false_or_null_in_the_wall_lists_stops_deploy(self):
         tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())

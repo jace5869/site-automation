@@ -657,18 +657,20 @@ portal_run_groups: []                            # the same for who may run the 
   All five are on when neither the list nor a 1.132.0 setting is set. Any other form, attribute (`altSecurityIdentities`,
   `employeeID` ...), `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute` /
   `portal_ad_card_match` still work as they did: set either one (or both) and the portal uses exactly ONE rule - that
-  attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out). It must be one of the
-  five, and cannot be set together with the list. Values are compared in ASCII lower case only.
+  attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out); `userPrincipalName` set
+  alone keeps 1.132.0's two UPN forms (`{edipi}@mil` and the 16-digit one). It must be one of the five, and cannot be
+  set together with the list. Set to `false`, `null` or blank, either stops the deploy: remove the line instead. Values are compared in ASCII lower case only.
 - **The card's name.** Only a card whose CN has the shape LAST.FIRST.EDIPI with up to three more name parts between (a middle name, a generation such as JR) is looked up in
   AD. A certificate with two CNs is refused.
 - **One card, one account.** The account is looked up over the whole domain (its root, not `portal_ldap_base`), with
   both `userPrincipalName` and `sAMAccountName` read for every candidate whatever forms the site kept. No group counts
   for the card when: no enabled account matches; more than one does (a separate `.adm` account with a matching value,
   two 16-digit UPNs); a returned account cannot be fully read - both `userPrincipalName` and `sAMAccountName` must come
-  back (it may be the card's); the search did not end cleanly (every page, to the end); or the account's values name
+  back, in every row of it (it may be the card's); the search did not end cleanly (every page, to the end) or returned
+  a reference to another server; or the account's values name
   another EDIPI under any of the five forms. A group membership counts only for that account's DN and objectGUID.
-  Lookups are kept per person for 5 minutes and dropped at every group read; a group read that lands during a lookup
-  makes that one answer count for nothing.
+  One card is looked up at a time, and decided on the group read taken right after its lookup. Lookups are kept per
+  person for 5 minutes, dropped at every group read, and never used with a group read that began after them.
 - **One domain only.** The lookup searches the domain of the DC that answers (its `defaultNamingContext`, else
   `portal_ldap_domain`). Other domains of a forest are never searched: list DCs of the one domain only. The deploy's
   summary names the base searched.
