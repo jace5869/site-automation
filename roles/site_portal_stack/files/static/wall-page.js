@@ -14,11 +14,11 @@
   var TEST = root.getAttribute("data-test") === "1";
   var FREEZE = TEST && QS.get("freeze") === "1";
   var MIN = 60000;
-  var monitorTransit = 0;
-  var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false;
+  var requestId = 0, lastOutcome = 0, lastFailure = 0, lastSeq = 0;
+  var W = null, receipt = 0, BY = {}, ETAG = "", LOADED = false;
   // the portal itself not answering (a restart, the network): after FAILS_MAX failed reads every source counts as not current
   var FAILS = 0, FAILS_MAX = 1, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
-  function NOW() { return FREEZE && W ? W.now * 1000 : Date.now() + SKEW; }
+  function NOW() { return W ? W.now * 1000 + (FREEZE ? 0 : performance.now() - receipt) : Date.now(); }
 
   // ---------------------------------------------------------------- DOM helpers (text only, never HTML)
   var NS = "http://www.w3.org/2000/svg";
@@ -130,6 +130,7 @@
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
     function arr(x) { return Array.isArray(x) ? x : []; }
+    receipt = performance.now();
     a.noConds = !Array.isArray(a.conds);                  // Codex r5 #16: no condition list at all - nothing is known, nothing green
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
@@ -224,7 +225,9 @@
     if (!areaOn(id)) return "off";
     if (id === "monitor") {
       var f = W.fleet;
-      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f && feedFresh("sw:fleet") === "ok" && NOW() + monitorTransit < f.valid_until * 1000 ? f.state : "stale";
+      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f &&
+        !(window.SAWallFleet && window.SAWallFleet.supersedes(W.seq, f.state)) && feedFresh("sw:fleet") === "ok" &&
+        Number.isFinite(f.valid_until) && NOW() < f.valid_until * 1000 ? f.state : "stale";
     }
     if (W.noConds) return "stale";
     var n = areaCounts(id);
@@ -827,9 +830,8 @@
   function dsFeed() { return vcFeed(); }
   function vcFeed() { return oldest(((W.vmware || {}).vcenters || []).map(function (x) { return x.feed; })); }
   function openDetail(ref, again) {
-    // 1.135.0: Share to Teams open: a refresh keeps it (its text and picture are a snapshot) - the card is redrawn on the next open
-    if (again && card.querySelector(".share")) return;
     var i = ref.indexOf(":"), kind = ref.slice(0, i), key = ref.slice(i + 1);
+    if (again && kind === "c" && BY[key] && card.querySelector(".share")) { openShare(key); return; }
     if (kind === "ds") { openDs(key, again); return; }
     var m = DET[kind] ? DET[kind](key) : null;
     clear(card);
@@ -1636,31 +1638,37 @@
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;
   })();
   function load(first) {
-    var sent = Date.now(), tag = "";
+    var mine = ++requestId, tag = "";
     var hd = {Accept: "application/json"};
     if (ETAG && !first) hd["If-None-Match"] = ETAG;
     return fetch(SRC, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
       if (res.status === 304) {
+        if (mine < lastOutcome) return undefined;
         if (!ETAG || hd["If-None-Match"] !== ETAG) throw new Error("unconfirmed cached response");
+        lastOutcome = mine;
         return undefined;
       }
-      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (!res.ok) {
+        var error = new Error("HTTP " + res.status);
+        if (!res.json) throw error;
+        return res.json().then(function (a) { error.seq = a && a.seq; throw error; });
+      }
       tag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (a) {
       if (a === undefined) return;
       if (!a || !Number.isFinite(a.now)) throw new Error("invalid wall response");
-      if (W && a.now < W.now) return;
+      if (mine < lastFailure) return;
+      if (Number.isSafeInteger(a.seq)) {
+        if (a.seq < lastSeq) return;
+        lastSeq = a.seq;
+      } else if (lastSeq || mine < lastOutcome) return;
+      lastOutcome = Math.max(lastOutcome, mine);
       var keepScroll = window.scrollY;
       W = adapt(a);
       ETAG = tag;
       FAILS = 0;
       UNREACH = false;
-      if (!FREEZE) {
-        var received = Date.now();
-        SKEW = a.now * 1000 - received;
-        monitorTransit = received - sent;
-      }
       setZone(W.zone || "UTC");
       if (!LOADED) {
         LOADED = true;
@@ -1673,6 +1681,12 @@
       window.scrollTo(0, keepScroll);
       root.setAttribute("data-ready", "1");
     }).catch(function (e) {
+      if (mine < lastOutcome) return;
+      if (e && Number.isSafeInteger(e.seq)) {
+        if (e.seq < lastSeq) return;
+        lastSeq = e.seq;
+      }
+      lastFailure = lastOutcome = mine;
       ETAG = "";
       if (!LOADED) { clear(root); root.appendChild(h("p", "note warn", ["The wall could not be read: " + e.message + ". It tries again in 30 s."])); }
       else {

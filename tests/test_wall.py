@@ -656,12 +656,15 @@ class Portal(unittest.TestCase):
         self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0] in (200, 304), True)
         self.assertIn('href="/portal/wall"', call("/")[1])
 
-    def test_etag_holds_between_seconds(self):
+    def test_etag_tracks_sequenced_answer(self):
         fixed = demo.view()                                   # a collector's read: the same until the next one
         _cfg, _p, call, _b = serve(self, view=lambda: fixed)
         _c, _body, h = call("/api/wall")
         time.sleep(1.2)
-        self.assertEqual(call("/api/wall", {"If-None-Match": h["ETag"]})[0], 304)
+        code, body, second = call("/api/wall", {"If-None-Match": h["ETag"]})
+        self.assertEqual(code, 200)
+        self.assertGreater(json.loads(body)["seq"], json.loads(_body)["seq"])
+        self.assertNotEqual(second["ETag"], h["ETag"])
 
     def test_csv_cells_are_never_formulas(self):
         cfg, p, call, base = serve(self, PORTAL_APPROVERS=json.dumps([JDOE_CN]))

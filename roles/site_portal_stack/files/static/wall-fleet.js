@@ -8,7 +8,7 @@
 // DOM is built node by node, every value from the answer goes in as text.
 (function () {
   "use strict";
-  var A = null, F = null, FAIL = "", LOADED_AT = 0, BUSY = false, VER = 0;
+  var A = null, F = null, FAIL = "", LOADED_AT = 0, lastSeq = 0, BUSY = false, VER = 0;
   var B = null, P = {};                       // the board (kept across the page's redraws, so an open card survives them) and its parts
   var SEL = Object.create(null), OV = null;          // no prototype: a key from the address (?node=) is only ever a node                    // the selection (node keys), the open card or list
   var SPOT = {g: null, left: 20, pausedUntil: 0}, DWELL = 20;
@@ -18,7 +18,8 @@
 
   function h(t, c, k, a) { return A.h(t, c, k, a); }
   function W() { return A.W(); }
-  function NOW() { return F && F.skew != null ? Date.now() + F.skew : A.NOW(); }
+  function NOW() { return F ? F.now * 1000 + (A.frozen && frozen() ? 0 : performance.now() - F.receipt) : A.NOW(); }
+  function current(until) { return Number.isFinite(until) && NOW() < until * 1000; }
   function frozen() { return A.frozen(); }
   function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
   function soon(fn) { requestAnimationFrame(function () { fn(); }); }      // after the layout (never the page's test queue)
@@ -26,6 +27,7 @@
   // ---------------------------------------------------------------- the answer
   function url() { return A.src + "/fleet"; }
   function adapt(a) {
+    var receipt = performance.now();
     var arr = function (x) { return Array.isArray(x) ? x : []; };
     var groups = arr(a.groups).map(function (g, i) { return {i: i, name: String(g[0] || ""), kind: g[1] || "g", verdict: g[3] || {}, nodes: []}; });
     var hosts = arr(a.hosts), models = arr(a.models), vcs = arr(a.vcs), vmw = a.vmw || {};
@@ -50,28 +52,37 @@
     var deadlines = nodes.map(function (n) { return n.until; }).concat(groups.map(function (g) { return g.verdict.valid_until; }))
       .filter(Number.isFinite).map(function (t) { return t * 1000; }).sort(function (a, b) { return a - b; });
     VER++;
-    return {coverageUntil: (a.verdict || {}).valid_until, deadlines: deadlines, expired: 0, groups: groups, nodes: nodes, by: by, cmp: a.cmp || {}, counts: a.counts || {}, vcs: vcs, incomplete: arr(a.incomplete), notes: arr(a.notes),
+    return {seq: a.seq, now: a.now, receipt: receipt, state: (a.verdict || {}).state, coverageUntil: (a.verdict || {}).valid_until, deadlines: deadlines, expired: 0, groups: groups, nodes: nodes, by: by, cmp: a.cmp || {}, counts: a.counts || {}, vcs: vcs, incomplete: arr(a.incomplete), notes: arr(a.notes),
             seconds: a.seconds || 60, feed: f, zone: a.zone || "UTC", title: a.title || "", enclave: a.enclave || "", group_by: a.group_by || "groups",
             vmRule: (a.cmp || {}).vm_rule || "", late: +a.late || 180, stale: +a.stale || 600};
   }
   function load(first) {
     if (BUSY) return;
     BUSY = true;
-    var sent = Date.now();
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, 60000);
     return fetch(url(), {headers: {Accept: "application/json"}, signal: controller.signal, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      if (res.status !== 200) throw new Error("HTTP " + res.status);
+      if (res.status !== 200) {
+        var error = new Error("HTTP " + res.status);
+        if (!res.json) throw error;
+        return res.json().then(function (a) { error.seq = a && a.seq; throw error; });
+      }
       return res.json();
     }).then(function (a) {
       if (!a || !Array.isArray(a.nodes) || !Array.isArray(a.groups)) throw new Error("invalid fleet answer");
       if (!Number.isFinite(a.now)) throw new Error("missing fleet time");
+      if (lastSeq && (!Number.isSafeInteger(a.seq) || a.seq < lastSeq)) return;
+      if (Number.isSafeInteger(a.seq)) lastSeq = a.seq;
       F = adapt(a);
-      if (!(A.frozen && frozen())) F.skew = a.now * 1000 - sent;
-      FAIL = ""; LOADED_AT = Date.now();
+      FAIL = ""; LOADED_AT = performance.now();
       Object.keys(SEL).forEach(function (k) { if (!F.by[k]) delete SEL[k]; });
       if (A && A.S.area === "monitor") { refresh(); firstOpen(); }
+      else if (A && A.render) A.render();
     }).catch(function (e) {
+      if (e && Number.isSafeInteger(e.seq)) {
+        if (e.seq < lastSeq) return;
+        lastSeq = e.seq;
+      }
       FAIL = (e && e.message) || "not reachable";
       if (A && A.S.area === "monitor") refresh();
     }).finally(function () { clearTimeout(timeout); BUSY = false; });
@@ -88,6 +99,9 @@
   }
   function swFresh() {                 // the worse of this answer's own read and the wall's newer word on SolarWinds
     if (!F) return "stale";
+    var wall = W();
+    if (wall && wall.seq > F.seq && (!wall.fleet || wall.fleet.state !== "ok" || !Number.isFinite(wall.fleet.valid_until) ||
+        A.NOW() >= wall.fleet.valid_until * 1000)) return "stale";
     var a = fr(F.feed.asof, F.feed.state, F.late, F.stale);
     if (A.feed("sw:fleet")) return worse(a, A.feedFresh("sw:fleet"));
     return W() && W().feeds ? "stale" : a;
@@ -107,7 +121,6 @@
     if (F) {
       var now = NOW();
       while (F.expired < F.deadlines.length && F.deadlines[F.expired] <= now) F.expired++;
-      while (F.expired && F.deadlines[F.expired - 1] > now) F.expired--;
     }
     var x = [k, swFresh(), F && F.expired];
     (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); });
@@ -117,7 +130,7 @@
   // lastdown / lastwarn (its source not current: grey, "last known")
   function shown(n) {
     if (n.vconly) return "info";
-    if (n.verdict !== "unk" && swFresh() === "ok" && NOW() < n.until * 1000) return n.verdict;
+    if (n.verdict !== "unk" && swFresh() === "ok" && current(n.until)) return n.verdict;
     if (n.c === "d") return "lastdown";
     if (n.c === "w") return "lastwarn";
     return "unk";
@@ -131,9 +144,9 @@
   // a group's state from every member (a node in two groups counts in both), kept until the data or a source's freshness changes
   function gState(g) {
     if (g.kind === "v") return {st: "info", label: "information only", up: 0, down: 0, warn: 0, n: coverageCurrent() ? g.verdict.total : "–"};
-    var v = g.verdict, current = swFresh() === "ok" && NOW() < v.valid_until * 1000;
-    return {st: current ? v.state : "stale", label: current ? v.label : "not current",
-            up: current ? v.up : 0, down: current ? v.down : 0, warn: current ? v.warn : 0, n: v.total || 0};
+    var v = g.verdict, usable = swFresh() === "ok" && current(v.valid_until);
+    return {st: usable ? v.state : "stale", label: usable ? v.label : "not current",
+            up: usable ? v.up : 0, down: usable ? v.down : 0, warn: usable ? v.warn : 0, n: v.total || 0};
   }
   function svcOf(n) { var g = F.groups[n.g]; return g ? (g.kind === "n" ? "no group" : g.name) : ""; }
   function hm(ms) { return A.hm(ms); }
@@ -169,7 +182,7 @@
     var word = statusWord(n, s);
     if (!n.vconly && (s === "lastdown" || s === "lastwarn")) word = (s === "lastdown" ? "DOWN" : "WARN") + " - last known, " + pollText(n);
     return {st: word, sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, phrase: phrase(n), loss: n.loss, vc: vmText(n),
-            said: sevOf(s) === "stale" ? phrase(n) : n.why || (n.said ? "SolarWinds: " + n.said : ""), up: s === "up" || s === "off"};
+            said: sevOf(s) === "stale" ? phrase(n) : n.why, up: s === "up" || s === "off"};
   }
   function ctx(L) {
     var w = W(), z = F.zone || "UTC", day = "", one = L.length === 1 ? L[0] : null;
@@ -239,7 +252,7 @@
   function render(api, stage) {
     A = api;
     if (!B) { build(); load(true); }
-    else if (Date.now() - LOADED_AT > 30000) load(false);          // back on the area after a while: read it again at once
+    else if (performance.now() - LOADED_AT > 30000) load(false);          // back on the area after a while: read it again at once
     stage.appendChild(B);
     refresh();
   }
@@ -387,7 +400,7 @@
   }
   function coverageCurrent() {
     var wallFleet = W() && W().fleet;
-    return F.cmp.vc_only != null && !(wallFleet && wallFleet.complete === false) && swFresh() === "ok" && NOW() < F.coverageUntil * 1000;
+    return F.cmp.vc_only != null && !(wallFleet && wallFleet.complete === false) && swFresh() === "ok" && current(F.coverageUntil);
   }
   function compare() {
     var c = F.cmp;
@@ -520,7 +533,7 @@
         x.fillText(fit(x, c.n.toLocaleString("en") + " nodes · " + c.label, L.colW * 0.48), x0 + L.colW, y + 14);
         x.textAlign = "left";
         var top = y + 22;
-        LAY.blocks.push({g: g, x: x0, y: y, top: top, w: L.colW, per: L.per, rows: b.rows});
+        LAY.blocks.push({name: g.name, kind: g.kind, keys: g.nodes.map(function (n) { return n.key; }), x: x0, y: y, top: top, w: L.colW, per: L.per, rows: b.rows});
         g.nodes.forEach(function (n, i) {
           var cx = x0 + (i % L.per) * (S + gap), cy = top + Math.floor(i / L.per) * (S + gap), s = shown(n);
           if (s === "off") { x.strokeStyle = C["--fl-grey"]; x.lineWidth = Math.max(1, S / 8); x.strokeRect(cx + .75, cy + .75, S - 1.5, S - 1.5); }
@@ -560,10 +573,10 @@
     for (var i = 0; i < LAY.blocks.length; i++) {
       var b = LAY.blocks[i], gap = Math.max(1, Math.round(S * 0.24));
       if (mx < b.x - 4 || mx > b.x + b.w + 4) continue;
-      if (my >= b.y - 4 && my < b.top) return {g: b.g};
+      if (my >= b.y - 4 && my < b.top) return {g: F.groups.find(function (g) { return g.name === b.name && g.kind === b.kind; })};
       if (my >= b.top && my < b.top + b.rows * (S + gap)) {
         var col = Math.floor((mx - b.x) / (S + gap)), rw = Math.floor((my - b.top) / (S + gap)), idx = rw * b.per + col;
-        if (col >= 0 && col < b.per && idx < b.g.nodes.length) return {n: b.g.nodes[idx], mx: mx, my: my};
+        if (col >= 0 && col < b.per && idx < b.keys.length) return {n: F.by[b.keys[idx]], mx: mx, my: my};
       }
     }
     return {};
@@ -589,11 +602,11 @@
     return [
       ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
       ["IP", n.ip || "none known", "mono"],
-      ["Status", statusWord(n, s).toLowerCase() + (sevOf(s) === "stale" && !n.vconly ? " · " + pollText(n) : n.why && sevOf(s) !== "stale" ? " · " + n.why : "") + (fr === "stale" ? " · NOT CURRENT (last known)" : fr === "late" ? " · LATE" : ""), sevOf(s)],
+      ["Status", statusWord(n, s).toLowerCase() + (n.why ? " · " + n.why : ""), sevOf(s)],
       n.vconly ? null : ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
       n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
       n.vm ? ["vCenter says:", vmText(n)] : null,
-      n.vconly ? null : [sevOf(s) === "stale" ? "SolarWinds' text (its status is not usable)" : "SolarWinds says", (n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.hms(n.polled * 1000) : "")],
+      n.vconly ? null : ["SolarWinds says", (sevOf(s) !== "stale" && n.said || "-") + (n.model ? " · " + n.model : "") + (n.polled != null ? " · polled " + A.hms(n.polled * 1000) : "")],
       ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
       ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]];
   }
@@ -776,5 +789,6 @@
     if (order.length) spotCue(Math.max(0, order.map(function (g) { return g.i; }).indexOf(SPOT.g)), order.length);
   }, 1000);
 
-  window.SAWallFleet = {render: render, fitted: fitted, failed: function () { return !!FAIL; }, _adapt: adapt};
+  window.SAWallFleet = {render: render, fitted: fitted, failed: function () { return !!FAIL; },
+    supersedes: function (seq, state) { return !!F && F.seq > seq && (F.state !== state || !current(F.coverageUntil)); }, _adapt: adapt};
 })();

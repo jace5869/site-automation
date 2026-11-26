@@ -3,7 +3,7 @@
 ## 1.136.0 — 2026-11-26
 
 **To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
-Network map uses - nothing new to create). The area comes on by itself (`portal_wall_monitor: auto`). Optional: group by a
+Network map uses - nothing new to create). Set `portal_wall_monitor: true` to enable the preview. Optional: group by a
 node custom property instead of SolarWinds' groups (`portal_wall_monitor_group_by: custom:ServiceGroup`), show only some
 groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`portal_wall_monitor_vm_match`), how often
 (`portal_wall_monitor_seconds`, 60).
@@ -31,18 +31,17 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 
 ### Known limits (to 1.136.1)
 
-- **P2 #1.** A large Teams preview can redraw as the displayed outage durations change.
-- **P2 #2.** In review, many VMs sharing a short name could hide another VM from the inventory-only list.
-  The monitor now ignores short names. Shared FQDNs or IPs can still leave coverage unresolved.
-- **P2 #3.** A VM outage start could appear exact after one vCenter reconnected while another kept answering.
-  The inventory-only group no longer reports outage start times.
-- **P2 #4.** An Actions tile could turn grey when a vCenter observation expired. Monitor deadlines now follow SolarWinds.
-- **P2 #7.** Refreshing an open list can move keyboard focus away from its controls.
-- **P2 #8.** A node card or share can show the end of the SolarWinds read as its source time even when its page arrived earlier.
-- **P2 #9.** After a fleet request fails, Overview can stay grey until someone opens the board and its request succeeds.
-- **P2 #10.** The comparison could keep counting unmonitored VMs after a SolarWinds poll expired.
-  The count now shows a dash when the read expires. An open list can retain rows until its next redraw.
-- **P2 #11.** In the Atlas Actions map, an all-unmanaged monitor area can appear unconfigured and link to Overview.
+- **P1 #8.** Membership can lag a group change by 15 minutes plus two read intervals. A newly added down node can be missing from a green service during that time.
+- **P1 #9 and #10.** Treat SolarWinds and vCenter observations as of the read's start. A slow read can give an old node status extra time on the wall or make an old VM heartbeat look recent in Teams.
+- **P2 #1.** A large Teams preview can redraw repeatedly as unrelated polls expire.
+- **P2 #2.** Refreshing an open list can move keyboard focus away from its controls.
+- **P2 #3.** A node card or Teams share can give the last page's read time for a node on an earlier page.
+- **P2 #4.** After a fleet request fails, Overview can stay grey until the board is opened and its next request succeeds.
+- **P2 #5.** An all-unmanaged area can appear unconfigured on the Atlas map and link to Overview.
+- **P2 #6.** A shared group condition can still say critical after a member's poll expires.
+- **P2 #7.** When a vCenter is offline, a matching VM in another vCenter can appear unique even if both now contain it.
+- **P2 #8.** Exactly as many containers as the configured limit can make a complete read appear incomplete.
+- **P2 #9.** The canvas can still open a vCenter-only VM after an expired poll has cleared the comparison count.
 
 ## 1.135.1 — 2026-11-26
 

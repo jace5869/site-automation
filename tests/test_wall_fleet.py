@@ -70,7 +70,7 @@ class Settings(unittest.TestCase):
         o, bad = wf.opts_of({})
         self.assertEqual((o["seconds"], o["group_by"], o["groups"], o["vm_match"]), (60, "groups", [], ["*VMware*"]))
         o, bad = wf.opts_of({"monitor_seconds": 5, "monitor_group_by": "custom:ServiceGroup", "monitor_groups": ["AD", 3, ""]})
-        self.assertEqual((o["seconds"], o["group_by"], o["groups"]), (60, "custom:ServiceGroup", ["AD"]))
+        self.assertEqual((o["seconds"], o["group_by"], o["groups"]), (60, "custom:ServiceGroup", []))
         for gb in ("custom:Service Group", "custom:x;DROP", "custom:", "custom:1abc", "Location"):   # SWQL text: letters, digits, _ only
             o, bad = wf.opts_of({"monitor_group_by": gb})
             self.assertEqual(o["group_by"], "groups", gb)
@@ -567,7 +567,14 @@ class FakeClient(object):
         if "Metadata.Entity" in swql:
             return [{"FullName": n} for n in params["names"] if self.groups is not None]
         if "Orion.ContainerMembers" in swql:
-            return [m for m in self.groups["members"]]
+            members = self.groups["members"]
+            if "WITH ROWS" in swql:
+                start, end = map(int, re.search(r"WITH ROWS (\d+) TO (\d+)", swql).groups())
+                return members[start - 1:end]
+            if "MemberPrimaryID > @member" in swql:
+                cursor = (params["container"], params["member"])
+                members = [m for m in members if (m["ContainerID"], m["MemberPrimaryID"]) > cursor]
+            return members[:int(swql.split()[2])]
         if "Orion.Container" in swql:
             return self.groups["list"]
         top = re.match(r"SELECT TOP (\d+) ", swql)
@@ -671,7 +678,7 @@ GATE_JS = r"""
 const fs = require("fs"), vm = require("vm"), assert = require("assert");
 const [dir, input, scenario] = process.argv.slice(1);
 const data = JSON.parse(input);
-let clock = data.now * 1000;
+let clock = data.now * 1000, dateOffset = 0;
 function el(tag, cls, children) {
   return {tag, cls, attrs: arguments[3], insertBefore(x, before) {this.children.splice(this.children.indexOf(before), 0, x);}, focus() { env.document.activeElement = this; },
     querySelectorAll(tag) { return this.children.filter(x => x && x.querySelectorAll)
@@ -686,7 +693,7 @@ const api = {S: {area: "overview"}, h: el, NOW: () => clock, W: () => ({}), feed
   nowList: () => [], src: "/api/wall"};
 const env = {window: {}, document: {getElementById: () => null}, location: {origin: "https://portal.example.mil"},
   Blob, AbortController, setTimeout, clearTimeout, setInterval(){}, requestAnimationFrame(){}, assert, api, data, el,
-  advance(s) { clock += s * 1000; }, Date: class extends Date { static now() { return clock; } }};
+  performance: {now: () => clock}, shiftDate(s) {dateOffset += s*1000;}, advance(s) { clock += s * 1000; }, Date: class extends Date { static now() { return clock + dateOffset; } }};
 vm.createContext(env);
 function script(name, setup) {
   const code = fs.readFileSync(dir + "/" + name, "utf8");
@@ -709,11 +716,37 @@ if (data.wall || data.actions) {
   if (data.wall) {
     const source = fs.readFileSync(dir + "/wall-page.js", "utf8");
     const loader = source.slice(source.indexOf("  function load(first)"), source.indexOf("  // the test harness only (data-test)"));
-    partial("wall-page.js", "  function overallState", loader + `
+    const detail = source.slice(source.indexOf("  function openDetail("), source.indexOf("  function closeDetail("));
+    const share = source.slice(source.indexOf("  function openShare("), source.indexOf("  var API ="));
+    partial("wall-page.js", "  function overallState", loader + detail + share + `
+    SRC = api.src; window.wallModel = () => W;
+    window.refreshShare = () => {
+      const id = "group";
+      BY[id] = {id,area:"monitor",kind:"fleetdown",sev:"crit",end:NOW()};
+      openShare(id);
+      assert.equal(window.sharedCondition.sev, "cleared");
+      BY[id] = {...BY[id], end:null};
+      openDetail("c:"+id,true);
+    };
+    const card = {querySelector:()=>true};
+    function verify() {return "";}
+    window.SAWallShare.open = (_, condition) => {window.sharedCondition = condition;};
     function render() {} LOADED = true; window.loadWall = load;
     W = adapt(JSON.parse(JSON.stringify(data.wall))); api.areaState = areaState; api.areaCounts = areaCounts; window.freshSignature = freshSig;`);
   }
   if (data.actions) partial("portal-looks.js", '  sec.addEventListener("click"', `
+    window.mapBounds = () => {
+      const ids = ["storage","vmware","vdi","ad","tickets","monitor"];
+      D.areas = ids.map(id=>({id,name:id,state:["storage","vmware","monitor"].includes(id)?"crit":"off",crit:3}));
+      h = el; s = (tag,attrs,kids)=>({tag,attrs,kids});
+      return statusMap().children[1].kids.filter(k=>k.tag==="a").map(a=>{
+        const xy = a.kids[0].attrs.d.match(/-?[0-9.]+/g).map(Number);
+        const xs = xy.filter((_,i)=>!(i%2)), ys = xy.filter((_,i)=>i%2);
+        const labels = a.kids.filter(k=>k.tag==="text");
+        return {left:Math.min(...xs),right:Math.max(...xs),top:Math.min(...ys),bottom:Math.max(...ys,labels[1].attrs.y),
+                center:[labels[0].attrs.x,labels[0].attrs.y-5]};
+      });
+    };
     render = () => {}; window.loadActions = load; D0 = {areas:[data.actions], now:data.now}; D = {now:data.now}; window.actions = () => {aged(); return D.areas[0];};`);
   env.document.getElementById = () => null;
 }
@@ -723,6 +756,15 @@ script("wall-fleet.js", `
   P = {ov: el(), svc: el(), logo: el(), small: el(), site: el(), clock: el("", "", [{}, {}])};
   // The surrounding board panels do not participate in the dialog's lifecycle.
   srcs = pills = banner = notUp = compare = spotlight = footer = () => {};
+  async function wallReply(body) {
+    globalThis.fetch = async()=>({ok:true,json:async()=>JSON.parse(JSON.stringify(body))});
+    await window.loadWall(false);
+  }
+  async function deliverAll() {
+    globalThis.fetch = async()=>({status:200,json:async()=>data}); await load(false);
+    await wallReply(data.wall);
+    globalThis.fetch = async()=>({ok:true,json:async()=>({now:data.now,areas:[data.actions]})}); await window.loadActions();
+  }
   const card = () => JSON.stringify(P.ov.children);
   ` + scenario);
 """
@@ -905,7 +947,7 @@ class Gate2(unittest.TestCase):
           const t = Date.now() / 1000;
           for (const [state, age] of [["ok", 2], ["ok", 700], ["warn", 2]]) {
             D0 = {now: t-age, areas: [{id:"monitor", valid_until:t-1, state, big:"2/2", unit:"nodes up", ok_until:t-1, live:[["warn", t-1]]}]};
-            D = JSON.parse(JSON.stringify(D0)); aged();
+            D = JSON.parse(JSON.stringify(D0)); receipt = performance.now() - age * 1000; aged();
             assert.deepEqual([D.areas[0].state, D.areas[0].big, D.areas[0].unit], ["stale","–","no current data"]);
           }
         })();`);
@@ -1186,7 +1228,7 @@ class Gate4(unittest.TestCase):
           })();
         """)
 
-    def test_gate4_4_transit_consumes_all_three_deadlines(self):
+    def test_gate4_4_all_three_deadlines_start_at_receipt(self):
         Gate3.expiring(self)
         self.js(self.delivered(), """
           (async () => {
@@ -1194,6 +1236,7 @@ class Gate4(unittest.TestCase):
             globalThis.fetch = async () => ({status:200, ok:true, json:async()=>bodies.shift()});
             const pending = [load(false), window.loadWall(false), window.loadActions()];
             advance(12); await Promise.all(pending);
+            assert.equal(shown(F.nodes[0]), "up"); advance(6);
             assert.equal(shown(F.nodes[0]), "unk");
             assert.equal(api.areaState("monitor"), "stale");
             assert.equal(window.actions().state, "stale");
@@ -1239,11 +1282,11 @@ class Gate4(unittest.TestCase):
             self.assertEqual(wf.conds(fm, self.now), wf.conds(base, self.now))
             self.assertNotIn("vCenter", str(wf.conds(fm, self.now)))
 
-    def test_gate4_7_unknown_status_labels_raw_text(self):
+    def test_gate4_7_unknown_status_suppresses_up_text(self):
         self.rows[0].update(Status=True, StatusDescription="Node status is Up.")
         self.js(self.model(), """
           const fields = cardDetails(F.by["1"], shown(F.by["1"])).filter(Boolean);
-          assert(fields.some(([k,v]) => k === "SolarWinds' text (its status is not usable)" && v.includes("Node status is Up.")));
+          assert(fields.some(([k,v]) => k === "SolarWinds says" && !v.includes("Node status is Up.")));
           assert(!fields.find(([k]) => k === "Status")[1].includes("Up"));
         """)
 
@@ -1370,6 +1413,224 @@ class Gate4(unittest.TestCase):
             WallLive.follow(live)
         live.nal.viewed.assert_called_once()
         live.fleet.viewed.assert_not_called()
+
+
+class Gate5(unittest.TestCase):
+    setUp = Gate.setUp
+    js = Gate.js
+    model = Gate3.model
+    delivered = Gate4.delivered
+    role = Path(FILES).parent
+
+    def test_gate5_1_cross_endpoint_verdict(self):
+        self.js(self.delivered(), """
+          (async () => {
+            data.seq = 1; data.wall.seq = 2; data.wall.fleet.state = "crit";
+            F = adapt(data); api.W = window.wallModel; api.feed = ()=>({state:"ok"}); api.feedFresh = ()=> "ok";
+            assert.equal(shown(F.nodes[0]), "up");
+            await wallReply(data.wall);
+            assert.equal(shown(F.nodes[0]), "unk");
+            data.seq = 3; data.verdict.state = "crit"; F = adapt(data);
+            data.wall.seq = 2; data.wall.fleet.state = "ok"; await wallReply(data.wall);
+            assert.notEqual(api.areaState("monitor"), "ok");
+          })();
+        """)
+
+    def test_gate5_2_delayed_wall_replies(self):
+        self.js(self.delivered(), """
+          (async () => {
+            let resolve;
+            const held = () => {globalThis.fetch = () => new Promise(r => resolve = r); return window.loadWall(false);};
+            const old = held();
+            globalThis.fetch = async () => ({status:503}); await window.loadWall(false);
+            resolve({ok:true,json:async()=>data.wall}); await old;
+            assert.equal(api.areaState("monitor"), "stale");
+            await wallReply({...data.wall, seq:2});
+            const cached = held(); await wallReply({...data.wall, seq:3});
+            resolve({status:304}); await cached;
+            assert.equal(api.areaState("monitor"), "ok");
+            globalThis.fetch = async () => ({status:503, json:async()=>({seq:5})}); await window.loadWall(false);
+            await wallReply({...data.wall, seq:4}); assert.equal(api.areaState("monitor"), "stale");
+            await wallReply({...data.wall, seq:6}); assert.equal(api.areaState("monitor"), "ok");
+          })();
+        """)
+
+    def test_gate5_3_monotonic_receipt(self):
+        Gate3.expiring(self)
+        self.js(self.delivered(), """
+          (async () => {
+            await deliverAll(); advance(6); shiftDate(-60);
+            assert.deepEqual([shown(F.nodes[0]),api.areaState("monitor"),window.actions().state],
+                             ["unk","stale","stale"]);
+          })();
+        """)
+
+    def answers(self):
+        from threading import Lock
+        from test_netapp_live import cfg_for
+        from site_portal import WallLive
+        live = Gate.live(self, snap(self.rows, self.groups, self.now))
+        with tempfile.TemporaryDirectory() as tmp:
+            live.cfg = cfg_for(tmp, PORTAL_WALL_MONITOR="1")
+            live.collector, live.lock, live.nal, live.tracker = None, Lock(), None, wm.Tracker()
+            return live.fleet_answer()[1], WallLive.answer(live), live.fleet_answer()[1]
+
+    def test_gate5_4_shared_sequence_and_clock_reset(self):
+        a, (_, b, _), c = self.answers()
+        seq = [json.loads(x)["seq"] for x in (a,b,c)]
+        self.assertTrue(all(type(n) is int for n in seq) and seq[0] < seq[1] < seq[2])
+        self.js(self.delivered(), """
+          (async () => {
+            await wallReply({...data.wall, seq:10});
+            await wallReply({...data.wall, seq:12, now:data.now-60, title:"newer"});
+            await wallReply({...data.wall, seq:11, title:"obsolete"});
+            assert.equal(window.wallModel().title,"newer");
+            for (const seq of [12,11]) {
+              globalThis.fetch = async()=>({status:200,json:async()=>({...data,seq,title:String(seq)})});
+              await load(false);
+            }
+            assert.equal(F.title,"12");
+          })();
+        """)
+
+    def test_gate5_5_hit_current_row(self):
+        self.js(self.model(), """
+          const old = F.groups[0];
+          LAY.blocks = [{g:old,name:old.name,kind:old.kind,keys:old.nodes.map(n=>n.key),x:0,y:0,top:10,w:100,rows:1,per:10}];
+          P.cv = {clientWidth:100,getBoundingClientRect:()=>({left:0,top:0,width:100})};
+          data.nodes[0][18] = "down"; F = adapt(data);
+          const latest = hit({clientX:1,clientY:12}).n;
+          assert.strictEqual(latest,F.by[old.nodes[0].key]); assert.equal(shown(latest),"down");
+        """)
+
+    def test_gate5_6_refresh_condition_share(self):
+        self.js(self.delivered(), """
+          window.refreshShare(); assert.equal(window.sharedCondition.sev,"crit");
+          assert.equal(window.sharedCondition.until,"");
+        """)
+
+    def test_gate5_7_membership_cursor(self):
+        members = [dict(ContainerID=1, MemberPrimaryID=i, MemberEntityType="Orion.Nodes") for i in range(1,1003)]
+        class Changing(FakeClient):
+            def query(client, query, params=None):
+                page = super().query(query, params)
+                if "FROM Orion.ContainerMembers" in query and len(members) == 1002:
+                    members.pop(0)
+                return page
+        client = Changing([], {"list": [dict(ContainerID=1, Name="DB", Status=2)], "members": members})
+        groups = wf.read_groups(client, OPTS)
+        self.assertIn("1001", groups["members"])
+        self.assertFalse(groups["cut"])
+        self.assertIn("ContainerID > @container OR (ContainerID = @container AND MemberPrimaryID > @member)", client.q[-1][0])
+        self.assertTrue(client.q[-1][0].endswith("ORDER BY ContainerID, MemberPrimaryID"))
+
+    def test_gate5_11_contradictory_status(self):
+        self.rows[0].update(Status=2, PercentLoss=0, StatusDescription="Node status is Up.")
+        self.js(self.model(), """
+          const n = F.by["1"], fields = cardDetails(n, shown(n));
+          assert(!JSON.stringify(fields).includes("Node status is Up."));
+          assert(fields.some(r=>r && r[0]==="SolarWinds says"));
+          openCard([n]); assert(!panel.text.includes("Node status is Up."));
+        """)
+
+    def test_gate5_12_conflicting_node_id(self):
+        self.rows = [sw_row(1,"A-down",2),sw_row(1,"Z-up")]
+        fm = self.model()
+        self.assertEqual([r[18] for r in fm["nodes"] if r[13]=="1"], ["unk"])
+        self.assertFalse(fm["complete"])
+
+    def test_gate5_13_invalid_deadlines(self):
+        for value in ("invalid", float("inf"), float("nan")):
+            wall = self.delivered()["wall"]
+            wall["fleet"]["valid_until"] = value
+            summary = wm.summary(wall, self.now)
+            area = next(a for a in summary["areas"] if a["id"] == "monitor")
+            self.assertEqual((area["state"], area["valid_until"]), ("stale", None))
+        self.js(self.delivered(), """
+          (async () => {
+            for (const bad of ["invalid","Infinity",null]) {
+              data.actions.valid_until = data.wall.fleet.valid_until = bad;
+              data.nodes[0][19] = data.groups[0][3].valid_until = bad;
+              await deliverAll();
+              assert.deepEqual([window.actions().state,api.areaState("monitor"),shown(F.nodes[0]),gState(F.groups[0]).st],
+                               ["stale","stale","unk","stale"]);
+            }
+          })();
+        """)
+
+    def test_gate5_14_setting_types(self):
+        from test_netapp_live import cfg_for
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Path(tmp)/"settings.json"
+            for url in ([],{},123):
+                settings.write_text(json.dumps({"PORTAL_WALL_MONITOR":"1","PORTAL_WALL_MONITOR_SWIS_URL":url}))
+                cfg = cfg_for(tmp, PORTAL_SETTINGS=str(settings))
+                self.assertTrue(cfg.wall_fleet_why)
+                self.assertTrue(cfg.wall_fleet_notes)
+            for switch in (1, [], {}, "invalid"):
+                settings.write_text(json.dumps({"PORTAL_WALL_MONITOR": switch}))
+                cfg = cfg_for(tmp, PORTAL_SETTINGS=str(settings))
+                self.assertFalse(cfg.wall_fleet)
+                self.assertTrue(cfg.wall_fleet_notes)
+            for key, value in (("seconds",True),("max_nodes",200.5),("groups",[2]),("vm_match",None),("group_by",[])):
+                opts, notes = wf.opts_of({"monitor_"+key:value})
+                self.assertEqual(opts[key],wf.DEFAULTS[key])
+                self.assertTrue(notes,key)
+
+    def test_gate5_15_history_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/"since.json"
+            for value in (float("inf"),float("nan"),10**400,-1):
+                path.write_text(json.dumps({"d":{"sw:1":["d",value,True]},"at":{"sw:":value}}))
+                history = wf.Since(path)
+                self.assertEqual((history.d,history.last),({},{}))
+
+    def test_gate5_16_surrogate_response_bytes(self):
+        import hashlib
+        self.rows[0].update(Caption="WEB\ud800", Status=2)
+        a, (_, b, tag), _ = self.answers()
+        for body in (a,b):
+            self.assertIn(r"WEB\ud800", json.dumps(json.loads(body)))
+            body.encode("utf-8")
+        self.assertEqual(tag, '"%s"' % hashlib.sha256(b.encode()).hexdigest()[:20])
+
+    def test_gate5_17_islands_disjoint(self):
+        self.js(self.delivered(), """
+          const old = [[150,125],[400,100],[640,140],[860,100],[1070,135]];
+          const bounds = window.mapBounds();
+          assert.deepEqual(bounds.slice(0,5).map(b=>b.center),old);
+          bounds.forEach((a,i)=>bounds.slice(i+1).forEach(b=>assert(
+            a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top)));
+        """)
+
+    def test_gate5_18_solarwinds_ca_is_private(self):
+        import yaml
+        tasks = yaml.safe_load((self.role/"tasks/main.yml").read_text())
+        copy = next(t["ansible.builtin.copy"] for t in tasks if t.get("ansible.builtin.copy",{}).get("src")=="{{ portal_solarwinds_ca_file }}")
+        self.assertNotIn("/trust.d/",copy["dest"])
+        import site_portal as sp
+        from unittest.mock import patch
+        from test_netapp_live import cfg_for
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_for(tmp, PORTAL_NETMAP="0", PORTAL_WALL_MONITOR="1", PORTAL_SWIS_CA="/app/solarwinds.pem",
+                          PORTAL_WALL_MONITOR_SWIS_URL="https://swis.corp.example.mil",
+                          PORTAL_SWIS_LOGIN=json.dumps({"user": "reader", "password": "example"}))
+            with patch.object(sp.site_aap, "Api") as aap, patch.object(site_swis, "Client") as swis:
+                sp.Aap(cfg)
+                sp.WallLive(cfg, None).fleet.client_fn()
+                self.assertTrue(aap.call_args.args[0]["verify"])
+                self.assertEqual(aap.call_args.kwargs["ca_path"], "")
+                self.assertEqual(swis.call_args.kwargs["ca_path"], "/app/solarwinds.pem")
+
+    def test_gate5_19_deploy_assert_only_when_enabled(self):
+        import yaml
+        tasks = yaml.safe_load((self.role/"tasks/main.yml").read_text())
+        assertion = next(t for t in tasks if t["name"].endswith("the wall's Ops monitor settings"))
+        self.assertEqual(assertion["when"], "_portal_wall_monitor | bool")
+
+    def test_gate5_20_preview_opt_in(self):
+        import yaml
+        self.assertIs(yaml.safe_load((self.role/"defaults/main.yml").read_text())["portal_wall_monitor"],False)
 
 
 NODE_JS = r"""

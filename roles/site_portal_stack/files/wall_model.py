@@ -915,7 +915,10 @@ def summary(m, now):
         n = {"crit": sum(1 for c in cur if c.get("sev") == "crit"), "warn": sum(1 for c in cur if c.get("sev") == "warn")}
         fs = m.get("fleet") if aid == "monitor" else None
         if fs:
-            st = fs["state"] if fs.get("valid_until") is not None and now < fs["valid_until"] else "stale"
+            until = fs.get("valid_until")
+            if type(until) not in (float, int) or not -math.inf < until < math.inf:
+                until = None
+            st = fs["state"] if until is not None and now < until else "stale"
         elif not a.get("on") or not a.get("built"):
             st = "off"
         elif aid == "monitor" or conds is None:
@@ -1007,7 +1010,6 @@ def summary(m, now):
             f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None
             live.append([c.get("sev"), (float(f["asof"]) + stale_s) if isinstance(f, dict) and f.get("asof") is not None else None])
         if fs:
-            until = fs.get("valid_until")
             ok_until = until if st == "ok" else None
             live = [[sev, until] for sev, _ in live]
         out.append({"id": aid, "name": a.get("name"), "short": a.get("short") or a.get("name"), "team": a.get("team") or "",

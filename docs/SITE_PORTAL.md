@@ -1048,8 +1048,7 @@ setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_rol
 
 - The login is one podman secret on the server (`site-portal-swis`), as the AAP token: never in a file, the unit or
   the logs. The service's log says each read that fails (once) and when it reads again.
-- SolarWinds' certificate: the server's CAs (`portal_trust_host_cas`), plus `portal_solarwinds_ca_file` (a file on
-  the server).
+- Set `portal_solarwinds_ca_file` to use a dedicated CA file for SolarWinds readers. With that setting empty, the readers use the service's usual trust roots.
 - The map's settings are the report's (`netmap_site_by`, `netmap_site_pattern`, `netmap_hierarchy`, `netmap_sites` ... in all.yml);
   `portal_motion` applies.
 - No credential (or `portal_netmap: false`): no page and no menu entry; `/portal/netmap` says why.
@@ -1226,6 +1225,8 @@ no longer in the latest read, they say when it was last seen.
 
 ### Ops monitor (1.136.0)
 
+**To set up** this opt-in preview, set `portal_wall_monitor: true` and run **Site portal - deploy** with the **SolarWinds (read-only)** credential.
+
 A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
 up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw
 it in their own colours and type, Lights / Cockpit / Map in the page's - on a board that fills the screen like the room's
@@ -1300,7 +1301,7 @@ wall's own collector (it now also reads each VM's `guest.ipAddress` and `guest.h
 
 | Setting | Default | What it does |
 |---|---|---|
-| `portal_wall_monitor` | `auto` | on with the "SolarWinds (read-only)" credential on Site portal - deploy; `true` / `false` |
+| `portal_wall_monitor` | `false` | Enable the preview with `true`. Explicit `auto` enables it when the SolarWinds credential is configured. |
 | `portal_wall_monitor_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
 | `portal_wall_monitor_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
 | `portal_wall_monitor_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |

@@ -9,7 +9,7 @@
   if (!sec || !window.fetch) return;
   var SRC = sec.getAttribute("data-src"), WALL = sec.getAttribute("data-wall"), TITLE = sec.getAttribute("data-title") || "Ops center";
   var de = document.documentElement, NS = "http://www.w3.org/2000/svg";
-  var D = null, D0 = null, SKEW = 0, FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
+  var D = null, D0 = null, receipt = performance.now(), FAIL = 0, SPOT = 0, SPOT_LEFT = 8, PAUSE = 0, FLIP = 0;
   var EVERY = 8;                                  // seconds: the spotlight's step and a Metro tile's turn
 
   function h(tag, cls, kids, at) {
@@ -28,7 +28,7 @@
   function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
   function skin() { return de.getAttribute("data-skin") || "strata"; }
   function moves() { return de.classList.contains("moves"); }
-  function now() { return Date.now() + SKEW; }
+  function now() { return (D ? D.now * 1000 : 0) + (performance.now() - receipt); }
 
   var WORD = {crit: "Critical", warn: "Warning", ok: "OK", stale: "Not current", off: "Not on the wall yet"};
   var ICON = {
@@ -166,7 +166,7 @@
     ], {"aria-live": "off", "data-id": a.id});
   }
   // the status map: each area an island at a fixed place, its contour rings its state (a ring more for each open condition)
-  var PLACE = {storage: [150, 125], vmware: [400, 100], vdi: [640, 140], ad: [860, 100], tickets: [1070, 135], network: [1180, 100]};
+  var PLACE = {storage: [150, 125], vmware: [400, 100], vdi: [640, 140], ad: [860, 100], tickets: [1070, 135], network: [1180, 100], monitor: [400, 212]};
   function blob(cx, cy, r, seed) {
     var p = [], n = 10;
     for (var i = 0; i < n; i++) {
@@ -186,8 +186,9 @@
     for (var y = 30; y < 240; y += 40) kids.push(s("path", {class: "grid", d: "M0 " + y + " C 300 " + (y - 14) + ", 600 " + (y + 14) + ", 1220 " + y}));
     D.areas.forEach(function (a, i) {
       var p = PLACE[a.id] || [140 + i * 190, 110], rings = a.state === "off" ? 1 : 2 + Math.min(3, (a.crit || 0) + (a.warn || 0)), g = [];
-      for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], 36 + r * 10, i + 1)}));
-      var below = p[1] + (36 + (rings - 1) * 10) * 0.82 + 18;            // the state under the island, never across its rings
+      var radius = a.id === "monitor" ? 18 : 36, step = a.id === "monitor" ? 3 : 10;
+      for (var r = rings - 1; r >= 0; r--) g.push(s("path", {class: "is c" + r, d: blob(p[0], p[1], radius + r * step, i + 1)}));
+      var below = p[1] + (radius + (rings - 1) * step) * 0.82 + (a.id === "monitor" ? 10 : 18);            // the state under the island, never across its rings
       g.push(s("text", {x: p[0], y: p[1] + 5, "text-anchor": "middle"}, [a.short || a.name]));
       g.push(s("text", {class: "mts", x: p[0], y: below, "text-anchor": "middle"}, [WORD[a.state] + (a.crit + a.warn ? " · " + (a.crit + a.warn) + " open" : "")]));
       var link = s("a", {href: WALL + (a.state === "off" ? "" : "?area=" + encodeURIComponent(a.id)), class: "k-" + a.state, "aria-label": a.name + ": " + WORD[a.state]}, g);
@@ -221,8 +222,8 @@
     var t = now(), stale = (D.stale || 600) * 1000, late = (D.late || 180) * 1000, old = D.now && t - D.now * 1000 > stale;
     D.areas = D0.areas.map(function (a0) {
       var a = JSON.parse(JSON.stringify(a0));
-      if (a.id === "monitor" && (a.state !== "off" || a.valid_until != null)) {
-        if (FAIL || a.valid_until == null || t + monitorTransit >= a.valid_until * 1000) {
+      if (a.id === "monitor" && (a.state !== "off" || Object.prototype.hasOwnProperty.call(a, "valid_until"))) {
+        if (FAIL || !Number.isFinite(a.valid_until) || t >= a.valid_until * 1000) {
           Object.assign(a, {state: "stale", big: "–", unit: "no current data", note: "", crit: 0, warn: 0, worst: [], why: "not current"});
         }
         return a;
@@ -292,9 +293,9 @@
     sec.appendChild(h("p", "ops-note", ["The wall's areas could not be read (" + msg + "). They are tried again in 60 s; the wall itself: ", h("a", "", ["open it"], {href: WALL}), "."]));
     sec.hidden = false;
   }
-  var SEQ = 0, monitorTransit = 0;
+  var SEQ = 0;
   function load() {
-    var mine = ++SEQ, sent = Date.now();
+    var mine = ++SEQ;
     return fetch(SRC, {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"}).then(function (r) {
       if (mine !== SEQ) return null;                                         // an older read that answered late: dropped
       if (r.status === 404) { D = D0 = null; sec.hidden = true; return null; }  // the wall is off here: nothing kept to show again
@@ -302,13 +303,10 @@
       return r.json();
     }).then(function (a) {
       if (!a || mine !== SEQ) return;                                        // an older read that answered late: dropped
+      if (!Number.isFinite(a.now)) throw new Error("missing wall time");
       if (!Array.isArray(a.areas)) throw new Error("no areas in the answer");
       FAIL = 0;
-      if (a.now) {
-        var received = Date.now();
-        SKEW = a.now * 1000 - received;
-        monitorTransit = received - sent;
-      }
+      receipt = performance.now();
       D0 = a;
       D = JSON.parse(JSON.stringify(a));
       render();

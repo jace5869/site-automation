@@ -278,7 +278,7 @@ portal_wall_site_places: {}                         # the Map style's dots: {SIT
 # is never "down"; down in SolarWinds but running in vCenter: "Disagree - likely the network path"). Click a node for its card
 # (Copy text / picture for Teams), tick several and "Share selected to Teams". Read by the portal itself with the network map's
 # "SolarWinds (read-only)" login (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) while the wall is open.
-portal_wall_monitor: auto                           # auto (on with the "SolarWinds (read-only)" credential) | true | false
+portal_wall_monitor: false                          # opt-in preview: true | false | auto (on with the "SolarWinds (read-only)" credential)
 portal_wall_monitor_seconds: 60                     # SolarWinds is read every this many seconds while the wall is open (60 to 3600); LATE / STALE stretch with it
 portal_wall_monitor_group_by: groups                # groups (SolarWinds' groups, a node in each group it is a direct member of) | custom:<a node custom property, e.g. custom:ServiceGroup>
 portal_wall_monitor_groups: []                      # only these groups, in this order (names, any case; [] = every group with a node in it, A to Z); the rest under "Workloads (no group)"

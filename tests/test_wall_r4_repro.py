@@ -413,7 +413,7 @@ class WallPage(unittest.TestCase):
         # Exercise the real adapter and renderer inside their closure. Leave fetch and timers idle.
         prefix = page_prefix("wall-page.js", "\n  load(true);")
         script = DOM + setup + "\nconst answer = " + json.dumps(answer) + ";\n" + prefix + """
-          SKEW = answer.now * 1000 - Date.now();
+          // 1.136.0: the page keeps its own clock from the answer (server now + time since receipt): no SKEW to set
           function inspect() { W = adapt(answer);
         """ + probe + """
           }

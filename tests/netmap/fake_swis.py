@@ -125,6 +125,11 @@ def columns(ent):
 
 def where_ok(where, params):
     """A test for one row of a generic table: the WHERE forms the snapshot sends; 1.96.2: (a OR b) of those."""
+    cursor = " AND (ContainerID > @container OR (ContainerID = @container AND MemberPrimaryID > @member))"
+    if where and where.endswith(cursor):
+        base = where_ok(where[:-len(cursor)], params)
+        last = (params["container"], params["member"])
+        return lambda row: base(row) and (row["ContainerID"], row["MemberPrimaryID"]) > last
     tests = []
     for part in re.split(r" AND ", where or ""):
         part = part.strip()
@@ -220,7 +225,9 @@ def run(q, params):
         src = [r for r in MORE[ent] if ok(r)]
         first = (order or "").split(",")[0].strip().split(" ")
         key = first[0]
-        if key:                                 # 1.96.1: ORDER BY its first column (the snapshot's keyset paging); 1.97.0: DESC
+        if order == "ContainerID, MemberPrimaryID":
+            src.sort(key=lambda r: (r["ContainerID"], r["MemberPrimaryID"]))
+        elif key:                               # 1.96.1: ORDER BY its first column (the snapshot's keyset paging); 1.97.0: DESC
             src = sorted(src, key=lambda r: (r.get(key) is None, r.get(key)))
             if len(first) > 1 and first[1].upper() == "DESC":
                 src = [r for r in src if r.get(key) is not None][::-1] + [r for r in src if r.get(key) is None]

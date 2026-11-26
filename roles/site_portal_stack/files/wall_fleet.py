@@ -49,14 +49,17 @@ ROW = ["group", "name", "ip", "code", "response_ms", "loss_pct", "since", "since
 
 def opts_of(o):
     """the Ops monitor settings (PORTAL_WALL_OPTS monitor_*) with their defaults -> (opts, [what was wrong])"""
-    o = o if isinstance(o, dict) else {}
+    if not isinstance(o, dict):
+        return dict(DEFAULTS), ["monitor settings need an object; defaults used"]
     out, bad = dict(DEFAULTS), []
     for key, low, high in (("seconds", 60, 3600), ("max_nodes", 100, 50000), ("poll_stale_minutes", 5, 1440)):
-        try:
-            out[key] = max(low, min(high, int(o.get("monitor_" + key, DEFAULTS[key]))))
-        except (TypeError, ValueError, OverflowError):
-            bad.append("portal_wall_monitor_%s is not a number" % key)
-    gb = str(o.get("monitor_group_by") or "groups").strip()
+        value = o.get("monitor_" + key, DEFAULTS[key])
+        if type(value) is int:
+            out[key] = max(low, min(high, value))
+        else:
+            bad.append("portal_wall_monitor_%s needs an integer; default used" % key)
+    gb = o.get("monitor_group_by", "groups")
+    gb = gb.strip() if isinstance(gb, str) else ""
     if gb.lower() == "groups":
         out["group_by"] = "groups"
     elif gb.lower().startswith("custom:") and IDENT.match(gb.split(":", 1)[1].strip()):
@@ -65,11 +68,11 @@ def opts_of(o):
         bad.append("portal_wall_monitor_group_by is groups or custom:<a node custom property> (letters, digits and _): %r - groups used" % gb[:64])
     for k, d in (("groups", "monitor_groups"), ("vm_match", "monitor_vm_match")):
         v = o.get(d, DEFAULTS[k])
-        if isinstance(v, (list, tuple)):
+        if isinstance(v, list) and all(isinstance(y, str) for y in v):
             seen = set()                        # once each, any case (a duplicate would draw an empty tile)
-            out[k] = [x for x in (str(y).strip()[:200] for y in v if isinstance(y, str)) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
-        elif v is not None:
-            bad.append("portal_wall_monitor_%s is a list" % k)
+            out[k] = [x for x in (y.strip()[:200] for y in v) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
+        else:
+            bad.append("portal_wall_monitor_%s needs a list of strings; default used" % k)
     return out, bad
 
 
@@ -170,11 +173,30 @@ def read_groups(client, o):
         raise site_swis.SwisError("this Orion has no groups (Orion.Container / Orion.ContainerMembers)", "query")
     cap = o["max_nodes"]
     groups, gcut = client.paged("SELECT ContainerID, Name, Status FROM Orion.Container", "ContainerID", None, o["page"], cap)
-    members, mcut = client.paged("SELECT ContainerID, MemberPrimaryID, MemberEntityType FROM Orion.ContainerMembers WHERE MemberEntityType IN @types",
-                                 "ContainerID, MemberPrimaryID", {"types": ["Orion.Nodes"]}, o["page"], cap * 20)
     group_ids = {str(g.get("ContainerID")) for g in groups}
     def valid_id(value):
         return type(value) is int and value > 0 or isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,9}", value)
+    members, mcut = [], False
+    params = {"types": ["Orion.Nodes"]}
+    predicate = ""
+    while True:
+        size = min(o["page"], cap * 20 + 1 - len(members))
+        page = client.query("SELECT TOP %d ContainerID, MemberPrimaryID, MemberEntityType FROM Orion.ContainerMembers "
+                            "WHERE MemberEntityType IN @types%s ORDER BY ContainerID, MemberPrimaryID" % (size, predicate), params)
+        members.extend(page)
+        if len(members) > cap * 20:
+            members.pop()
+            mcut = True
+            break
+        if len(page) < size:
+            break
+        end = page[-1] if isinstance(page[-1], dict) else {}
+        container, member = end.get("ContainerID"), end.get("MemberPrimaryID")
+        if not valid_id(container) or not valid_id(member) or (container, member) == (params.get("container"), params.get("member")):
+            mcut = True
+            break
+        predicate = " AND (ContainerID > @container OR (ContainerID = @container AND MemberPrimaryID > @member))"
+        params = dict(params, container=container, member=member)
     by = {}
     for m in members:
         if not isinstance(m, dict):
@@ -302,9 +324,11 @@ class Since(object):
                     f = json.load(fh)
                 d = f.get("d") if isinstance(f, dict) else None
                 if isinstance(d, dict):
-                    self.last = dict((str(k), float(v)) for k, v in f["at"].items() if isinstance(v, (int, float))) if isinstance(f.get("at"), dict) else {}
+                    def timestamp(v):
+                        return type(v) in (int, float) and 0 <= v < 253402300800  # through year 9999
+                    self.last = dict((str(k), float(v)) for k, v in f["at"].items() if timestamp(v)) if isinstance(f.get("at"), dict) else {}
                     self.d = dict((str(k), v) for k, v in d.items()
-                                  if isinstance(v, list) and len(v) == 3 and isinstance(v[0], str) and isinstance(v[1], (int, float)))
+                                  if isinstance(v, list) and len(v) == 3 and isinstance(v[0], str) and timestamp(v[1]))
             except FileNotFoundError:
                 pass
             except (OSError, ValueError) as e:
@@ -460,19 +484,19 @@ def match(nodes, vms):
     return pairs, used
 
 
-def _since_words(c, rt, loss, desc):
+def _since_words(c, rt, loss):
     if c == DOWN:
-        return "not answering (100% loss)" if loss is not None and loss >= 100 else (desc or "down in SolarWinds")
+        return "not answering (100% loss)" if loss is not None and loss >= 100 else "down in SolarWinds"
     if c == WARN:
         if loss:
             return "packet loss %d%%" % round(loss)
         if rt is not None and rt >= 0:
-            return "response %d ms" % round(rt) + (" · " + desc if desc and "warn" not in desc.lower() else "")
-        return desc or "warning in SolarWinds"
+            return "response %d ms" % round(rt)
+        return "warning in SolarWinds"
     if c == UNMANAGED:
         return "unmanaged in SolarWinds"
     if c == UNKNOWN:
-        return "SolarWinds: " + (desc or "status unknown")
+        return "status unknown"
     return ""
 
 
@@ -513,7 +537,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     if rows == [] and feed["state"] == "ok":
         out["incomplete"].append("SolarWinds answered with no node (does the account see the nodes?)")
     prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
-    nodes, odd = [], 0
+    by_id, odd = {}, 0
     lastsync = not any("LastSync" in x for x in snap.get("notes") or [])     # this Orion gives a node's last poll
     for r in rows:
         if not isinstance(r, dict) or r.get("NodeID") is None:
@@ -522,10 +546,16 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         rt, loss = _num(r.get("ResponseTime")), _num(r.get("PercentLoss"))
         um = r.get("UnManaged")
         c = sw_code(r.get("Status"), um is True or str(um).strip().lower() in ("true", "1"))
-        nodes.append({"id": str(r.get("NodeID")), "name": r.get("Caption") or r.get("DNS") or "",
+        nid = str(r["NodeID"])
+        if nid in by_id:
+            if by_id[nid]["status"] != r.get("Status") or by_id[nid]["c"] != c:
+                by_id[nid].update(c=UNKNOWN, desc="")
+            continue
+        by_id[nid] = {"id": nid, "status": r.get("Status"), "name": r.get("Caption") or r.get("DNS") or "",
                       "at": _num(r.get("_read_at", at)), "dns": r.get("DNS"), "ip": r.get("IPAddress") or "", "c": c, "rt": rt, "loss": loss,
                       "desc": _txt(r.get("StatusDescription")), "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
-                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": _txt(r.get("cp_group"), 120) if prop else ""})
+                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": _txt(r.get("cp_group"), 120) if prop else ""}
+    nodes = list(by_id.values())
     if odd:
         out["incomplete"].append("%d SolarWinds rows without a NodeID" % odd)
     structural_gap = bool(out["incomplete"])
@@ -596,7 +626,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         gl = sorted(set(gl))
         gi = gl[0] if gl else nog
         c, why, flags, vcode, host, vci = n["c"], "", "", "", "", -1
-        why = _since_words(c, n["rt"], n["loss"], n["desc"])
+        why = _since_words(c, n["rt"], n["loss"])
         vi = pairs.get(ni)
         if ni in pairs and vi is None:
             flags += "a"
@@ -622,10 +652,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         if page_current and c != UNKNOWN and "o" not in flags and not (structural_gap and c == UP):
             until = min(page_until, n["polled"] + poll_stale)
         verdict = VERDICTS[c] if until is not None else "unk"
+        said = n["desc"] if verdict not in ("up", "unk") else ""
+        words = re.findall(r"\b(up|down|warning|unmanaged|unknown)\b", said.lower())
+        if any(word != {"warn": "warning", "off": "unmanaged"}.get(verdict, verdict) for word in words):
+            said = ""
         codes["sw:" + n["id"]] = (c, n["at"])
         built.append([gi, _txt(n["name"] or n["ip"] or n["id"]), n["ip"], c, None if n["rt"] is None or n["rt"] < 0 else round(n["rt"]), None if n["loss"] is None else round(n["loss"]),
                       0, 0, why, vcode, idx("hosts", host), vci, flags, n["id"], [x for x in gl if x != gi],
-                      n["polled"], n["desc"] if c != UP else "",
+                      n["polled"], said,
                       idx("models", (n["vendor"] + " · " + n["model"]).strip(" ·")), verdict, until])
     if any(n["at"] is None or now >= n["at"] + sw_late for n in nodes):
         out["incomplete"].append("SolarWinds node page not current")
@@ -733,9 +767,9 @@ def conds(fm, now):
             continue
         rs = per.get(gi, [])
         verdict = g[3]
-        can_clear = verdict["state"] == "ok" and now < verdict["valid_until"]
+        can_clear = verdict["state"] == "ok" and now < (_num(verdict.get("valid_until")) or 0)
         for state, kind, word, sev in (("down", "fleetdown", "down", "crit"), ("warn", "fleetwarn", "warning", "warn")):
-            bad = sorted([r for r in rs if r[18] == state and now < r[19]], key=lambda r: (r[6] or now, r[1]))
+            bad = sorted([r for r in rs if r[18] == state and now < (_num(r[19]) or 0)], key=lambda r: (r[6] or now, r[1]))
             cid = "fleet:%s:%s" % (kind[5:], g[0])
             if not bad:
                 if can_clear:
