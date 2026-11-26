@@ -744,7 +744,7 @@ class Live(unittest.TestCase):
         self.assertIn(b'data-approver="0"', raw)
         code, r = self.post("/api/approvals/%d/approve" % aid, {})
         self.assertEqual(code, 403)
-        self.assertIn("You are not an approver (portal_approvers, portal_approve_groups)", r["error"])
+        self.assertIn("You are not on the list of people who may approve this workflow (portal_approvers, portal_approve_groups)", r["error"])
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR, token="")
         self.assertEqual(code, 403)                                                   # the CSRF check for approvals too
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR)
@@ -848,7 +848,8 @@ class Live(unittest.TestCase):
         """An approval of a run nobody started in the portal (a schedule in AAP) for the listed workflow ckl_import."""
         tid = self.states["ckl_import"][0]
         wid, aid = fake_aap.new_id(), fake_aap.new_id()
-        fake_aap.STATE["jobs"][wid] = {"id": wid, "type": "workflow_job", "name": "Checklists imported (daily)", "created": time.time(), "nodes": [aid], "template": tid,
+        # (a workflow job carries its template's name, as AAP names it - 1.133.0 counts an action's access only under that name)
+        fake_aap.STATE["jobs"][wid] = {"id": wid, "type": "workflow_job", "name": "Checklists imported into STIG Manager", "created": time.time(), "nodes": [aid], "template": tid,
                                        "launch_type": "scheduled", "schedule": "Daily import"}
         fake_aap.STATE["jobs"][aid] = {"id": aid, "type": "workflow_approval", "name": "Approve the daily import", "created": time.time(), "status": "pending"}
         ap = {"id": aid, "name": "Approve the daily import", "description": "The scorecard is rebuilt after this.", "status": "pending", "created": time.time(), "workflow": wid,
@@ -880,7 +881,7 @@ class Live(unittest.TestCase):
         wid, aid = self._scheduled_approval()
         try:
             a = next(x for x in json.loads(self.req("/api/approvals")[1])["approvals"] if x["id"] == aid)               # a person who is no approver sees it, cannot decide it
-            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not an approver (portal_approvers, portal_approve_groups) - only the approvers decide."))
+            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not on the list of people who may approve this workflow (portal_approvers, portal_approve_groups)."))
             self.assertEqual(self.post("/api/approvals/%d/approve" % aid, {})[0], 403)
         finally:
             self._gone(wid, aid)
@@ -2221,7 +2222,7 @@ class Found(unittest.TestCase):
 
     def test_89_the_controllers_word_on_approving(self):
         can = sp.Portal._can_approve
-        self.assertTrue(can({}))                                                           # AAP says nothing: shown, and AAP refuses at the decision if need be
+        self.assertFalse(can({}))                                                          # 1.133.0 (Codex #8): AAP says nothing - not decided here
         self.assertTrue(can({"can_approve_or_deny": True}))
         self.assertFalse(can({"can_approve_or_deny": False, "summary_fields": {"user_capabilities": {"approve": True}}}))
         self.assertFalse(can({"summary_fields": {"user_capabilities": {"approve": False}}}))
@@ -2777,16 +2778,16 @@ class DeployPlanWords(unittest.TestCase):
 
 class DeployPlanApproverTile(unittest.TestCase):
     def test_a_saved_placement_is_counted_in_the_tiles_and_the_legend(self):
-        # review 1.117 b2: after a saved placement the tiles add up to the fields - "Changed by the approver" has a
+        # review 1.117 b2: after a saved placement the tiles add up to the fields - "Changed during approval" has a
         # tile and a legend chip, as the other three sources do
         plan = sp.deploy_plan(vm_plan())
         plan["vms"][0]["rows"][1].update(kind="approver", level="", why="58.0% memory used with this VM and 1 host down (target 80%)")
         plan["counts"].update(default=0, approver=1, warnings=0)
         page = sp.deploy_card(sp.Config({}), plan)
-        self.assertIn('<div class="k">Changed by the approver</div><div class="v">1</div>', page)
-        self.assertEqual(page.count("Changed by the approver</span>"), 2)          # the legend and the row
+        self.assertIn('<div class="k">Changed during approval</div><div class="v">1</div>', page)
+        self.assertEqual(page.count("Changed during approval</span>"), 2)          # the legend and the row
         plain = sp.deploy_card(sp.Config({}), sp.deploy_plan(vm_plan()))
-        self.assertNotIn("Changed by the approver", plain)
+        self.assertNotIn("Changed during approval", plain)
 
 
 class DeployPlanPages(unittest.TestCase):
@@ -2841,7 +2842,8 @@ class DeployPlanPages(unittest.TestCase):
             jobs[aid] = {"id": aid, "type": "workflow_approval", "name": "Build the VM?", "created": now, "status": "pending"}
             fake_aap.STATE["approvals"][aid] = dict(jobs[aid], workflow=wid, expires=now + 3600)
         if launched:
-            self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
+            self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0],
+                                 "controller": sp.portal_access.controller_id(self.portal.cfg.aap_url)})   # 1.133.0: a record names its controller
         return wid, jid
 
     def test_job_output_on_the_live_and_raw_routes(self):
@@ -3216,7 +3218,7 @@ class DeployPlanPages(unittest.TestCase):
         self.handler = sp.make_handler(self.portal.cfg, self.portal, os.path.join(FILES, "static"))
         for path in ("/jobs/%d" % wid, "/jobs/%d?via=%d" % (jid, wid)):
             page = self.get(path, APPR)
-            for word in ("Changed by the approver", "Placement saved on CHG0030001 by AAP job %d" % job, "changed by %s (AAP job %d)" % (approver, job)):
+            for word in ("Changed during approval", "Placement saved on CHG0030001 by AAP job %d" % job, "changed by %s (AAP job %d)" % (approver, job)):
                 self.assertIn(word, page)
         page = self.get("/jobs/%d" % wid, APPR)
         self.assertIn("the plan with the new placement", page)
@@ -3242,7 +3244,7 @@ class DeployPlanPages(unittest.TestCase):
         page = self.get("/jobs/%d" % wid, APPR)
         self.assertIn("The ticket changed. Nothing was changed.", page)
         self.assertIn("Approve - build as shown", page)
-        self.assertNotIn("Changed by the approver", page)
+        self.assertNotIn("Changed during approval", page)
         self.assertEqual(self.change(aid, {"plan": ""}, action="approve")[0], 200)
 
     def test_vm_plan_at_approval_and_on_the_propose_job(self):
@@ -3332,10 +3334,10 @@ class DeployPlanPages(unittest.TestCase):
                 if state == "stopped":
                     self.assertIn('class="deploy-stop"', page)
                     self.assertIn("Stop: Two answers for the cluster.", page)
-                    self.assertIn("Sent to the requester as a comment", page)
+                    self.assertIn("Sent to the person who opened the request as a comment", page)
                     self.assertIn("<blockquote>Which cluster should we use?</blockquote>", page)
                 else:
-                    self.assertNotIn("Sent to the requester", page)
+                    self.assertNotIn("Sent to the person who opened the request", page)
                     self.assertNotIn("deploy-fields", page)
             workflow = self.get("/jobs/%d" % wid, dn=APPR)
             self.assertIn("<b>Stopped</b> - the plan needs an answer before the approval.", workflow)
@@ -3887,7 +3889,8 @@ class Codex1(unittest.TestCase):
 
     def _start(self, vars_, values, code, data):
         calls = []
-        aap = sp.Aap(self.cfg, api=StubApi(lambda m, p, b: calls.append((m, p, b)) or (code, data)))
+        aap = sp.Aap(self.cfg, api=StubApi(lambda m, p, b: calls.append((m, p, b)) or (
+            (200, {"id": 9, "name": "Some job"}) if (m, p.split("?")[0]) == ("GET", "job_templates/9/") else (code, data))))   # the live name check
         portal = sp.Portal(self.cfg, aap=aap)
         portal.same_template = lambda a: ""
         act = {"name": "jt_9", "discovered": True, "tid": 9, "aap": {"type": "job", "name": "Some job"}, "limit_from": "", "vars": vars_,
@@ -5459,7 +5462,7 @@ class Motion1870(unittest.TestCase):
         self.assertIn('stroke-dashoffset="53.4"', r)
         self.assertIn('transform="rotate(-90 21 21)"', r)                                                       # the arc starts at the top; the turn is the svg's
         self.assertNotIn("style", r)
-        self.assertIn('class="ring"', sp.ring_html({"steps_n": 2, "steps_done": 0}, False, True))               # waiting for an approver: it does not turn
+        self.assertIn('class="ring"', sp.ring_html({"steps_n": 2, "steps_done": 0}, False, True))               # waiting for approval: it does not turn
         self.assertIn("<b>40%</b>", sp.ring_html({"pct": 40, "est": 300}, False, False))                        # a job: its estimate from the last good run
         self.assertEqual(sp.ring_html({"pct": 40, "est": None}, False, False), "")                              # nothing known: no ring, never a made-up fill
         self.assertEqual(sp.ring_html({}, False, False), "")

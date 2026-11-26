@@ -37,9 +37,42 @@ wall keeps **Cockpit** as its default style. Optional: `portal_look` (the look e
   CDN. The content security policy is unchanged (no inline script or style).
 - The wall's feedback area "Lights / Cockpit / Map" is now "The wall's styles". A SnapMirror lag condition carries its
   lag in hours (for its chart).
+- The Admin page (1.134.0) follows the look like every page.
 - Docs: docs/SITE_PORTAL.md (*The look*, *The room's styles*, *Share to Teams*, *Make a screen the ops wall*).
 - Tests: `tests/test_portal_looks.py`; `tests/test_wall.py` walks the new styles for green on stale data; the portal e2e
   loads every look and wall style with no script error or CSP violation.
+
+## 1.134.0 — 2026-11-26
+
+**To set up:** in all.yml set who may use the new Admin page - `portal_admin_groups: ["<admins group>"]` and/or
+`portal_admins: [<card CN>]` (with both empty, nobody may open it) - then run **Site portal - deploy**. Nothing else changes:
+the card lines and access lists of 1.133.0 stay as they are.
+
+- **Admin page** (`/portal/admin`, admins only, every form with the portal token): per template the AD groups that may run
+  it, per workflow with an approval step the groups that may approve it, **Ask once more before launch**, and **Show on the
+  portal** (exported for *AAP - set up portal actions*). The groups add to the all.yml lists, never take anyone away.
+  Tabs: Template access, Groups (last AD read, members, what each group gives), Ansible connection, Activity (who changed
+  what, when), Import (a reviewed YAML backup); Export as YAML.
+- **One AAP controller.** `access.json` (the portal's data volume) belongs to the controller in `portal_aap_url`. Deployed for
+  another controller, the saved grants are dropped on the first read - listed in Activity, said on the Admin page; save them
+  again or import a backup there. A reviewed import is bound to the controller it was previewed for.
+- **Fails closed.** A grant applies only while AAP's template list (never older than 15 minutes from the start of its read)
+  still has that template under the saved name. What a saved row restricts holds even when it does not apply just then:
+  **Ask once more** still asks, a restricted placement helper is still checked. A damaged `access.json` keeps the rows last
+  read whole for that; damaged since the portal started, nothing launches until an admin recovers it.
+- **Records.** A launch, approval or placement record is stamped with its controller; one of another controller is never
+  shown nor matched by its job number. A record from before 1.134.0 is shown as in 1.133.0, with no saved grant.
+- Every launch checks the template's live name in AAP (a rename between two reads is never launched; a renamed built-in's id
+  is looked up again). Self-approval is refused also for a run started in AAP under the approver's own name; an approval AAP
+  says nothing about is decided in AAP.
+- Getting in only as an admin or through a template's saved group gives exactly that: the Admin page, or that template -
+  never the open run default, an action's `who` list, the 1.133.0 job visibility, or the other pages (reports, AD, NetApp,
+  wall, network map, host search), which stay for the view lists. A run started from the portal whose record is
+  no longer kept is decided in AAP (who started it is not known). *AAP - set up portal actions* grants Approve only from
+  the Admin page's export.
+- Card matching, AD reads and the 1.133.0 names are unchanged.
+- Tests: `tests/test_portal_admin.py` (OneController1340 and the earlier review rounds), `tests/test_portal_readers.py`,
+  `tests/test_site_portal.py`.
 
 ## 1.133.0 — 2026-11-25
 

@@ -64,14 +64,14 @@ portal_reports_mount: ro,z
 
 # ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) -------------------------------
 portal_viewers: "{{ portal_readers | default([]) }}"  # was portal_readers. Card CNs allowed to view. With both view lists empty, any verified card may view.
-portal_view_groups: "{{ portal_reader_groups | default([]) }}"  # was portal_reader_groups. AD groups allowed to view. Run and approve access also grant view access.
+portal_view_groups: "{{ portal_reader_groups | default([]) }}"  # was portal_reader_groups. AD groups allowed to view. Run, approve and admin access also grant view access.
 portal_access_contact: ""                           # contact shown when view access is refused. Empty uses "your portal administrator".
-portal_runners: "{{ portal_requesters | default([]) }}"  # was portal_requesters. Card CNs allowed to run actions. Both run lists empty = anyone who can view. An action's own who overrides.
+portal_runners: "{{ portal_requesters | default([]) }}"  # was portal_requesters. Card CNs allowed to run every template without its own who list (a who list overrides them).
 portal_approvers: []                                # who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works)
 portal_launches_per_hour: 20                        # one person's launches in an hour, at most
 portal_vm_deploy_placement_template: "VM - deploy placement change"  # AAP job that checks and records a placement before approval
 portal_allow_self_approval: false                   # true = an approver may approve or deny a run they started themselves
-# View, approve and run access from AD groups (each person still needs a verified card). A group's name (its cn or
+# View, approve, run and admin access from AD groups (each person still needs a verified card). A group's name (its cn or
 # sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind
 # Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only
 # explicitly named card CNs count for those roles (with groups set, an empty portal_runners is nobody - never everyone).
@@ -79,6 +79,8 @@ portal_allow_self_approval: false                   # true = an approver may app
 # quotes a backslash starts an escape (\U, \x ...) and all.yml no longer loads.
 portal_approve_groups: "{{ portal_approver_groups | default([]) }}"  # was portal_approver_groups. AD groups allowed to approve, e.g. [AAP-Approvers] or a DN.
 portal_run_groups: "{{ portal_requester_groups | default([]) }}"  # was portal_requester_groups. AD groups allowed to run actions (with portal_runners); [] = none.
+portal_admin_groups: []                             # 1.134.0: AD groups that may use the Admin page (/portal/admin): names, DOMAIN\Group or DNs. Both admin lists empty = nobody.
+portal_admins: []                                   # 1.134.0: card CNs that may use the Admin page, also while AD cannot be read
 portal_ad_card_attribute: "{{ undef() }}"           # 1.132.0's setting, unset by default. Set: the one rule's attribute (userPrincipalName when left out). Never with portal_ad_card_matches.
 portal_ad_card_match: "{{ undef() }}"               # 1.132.0's setting, unset by default: the one rule's form ({edipi}@mil when left out). Never with portal_ad_card_matches.
 _portal_legacy_card_rule: "{{ portal_ad_card_attribute is defined or portal_ad_card_match is defined }}"

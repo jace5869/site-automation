@@ -71,6 +71,8 @@
     alone_label: "{{ portal_label_alone | default('portal-alone', true) }}"
     publish_max: "{{ portal_publish_max | int }}"
     publish_organization: "{{ portal_publish_organization | default('') | string }}"
+    publish_exact: "{{ portal_publish_exact | default(false) | bool }}"
+    publish_ids: "{{ portal_publish_ids | default({}, true) }}"
     known: "{{ _setup_history.fingerprints if _setup_history.fingerprints is not none else omit }}"
     describe: "{{ _portal_describe }}"
     ca_path: "{{ portal_setup_aap_ca_path }}"

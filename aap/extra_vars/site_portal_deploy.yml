@@ -115,6 +115,13 @@ portal_public_url: https://stigman.example.mil/portal/
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 
+## 1.134.0: AD groups that may use the Admin page (/portal/admin): names, DOMAIN\Group or DNs. Both
+## admin lists empty = nobody.
+# portal_admin_groups: []
+
+## 1.134.0: card CNs that may use the Admin page, also while AD cannot be read
+# portal_admins: []
+
 ## 1.132.0's setting, unset by default. Set: the one rule's attribute (userPrincipalName when left
 ## out). Never with portal_ad_card_matches.
 # portal_ad_card_attribute: "{{ undef() }}"
@@ -754,12 +761,12 @@ portal_public_url: https://stigman.example.mil/portal/
 
 ## 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (*
 ## and ?, any case) of AAP names: each match gets the label portal_label and Execute for
-## portal_setup_portal_user. Run with Check first: it says would label / would grant / already done
-## / skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that
-## matches more than portal_publish_max stops with the list and changes nothing. The credential
-## needs Admin on the templates' organization, as for the rest of this job. Set these in the
-## Variables of AAP - set up portal actions, not of Site portal - deploy (the deploy does not apply
-## them). e.g. ["Site - health *", "Weekly cleanup"]
+## portal_setup_portal_user. Workflows with approval nodes also get Approve. Run with Check first:
+## would label / would grant / already done / skipped. Nothing is ever removed by this; a pattern
+## that matches nothing is said; one that matches more than portal_publish_max stops with the list
+## and changes nothing. The credential needs Admin on the templates' organization, as for the rest
+## of this job. Set these in the Variables of AAP - set up portal actions, not of Site portal -
+## deploy (the deploy does not apply them). e.g. ["Site - health *", "Weekly cleanup"]
 # portal_publish_templates: []
 
 ## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})

@@ -315,8 +315,10 @@
     quiet: true
   loop:
     - {setting: portal_viewers, entries: "{{ portal_viewers }}"}
-    - {setting: portal_runners, entries: "{{ portal_runners }}"}      # 1.133.0: a blank entry never opens Run
+    - {setting: portal_runners, entries: "{{ portal_runners }}"}      # 1.133.0 (Codex #5): a blank entry never opens Run
     - {setting: portal_approvers, entries: "{{ portal_approvers }}"}
+    - {setting: portal_admin_groups, entries: "{{ portal_admin_groups }}"}
+    - {setting: portal_admins, entries: "{{ portal_admins }}"}
     - {setting: portal_view_groups, entries: "{{ portal_view_groups }}"}
     - {setting: portal_run_groups, entries: "{{ portal_run_groups }}"}
     - {setting: portal_approve_groups, entries: "{{ portal_approve_groups }}"}
@@ -326,7 +328,10 @@
 - name: Settings | the AD groups and domain controllers
   ansible.builtin.set_fact:
     _portal_ldap_on: >-
-      {{ (portal_view_groups | length > 0) or (portal_approve_groups | default([], true) | length > 0)
+      {{ (portal_admin_groups | length > 0) or (portal_view_groups | length > 0)
+         or ((lookup('ansible.builtin.vars', portal_ldap_vars.user | default('MICROSOFT_AD_LDAP_USERNAME'), default='')
+              or lookup('ansible.builtin.env', portal_ldap_vars.user | default('MICROSOFT_AD_LDAP_USERNAME'))) | length > 0)
+         or (portal_approve_groups | default([], true) | length > 0)
          or (portal_run_groups | default([], true) | length > 0)
          or (portal_wall | bool and portal_wall_feedback | bool and ((portal_wall_feedback_groups | default([], true) | length > 0)
              or (portal_wall_feedback_readers | default([], true) | length > 0))) }}
@@ -343,7 +348,7 @@
   ansible.builtin.assert:
     that: >-
       not ((portal_view_groups | default([], true) | length > 0) or (portal_approve_groups | default([], true) | length > 0)
-           or (portal_run_groups | default([], true) | length > 0))
+           or (portal_run_groups | default([], true) | length > 0) or (portal_admin_groups | default([], true) | length > 0))
       or (_portal_ldap_servers | length > 0) or (portal_ldap_domain | default('', true) | string | trim | length > 0)
     fail_msg: >-
       AD groups are set but the portal has no domain controller to ask: set portal_ldap_server: "dc01.<domain>,dc02.<domain>" or
@@ -595,6 +600,10 @@
     dest: "{{ portal_config_dir }}/app/{{ item.dest }}"
     mode: "0644"
   loop:
+    - {src: portal_access.py, dest: portal_access.py}
+    - {src: portal_admin.py, dest: portal_admin.py}
+    - {src: static/admin.css, dest: static/admin.css}
+    - {src: static/admin.js, dest: static/admin.js}
     - {src: site_portal.py, dest: site_portal.py}
     - {src: start.sh, dest: start.sh}
     - {src: static/portal.js, dest: static/portal.js}
@@ -855,7 +864,7 @@
     msg: >-
       WARNING - portal AD groups are set, but this job has no LDAP login: attach the "LDAP Bind Account"
       credential to its template (portal_ldap_vars names where its user and password are). Until then the portal reads no group: only
-      portal_viewers, portal_approvers and portal_runners count toward group-restricted access. docs/SITE_PORTAL.md, "Approvers from AD groups".
+      portal_viewers, portal_approvers, portal_runners and portal_admins count toward group-restricted access. docs/SITE_PORTAL.md, "Access from AD groups".
   when: _portal_ldap_on | bool and not ((_portal_ldap_login | from_json).user | length > 0 and (_portal_ldap_login | from_json).password | length > 0)
 
 - name: Secret | the AD groups' LDAP login - current state
@@ -1140,9 +1149,11 @@
       PORTAL_ACCESS_CONTACT: "{{ portal_access_contact | default('', true) | string }}"
       PORTAL_READER_GROUPS: "{{ portal_view_groups }}"
       PORTAL_REQUESTERS: "{{ portal_runners }}"
+      PORTAL_ADMINS: "{{ portal_admins }}"
+      PORTAL_ADMIN_GROUPS: "{{ portal_admin_groups }}"
       PORTAL_APPROVERS: "{{ portal_approvers }}"
       # 1.120.0: approvers and requesters from AD groups (the login: the secret site-portal-ldap)
-      # 1.133.0: a false or null list is refused above - written as it is, never turned into "anyone"
+      # 1.133.0 (Codex r2 #12, #17): a false or null list is refused above - written as it is, never turned into "anyone"
       PORTAL_APPROVER_GROUPS: "{{ portal_approve_groups }}"
       PORTAL_REQUESTER_GROUPS: "{{ portal_run_groups }}"
       PORTAL_AD_CARD_MATCHES: "{{ _portal_ad_card_matches }}"

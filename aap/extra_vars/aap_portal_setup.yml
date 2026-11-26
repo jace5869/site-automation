@@ -92,16 +92,22 @@ portal_setup_portal_user: svc_site_portal
 
 ## 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (*
 ## and ?, any case) of AAP names: each match gets the label portal_label and Execute for
-## portal_setup_portal_user. Run with Check first: it says would label / would grant / already done
-## / skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that
-## matches more than portal_publish_max stops with the list and changes nothing. The credential
-## needs Admin on the templates' organization, as for the rest of this job. Set these in the
-## Variables of AAP - set up portal actions, not of Site portal - deploy (the deploy does not apply
-## them). e.g. ["Site - health *", "Weekly cleanup"]
+## portal_setup_portal_user. Workflows with approval nodes also get Approve. Run with Check first:
+## would label / would grant / already done / skipped. Nothing is ever removed by this; a pattern
+## that matches nothing is said; one that matches more than portal_publish_max stops with the list
+## and changes nothing. The credential needs Admin on the templates' organization, as for the rest
+## of this job. Set these in the Variables of AAP - set up portal actions, not of Site portal -
+## deploy (the deploy does not apply them). e.g. ["Site - health *", "Weekly cleanup"]
 # portal_publish_templates: []
 
 ## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
 # portal_publish_area: {}
+
+## the Admin page's export: {name: {kind, id}} - exact mode publishes only that object
+# portal_publish_ids: {}
+
+## true (the Admin page's export): each name exactly, one template or workflow each
+# portal_publish_exact: false
 
 ## an organization's name: only its templates and workflows are matched (with ["*"]: all of them);
 ## "" = any

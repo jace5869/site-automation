@@ -212,8 +212,10 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_portal_auditor` | `false` | 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on portal_setup_organization, which it needs to read the report jobs' findings ("pick a host, then a finding"). Organization Auditor reads everything in the organization and writes nothing; the credential's user needs Admin on the organiz… (all of it: the role file) |
 | `portal_setup_workflows` | `{}` | {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it |
 | `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
-| `portal_publish_templates` | `[]` | 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (* and ?, any case) of AAP names: each match gets the label portal_label and Execute for portal_setup_portal_user. Run with Check first: it says would label / would grant / already done / skipped. Nothing is ever removed by thi… (all of it: the role file) |
+| `portal_publish_templates` | `[]` | 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (* and ?, any case) of AAP names: each match gets the label portal_label and Execute for portal_setup_portal_user. Workflows with approval nodes also get Approve. Run with Check first: would label / would grant / already done /… (all of it: the role file) |
 | `portal_publish_area` | `{}` | {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"}) |
+| `portal_publish_ids` | `{}` | the Admin page's export: {name: {kind, id}} - exact mode publishes only that object |
+| `portal_publish_exact` | `false` | true (the Admin page's export): each name exactly, one template or workflow each |
 | `portal_publish_organization` | (empty) | an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any |
 | `portal_publish_max` | `50` | the most one pattern may match |
 | `portal_unpublish_templates` | `[]` | Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape. |
@@ -2183,15 +2185,17 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
 | `portal_reports_mount` | `ro,z` | how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a folder another container mounts with :Z, a private label, is relabeled by that container's next start - see docs/SITE_PORTAL.md, SELinux) |
 | `portal_viewers` | `"{{ portal_readers \| default([]) }}"` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- was portal_readers. Card CNs allowed to view. With both view lists empty, any verified card may view. |
-| `portal_view_groups` | `"{{ portal_reader_groups \| default([]) }}"` | was portal_reader_groups. AD groups allowed to view. Run and approve access also grant view access. |
+| `portal_view_groups` | `"{{ portal_reader_groups \| default([]) }}"` | was portal_reader_groups. AD groups allowed to view. Run, approve and admin access also grant view access. |
 | `portal_access_contact` | (empty) | contact shown when view access is refused. Empty uses "your portal administrator". |
-| `portal_runners` | `"{{ portal_requesters \| default([]) }}"` | was portal_requesters. Card CNs allowed to run actions. Both run lists empty = anyone who can view. An action's own who overrides. |
+| `portal_runners` | `"{{ portal_requesters \| default([]) }}"` | was portal_requesters. Card CNs allowed to run every template without its own who list (a who list overrides them). |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
 | `portal_vm_deploy_placement_template` | `"VM - deploy placement change"` | AAP job that checks and records a placement before approval |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
-| `portal_approve_groups` | `"{{ portal_approver_groups \| default([]) }}"` | View, approve and run access from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_… (all of it: the role file) |
+| `portal_approve_groups` | `"{{ portal_approver_groups \| default([]) }}"` | View, approve, run and admin access from AD groups (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_ad_… (all of it: the role file) |
 | `portal_run_groups` | `"{{ portal_requester_groups \| default([]) }}"` | was portal_requester_groups. AD groups allowed to run actions (with portal_runners); [] = none. |
+| `portal_admin_groups` | `[]` | 1.134.0: AD groups that may use the Admin page (/portal/admin): names, DOMAIN\Group or DNs. Both admin lists empty = nobody. |
+| `portal_admins` | `[]` | 1.134.0: card CNs that may use the Admin page, also while AD cannot be read |
 | `portal_ad_card_attribute` | `"{{ undef() }}"` | 1.132.0's setting, unset by default. Set: the one rule's attribute (userPrincipalName when left out). Never with portal_ad_card_matches. |
 | `portal_ad_card_match` | `"{{ undef() }}"` | 1.132.0's setting, unset by default: the one rule's form ({edipi}@mil when left out). Never with portal_ad_card_matches. |
 | `portal_ad_card_matches` | (worked out by the role; see its file) | 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName {edipi}@mil or {edipi}{digits6}@mil (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ or {edipi}.mil ({edipi} = the last ten digits of the card CN). Nothing else; never a * or ?. A card must be exactly one enabled acco… (all of it: the role file) |

@@ -8,8 +8,10 @@ the AD report's (site_ldap). Standard library and ldap3 (dnspython for the DCs o
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import contextlib
 import re
 import threading
+from threading import local as _thread_local
 import uuid
 import time
 
@@ -30,7 +32,8 @@ except ImportError:
 IN_CHAIN = "1.2.840.113556.1.4.1941"               # LDAP_MATCHING_RULE_IN_CHAIN: a member of a member ... counts
 BIT_AND = "1.2.840.113556.1.4.803"                 # LDAP_MATCHING_RULE_BIT_AND
 DISABLED = 0x2                                     # userAccountControl ACCOUNTDISABLE
-ROLES = ("approvers", "requesters", "readers", "wall_feedback", "wall_readers")   # 1.130.0: portal readers; the wall's Feedback button and list
+ROLES = ("approvers", "requesters", "readers", "admins", "templates", "wall_feedback", "wall_readers")   # 1.130.0: portal readers; the wall's Feedback button and list
+# 1.134.0: admins (portal_admins / portal_admin_groups) and templates (the groups the Admin page saved on templates)
 SECONDS, RETRY = 300, 60                           # read every 5 minutes; 60 s after a failure
 # 1.133.0: a card is matched only by exact forms of two attributes (the director's cut: altSecurityIdentities and any
 # other attribute are gone). No * or ? anywhere; {digits6} (six ASCII digits) is the only variable part.
@@ -450,9 +453,17 @@ class Reader(object):
                 for name in want[role]:
                     if name not in seen:
                         dn, why = self.group_dn(c, base, name)
-                        seen[name] = {"name": short_name(name), "dn": dn, "found": bool(dn), "why": why, "keys": self.members(c, base, dn) if dn else []}
+                        seen[name] = {"setting": name, "name": short_name(name), "dn": dn, "found": bool(dn), "why": why, "keys": self.members(c, base, dn) if dn else []}
                         seen[name]["count"] = len(seen[name]["keys"])
                     res["groups"][role].append(seen[name])
+            if self.o.get("suggest_groups"):
+                # 1.134.0: the Admin page's group names to pick from - optional, never costs the membership read
+                try:
+                    rows = self.search(c, base, "(objectCategory=group)", ["sAMAccountName"])
+                    res["suggestions"] = sorted({e["dn"] for e in rows if isinstance(e, dict) and isinstance(e.get("dn"), str) and e["dn"]},
+                                                key=str.casefold)
+                except Exception:                 # noqa: BLE001
+                    res["suggestions"] = []
             res["ok"] = True
         except Exception as e:                            # noqa: BLE001 - whatever it was: not read, said
             res["error"] = "LDAP: " + sl.short_err(self.scrub(getattr(e, "message", "") or e))
@@ -515,8 +526,35 @@ class Groups(object):
             self.on_change(r)
         return r
 
+    @contextlib.contextmanager
+    def pinned(self):
+        """1.134.0: one decision, one group read - every has / group_matches in this thread inside the block uses the read
+        taken at its start, even when a refresh lands meanwhile (a nested block keeps the outer one's)"""
+        pin = self.__dict__.setdefault("_pin", _thread_local())
+        if getattr(pin, "depth", 0):
+            pin.depth += 1
+            try:
+                yield pin.r
+            finally:
+                pin.depth -= 1
+            return
+        with self.lock:
+            pin.r = self.last
+        pin.depth = 1
+        try:
+            yield pin.r
+        finally:
+            pin.depth, pin.r = 0, None
+
+    def current(self):
+        """the group read a check uses: the pinned one inside pinned(), else the last (caller holds self.lock)"""
+        pin = self.__dict__.get("_pin")
+        if pin is not None and getattr(pin, "depth", 0):
+            return pin.r
+        return self.last
+
     def start(self):
-        if not self.configured() or self.thread is not None:
+        if (not self.configured() and not self.reader.o.get("suggest_groups")) or self.thread is not None:
             return
 
         def run():
@@ -545,26 +583,26 @@ class Groups(object):
         age = (now or time.time()) - r["at"] if r else 0
         return bool(r and r.get("ok")) and -RETRY <= age <= self.seconds + 2 * RETRY    # the clock set back: no read either
 
-    def has(self, role, cn):
-        return next(self.group_matches(role, cn), None) is not None
+    def has(self, role, cn, names=None):
+        return next(self.group_matches(role, cn, names), None) is not None
 
     def cn_lock(self, cn):
         return self._cn_locks[hash(str(cn)) % len(self._cn_locks)]
 
-    def group_matches(self, role, cn):
+    def group_matches(self, role, cn, names=None):
         """Yield each of the role's groups the card's one AD account is a member of (its name) and the attribute that matched.
         Codex 1.133.0 r2: under the card's lock - the lookup (or a cached answer made after the current group read began),
         then the group read taken ONCE, after it; a group read that began after the answer was made: nothing counts."""
         if not self.want.get(role):
             return
         with self.lock:
-            ready = self.fresh(self.last) and not self.held()
+            ready = self.fresh(self.current()) and not self.held()
         if not ready:
             return                                  # no good group read: denied before any bind (Codex r2 MEDIUM)
         with self.cn_lock(cn):
             found, made = self._account(cn)
             with self.lock:
-                r = self.last
+                r = self.current()                  # 1.134.0: the decision's pinned read, else the last
                 held = self.held()
             if held or not self.fresh(r) or not found[0] or made < r["at"]:
                 return                              # fail closed: the named lists only
@@ -573,12 +611,14 @@ class Groups(object):
             rules = [x for x in self.reader.matches if _form(x["attribute"], x["match"])]
             out = []
             for g in r["groups"].get(role) or []:
+                if names is not None and g.get("setting") not in names:
+                    continue                        # 1.134.0: only the groups asked for (a template's saved groups)
                 # the member entry must be that account - its DN (any case) AND its objectGUID (Codex r3 #5) - its values must
                 # name this card's EDIPI only under any of the five forms (Codex r4 #2), AND name it under one of the site's
                 # forms in this same read (Codex r2: never an old match joined to a new membership)
                 if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") and m.get("guid") == guid
                        and entry_edipis(ALL_FORMS, m) == {e_} and e_ in entry_edipis(rules, m) for m in g.get("keys") or []):
-                    out.append((g["name"], attr))
+                    out.append((g.get("setting") or g["name"], attr))     # 1.134.0: the group as the settings name it
         for x in out:
             yield x
 
