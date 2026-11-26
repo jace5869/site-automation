@@ -68,6 +68,7 @@
           {{ out }}
         _eb_check_url: "{{ vm_rightsize_act_check_url }}"
         _eb_kind: vm_rightsize              # the answer cache's job kind (site_act_cache)
+        _eb_tiers: "{{ vm_rightsize_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
         _ea_names: "{{ _vm_rs_read.vms | vm_rightsize_names }}"
         _ea_model_timeout: "{{ vm_rightsize_act_model_timeout }}"
       when: _vm_rs_items | length > 0
@@ -76,7 +77,7 @@
       ansible.builtin.set_fact:
         _vm_rs_act_sections: >-
           {{ _vm_rs_items | vm_rightsize_act_section(_vm_rs, _ea_parsed,
-               {'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw, 'cache_note': _ea_cache_note | default('')}) }}
+               {'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw, 'cache_note': [_ea_cache_note | default(''), _ea_tiers_note | default('')] | select | join(' ')}) }}
       when: _vm_rs_items | length > 0
 
 - name: VMware | the report

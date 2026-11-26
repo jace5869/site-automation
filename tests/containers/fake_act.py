@@ -11,7 +11,10 @@ The jobs ask several questions at once (plugins/action/site_act_ask.py): each ca
 fake-act-stdin.d/<n>.txt (n: the call's number), and the answers queue is read under a lock. "slow" (seconds)
 makes each call that long, so a test sees the questions overlap (fake-act-times.log: start and end of each call).
 "summaries_by": {"TEXT": "answer"} answers a call whose piped input holds TEXT (the first that matches), before the
-queue: questions asked at the same time each get their own answer, whichever starts first."""
+queue: questions asked at the same time each get their own answer, whichever starts first.
+1.137.0, model tiers: "by_model": {"<model>": {"summary": ..., "summaries_by": {...}}} answers a call started with that
+model (GENAI_MODEL, ASKSAGE_MODEL or GENAI_BETA_MODEL) from its own entry first; every call with piped input is logged in
+fake-act-models.log as {"model", "ids" (the P<n> lines it read), "head" (the evidence's first lines)}."""
 import fcntl
 import json
 import os
@@ -82,8 +85,16 @@ path = os.environ.get("FAKE_ACT_CONFIG", "/etc/fake-act.json")
 if os.path.exists(path):
     cfg = json.load(open(path))
 summary = cfg.get("summary", "fake ACT: root cause = stopped on purpose")
-by = [v for k, v in (cfg.get("summaries_by") or {}).items() if k in piped]
-if by:
+model = os.environ.get("GENAI_MODEL") or os.environ.get("ASKSAGE_MODEL") or os.environ.get("GENAI_BETA_MODEL") or ""
+own = (cfg.get("by_model") or {}).get(model) or {}
+if piped:
+    with open(os.path.join(out, "fake-act-models.log"), "a") as fh:
+        fh.write(json.dumps({"model": model, "ids": re.findall(r"^(P\d+) ", piped, re.M), "head": piped[:300]}) + "\n")
+by = [v for k, v in (own.get("summaries_by") or {}).items() if k in piped] or (
+    [] if own.get("summary") else [v for k, v in (cfg.get("summaries_by") or {}).items() if k in piped])
+if own.get("summary") and not by:
+    summary = own["summary"]
+elif by:
     summary = by[0]
 elif cfg.get("summaries"):
     summary = cfg["summaries"].pop(0)

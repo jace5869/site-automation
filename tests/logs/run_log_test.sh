@@ -195,6 +195,53 @@ json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Give the 
           open(sys.argv[1], "w"))
 EOPY
 
+# 1.137.0, model tiers: a stand-in of two models (fake_act.py's by_model). The worker reads each batch; the batch with the
+# critical pattern (P1) goes to the smart model at once; the worker's unsure answer (P3, confidence 30) is asked of the
+# smart model once; the smart model writes the verdict from the answers, never the evidence. Then the job's switch off.
+cp "$work/act/act.json" "$work/act/act-items.json"
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+def ans(model, conf, low=None):
+    items = [{"id": "P%d" % i, "cause": "%s cause %d" % (model, i), "evidence": "a line", "fix": "a fix",
+              "confidence": (30 if low == "P%d" % i else conf)} for i in range(1, 10)]
+    return "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "%s overall" % model, "items": items}) + "\nEND_ACT_ANALYSIS"
+json.dump({"summary": "no model set",
+           "by_model": {"worker-e2e": {"summary": ans("worker", 85), "summaries_by": {"\nP3 [": ans("worker", 85, "P3")}},
+                        "smart-e2e": {"summary": ans("smart", 92), "summaries_by": {"Short analyses of": "BEGIN_ACT_ANALYSIS\n"
+                                      + json.dumps({"overall": "SMART VERDICT: restart the JVM first."}) + "\nEND_ACT_ANALYSIS"}}}},
+          open(sys.argv[1], "w"))
+EOPY
+rm -f "$work/act/fake-act-models.log"
+run "model tiers: the worker reads the batches, the smart model the critical and unsure ones, and writes the verdict" ok \
+    -e "$mail" -e "$actvars" -e log_analysis_act_batch=2 \
+    -e '{"site_act_models": {"genai": "smart-e2e"}, "site_act_worker_models": {"genai": "worker-e2e"}}' \
+    -- "answered by the worker model (worker-e2e)" "by the smart model (smart-e2e)" "re-asked after the worker (2 unsure)" \
+       "The overall verdict: the smart model, from the answers." "SMART VERDICT: restart the JVM first." "smart cause 1" "smart cause 3"
+if "$py" - "$work/act/fake-act-models.log" > "$work/tiers.txt" <<'EOPY'
+import json, re, sys
+calls = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+print("; ".join("%s %s%s" % (c["model"], ",".join(c["ids"]), " (verdict)" if "Short analyses of" in c["head"] else "") for c in calls))
+worker = [c for c in calls if c["model"] == "worker-e2e"]
+smart = [c for c in calls if c["model"] == "smart-e2e"]
+verdict = [c for c in smart if "Short analyses of" in c["head"]]
+ok = (worker and not any("P1" in c["ids"] for c in worker)                            # the critical batch: never the worker
+      and any("P1" in c["ids"] for c in smart) and any("P3" in c["ids"] for c in smart)  # critical at once, unsure re-asked
+      and len(verdict) == 1 and not re.search(r"^P\d+ \[", verdict[0]["head"], re.M)     # the verdict reads no evidence line
+      and {c["model"] for c in calls} == {"worker-e2e", "smart-e2e"})
+sys.exit(0 if ok else 1)
+EOPY
+then echo "ok   -   ...the calls by model: $(cat "$work/tiers.txt")"
+else echo "FAIL -   ...the calls by model: $(cat "$work/tiers.txt")"; fails=$((fails + 1)); fi
+rm -f "$work/act/fake-act-models.log"
+run "model tiers off for the job (log_analysis_act_tiers false): the smart model only, no models line" ok \
+    -e "$actvars" -e log_analysis_act_batch=2 -e log_analysis_act_tiers=false \
+    -e '{"site_act_models": {"genai": "smart-e2e"}, "site_act_worker_models": {"genai": "worker-e2e"}}' \
+    -- "smart cause 1" "smart overall"
+if grep -q '"worker-e2e"' "$work/act/fake-act-models.log" || grep -q "ACT models (site_act_worker_model)" "$work/out.txt"; then
+    echo "FAIL -   ...the worker was asked with the job's tiers off"; fails=$((fails + 1))
+else echo "ok   -   ...only the smart model asked, and no models line"; fi
+cp "$work/act/act-items.json" "$work/act/act.json"
+
 : > "$work/journalctl.args"; : > "$work/podman.args"
 since="$(date -u -d '-2 hours' '+%Y-%m-%d %H:%M')"; until="$(date -u -d '-1 hour' '+%Y-%m-%d %H:%M')"
 run "a fixed window (since / until) reaches journalctl and podman; no ACT: the patterns only, no key needed" ok \

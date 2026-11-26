@@ -24,11 +24,14 @@
       {%- endfor -%}
       {{ out }}
     _ea_names: ["{{ inventory_hostname }}"]
+    _em_tiers: "{{ answer_keys_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
+    _em_tier_form: code                # a draft with no ```powershell block (and no NEEDS-VALUE) goes to the smart model
     _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
   when: _ak_for_act | default([]) | length > 0
 
 - name: Answer keys | ACT's drafts, rule by rule
   ansible.builtin.set_fact:
+    _ak_tiers_note: "{{ _em_tiers_note | default('') }}"     # 1.137.0: which model drafted (site_act_worker_model)
     _ak_act: >-
       {%- set out = {} -%}
       {%- for r in _ak_for_act | default([]) -%}

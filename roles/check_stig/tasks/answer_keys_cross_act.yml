@@ -28,10 +28,13 @@
       {%- endfor -%}
       {{ out }}
     _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
+    _em_tiers: "{{ answer_keys_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
+    _em_tier_form: verdict             # an "unsure" first line (no NF, Open or NA) goes to the smart model
   when: _akx_asks.asks | default([]) | length > 0
 
 - name: Answer keys cross-check | ACT's answers, rule by rule
   ansible.builtin.set_fact:
+    _akx_tiers_note: "{{ _em_tiers_note | default('') }}"    # 1.137.0: which model answered (site_act_worker_model)
     _akx_answers: >-
       {%- set out = {} -%}
       {%- for x in _akx_asks.asks | default([]) -%}

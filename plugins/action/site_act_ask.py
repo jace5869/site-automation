@@ -30,6 +30,15 @@ evidence_batches.yml and evidence_many.yml call it). Once per task call, so once
    a question asked before with the same evidence, task, provider and model takes the answer kept then, before the
    check of the way (a run answered from it needs no model); the answers that cover every item asked are kept for the
    next runs. A database that cannot be used is one line in `cache.why`; the questions are asked as without it.
+10. With `tiers` (1.137.0, model tiers: a job that takes them and a worker model, tiers_plan()) - three waves, one check of
+   the way and one ACT folder for all: (1) each question on the worker model (its model in ACT's own model setting,
+   GENAI_MODEL ...; nothing else changes: the launcher, the keys on stdin, the masking), but a question with an item the
+   job marks critical goes to the smart model at once; (2) each worker answer that is no answer, unreadable, unsure or
+   says critical (judge()) asked once more of the smart model, with the same task and evidence - its answer is final,
+   never back to the worker, never a third time; when it fails, the worker's answer stays; (3) the smart model reads
+   the answers (never the evidence: synth_evidence()) and writes the overall verdict (form analysis, synth on). Each
+   wave's questions are keyed in the cache with the model they went to, so a tier never takes the other's answer.
+   Without `tiers` (or it off), 1.136.0 to the byte (tests/test_site_act_tiers.py, the golden).
 
 The API keys come from the controller's environment, as before. They reach ACT through its process environment,
 never a command line. ACT's answer is returned, never printed: the task that calls this is no_log.
@@ -38,10 +47,13 @@ Arguments: questions [{items: [{id}], evidence, task, names, cache_key}], skip, 
 names [str] (with each question's own names: what ACT masks), pseudonymize, evidence_max, concurrency, timeout, retries,
 retry_unreadable, script, launcher (act_launch.py; default: vendor/act's), env_pass [str] (act_triage_env_pass),
 key_env_names [str] (act_triage_key_env_names), provider, model, cache {kind, ttl_days, clear, create, write, db {host,
-port, database, user, password, tls, ca_file, connect_timeout}}.
+port, database, user, password, tls, ca_file, connect_timeout}}, tiers {on, worker, workers {provider: model}, form
+(analysis, code, verdict), synth, sure}.
 Returns: url, reached (true, false, or None when not checked), why_not ('' or the reason nothing was asked),
-questions [{ids, asked, ran, status, summary, stop_reason, model, tries, reason, cached ('' or when it was kept)}],
-cache {on, hits, saved, pruned, created, why}.
+questions [{ids, asked, ran, status, summary, stop_reason, model, tries, reason, cached ('' or when it was kept); with
+tiers: tier (worker, smart, escalated), escalated (why), escalation_failed}], cache {on, hits, saved, pruned, created,
+why}, tiers (only when asked for: {on: false, why} or {on, worker, smart, form, items {worker, smart, escalated, none},
+escalated_why, escalation_failed, synth {asked, ran, overall, reason, model, cached}, note}).
 """
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -258,6 +270,219 @@ def _pid(v):
     return ("P" + pid) if pid.isdigit() else pid
 
 
+# ---- 1.137.0: model tiers --------------------------------------------------------------------------------------------
+# With a worker model (site_act_worker_model / site_act_worker_models) and a job that takes tiers (its *_act_tiers), the
+# per-item questions go to the worker model first; what it cannot settle goes to the smart model (site_act_model /
+# site_act_models) once; the smart model also writes the cross-item verdict from the answers (never the evidence).
+MODEL_SETTING = {"genai": "GENAI_MODEL", "asksage": "ASKSAGE_MODEL", "genai-beta": "GENAI_BETA_MODEL"}
+SURE = 50                               # a confidence under this is unsure: "under 50 = a guess" (the jobs' prompts)
+FORMS = ("analysis", "code", "verdict")
+SYNTH_MAX = 60000                       # characters of answers the smart model reads for the verdict
+SYNTH_TASK = (
+    "You are the senior reviewer of one report. A first-pass model read the evidence in parts and wrote the short analyses "
+    "below, one per item: its id, the likely cause, the fix and how sure it was (some were checked again by a stronger "
+    "model). You do not see the evidence itself, and you run nothing. Write the report's overall verdict: what to do first, "
+    "and which items share one cause. Use only what the analyses say; where they are unsure, say what to check first.\n\n"
+    "End your answer with exactly one JSON object between a line BEGIN_ACT_ANALYSIS and a line END_ACT_ANALYSIS, nothing "
+    "else between them:\nBEGIN_ACT_ANALYSIS\n"
+    '{"overall": "three or four sentences in plain text: what to do first, and which items share a cause"}\n'
+    "END_ACT_ANALYSIS")
+_readers = {}
+
+
+def tiers_plan(t, provider, smart):
+    """The tiers of one call: {} (off: no `tiers`, the job's switch off, or no worker model), {"why": ...} (asked for, not
+    usable: said in the result), or {on, worker, smart, form, synth, sure}. The worker model: `worker`
+    (site_act_worker_model, one for the run) over `workers`[provider] (site_act_worker_models), as site_act_model over
+    site_act_models. The same model as the smart one: one tier (off)."""
+    if not isinstance(t, dict) or not _bool(t.get("on", False)):
+        return {}
+    workers = t.get("workers") if isinstance(t.get("workers"), dict) else {}
+    w = str(t.get("worker") or "").strip() or str(workers.get(provider) or "").strip()
+    if not w:
+        return {}
+    if re.search(r"[\r\n,]", w) or len(w) > 200:
+        return {"why": "The worker model (site_act_worker_model) is not one model name: not used, the smart model answers everything."}
+    if w == str(smart or "").strip():
+        return {"why": "The worker model is the smart model (%s): one model answers everything." % w}
+    try:
+        sure = max(0, min(100, int(t.get("sure") if t.get("sure") not in (None, "") else SURE)))
+    except (TypeError, ValueError):
+        sure = SURE
+    return {"on": True, "worker": w, "smart": str(smart or ""), "form": t.get("form") if t.get("form") in FORMS else "analysis",
+            "synth": _bool(t.get("synth", True)), "sure": sure}
+
+
+def _crit(v):
+    return v is True or str(v if v is not None else "").strip().lower() in ("critical", "true", "yes")
+
+
+def job_critical(item):
+    """True when the job marks an item critical (its own data: severity or level critical, or critical true): it goes to the
+    smart model at once."""
+    return isinstance(item, dict) and (item.get("critical") is True
+                                       or str(item.get("severity") or "").strip().lower() == "critical"
+                                       or str(item.get("level") or "").strip().lower() == "critical")
+
+
+def _reader(name, path, attr):
+    with _parse_lock:
+        if name not in _readers:
+            spec = importlib.util.spec_from_file_location("site_act_ask_" + name, os.path.join(os.path.dirname(_HERE), *path))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _readers[name] = mod
+    return getattr(_readers[name], attr)
+
+
+def judge(form, row, items, sure=SURE):
+    """'' when a worker's answer stands, else why it goes to the smart model: "no answer", "unreadable", "unsure",
+    "critical". form: analysis (act_analysis_parse - the batched jobs), code (the STIG answer keys' drafts: a ```powershell
+    block or NEEDS-VALUE), verdict (the answer keys' cross-check: NF, Open or NA on the first line - else unsure)."""
+    if not row.get("ran"):
+        return "no answer"
+    s = row.get("summary")
+    try:
+        if form == "verdict":
+            v = _reader("cross", ("filter", "stig_answer_cross_filters.py"), "stig_answer_cross_act_answer")(_text(s))
+            return "" if v.get("verdict") else "unsure"
+        if form == "code":
+            t = _text(s)
+            ok = (_reader("keys", ("filter", "stig_answer_filters.py"), "stig_answer_act_code")(t)
+                  or _reader("keys", ("filter", "stig_answer_filters.py"), "stig_answer_act_needs")(t))
+            return "" if ok else "unreadable"
+        r = _parser()(s, items)
+    except Exception:
+        return "unreadable"
+    if not r.get("parsed"):
+        return "unreadable"
+    asked = [_pid(i.get("id")) for i in items if isinstance(i, dict)]
+    raw = _cache()[0]._analysis(_cache()[0]._unwrap(_text(s)))
+    if isinstance(raw, dict):
+        for x in (raw.get("items") or []) + (raw.get("causes") or []):
+            if isinstance(x, dict) and any(_crit(x.get(f)) for f in ("critical", "severity", "level")):
+                return "critical"
+    by = r.get("by_id") or {}
+    for pid in asked:
+        rec = by.get(pid)
+        if not isinstance(rec, dict):
+            return "unreadable"         # an item left out
+        if rec.get("noise"):
+            continue
+        if rec.get("confidence") is None or rec["confidence"] < sure:
+            return "unsure"
+    return ""
+
+
+def _cut(v, n):
+    t = " ".join(str(v or "").split())
+    return t if len(t) <= n else t[:n - 3].rstrip() + "..."
+
+
+def synth_evidence(done):
+    """What the smart model reads for the verdict: per item of the answered questions ([(row, items)]) its id, who answered,
+    the cause, the fix, how sure, and at most one cut line it quoted - never the evidence itself. Redacted (site_redact,
+    every URL's query) as a kept answer. '' when there is nothing."""
+    C = _cache()[0]
+    lines = []
+    for row, items in done:
+        try:
+            r = _parser()(row.get("summary"), items)
+        except Exception:
+            continue
+        if not r.get("parsed"):
+            continue
+        who = {"worker": "first pass", "escalated": "checked again by the stronger model",
+               "smart": "the stronger model"}.get(row.get("tier"), "the stronger model")
+        by = r.get("by_id") or {}
+        for it in items:
+            pid = _pid(it.get("id"))
+            rec = by.get(pid)
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("noise"):
+                lines.append("%s (%s): noise. %s" % (pid, who, _cut(rec.get("cause"), 200)))
+                continue
+            conf = rec.get("confidence")
+            parts = ["%s (%s, confidence %s):" % (pid, who, conf if conf is not None else "not given"),
+                     "cause: " + _cut(rec.get("cause"), 300)]
+            if rec.get("fix"):
+                parts.append("fix: " + _cut(rec.get("fix"), 300))
+            for k in ("estimate", "recommendation"):
+                if rec.get(k):
+                    parts.append("%s: %s" % (k, _cut(rec[k], 200)))
+            ev = str(rec.get("evidence") or "").strip().splitlines()
+            if ev:
+                parts.append("quoted: " + _cut(ev[0], 160))
+            lines.append(" ".join(parts))
+    if not lines:
+        return ""
+    text = "Short analyses of %d item(s):\n%s" % (len(lines), "\n".join(lines))
+    text = C._scrub(C._redact_all(text))
+    return text[:SYNTH_MAX]
+
+
+def synth_read(summary):
+    """The smart model's verdict: the JSON's overall between the markers (or the last {...}) - '' when none."""
+    t = _text(summary)
+    cands = re.findall(r"BEGIN_ACT_ANALYSIS\s*(.*?)\s*END_ACT_ANALYSIS", t, re.S)
+    i, j = t.find("{"), t.rfind("}")
+    if 0 <= i < j:
+        cands.append(t[i:j + 1])
+    for c in cands:
+        for attempt in (c.strip(), re.sub(r",\s*([}\]])", r"\1", c.strip())):
+            try:
+                v = json.loads(attempt)
+            except ValueError:
+                continue
+            if isinstance(v, dict) and isinstance(v.get("overall"), str) and v["overall"].strip():
+                return _cut(v["overall"], 1500)
+    return ""
+
+
+def synth_store(summary):
+    """What the cache keeps of a verdict: its overall, redacted, between the markers ('' = not kept)."""
+    got = synth_read(summary)
+    if not got:
+        return ""
+    C = _cache()[0]
+    return "%s\n%s\n%s" % (C.MARK_BEGIN, json.dumps({"items": [], "overall": C._scrub(C._redact_all(got))}, ensure_ascii=False,
+                                                    sort_keys=True), C.MARK_END)
+
+
+def tiers_summary(T, rows, todo, syn):
+    """The result's tiers: the models, the items each answered (worker, smart at once, escalated: re-asked after the
+    worker), why they were re-asked, the verdict - and the report's line (note)."""
+    n = {"worker": 0, "smart": 0, "escalated": 0, "none": 0}
+    why, failed = {}, 0
+    for i in todo:
+        r = rows[i]
+        k = len(r.get("ids") or [])
+        if not r.get("ran"):
+            n["none"] += k
+        else:
+            n[r.get("tier") if r.get("tier") in n else "smart"] += k
+        if r.get("escalated"):
+            why[r["escalated"]] = why.get(r["escalated"], 0) + k
+        if r.get("escalation_failed"):
+            failed += k
+    asked = n["smart"] + n["escalated"]
+    note = "ACT models (site_act_worker_model): %d item(s) answered by the worker model (%s), %d by the smart model (%s)" % (
+        n["worker"], T["worker"], asked, T["smart"] or "ACT's default")
+    if n["escalated"] or why:
+        note += ", %d of them re-asked after the worker (%s)" % (
+            n["escalated"], ", ".join("%d %s" % (v, k) for k, v in sorted(why.items())))
+    note += "."
+    if failed:
+        note += " %d item(s) keep the worker's answer: the smart model gave none." % failed
+    if syn.get("ran"):
+        note += " The overall verdict: the smart model, from the answers."
+    elif syn.get("asked") or syn.get("reason"):
+        note += " The overall verdict could not be written (%s): each batch's own." % _cut(syn.get("reason"), 160)
+    return {"on": True, "worker": T["worker"], "smart": T["smart"], "form": T["form"], "items": n, "escalated_why": why,
+            "escalation_failed": failed, "synth": syn, "note": note}
+
+
 def _now():
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
 
@@ -451,6 +676,13 @@ class ActionModule(ActionBase):
         if not todo:
             return out
 
+        # 1.137.0: model tiers (site_act_worker_model; tiers_plan): {} when off - then everything below is 1.136.0's
+        smart = _effective_model(model, eprov, aenv)
+        T = tiers_plan(a.get("tiers"), eprov, smart)
+        if T.get("why"):
+            out["tiers"] = {"on": False, "why": T["why"]}
+        T = T if T.get("on") else {}
+
         # the answer cache (the report database): the questions asked before take their kept answer
         c = a.get("cache") if isinstance(a.get("cache"), dict) else {}
         cdb = _db_args(c.get("db") or {}) if c else {}
@@ -462,156 +694,255 @@ class ActionModule(ActionBase):
         info = {"on": bool(c and cdb.get("host") and kind and ttl > 0), "hits": 0, "saved": 0, "pruned": 0, "created": False, "why": ""}
         out["cache"] = info
         write = _bool(c.get("write", True))
-        keys = {}
-        if info["on"]:
+        opened = []
+
+        def lookup(jobs):
+            """The kept answers of these questions put in their rows -> the questions still to ask. A question's key: its own
+            cache_key (the log analysis: its patterns, not its times) or its task and evidence; the provider, the model
+            the question goes to and the URL - so a worker's answer is never the smart model's, nor the other way round."""
+            if not info["on"] or not jobs:
+                return jobs
             try:
                 C, DB, pv = _cache()
-                # a question's own cache_key (the log analysis: its patterns, not its times) stands for its task and evidence
                 # 1.136.0 (Codex P2): the model as ACT will use it (a model setting in site_act_env wins) and the URL it
                 # asks: another model or deployment never takes this one's answers
-                eff = "%s|%s|%s|cap=%d" % (eprov, _effective_model(model, eprov, aenv), url, cap)
-                keys = dict((i, C.key(provider, eff, pv, kind, "", "cache_key:" + _text(questions[i].get("cache_key")))
-                             if _text(questions[i].get("cache_key")).strip() else
-                             C.key(provider, eff, pv, kind, _text(questions[i].get("task")), piped[i])) for i in todo)
+                for j in jobs:
+                    eff = "%s|%s|%s|cap=%d" % (eprov, j["mdl"], url, cap)
+                    j["key"] = (C.key(provider, eff, pv, kind, "", "cache_key:" + j["own"]) if j["own"].strip() else
+                                C.key(provider, eff, pv, kind, j["task"], j["piped"]))
                 if not DB.HAS_PYMYSQL:
                     raise RuntimeError(DB.NO_PYMYSQL)
                 conn = DB.connect(cdb)[0]
                 try:
-                    there, info["created"] = C.schema(conn, _bool(c.get("create", True)) and write)
-                    if not there:
-                        raise RuntimeError("the table act_answer_cache is not there - make it once (docs/REPORT_DATABASE.md)")
                     now = _now()
-                    if write:
-                        info["pruned"] = C.purge(conn, now)
-                    hits = {} if _bool(c.get("clear", False)) else C.load(conn, keys.values(), now, ttl)
+                    if not opened:
+                        there, info["created"] = C.schema(conn, _bool(c.get("create", True)) and write)
+                        if not there:
+                            raise RuntimeError("the table act_answer_cache is not there - make it once (docs/REPORT_DATABASE.md)")
+                        if write:
+                            info["pruned"] = C.purge(conn, now)
+                        opened.append(True)
+                    hits = {} if _bool(c.get("clear", False)) else C.load(conn, [j["key"] for j in jobs], now, ttl)
                 finally:
                     conn.close()
-                for i, k in keys.items():
-                    h = hits.get(k)
+                for j in jobs:
+                    h = hits.get(j["key"])
                     if h:
-                        rows[i].update(ran=True, status="cached", summary=h["answer"], model=h["model"] or model, cached=h["created"])
-                info["hits"] = sum(1 for r in rows if r["cached"])
-                todo = [i for i in todo if not rows[i]["cached"]]
+                        j["row"].update(ran=True, status="cached", summary=h["answer"], model=h["model"] or j["fallback"],
+                                        cached=h["created"])
+                info["hits"] += sum(1 for j in jobs if j["row"]["cached"])
+                return [j for j in jobs if not j["row"]["cached"]]
             except Exception as e:      # the cache is never the job's failure: said, and asked as without it
                 info["on"] = False
                 info["why"] = "not used: %s" % (_cache_mods["db"].explain(e, cdb) if "db" in _cache_mods else type(e).__name__)
-        if not todo:
+                for j in jobs:
+                    j.pop("key", None)
+                return jobs
+
+        again_unreadable = _bool(a.get("retry_unreadable", False))
+        launcher = str(a.get("launcher") or LAUNCHER)
+        settings = dict((str(k), None if v is None else str(v)) for k, v in (a.get("env") or {}).items() if str(k) not in DROP_ENV)
+        names = [str(n) for n in (a.get("names") or []) if n not in (None, "")]
+        mset = MODEL_SETTING.get(eprov, "GENAI_MODEL")
+
+        def job(i, n, row, tier):
+            """One ACT run of question i: the worker's (its model in ACT's model setting) or the smart model's."""
+            q = questions[i]
+            j = {"i": i, "n": n, "row": row, "task": _text(q.get("task")), "piped": piped[i], "own": _text(q.get("cache_key")),
+                 "items": [x for x in (q.get("items") or []) if isinstance(x, dict)], "qnames": q.get("names") or [],
+                 "settings": settings, "mdl": smart, "fallback": model, "again": again_unreadable}
+            if tier == "worker":
+                j.update(settings=dict(settings, **{mset: T["worker"]}), mdl=T["worker"], fallback=T["worker"], again=False)
+            if tier:
+                row["tier"] = tier
+            return j
+
+        first = []
+        for i in todo:
+            tier = ""
+            if T:
+                # an item the job marks critical (its severity or level) goes to the smart model at once
+                tier = "smart" if any(job_critical(x) for x in (questions[i].get("items") or [])) else "worker"
+            first.append(job(i, i, rows[i], tier))
+        pending = lookup(first)
+        if not pending and not T:
             return out
 
         # 1.104.0's rules, through ACT's own launcher (act_launch.py): an allowlisted environment, the keys and settings
         # on its stdin (never argv), only the forwarded provider keys, the masking last
-        launcher = str(a.get("launcher") or LAUNCHER)
-        keep = [str(k) for k in (a.get("env_pass") or [])]
-        key_names = [str(k) for k in (a.get("key_env_names") if a.get("key_env_names") is not None else rules(launcher).ACT_KEYS)]
-        settings = dict((str(k), None if v is None else str(v)) for k, v in (a.get("env") or {}).items() if str(k) not in DROP_ENV)
-        bad = refused(settings, keep, launcher)
-        if bad:
-            reason = ("ACT was not started: site_act_env has names ACT may not get (a credential or an unknown setting): "
-                      "%s." % ", ".join(bad))
-            out["why_not"] = reason
-            for i in todo:
-                rows[i]["reason"] = reason
-            return out
-        env = dict((k, v) for k, v in os.environ.items() if k not in DROP_ENV)     # the launcher keeps only its allowlist
-        names = [str(n) for n in (a.get("names") or []) if n not in (None, "")]
-        role_env = {"ACT_NO_BANNER": "1", "ACT_PSEUDONYMIZE": "1" if _bool(a.get("pseudonymize", True)) else "0"}
+        ready = {}
 
-        probe_env = check_env(settings, keep, launcher)
-        # not through a proxy with a password (the EE's own too), nor to a URL with a user and password in it (urllib
-        # takes neither as the uri module did): ACT is asked, and says itself when it fails (Codex, Neon r2)
-        if (_bool(a.get("check_url", True)) and not proxy_with_password(probe_env)
-                and not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@", url)):
-            ok, why = reach(url, str(a.get("ca") or ""), probe_env)
-            out["reached"] = ok
-            if not ok:
-                reason = unreached_reason(url, why)
-                out["why_not"] = reason
-                for i in todo:
-                    rows[i]["reason"] = reason
-                return out
-
-        timeout = max(1, int(a.get("timeout") or 1200))
-        retries = max(0, int(a.get("retries", 1)))
-        again_unreadable = _bool(a.get("retry_unreadable", False))
-        width = int(a.get("concurrency") or 0)
-        width = min(WIDTH_ALL, len(todo)) if width <= 0 else min(width, len(todo))
-        script = str(a.get("script") or "")
-        if not os.path.isfile(script):
-            raise IOError("ACT's script is missing")
-
-        work = tempfile.mkdtemp(suffix=".act")
-        try:
+        def prepare():
+            """Once, before the first question that needs the model: the settings ACT may get, the way to the model, ACT
+            copied into a private folder -> '' or why nothing can be asked (out's why_not)."""
+            if "why" in ready:
+                return ready["why"]
+            keep = [str(k) for k in (a.get("env_pass") or [])]
+            key_names = [str(k) for k in (a.get("key_env_names") if a.get("key_env_names") is not None else rules(launcher).ACT_KEYS)]
+            bad = refused(settings, keep, launcher)
+            if bad:
+                ready["why"] = out["why_not"] = (
+                    "ACT was not started: site_act_env has names ACT may not get (a credential or an unknown setting): "
+                    "%s." % ", ".join(bad))
+                return ready["why"]
+            probe_env = check_env(settings, keep, launcher)
+            # not through a proxy with a password (the EE's own too), nor to a URL with a user and password in it (urllib
+            # takes neither as the uri module did): ACT is asked, and says itself when it fails (Codex, Neon r2)
+            if (_bool(a.get("check_url", True)) and not proxy_with_password(probe_env)
+                    and not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@", url)):
+                ok, why = reach(url, str(a.get("ca") or ""), probe_env)
+                out["reached"] = ok
+                if not ok:
+                    ready["why"] = out["why_not"] = unreached_reason(url, why)
+                    return ready["why"]
+            ready.update(keep=keep, key_names=key_names,
+                         env=dict((k, v) for k, v in os.environ.items() if k not in DROP_ENV),     # the launcher keeps only its allowlist
+                         role_env={"ACT_NO_BANNER": "1", "ACT_PSEUDONYMIZE": "1" if _bool(a.get("pseudonymize", True)) else "0"},
+                         timeout=max(1, int(a.get("timeout") or 1200)), retries=max(0, int(a.get("retries", 1))),
+                         width=int(a.get("concurrency") or 0), script=str(a.get("script") or ""))
+            if not os.path.isfile(ready["script"]):
+                raise IOError("ACT's script is missing")
+            work = ready["work"] = tempfile.mkdtemp(suffix=".act")
             os.chmod(work, stat.S_IRWXU)
-            act = os.path.join(work, "act")
-            shutil.copyfile(script, act)
-            os.chmod(act, stat.S_IRWXU)
-            launch_copy = os.path.join(work, "act_launch.py")
-            shutil.copyfile(launcher, launch_copy)
-            os.chmod(launch_copy, stat.S_IRUSR | stat.S_IWUSR)
+            ready["act"] = os.path.join(work, "act")
+            shutil.copyfile(ready["script"], ready["act"])
+            os.chmod(ready["act"], stat.S_IRWXU)
+            ready["launch_copy"] = os.path.join(work, "act_launch.py")
+            shutil.copyfile(launcher, ready["launch_copy"])
+            os.chmod(ready["launch_copy"], stat.S_IRUSR | stat.S_IWUSR)
+            ready["why"] = ""
+            return ""
 
-            def one(i):
-                q, r = questions[i], rows[i]
+        def one(j):
+            r, timeout, retries = j["row"], ready["timeout"], ready["retries"]
+            rec = {}
+            try:
+                own = names + [str(n) for n in j["qnames"] if n not in (None, "")]
+                own = [n for n in own if not re.search(r"[,\r\n]", n)]      # one name each, as ACT splits them
+                launch = launch_input(j["settings"], dict(ready["role_env"], ACT_PSEUDO_NAMES=",".join(sorted(set(own), key=own.index))),
+                                      ready["key_names"], launcher)
+                items = j["items"]
                 rec = {}
-                try:
-                    own = names + [str(n) for n in (q.get("names") or []) if n not in (None, "")]
-                    own = [n for n in own if not re.search(r"[,\r\n]", n)]      # one name each, as ACT splits them
-                    launch = launch_input(settings, dict(role_env, ACT_PSEUDO_NAMES=",".join(sorted(set(own), key=own.index))),
-                                          key_names, launcher)
-                    items = [x for x in (q.get("items") or []) if isinstance(x, dict)]
-                    rec = {}
-                    # 1.136.0 (Neon P3): every try of one question within `timeout` together (1.104.0's cap holds:
-                    # an ACT that gave up at its model time is asked again only in the time left), and an answer that
-                    # ran is never lost to a later try that failed
-                    deadline = time.time() + timeout
-                    for t in range(1 + retries):
-                        left = int(deadline - time.time())
-                        if t and left < min(30, max(1, timeout // 4)):     # too little time left for a try
-                            break
-                        r["tries"] = t + 1
-                        got = run_act(sys.executable, act, work, i, _text(q.get("task")), piped[i], env, max(1, left),
-                                      launch_copy, launch, keep)
-                        got_ran = got.get("status") != "error" and bool(got.get("summary"))
-                        if got_ran or not (rec.get("status") != "error" and rec.get("summary")):
-                            rec = got
-                        summary = rec.get("summary")
-                        ran = rec.get("status") != "error" and bool(summary)
-                        if got.get("_timed_out"):
-                            break
-                        if ran and not (again_unreadable and not readable(summary, items)):
-                            break
-                    r["asked"] = True
-                    r["status"] = str(rec.get("status") or "")
-                    r["summary"] = rec.get("summary") if rec.get("summary") is not None else ""
-                    r["stop_reason"] = str(rec.get("stop_reason") or "")
-                    r["model"] = str(rec.get("model") or model)
-                    r["ran"] = r["status"] != "error" and bool(r["summary"])
-                    if not r["ran"]:
-                        r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider,
-                                                                              _plain_url(url))
-                except Exception as e:  # this question only: the others keep their answers. Its type, never its text
-                    if r["tries"] > 1 and rec.get("status") != "error" and rec.get("summary"):     # an answer came (Codex r2)
-                        r.update(asked=True, ran=True, status=str(rec.get("status") or ""), summary=rec["summary"],
-                                 stop_reason="", model=str(rec.get("model") or model), reason="")
-                        return i
-                    r.update(asked=r["tries"] > 0, ran=False, status="error", summary="",
-                             stop_reason="%s while asking" % type(e).__name__,
-                             reason="ACT could not be asked (%s in site_act_ask)." % type(e).__name__)
-                return i
+                # 1.136.0 (Neon P3): every try of one question within `timeout` together (1.104.0's cap holds:
+                # an ACT that gave up at its model time is asked again only in the time left), and an answer that
+                # ran is never lost to a later try that failed
+                deadline = time.time() + timeout
+                for t in range(1 + retries):
+                    left = int(deadline - time.time())
+                    if t and left < min(30, max(1, timeout // 4)):     # too little time left for a try
+                        break
+                    r["tries"] = t + 1
+                    got = run_act(sys.executable, ready["act"], ready["work"], j["n"], j["task"], j["piped"], ready["env"],
+                                  max(1, left), ready["launch_copy"], launch, ready["keep"])
+                    got_ran = got.get("status") != "error" and bool(got.get("summary"))
+                    if got_ran or not (rec.get("status") != "error" and rec.get("summary")):
+                        rec = got
+                    summary = rec.get("summary")
+                    ran = rec.get("status") != "error" and bool(summary)
+                    if got.get("_timed_out"):
+                        break
+                    if ran and not (j["again"] and not readable(summary, items)):
+                        break
+                r["asked"] = True
+                r["status"] = str(rec.get("status") or "")
+                r["summary"] = rec.get("summary") if rec.get("summary") is not None else ""
+                r["stop_reason"] = str(rec.get("stop_reason") or "")
+                r["model"] = str(rec.get("model") or j["fallback"])
+                r["ran"] = r["status"] != "error" and bool(r["summary"])
+                if not r["ran"]:
+                    r["reason"] = "ACT failed: %s (provider %s, %s)." % (r["stop_reason"] or "it gave no answer", provider,
+                                                                          _plain_url(url))
+            except Exception as e:  # this question only: the others keep their answers. Its type, never its text
+                if r["tries"] > 1 and rec.get("status") != "error" and rec.get("summary"):     # an answer came (Codex r2)
+                    r.update(asked=True, ran=True, status=str(rec.get("status") or ""), summary=rec["summary"],
+                             stop_reason="", model=str(rec.get("model") or j["fallback"]), reason="")
+                    return j
+                r.update(asked=r["tries"] > 0, ran=False, status="error", summary="",
+                         stop_reason="%s while asking" % type(e).__name__,
+                         reason="ACT could not be asked (%s in site_act_ask)." % type(e).__name__)
+            return j
 
+        def wave(jobs):
+            """These questions asked, at most `concurrency` at a time (0: up to WIDTH_ALL), in one ACT folder -> '' or why
+            they could not be (each row's reason says it)."""
+            if not jobs:
+                return ""
+            why = prepare()
+            if why:
+                for j in jobs:
+                    j["row"]["reason"] = why
+                return why
+            width = ready["width"]
+            width = min(WIDTH_ALL, len(jobs)) if width <= 0 else min(width, len(jobs))
             started = time.time()
             with ThreadPoolExecutor(max_workers=width) as pool:
-                list(pool.map(one, todo))
-            out["seconds"] = round(time.time() - started, 1)
+                list(pool.map(one, jobs))
+            for j in jobs:      # the answer as this run got it: a worker's row later takes the smart model's (1.137.0)
+                j["got"] = {"ran": j["row"]["ran"], "summary": j["row"]["summary"], "model": j["row"]["model"]}
+            out["seconds"] = round(out.get("seconds", 0) + time.time() - started, 1)
+            asked.extend(jobs)
+            return ""
+
+        asked = []
+        try:
+            if wave(pending) and not T:
+                return out
+            if T:
+                # the second wave: each worker answer that is no answer, unreadable, unsure or says critical (judge) - its
+                # question asked once more, of the smart model, with the same task and evidence; the smart answer is
+                # final, whatever it says (never back to the worker, never a third time)
+                esc = []
+                for j in first:
+                    if j["row"].get("tier") != "worker":
+                        continue
+                    j["why"] = judge(T["form"], j["row"], j["items"], T["sure"])
+                    if j["why"]:
+                        e = dict(j["row"], asked=False, ran=False, status="", summary="", stop_reason="", model=model,
+                                 tries=0, reason="", cached="")
+                        esc.append(dict(job(j["i"], len(questions) + j["i"], e, "smart"), worker=j))
+                wave(lookup(esc))
+                for e in esc:
+                    w, r = e["worker"], e["worker"]["row"]
+                    if e["row"]["ran"]:
+                        r.update(e["row"], tier="escalated", escalated=w["why"])
+                    else:
+                        r.update(escalated=w["why"], escalation_failed=e["row"]["reason"] or "the smart model gave no answer")
+                        if not r["ran"]:
+                            r.update(reason=e["row"]["reason"] or r["reason"])
+                # the third: the smart model reads the answers (never the evidence) and writes the cross-item verdict
+                syn = {"asked": False, "ran": False, "overall": "", "reason": "", "model": "", "cached": ""}
+                done = [(rows[i], [x for x in (questions[i].get("items") or []) if isinstance(x, dict)]) for i in todo if rows[i]["ran"]]
+                if (T["form"] == "analysis" and T["synth"] and done
+                        and (len(done) > 1 or any(r.get("tier") == "worker" for r, _ in done))):
+                    text = synth_evidence(done)
+                    if text:
+                        srow = {"ids": [], "asked": False, "ran": False, "status": "", "summary": "", "stop_reason": "",
+                                "model": model, "tries": 0, "reason": "", "cached": ""}
+                        qn = []
+                        for q in questions:
+                            qn += [n for n in (q.get("names") or []) if n not in (None, "") and n not in qn]
+                        sj = {"i": -1, "n": 2 * len(questions), "row": srow, "task": SYNTH_TASK, "piped": payload(text, cap),
+                              "own": "", "items": [], "qnames": qn, "settings": settings, "mdl": smart, "fallback": model,
+                              "again": False, "store": synth_store}
+                        if sj["piped"]:
+                            wave(lookup([sj]))
+                            got = synth_read(srow["summary"]) if srow["ran"] else ""
+                            syn.update(asked=srow["asked"], ran=bool(got), overall=got, model=srow["model"], cached=srow["cached"],
+                                       reason="" if got else (srow["reason"] or "the smart model's summary could not be read"))
+                out["tiers"] = tiers_summary(T, rows, todo, syn)
         finally:
-            shutil.rmtree(work, ignore_errors=True)
+            if ready.get("work"):
+                shutil.rmtree(ready["work"], ignore_errors=True)
         if info["on"] and write:
             keep = []
-            for i in todo:
-                items = [x for x in (questions[i].get("items") or []) if isinstance(x, dict)]
-                if rows[i]["ran"] and complete(rows[i]["summary"], items):
-                    s = _cache_mods["c"].stored(rows[i]["summary"])
-                    if s:
-                        keep.append((keys[i], kind, _cache_mods["pv"], rows[i]["model"], s))
+            for j in asked:
+                g = j["got"]
+                if "key" not in j or not g["ran"]:
+                    continue
+                s = j["store"](g["summary"]) if j.get("store") else (
+                    _cache_mods["c"].stored(g["summary"]) if complete(g["summary"], j["items"]) else "")
+                if s:
+                    keep.append((j["key"], kind, _cache_mods["pv"], g["model"], s))
             if keep:
                 try:
                     conn = _cache_mods["db"].connect(cdb)[0]

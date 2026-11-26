@@ -8,17 +8,21 @@
 # Input:  _eb_batches ([{items, evidence, task}], built by the job: problems | batch(n)), _eb_check_url (bool: check
 #         the way to the model), _eb_retry_unreadable (default true: an answer act_analysis_parse cannot read is asked
 #         again; false for a job with its own reader, as the WAR), _eb_kind (1.136.0: the job's kind for the answer cache in
-#         the report database - log_analysis, vm_alarm_act ...; undefined: no cache), _ea_names, _ea_model_timeout,
-#         _ea_in_check - as for evidence_analysis.yml
+#         the report database - log_analysis, vm_alarm_act ...; undefined: no cache), _eb_tiers (1.137.0, bool, default
+#         false: the job takes model tiers - its *_act_tiers; the WAR and the outage review are one judgement each and
+#         never do), _ea_names, _ea_model_timeout, _ea_in_check - as for evidence_analysis.yml
 # Output: _ea_ran (ACT answered at least one batch), _ea_parsed (act_batches_merge), _ea_reason ('' when every batch
 #         was answered, else which were not and why), _ea_raw, _ea_model, _ea_url, _eb_results (per batch), _ea_off,
 #         _ea_cache (the cache: on, hits, saved, pruned, created, why), _ea_cache_note ('' or, for the report, how many
-#         answers came from the cache and from when)
+#         answers came from the cache and from when), _ea_tiers (1.137.0: the plugin's tiers, {} without), _ea_tiers_note
+#         ('' or, for the report, which model answered how many items)
 - name: ACT | no answer yet
   ansible.builtin.set_fact:
     _eb_results: []
     _ea_cache: {}
     _ea_cache_note: ""
+    _ea_tiers: {}
+    _ea_tiers_note: ""
 
 # a dry run (Check) asks nothing: one "would analyze N items" for them all; nor does ACT off (site_act_enabled false)
 - name: ACT | a dry run (Check), or ACT off - ACT is not asked
@@ -37,6 +41,7 @@
     _ask_check_url: "{{ _eb_check_url | default(true) | bool }}"
     _ask_retry_unreadable: "{{ _eb_retry_unreadable | default(true) | bool }}"
     _ask_cache_kind: "{{ _eb_kind | default('') }}"
+    _ask_tiers: "{{ _eb_tiers | default(false) | bool }}"
   when: (not ansible_check_mode or _ea_in_check | default(false) | bool) and site_act_enabled | bool
 
 - name: ACT | each question's answer
@@ -56,19 +61,29 @@
   when: (not ansible_check_mode or _ea_in_check | default(false) | bool) and site_act_enabled | bool
   ansible.builtin.set_fact:
     _ea_ran: "{{ _eb_results | selectattr('ran') | list | length > 0 }}"
-    _ea_parsed: "{{ _eb_results | act_batches_merge }}"
+    # 1.137.0: with tiers, the smart model's verdict (from the answers) is the overall; the batches' failures stay after it
+    _ea_parsed: "{{ _eb_results | act_batches_merge | act_tiers_overall(_ea_ask.tiers | default({})) }}"
     _ea_reason: "{{ _eb_results | act_batches_reason }}"
     _ea_raw: "{{ _eb_results | map(attribute='raw') | select | join('\n\n') }}"
     _ea_model: "{{ (_eb_results | map(attribute='model') | select | list + [''])[0] }}"
     _ea_why_not: "{{ _ea_ask.why_not }}"
     _ea_off: false
     _ea_cache: "{{ _ea_ask.cache | default({}) }}"
+    _ea_tiers: "{{ _ea_ask.tiers | default({}) }}"
+    _ea_tiers_note: "{{ (_ea_ask.tiers | default({})).note | default((_ea_ask.tiers | default({})).why | default('')) }}"
     _ea_cache_note: >-
       {%- set kept = _ea_ask.questions | map(attribute='cached', default='') | select | list | sort -%}
       {%- if kept -%}
       {{ kept | length }} of {{ _ea_ask.questions | length }} answer(s) from an earlier run ({{ kept[0] if kept[0] == kept[-1]
          else kept[0] ~ ' to ' ~ kept[-1] }} UTC; site_act_cache).
       {%- endif -%}
+
+- name: ACT | which model answered (site_act_worker_model)
+  ansible.builtin.debug:
+    msg: "{{ _ea_tiers_note }}"
+  when:
+    - (not ansible_check_mode or _ea_in_check | default(false) | bool) and site_act_enabled | bool
+    - _ea_tiers_note | length > 0
 
 - name: ACT | the answer cache (site_act_cache)
   ansible.builtin.debug:

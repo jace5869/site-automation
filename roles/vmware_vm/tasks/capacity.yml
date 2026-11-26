@@ -61,6 +61,7 @@
           {{ out }}
         _eb_check_url: "{{ vm_capacity_act_check_url }}"
         _eb_kind: vm_capacity               # the answer cache's job kind (site_act_cache)
+        _eb_tiers: "{{ vm_capacity_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
         _ea_names: "{{ _vm_cap_read | vm_capacity_names }}"
         _ea_model_timeout: "{{ vm_capacity_act_model_timeout }}"
 
@@ -69,7 +70,7 @@
         _vm_cap_act_sections: >-
           {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | vm_capacity_act_section(_ea_parsed,
                _vm_cap_opts | combine({'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw,
-                                       'cache_note': _ea_cache_note | default('')})) }}
+                                       'cache_note': [_ea_cache_note | default(''), _ea_tiers_note | default('')] | select | join(' ')})) }}
 
 # ACT's estimate before "Hosts per cluster" (act_at), on the website as in the email; the website (the atlas and brief
 # looks) has the runway board with its lines and hover where the email has tables (1.57.0)

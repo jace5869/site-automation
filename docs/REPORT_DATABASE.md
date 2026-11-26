@@ -2101,6 +2101,11 @@ The same question means the same evidence, the same prompt, the same provider, m
 kind. They are the ones ACT uses: a provider, model or URL in `site_act_env` or the execution environment counts. The evidence counts as ACT read it: after it
 was cut to its size.
 
+With model tiers (1.137.0, `site_act_worker_model`; [ADDING_ACT.md](ADDING_ACT.md), *Model tiers*), each answer is kept
+under the model that gave it: the worker's and the smart model's are two questions, and the smart model's verdict a
+third. A worker's answer that was unsure is kept too, and the next run still asks the smart model about it (or takes
+the smart model's kept answer).
+
 The log analysis compares its patterns instead: each pattern's level, source, signature and hosts, and its count as
 a band (1, 2-9, 10-99 ...), and its example lines without their times and dates. Also the team's question and the
 site's instructions. So the same log set a day later finds its answer, but `HTTP 401` and `HTTP 503` are two questions. For the VMware analyses, other times or counts in the evidence make

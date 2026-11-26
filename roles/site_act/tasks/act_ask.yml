@@ -7,9 +7,12 @@
 # Input:  _ask_questions ([{items, evidence, task, names}]: names, ACT masks them for that question too),
 #         _ask_check_url (bool), _ask_cache_kind (the job kind for the answer cache - 1.136.0, the batched jobs; '' or
 #         undefined: no cache), _ask_retry_unreadable (bool: an answer
-#         act_analysis_parse cannot read is asked again too), _ea_names, _ea_model_timeout, _ea_in_check
+#         act_analysis_parse cannot read is asked again too), _ask_tiers (1.137.0, bool: the job takes model tiers - its
+#         *_act_tiers; with site_act_worker_model(s) set), _ask_tier_form (analysis, code or verdict: how a worker's answer
+#         is judged), _ask_tier_synth (bool, default true: the smart model writes the verdict), _ea_names,
+#         _ea_model_timeout, _ea_in_check
 # Output: _ea_ask (the plugin's result: url, reached, why_not, questions [{ids, asked, ran, status, summary, stop_reason,
-#         model, tries, reason}]), _ea_url
+#         model, tries, reason, tier}], tiers {on, worker, smart, items, synth, note} or {on: false, why}), _ea_url
 - name: ACT | settings (provider, model, URL; the key comes from the job's credential)
   ansible.builtin.include_tasks: env.yml
 
@@ -69,6 +72,13 @@
                                              'GENAI_BETA_KEY', 'GENAI_BETA_KEYS']) }}
     provider: "{{ site_act_provider }}"
     model: "{{ site_act_model or (site_act_models | default({}))[site_act_provider] | default('') }}"
+    # 1.137.0: model tiers - a job that takes them (_ask_tiers: its *_act_tiers) and a worker model set; the plugin picks
+    # the worker for the provider ACT will use. {} = one model, exactly as 1.136.0.
+    tiers: >-
+      {{ {'on': true, 'worker': site_act_worker_model | default('', true) | string,
+          'workers': site_act_worker_models | default({}, true), 'form': _ask_tier_form | default('analysis', true),
+          'synth': _ask_tier_synth | default(true) | bool}
+         if _ask_tiers | default(false) | bool else {} }}
     # 1.136.0: the answers kept in the report database (act_answer_cache) - the batched jobs, with the "Report database"
     # credential on the template and site_act_cache on; a dry run (Check) reads it, writes nothing
     cache: >-

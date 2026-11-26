@@ -309,7 +309,8 @@ class Timeouts(unittest.TestCase):
             self.assertEqual(env.from_string(expr).render(v).strip(), want, model)      # before: always site_act_timeout (1200)
         with open(os.path.join(REPO, "plugins", "action", "site_act_ask.py")) as f:
             src = f.read()
-        self.assertRegex(src, r"finally:\n\s+shutil\.rmtree\(work, ignore_errors=True\)")      # ACT's folder goes, whatever happens
+        # ACT's folder goes, whatever happens (1.137.0: made once for every wave of the tiers, removed after the last)
+        self.assertRegex(src, r"finally:\n\s+if ready\.get\(\"work\"\):\n\s+shutil\.rmtree\(ready\[\"work\"\], ignore_errors=True\)")
         with open(os.path.join(REPO, "roles", "vmware_vm", "defaults", "main.yml")) as f:
             self.assertEqual(yaml.safe_load(f)["vm_outage_act_model_timeout"], 180)    # before: site_act_model_timeout (600)
 

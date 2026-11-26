@@ -787,6 +787,31 @@ def act_batches_merge(batches):
     return out
 
 
+def act_tiers_overall(parsed, tiers=None):
+    """1.137.0, model tiers (plugins/action/site_act_ask.py): the smart model's verdict, written from the workers' answers
+    (tiers.synth), becomes the analysis' overall; the batches' failures (act_batches_merge's error lines) stay after it.
+    No verdict: the analysis as it was (the batches' own overall lines)."""
+    p = dict(parsed or {})
+    s = (tiers or {}).get("synth") if isinstance(tiers, dict) else None
+    verdict = " ".join(str((s or {}).get("overall") or "").split()) if isinstance(s, dict) and s.get("ran") else ""
+    if not verdict:
+        return p
+    err = str(p.get("error") or "")
+    lines = list(p.get("overall_lines") or [])
+    tail = []
+    if err:
+        for k in range(len(lines) + 1):
+            if " ".join(lines[k:]) == err:
+                tail = lines[k:]
+                break
+        else:
+            tail = [err]
+    p["overall"] = " ".join([verdict] + tail)
+    if "overall_lines" in p:
+        p["overall_lines"] = [verdict] + tail
+    return p
+
+
 def act_batches_reason(batches):
     """'' when ACT answered every batch, else why not, by batch ('P11-P15 not analyzed: ACT failed: ...');
     one batch: its own reason, as it was."""
@@ -905,4 +930,5 @@ class FilterModule(object):
                 "vm_alarm_problems": vm_alarm_problems, "vm_alarm_evidence": vm_alarm_evidence,
                 "vm_alarm_act_task": vm_alarm_act_task, "act_analysis_parse": act_analysis_parse, "act_answer_text": act_answer_text,
                 "vm_alarm_act_report": vm_alarm_act_report, "vm_alarm_names": vm_alarm_names,
-                "act_batches_merge": act_batches_merge, "act_batches_reason": act_batches_reason}
+                "act_batches_merge": act_batches_merge, "act_batches_reason": act_batches_reason,
+                "act_tiers_overall": act_tiers_overall}

@@ -43,6 +43,7 @@
           {{ out }}
         _eb_check_url: "{{ log_analysis_check_url | bool }}"
         _eb_kind: log_analysis              # the answer cache's job kind (site_act_cache)
+        _eb_tiers: "{{ log_analysis_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
         _ea_names: "{{ _la | log_names(log_analysis_names_extra) }}"
         _ea_model_timeout: "{{ log_analysis_act_model_timeout }}"
 
@@ -53,7 +54,7 @@
         _la_reason: "{{ _ea_reason }}"
         _la_raw: "{{ _ea_raw }}"
         _la_model: "{{ _ea_model }}"
-        _la_cache_note: "{{ _ea_cache_note | default('') }}"
+        _la_cache_note: "{{ [_ea_cache_note | default(''), _ea_tiers_note | default('')] | select | join(' ') }}"   # 1.137.0: and which model answered
 
 - name: Logs | the report
   ansible.builtin.set_fact:

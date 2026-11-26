@@ -869,6 +869,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `answer_keys_trial` | `false` | 1.76.4: try each draft once on the host, in a read-only sandbox (systemd-run; docs/STIG_ANSWER_KEYS.md, The trial) - off by default until the sandbox is hardened further: false = the read-only check only, nothing else runs on the host, and each block is offered marked "not tried" (read it, try it on a test host first)… (all of it: the role file) |
 | `answer_keys_trial_timeout` | `60` | seconds each ValidationCode may run in its trial on the host |
 | `answer_keys_cross_check` | `true` | 1.77.0, the cross-check: for each block, Evaluate-STIG, STIG Manager (a person's review after the last scan), the code in the trial and ACT on its own side by side - Agree, Need a look or Too little to compare; never changes a block. ACT gets DISA's check text and the host's read-only evidence (DISA's commands on the… (all of it: the role file) |
+| `answer_keys_act_tiers` | `true` | 1.137.0: with a worker model (site_act_worker_model) the worker drafts each rule and gives each cross-check verdict first; a draft without code or an unsure verdict is asked of the smart model once; false = the smart model only |
 | `answer_keys_cross_check_act_max` | `50` | 1.77.0: at most this many ACT calls a run for the cross-check (hosts with the same evidence share one); past it the rule says "not asked (the cap, answer_keys_cross_check_act_max)" |
 | `answer_keys_evidence` | `web` | 1.77.0: a host's text in the reports of both answer keys jobs (what the trial or the code read, Evaluate-STIG's comment, the cross-check's evidence) - web: on the report website, redacted, at most 20 lines and 2000 characters a rule; never in the email or its workbook (statuses, counts and rule ids only); none: nowher… (all of it: the role file) |
 | `answer_keys_try_hosts` | `10` | ---- STIG answer keys - try my answer file (1.77.0, playbooks/stig_answer_keys_try.yml): your answer files on test hosts ----- at most this many test hosts in one run (target and the Limit); Evaluate-STIG runs twice on each, with and without your answer files (check_stig_evaluate_answers) |
@@ -1233,6 +1234,7 @@ File: `roles/log_analysis/defaults/main.yml`
 | `log_analysis_question` | (empty) | What you want to know, in your words - ACT looks at it first (a good survey question), e.g. "users report slow logins since 09:00". |
 | `log_analysis_names_extra` | `[]` | more names ACT replaces with placeholders before the model sees them (host names are always) |
 | `log_analysis_max_items` | `30` | ACT analyzes at most this many patterns, the most severe first (the rest are listed) |
+| `log_analysis_act_tiers` | `true` | 1.137.0: with a worker model (site_act_worker_model) the worker reads each batch of patterns, the smart model the unsure or critical ones and writes the verdict; false = the smart model only |
 | `log_analysis_act_batch` | `"{{ site_act_batch \| default(5) }}"` | patterns per question to ACT, each with only its evidence (0 = all in one question) |
 | `log_analysis_examples` | `3` | example lines per pattern in the evidence, the report and the artifacts |
 | `log_analysis_max_chars` | `60000` | the evidence ACT reads is cut at this many characters |
@@ -2025,6 +2027,8 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_model` | (empty) | one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models |
 | `site_act_url` | (empty) | one URL for this run; empty = site_act_urls |
 | `site_act_ca` | (empty) | a CA bundle file ON THE HOSTS for the provider's certificate; empty = the host's trust store |
+| `site_act_worker_model` | (empty) | 1.137.0: model tiers (docs/ADDING_ACT.md, "Model tiers"). A cheaper, faster WORKER model does the per-item first pass of the jobs that ask ACT about many items on the AAP side (the log analysis, the VMware alarms, capacity and right-sizing analyses, the STIG answer keys); the model above (the SMART one) gets what the… (all of it: the role file) |
+| `site_act_worker_models` | `{}` |  |
 | `site_act_env` | `{}` | Any other ACT environment settings (advanced; these win over the ones above), e.g. {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}. See the top of vendor/act/act for the list. Every ACT job streams the model's answer (ACT_STREAM=1), so a firewall or proxy idle timeout does not cut a long answer ("connection reset by p… (all of it: the role file) |
 | `site_act_model_timeout` | `600` | Seconds the model may take for ONE answer, retries after a provider hiccup included (ACT's GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch. |
 | `site_act_timeout` | `1200` | seconds for one whole ACT run (several answers): keep it above site_act_model_timeout |
@@ -2752,6 +2756,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_rightsize_workers` | `4` | statistics queries at a time |
 | `vm_rightsize_act` | `false` | GenAI (ACT) reviews the suggestions: needs an "ACT model key" credential (docs/VMWARE.md, "ACT analysis") |
 | `vm_rightsize_act_max_items` | `40` | suggestions ACT reviews: too small first, then too big (the most freed first) |
+| `vm_rightsize_act_tiers` | `true` | 1.137.0: with a worker model (site_act_worker_model) the worker reviews each batch, the smart model the unsure ones and writes the verdict; false = the smart model only |
 | `vm_rightsize_act_batch` | `"{{ site_act_batch \| default(5) }}"` | suggestions per question to ACT (0 = all in one) |
 | `vm_rightsize_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_rightsize_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
@@ -2797,6 +2802,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` | Events about a VM stopping, restarting or failing over (guest shutdown, power off, HA restart): the VM events table. |
 | `vm_alarm_fail` | `false` | The job stays green when it finds alarms: the report and email say what. true = mark the job FAILED when there is a critical alarm or a host is not connected, for workflows. |
 | `vm_alarm_act_max_items` | `40` | ACT analysis (playbooks/vm_alarm_act_analysis.yml). ACT runs on the AAP side (the execution environment), never on the ESXi hosts; the model provider, model, URL, proxy and CA are the site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential. analyze at most this many problems, the… (all of it: the role file) |
+| `vm_alarm_act_tiers` | `true` | 1.137.0: with a worker model (site_act_worker_model) the worker reads each batch, the smart model the critical and unsure problems and writes the verdict; false = the smart model only |
 | `vm_alarm_act_batch` | `"{{ site_act_batch \| default(5) }}"` | problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts off (0 = all in one question) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
@@ -2951,6 +2957,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_fail` | `false` | The job stays green: the report says what is short. true = mark it FAILED when a cluster or datastore is critical (for workflows). |
 | `vm_capacity_act` | `false` | GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI). Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms analysis. ACT runs on the AAP side and runs no command. |
 | `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
+| `vm_capacity_act_tiers` | `true` | 1.137.0: with a worker model (site_act_worker_model) the worker estimates each batch, the smart model the unsure ones and writes the verdict; false = the smart model only |
 | `vm_capacity_act_batch` | `"{{ site_act_batch \| default(5) }}"` | items per question to ACT (each question has the whole evidence; 0 = all in one) |
 | `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |

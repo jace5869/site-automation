@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.137.0 — 2026-11-26
+
+**To set up: optional `site_act_worker_model`** (or `site_act_worker_models: {genai: <the worker model's id>}`) in
+all.yml - a cheaper, faster model for the per-item first pass. Without it, nothing changes: every question goes to
+`site_act_model` / `site_act_models`, exactly as in 1.136.0. Each job can turn it off: `log_analysis_act_tiers`,
+`vm_alarm_act_tiers`, `vm_capacity_act_tiers`, `vm_rightsize_act_tiers`, `answer_keys_act_tiers` (all `true`).
+
+**ACT model tiers: a worker model for the bulk, the smart model for judgement** (docs/ADDING_ACT.md, "Model tiers").
+
+- **Where the worker answers:** the log analysis (each batch of patterns), the VMware alarms ACT analysis (each batch of
+  problems), the capacity and right-sizing analyses (each batch), and the STIG answer keys (each rule's draft, each
+  cross-check answer). The WAR, the outage review, ticket insights, the incident documents, VM ask and deploy and a
+  finding's triage are one judgement each: always the smart model.
+- **An item the job marks critical** (an alarm or a log pattern at level critical) goes to the smart model at once.
+- **The smart model checks the worker once.** A question goes to it, with the same task and evidence, when the worker
+  gave no answer, gave one the job cannot read or that leaves an item out, is unsure (a confidence under 50, an
+  `unsure` cross-check verdict, a draft with no code) or calls an item critical. Its answer is final: never back to the
+  worker, never a third time. When it fails, the worker's answer stays, and the report says so.
+- **The smart model writes the verdict** of the log analysis, alarms, capacity and right-sizing reports from the
+  workers' short answers (id, cause, fix, confidence, one quoted line, secrets masked), never the evidence. When it
+  cannot be read, each batch keeps its own lines.
+- **One line in each report** (and the job output) says which model answered how many items, how many were re-asked and
+  why. The answer keys say it at the end of their report.
+- **The answer cache keeps each tier under its own model**: a worker's answer never stands for the smart model's, nor
+  the other way round. A run whose answers are all kept reaches no model.
+- **The same rules for both tiers:** the worker only reads the evidence the job collected and runs no command; one
+  launcher (`act_launch.py`), the keys only on its input, a refused `site_act_env` name stops every tier, the masking
+  last. One check of the way to the model and one ACT folder for all the questions.
+- Tests: `tests/test_site_act_tiers.py` - a stand-in ACT that answers by its model: the routing, each reason to go to the
+  smart model, no loop, the verdict never reading the evidence, its fall-back, the keys per model, and a golden of
+  1.136.0's engine (`tests/fixtures/act_tiers_golden_1360.json`: every ACT run's task, input, model, masking, answer and
+  cache key) that tiers off matches byte for byte; the ACT e2e with a stand-in of two models.
+- Not in it: the health check's `explain` level and fapolicyd (ACT runs on each host there, not through the engine).
+
 ## 1.136.0 — 2026-11-26
 
 **To set up: nothing.** The answer cache needs the **Report database** credential (the writer, `report_writer`) on the

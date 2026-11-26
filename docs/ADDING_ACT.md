@@ -422,6 +422,67 @@ One job asks like this:
 
 The STIG answer keys ask every rule in one call too (`evidence_many.yml`): the drafts, then the cross-check.
 
+### Model tiers: a worker model for the bulk, the smart model for judgement (1.137.0)
+
+Off until you set a worker model. Then the jobs that ask ACT about many items on the AAP side send each item to a
+cheaper, faster **worker** model first. The model you already set (`site_act_model`, `site_act_models`) becomes the
+**smart** model. It gets only what the worker could not settle, and it writes the report's verdict.
+
+| Job | Worker model (each item) | Smart model |
+|---|---|---|
+| Log analysis | each batch of patterns | critical patterns at once; the verdict |
+| VMware alarms ACT analysis | each batch of problems | critical problems at once; the verdict |
+| VMware capacity analysis | each batch of estimates | the verdict |
+| VM right-sizing | each batch of suggestions | the verdict |
+| STIG answer keys | each rule's draft and each cross-check answer | a draft with no code, an `unsure` verdict |
+| WAR, outage review, ticket insights, incident documents, VM ask and deploy, a finding's triage | - | all of it (one judgement each) |
+| Health check (`explain`), fapolicyd | - | all of it (ACT runs on each host, not through the engine) |
+
+How it works:
+
+- **The worker answers first.** Its model goes in ACT's own model setting (`GENAI_MODEL` ...). Nothing else changes:
+  the same launcher, the same evidence, the keys only on the launcher's input, the masking last. The worker only reads
+  the evidence the job collected. It runs no command.
+- **An item the job marks critical** (an alarm or a log pattern at level critical) goes to the smart model at once.
+- **The smart model checks the worker once.** A question goes to the smart model when the worker:
+  - gave no answer;
+  - gave an answer the job cannot read, or left an item out;
+  - is unsure: a confidence under 50 ("a guess" in the jobs' own prompts), an `unsure` cross-check verdict, or a draft
+    with no code;
+  - calls an item critical.
+
+  The smart model gets the same task and evidence. Its answer is final, even when it is unsure: nothing goes back to
+  the worker or is asked a third time. When the smart model fails, the worker's answer stays, and the report says so.
+- **The smart model writes the verdict.** It reads only the worker's short answers: for each item its id, cause, fix,
+  confidence and at most one quoted line, with secrets masked. It never reads the evidence. Its verdict is the report's
+  overall. When it cannot be read, each batch keeps its own lines, and the report says so.
+- **One line in the report** says which model answered how many items: *ACT models (site_act_worker_model): 12 item(s)
+  answered by the worker model (...), 3 by the smart model (...), 2 of them re-asked after the worker (1 critical, 1
+  unsure). The overall verdict: the smart model, from the answers.*
+- **The answer cache** (`site_act_cache`) keeps each tier's answers under its own model. A worker's answer never
+  stands for the smart model's, or the other way round. A run where every answer is kept reaches no model at all.
+
+Example: hydrogen as the worker, carbon or argon as the smart model. Use the model ids your provider gives; a list
+of them is in ACT's `:models`.
+
+```yaml
+# playbooks/group_vars/all.yml
+site_act_models: {genai: <carbon or argon model id>}       # the smart model (argon: gemini-4-argon-withtools)
+site_act_worker_models: {genai: <hydrogen model id>}       # the worker model
+# site_act_worker_model: <id>                              # or one worker for this run, whatever the provider
+```
+
+Each job can turn tiers off and stay on the smart model: `log_analysis_act_tiers`, `vm_alarm_act_tiers`,
+`vm_capacity_act_tiers`, `vm_rightsize_act_tiers`, `answer_keys_act_tiers` (all `true`). Without a worker model, or with
+the job's switch `false`, every question goes to the smart model, exactly as before 1.137.0. A worker that is the smart
+model is one tier too.
+
+What it saves, and what it does not: most items are read by the worker model, which is quicker and lighter on the
+gateway's quota. The smart model reads far less: the items the worker could not settle, and one short summary. Both
+tiers use the same key, so they share its quota (GenAI.mil's default: 60 requests and 200,000 tokens a minute). A run
+makes a few more requests than before: one for the verdict, and one for each item checked again. Watch the report line
+for a week. When most items are re-asked, the worker model is too weak for that job: turn tiers off for it.
+
 ### Causes: one answer shape for every "why" report
 
 When a report asks ACT why (the log analysis first; the alarms, health check, fapolicyd and right-sizing
