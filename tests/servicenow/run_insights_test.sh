@@ -702,6 +702,8 @@ def norm(path):
         d = json.loads(t)
         for k in ("when", "runs"):
             d.pop(k, None)
+        if d.get("files_more") == []:       # 1.122.2's key, written empty by the page-by-page path only: the same page
+            d.pop("files_more")
         t = json.dumps(d, sort_keys=True)
     t = re.sub(r'<details class="notes"><summary><b>Time this run</b>.*?</details>', "", t, flags=re.S)
     t = re.sub(r"\d{4}-\d{2}-\d{2}_\d{4}_job-", "D_job-", t)        # this run's own page: its name carries the minute
