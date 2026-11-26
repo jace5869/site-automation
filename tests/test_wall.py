@@ -880,6 +880,15 @@ class Browser(unittest.TestCase):
         self.assertIn("Not on the wall yet", out)                                    # VDI, AD, Outages, Network: grey
         self.assertIn('data-d="ctr:hosts"', out)                                     # every counter opens a card
 
+    def test_room_styles_show_what_the_wall_watches(self):
+        """review r1 (Codex 7, Neon 7): ?area=watch in Strata, Relay and Metro is the watch list, not the board"""
+        for st in ("strata", "relay", "metro"):
+            out = self.dom("style=%s&area=watch&freeze=1" % st)
+            self.assertIn('data-ready="1"', out, st)
+            self.assertIn("What the wall watches", out, st)
+            self.assertNotIn('class="wx wx-', out, st)
+            self.assertNotRegex(out, r'<html[^>]*class="[^"]*\bscreen\b', st)
+
     def test_detail_cards(self):
         out = self.dom("style=cockpit&freeze=1&open=" + urllib.request.quote("c:host:%s:sita01-esx03.corp.example.mil" % demo.VC1))
         self.assertIn('id="dsBack" role="presentation" class="on"', out)
