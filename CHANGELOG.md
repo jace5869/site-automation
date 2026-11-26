@@ -19,7 +19,8 @@ outage review and the STIG answer keys all use it.
   the order they were asked in.
 - The STIG answer keys ask all their rules in one call: the drafts, then the cross-check.
 - A question that failed is asked once more (`site_act_retries`). In the jobs that ask in batches, an answer the
-  job cannot read is asked again too (not the WAR: it has its own reader). A question that ran out of time is not.
+  job cannot read is asked again too (not the WAR: it has its own reader). All tries of a question share its time;
+  one that ran out of it is not asked again. An answer that came is kept when the next try fails.
 - A question with no evidence is never sent: *No evidence to read: ACT was not asked.* The evidence is checked as
   it is sent, cut at `act_triage_evidence_total_chars`.
 - What ACT reads always starts with a fixed line. So ACT only reads and answers, and never runs a command on the
@@ -58,7 +59,8 @@ outage review and the STIG answer keys all use it.
 - At the `explain` level, ACT reads the first host of each group of hosts with the same findings. The others take
   its answer, and their reports say so.
 - Findings count as the same without their numbers, times, addresses and the host's own names - but with their
-  ports, ids and read-only hints. fapolicyd compares the findings ACT is given too.
+  ports, quoted names, ids and read-only hints. fapolicyd compares the findings ACT is given too. Grouped within one
+  `serial` batch and one pass of the play; a failed first host is said as a failure, not as a shared answer.
 - `diagnose`, `self-heal` and troubleshoot (its own evidence) still ask each host.
 - fapolicyd's analysis groups hosts with the same blocks too, and runs on `site_act_concurrency` hosts at a time,
   as the other ACT jobs.

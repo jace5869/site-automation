@@ -511,13 +511,23 @@ class ActionModule(ActionBase):
                                           key_names, launcher)
                     items = [x for x in (q.get("items") or []) if isinstance(x, dict)]
                     rec = {}
+                    # 1.136.0 (Neon P3): every try of one question within `timeout` together (1.104.0's cap holds:
+                    # an ACT that gave up at its model time is asked again only in the time left), and an answer that
+                    # ran is never lost to a later try that failed
+                    deadline = time.time() + timeout
                     for t in range(1 + retries):
+                        left = int(deadline - time.time())
+                        if t and left < min(30, max(1, timeout // 4)):     # too little time left for a try
+                            break
                         r["tries"] = t + 1
-                        rec = run_act(sys.executable, act, work, i, _text(q.get("task")), piped[i], env, timeout,
+                        got = run_act(sys.executable, act, work, i, _text(q.get("task")), piped[i], env, max(1, left),
                                       launch_copy, launch, keep)
+                        got_ran = got.get("status") != "error" and bool(got.get("summary"))
+                        if got_ran or not (rec.get("status") != "error" and rec.get("summary")):
+                            rec = got
                         summary = rec.get("summary")
                         ran = rec.get("status") != "error" and bool(summary)
-                        if rec.get("_timed_out"):
+                        if got.get("_timed_out"):
                             break
                         if ran and not (again_unreadable and not readable(summary, items)):
                             break

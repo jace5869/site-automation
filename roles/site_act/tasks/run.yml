@@ -40,7 +40,8 @@
 
 - name: ACT | the hosts with the same findings
   ansible.builtin.set_fact:
-    _site_act_group: "{{ hostvars | site_act_group(ansible_play_hosts, inventory_hostname, '_site_act_sig') }}"
+    # this batch's hosts only (serial: an earlier batch's hosts ran their own ACT - Neon P2)
+    _site_act_group: "{{ hostvars | site_act_group(ansible_play_batch, inventory_hostname, '_site_act_sig') }}"
 
 - name: ACT | no API key for {{ site_act_provider }} - ACT is skipped (the findings are still reported)
   ansible.builtin.set_fact:
@@ -114,7 +115,13 @@
                                     'same_hosts': _site_act_group.same, 'read_on': _site_act_group.lead}) }}
   vars:
     _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
-  when: _site_act_key_ok | bool and _site_act_group.same | length > 1
+  # only over an answer (Neon P2): an error of the lead is said as it is, not as a shared answer
+  when: _site_act_key_ok | bool and _site_act_group.same | length > 1 and site_act_result.status | default('') != 'error'
+
+# a later pass of the play (check, fix, check again) groups on its own findings, never this pass's (Neon P2)
+- name: ACT | this pass's signature is spent
+  ansible.builtin.set_fact:
+    _site_act_sig: ""
 
 - name: ACT | what ACT says
   ansible.builtin.debug:

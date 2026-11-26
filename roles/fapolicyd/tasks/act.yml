@@ -42,7 +42,7 @@
 
 - name: Fapolicyd | the hosts with the same denials
   ansible.builtin.set_fact:
-    _fa_act_group: "{{ hostvars | site_act_group(ansible_play_hosts, inventory_hostname, '_site_act_sig') }}"
+    _fa_act_group: "{{ hostvars | site_act_group(ansible_play_batch, inventory_hostname, '_site_act_sig') }}"     # this batch's hosts (serial)
 
 - name: Fapolicyd | ACT's analysis (evidence only)
   when: _fa_act_skip | length == 0 and _fa_act_group.lead == inventory_hostname
@@ -85,7 +85,13 @@
                                       'same_hosts': _fa_act_group.same, 'read_on': _fa_act_group.lead}) }}
   vars:
     _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
-  when: _fa_act_skip | length == 0 and _fa_act_group.same | length > 1 and act_triage_result is defined
+  when: >-
+    _fa_act_skip | length == 0 and _fa_act_group.same | length > 1 and act_triage_result is defined
+    and act_triage_result.status | default('') != 'error'
+
+- name: Fapolicyd | this pass's signature is spent (a later pass groups on its own denials)
+  ansible.builtin.set_fact:
+    _site_act_sig: ""
 
 - name: Fapolicyd | ACT ran on this host (its analysis goes in the report)
   ansible.builtin.set_fact:

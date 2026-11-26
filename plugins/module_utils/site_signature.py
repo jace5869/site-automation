@@ -77,6 +77,14 @@ def group(records, text="message", obj="host", examples=3, cap=300, names=None):
     return out
 
 
+_QUOTED = re.compile(r'"([^"\n]{1,200})"|\'([^\'\n]{1,200})\'')
+
+
+def _sig_has_name(text, names):
+    t = str(text).lower()
+    return any(str(n).lower() in t for n in (names or []) if n not in (None, ""))
+
+
 _PORTS = re.compile(r"(?i)(?:\bport\s*|(?<=[A-Za-z0-9\]]):)(\d{1,5})\b")
 
 
@@ -97,6 +105,11 @@ def finding_lines(findings, names=None):
                 line += " hint=" + signature(str(f.get("hint")), names)
             if ports:
                 line += " ports=" + ",".join(ports)
+            # the quoted names (a unit 'postgresql', a mount "/var") stay too, the host's own names out (Neon P3)
+            quoted = sorted(set(signature(a or b, names) if _sig_has_name(a or b, names) else (a or b)
+                                for a, b in _QUOTED.findall(text)))
+            if quoted:
+                line += " quoted=" + json.dumps(quoted)
             lines.add(line)
     return sorted(lines)
 

@@ -363,11 +363,14 @@ Many hosts of one job often found the same things: the same service down, the sa
 - Each host's report says so: *The same findings on 4 hosts: web01, web02, web03, web04 (ACT read web01; the
   others take its answer).*
 - Findings count as the same without their numbers, times, addresses and the host's own names. *91% full* on
-  one host and *95% full* on another is the same finding.
+  one host and *95% full* on another is the same finding. Ports, quoted names (a unit, a mount), the finding's id
+  and its read-only hint stay: port 443 and port 636, or unit *postgresql* and unit *nginx*, are not.
+- Hosts are grouped within one batch of the play (`serial`), and each pass of a play groups on its own findings.
+- When the first host's ACT fails, the others say why; they do not show it as a shared answer.
 - `diagnose` and `self-heal` always ask each host: a fix is for the host it was found on.
 - A job that brings its own evidence for each host (troubleshoot) asks each host.
-- fapolicyd's analysis groups the same way: the same blocks (what, by which program, how) on several hosts are
-  read once, however often each was blocked.
+- fapolicyd's analysis groups the same way: the same blocks (what, by which program, how) and the same findings
+  (a trust file that cannot be read ...) on several hosts are read once, however often each was blocked.
 - `site_act_group: false` asks every host.
 
 ### Many items at once: `site_act_batch`
@@ -394,8 +397,9 @@ One job asks like this:
 - Its questions run `site_act_concurrency` (3) at a time, or up to 4 when it is `0`. They come back in the
   order they were asked.
 - A question that failed is asked once more (`site_act_retries`, default **1**; `0` = never again). In the
-  jobs that ask in batches, an answer the job cannot read is asked again too. A question that ran out of
-  `site_act_timeout` is not asked again.
+  jobs that ask in batches, an answer the job cannot read is asked again too. All tries of one question share
+  its time (`site_act_timeout`, or the job's own cap): a question that ran out of it is not asked again. An
+  answer that came is kept when the next try fails.
 - A question with no evidence is never sent. The report says *No evidence to read: ACT was not asked.* The
   evidence is checked as it is sent, cut at `act_triage_evidence_total_chars` (1,500,000 characters).
 - What ACT reads always starts with one fixed line, so ACT only reads and answers. It never works on its own

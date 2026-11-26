@@ -41,6 +41,9 @@ rec = {"schema": "act.result/1", "status": "completed", "summary": "", "stop_rea
 if step.startswith("sleep:"):
     time.sleep(float(step.split(":")[1]))
     step = "answer"
+if step.startswith("slowfail:"):                 # ACT gave up at its own model time: an error, after a while
+    time.sleep(float(step.split(":")[1]))
+    step = "fail"
 if step == "answer":
     rec["summary"] = "BEGIN_ACT_ANALYSIS {\"items\": [{\"id\": \"%s\", \"cause\": \"c\", \"confidence\": 80}]} END_ACT_ANALYSIS" % task
 elif step == "prose":
@@ -505,6 +508,52 @@ class ReviewRound1Keys(unittest.TestCase):
     def test_fapolicyd_groups_by_its_findings_too(self):
         t = open(os.path.join(REPO, "roles", "fapolicyd", "tasks", "act.yml")).read()
         self.assertIn("ls + (_fr | fapolicyd_act_findings(_ff | default({}))", t)
+
+
+class ReviewRound1Neon(Base):
+    """1.136.0, Neon's first review of the port: a test for each finding fixed."""
+
+    def test_the_tries_of_a_question_share_its_time(self):
+        self.set_plan({"t1": ["slowfail:7", "answer"]})
+        started = time.time()
+        r = self.ask([q("t1")], timeout=8, retries=1)
+        self.assertLess(time.time() - started, 8 + 5)                        # before: 7 s, then a second full try
+        self.assertEqual(r["questions"][0]["tries"], 1)
+        self.assertFalse(r["questions"][0]["ran"])
+
+    def test_an_answer_that_ran_is_kept_when_the_next_try_fails(self):
+        self.set_plan({"t1": ["prose", "fail"]})
+        r = self.ask([q("t1")], retry_unreadable=True)
+        a = r["questions"][0]
+        self.assertEqual((a["tries"], a["ran"], a["summary"]), (2, True, "the cause is the network"))
+
+    def test_quoted_names_are_two_groups(self):
+        S = A._load("site_signature_neon", "module_utils", "site_signature.py")
+        a = [{"severity": "critical", "check": "services", "summary": "unit 'postgresql' is failed"}]
+        b = [{"severity": "critical", "check": "services", "summary": "unit 'nginx' is failed"}]
+        self.assertNotEqual(S.finding_set(a), S.finding_set(b))
+        c = [{"severity": "critical", "check": "services", "summary": "unit 'agent on web01' is failed"}]
+        d = [{"severity": "critical", "check": "services", "summary": "unit 'agent on web02' is failed"}]
+        self.assertEqual(S.finding_set(c, ["web01"]), S.finding_set(d, ["web02"]))      # the host's own name still out
+
+    def test_grouping_per_batch_once_per_pass_and_never_over_an_error(self):
+        import yaml
+        for rel, var, result in (("roles/site_act/tasks/run.yml", "_site_act_group", "site_act_result"),
+                                 ("roles/fapolicyd/tasks/act.yml", "_fa_act_group", "act_triage_result")):
+            with open(os.path.join(REPO, rel)) as f:
+                tasks = yaml.safe_load(f)
+            text = open(os.path.join(REPO, rel)).read()
+            self.assertIn("site_act_group(ansible_play_batch,", text, rel)
+            self.assertNotIn("site_act_group(ansible_play_hosts,", text, rel)
+            note = next(t for t in tasks if "said in the" in str(t.get("name", "")))
+            self.assertIn("%s.status | default('') != 'error'" % result, str(note["when"]), rel)
+            last = [t for t in tasks if "_site_act_sig" in (t.get("ansible.builtin.set_fact") or {})][-1]
+            self.assertEqual(last["ansible.builtin.set_fact"]["_site_act_sig"], "", rel)
+            self.assertGreater(tasks.index(last), tasks.index(note), rel)
+
+    def test_the_cache_note_reads_rows_without_cached(self):
+        t = open(os.path.join(REPO, "roles", "site_act", "tasks", "evidence_batches.yml")).read()
+        self.assertIn("map(attribute='cached', default='')", t)
 
 class FakeDB(object):
     """The report database as site_act_cache uses it: the table, schema_version, its rows {key: [kind, pv, model, created,

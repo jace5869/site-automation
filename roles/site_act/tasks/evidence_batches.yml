@@ -64,7 +64,7 @@
     _ea_off: false
     _ea_cache: "{{ _ea_ask.cache | default({}) }}"
     _ea_cache_note: >-
-      {%- set kept = _ea_ask.questions | map(attribute='cached') | select | list | sort -%}
+      {%- set kept = _ea_ask.questions | map(attribute='cached', default='') | select | list | sort -%}
       {%- if kept -%}
       {{ kept | length }} of {{ _ea_ask.questions | length }} answer(s) from an earlier run ({{ kept[0] if kept[0] == kept[-1]
          else kept[0] ~ ' to ' ~ kept[-1] }} UTC; site_act_cache).
