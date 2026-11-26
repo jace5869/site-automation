@@ -1275,7 +1275,9 @@ on the portal's data volume through a restart).
   caption or DNS name, vCenter's VM name or guest host name) - but never when both have an FQDN in different domains, or
   both an IP and they differ: that is another machine (it stays under *vCenter only*; a VM powered off in a test domain
   never greys a production node down). Two VMs that still fit are told apart by the IP, else not compared (said on the card
-  and in the panel). Templates and vCLS VMs are never counted.
+  and in the panel); two SolarWinds nodes that fit one VM likewise. A guest name like `localhost` is never a match. Templates
+  and vCLS VMs (and a powered-off VM whose template flag was not read) are never counted. The area's counts are SolarWinds'
+  nodes; the vCenter-only VMs are counted in the panel.
 - A node SolarWinds itself last polled (`LastSync`) longer ago than `portal_wall_fleet_poll_stale_minutes` (15) is not
   current: grey, never green, and never a recovery.
 - **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds

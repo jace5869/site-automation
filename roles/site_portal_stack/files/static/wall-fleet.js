@@ -10,7 +10,7 @@
   "use strict";
   var A = null, F = null, ETAG = "", FAIL = "", LOADED_AT = 0, BUSY = false, VER = 0, GSC = {sig: "", m: {}};
   var B = null, P = {};                       // the board (kept across the page's redraws, so an open card survives them) and its parts
-  var SEL = {}, OV = null;                    // the selection (node keys), the open card or list
+  var SEL = Object.create(null), OV = null;          // no prototype: a key from the address (?node=) is only ever a node                    // the selection (node keys), the open card or list
   var SPOT = {g: null, left: 20, pausedUntil: 0}, DWELL = 20;
   var LAY = {blocks: [], S: 10, k: 1};
   var ST_WORD = {d: "DOWN", w: "WARN", p: "OFF", m: "UNMANAGED", x: "UNKNOWN", u: "UP"};
@@ -42,7 +42,7 @@
     nodes.forEach(function (n) { var g = groups[n.g]; if (g) { g.nodes.push(n); g.members.push(n); } else n.g = -1; });
     nodes.forEach(function (n) { if (n.g >= 0) n.also.forEach(function (i) { if (groups[i] && i !== n.g) groups[i].members.push(n); }); });
     nodes = nodes.filter(function (n) { return n.g >= 0; });
-    var by = {};
+    var by = Object.create(null);
     nodes.forEach(function (n) { by[n.key] = n; });
     var f = a.feed || {};
     VER++;
@@ -82,10 +82,25 @@
   function swFresh() { return F ? fr(F.feed.asof, F.feed.state, F.late, F.stale) : "stale"; }
   function vcFreshI(i) { var v = F && F.vcs[i]; return v ? fr(v[1], v[2], (W() && W().late) || 180, (W() && W().stale) || 600) : "stale"; }
   function fresh(n) { return n.vconly ? (n.flags.indexOf("s") >= 0 ? "stale" : vcFreshI(n.vci)) : swFresh(); }
-  function sig() { var x = [VER, swFresh(), FAIL ? 1 : 0]; (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); }); return x.join(","); }
+  var SIGC = {t: 0, k: "", v: ""};
+  function sig() {                     // what every node's drawn state depends on, worked out at most every 200 ms
+    var t = Date.now(), k = VER + "|" + FAIL + "|" + (A.unreach() ? 1 : 0);
+    if (SIGC.k === k && t - SIGC.t < 200) return SIGC.v;
+    var x = [k, swFresh()];
+    (F ? F.vcs : []).forEach(function (v, i) { x.push(vcFreshI(i)); });
+    SIGC = {t: t, k: k, v: x.join(",")};
+    return SIGC.v;
+  }
   // what a node is drawn as: up (green, only when its source is current), down, warn, off (hollow grey), unk (grey),
   // lastdown / lastwarn (its source not current: grey, "last known")
   function shown(n) {
+    var sg = sig();
+    if (n._sg === sg) return n._s;
+    n._sg = sg;
+    n._s = shown0(n);
+    return n._s;
+  }
+  function shown0(n) {
     var f = fresh(n), old = n.flags.indexOf("o") >= 0, whole = !F.incomplete.length || n.vconly;
     if (n.c === "d") return f === "stale" ? "lastdown" : "down";                    // red beats grey: an old poll's down stays down
     if (n.c === "w") return f === "stale" || old ? "lastwarn" : "warn";
@@ -114,7 +129,7 @@
     var s = shown(n), d = n.since ? A.dur(NOW() - n.since) : "";
     var since = n.since ? " (since " + hm(n.since) + (n.exact ? "" : " or earlier") + ")" : " (since not known yet)";
     var plus = n.exact ? "" : "+";
-    if (n.c === "d") return (s === "lastdown" ? "last known down" : "down") + (d ? " " + d.replace(/ min$/, plus + " min").replace(/ h$/, plus + " h") : "") + since;
+    if (n.c === "d") return (s === "lastdown" ? "last known down" : "down") + (d ? (n.exact ? " " : " at least ") + d : "") + since;
     if (n.c === "w") return (n.why || "warning") + (d ? " (" + d + (n.exact ? "" : "+") + ", since " + hm(n.since) + (n.exact ? "" : " or earlier") + ")" : "");
     if (n.c === "u") return s === "up" ? "up" + (n.rt != null ? " · " + n.rt + " ms" : "") : "up when last read - not current";
     return n.why || ST_WORD[n.c].toLowerCase();
@@ -198,6 +213,7 @@
   function render(api, stage) {
     A = api;
     if (!B) { build(); load(true); }
+    else if (Date.now() - LOADED_AT > 30000) load(false);          // back on the area after a while: read it again at once
     stage.appendChild(B);
     refresh();
   }
@@ -269,6 +285,7 @@
     clear(P.ban);
     if (t) add(P.ban, [A.word("stale", "NOT CURRENT"), h("span", "", [t + " - grey = no current data; nothing here is green until SolarWinds is read again."])]);
     else if (inc.length) add(P.ban, [A.word("stale", "NOT WHOLE"), h("span", "", [inc.slice(0, 2).join(" · ") + " - the area is not shown OK until the read is whole."])]);
+    else if (F.notes.length) { P.ban.className = "fl-ban on note"; add(P.ban, [A.word("off", "NOTE"), h("span", "", [F.notes.slice(0, 2).join(" · ")])]); }
   }
   // the services strip: SolarWinds' groups (or the custom property's values), worst member wins
   function services() {
@@ -338,17 +355,18 @@
     P.cmpcue.textContent = "compared at each read · click a line for the list";
     if (!F.vcs.length) { P.cmp.appendChild(h("p", "wx-empty", ["No vCenter on the wall - nothing compared (the VMware area needs the \"VMware vCenter\" credential)."])); return; }
     var line = function (n, cls, t, sub, ref) {
-      return h("div", "r" + (n ? " " + cls : "") + (ref ? "" : " flat"), [h("b", "", [String(n)]), h("div", "", [t, h("small", "", [sub])])],
-               ref && n ? {"data-cmp": ref, tabindex: "0", role: "button", title: "The list of these nodes"} : null);
+      var real = typeof n === "number" && n > 0;
+      return h("div", "r" + (real ? " " + cls : " flat"), [h("b", "", [String(n)]), h("div", "", [t, h("small", "", [sub])])],
+               ref && real ? {"data-cmp": ref, tabindex: "0", role: "button", title: "The list of these nodes"} : null);
     };
-    var curVc = F.vcs.some(function (v, i) { return vcFreshI(i) === "ok"; });
+    var curVc = F.vcs.every(function (v, i) { return vcFreshI(i) === "ok"; });
     add(P.cmp, [
       line(c.vc_only == null ? "–" : c.vc_only, "", "VMs in vCenter, not monitored in SolarWinds", c.vc_only == null ? "not counted: SolarWinds' read is not whole and current" : "in the grid as \"vCenter only\", with vCenter's status (heartbeat)", "v"),
       line(c.vc_read ? c.not_in_vc || 0 : "–", "warn", "SolarWinds VMs not found in vCenter", c.vc_read ? "decommissioned? still polled · a VM by its Vendor or MachineType (" + F.vmRule + ")" : "not counted: not every vCenter's read is current", "n"),
       line(c.disagree || 0, "crit", "Disagree: SolarWinds down, vCenter running with heartbeat", (c.disagree_names || []).slice(0, 3).join(", ") + (c.disagree ? " - likely the network path, not the VM" : "none"), "g"),
       line(c.off_in_vc || 0, "", "SolarWinds down, powered off in vCenter", "shown as Powered off (grey), never down", "p"),
       c.ambiguous ? line(c.ambiguous, "warn", "Not compared: two VMs of one name", "the IP did not settle which - see each node's card", "a") : null,
-      curVc ? null : h("p", "wx-empty", ["vCenter not current: nothing is turned from down to Powered off until it is read again."])]);
+      curVc ? null : h("p", "wx-empty", ["A vCenter is not current: its VMs are not compared (never turned from down to Powered off) until it is read again."])]);
   }
   // the Spotlight: one group at a time, problems first; steps every DWELL s, or by ◀ ▶ (a click pauses it for 60 s)
   function spotOrder() {
@@ -398,13 +416,17 @@
   }
 
   // ---------------------------------------------------------------- the grid (canvas)
+  var COLC = {k: "", v: null};
   function colours() {
+    var de = document.documentElement, key = de.className + "|" + (de.getAttribute("data-theme") || "") + "|" + (matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    if (COLC.k === key && COLC.v) return COLC.v;
     var cs = {}, pr = P.probe;
     ["--fl-up", "--fl-warn", "--fl-crit", "--fl-grey", "--fl-accent", "--wx-ink", "--wx-mute", "--fl-label-ink", "--wx-panel", "--fl-notch"].forEach(function (t) {
       pr.style.color = ""; pr.style.color = "var(" + t + ")"; cs[t] = getComputedStyle(pr).color;
     });
     var f = getComputedStyle(B);
     cs.sans = f.getPropertyValue("--wx-sans").trim() || "sans-serif"; cs.mono = f.getPropertyValue("--wx-mono").trim() || "monospace";
+    COLC = {k: key, v: cs};
     return cs;
   }
   // the square size that fits every group in the room: the biggest of 18 to 3 px, in 1 to 3 columns (the shortest column first)
@@ -434,9 +456,11 @@
   function drawGrid() {
     if (!B || !F || !P.gw.isConnected) return;
     var Wd = Math.max(200, P.gw.clientWidth), Hd = Math.max(120, P.gw.clientHeight), dpr = (window.devicePixelRatio || 1) * (LAY.k || 1);
-    var cv = P.cv, x = cv.getContext("2d");
-    cv.style.width = Wd + "px"; cv.style.height = Hd + "px";
-    cv.width = Math.round(Wd * dpr); cv.height = Math.round(Hd * dpr);
+    var cv = P.cv, x = cv.getContext("2d"), pw = Math.round(Wd * dpr), ph = Math.round(Hd * dpr);
+    if (cv.width !== pw || cv.height !== ph) {                    // the backing store only when the size changed
+      cv.style.width = Wd + "px"; cv.style.height = Hd + "px";
+      cv.width = pw; cv.height = ph;
+    }
     x.setTransform(dpr, 0, 0, dpr, 0, 0);
     x.clearRect(0, 0, Wd, Hd);
     var C = colours(), gs = F.groups.filter(function (g) { return g.nodes.length; }), L = layout(gs, Wd, Hd), S = L.S, gap = L.gap;
@@ -468,7 +492,7 @@
             if (s === "warn" && S >= 7) { x.fillStyle = C["--fl-notch"]; x.fillRect(cx + S * .3, cy + S * .3, S * .4, S * .4); }       // a shape, not a colour only
             if ((s === "lastdown" || s === "lastwarn") && S >= 5) { x.strokeStyle = s === "lastdown" ? C["--fl-crit"] : C["--fl-warn"]; x.setLineDash([2, 2]); x.lineWidth = 1.5; x.strokeRect(cx + .75, cy + .75, S - 1.5, S - 1.5); x.setLineDash([]); }
           }
-          if (s === "down" && S >= 5) { x.strokeStyle = C["--fl-crit"]; x.lineWidth = 2; x.beginPath(); x.arc(cx + S / 2, cy + S / 2, Math.max(S, 7), 0, 7); x.stroke(); labels.push({n: n, x: cx, y: cy}); }
+          if (s === "down") { x.strokeStyle = C["--fl-crit"]; x.lineWidth = 2; x.beginPath(); x.arc(cx + S / 2, cy + S / 2, Math.max(S, 7), 0, 7); x.stroke(); labels.push({n: n, x: cx, y: cy}); }
           if (SEL[n.key]) { x.strokeStyle = C["--fl-accent"]; x.lineWidth = 3; x.strokeRect(cx - 3, cy - 3, S + 6, S + 6); }
         });
         if (SPOT.g === g.i) { x.strokeStyle = C["--fl-accent"]; x.lineWidth = 2; x.strokeRect(x0 - 5, y - 4, L.colW + 10, 22 + b.rows * (S + gap) + 6); }
@@ -486,6 +510,7 @@
   }
   function fit(x, t, w) {
     t = String(t || "");
+    if (w <= 8) return "";
     if (x.measureText(t).width <= w) return t;
     while (t.length > 1 && x.measureText(t + "…").width > w) t = t.slice(0, -1);
     return t + "…";
@@ -583,7 +608,13 @@
       var t = e.target;
       if (t.closest(".fl-card") && t.closest("button") && !t.closest(".fl-evs")) return;    // the card's own buttons
       var cb = t.closest("input[type=checkbox][data-k]");
-      if (cb) { if (cb.checked) SEL[cb.getAttribute("data-k")] = 1; else delete SEL[cb.getAttribute("data-k")]; notUp(); drawGrid(); e.stopPropagation(); return; }
+      if (cb) {
+        var ck = cb.getAttribute("data-k"), inList = P.evs.contains(cb);
+        if (cb.checked) SEL[ck] = 1; else delete SEL[ck];
+        if (inList) { notUp(); var again = P.evs.querySelector('input[data-k="' + (window.CSS && CSS.escape ? CSS.escape(ck) : ck) + '"]'); if (again) again.focus(); }
+        else { P.selc.textContent = Object.keys(SEL).length + " selected"; }
+        drawGrid(); e.stopPropagation(); return;
+      }
       var k = t.closest("[data-k]");
       if (k && F.by[k.getAttribute("data-k")]) { openCard([F.by[k.getAttribute("data-k")]]); return; }
       var g = t.closest("[data-g]");
@@ -596,8 +627,13 @@
         return;
       }
       if (t === P.selall) { notUpList().forEach(function (n) { if (n.c === "d") SEL[n.key] = 1; }); notUp(); drawGrid(); return; }
-      if (t === P.clr) { SEL = {}; notUp(); drawGrid(); return; }
-      if (t === P.shsel) { var sel = selected(); openCard(sel.length ? sel : notUpList().filter(function (n) { return n.c === "d"; }), "bulk"); return; }
+      if (t === P.clr) { SEL = Object.create(null); notUp(); drawGrid(); return; }
+      if (t === P.shsel) {
+        var sel = selected(), L2 = sel.length ? sel : notUpList().filter(function (n) { return n.c === "d"; });
+        if (!L2.length) L2 = notUpList();                       // nothing ticked, nothing down: every node not up
+        if (!L2.length) { P.selc.textContent = "nothing to share - every node is up"; return; }
+        openCard(L2, "bulk"); return;
+      }
       if (t === P.more) { openList("Not up · worst first", notUpList()); return; }
       if (t === P.prev || t === P.next) { step(t === P.next ? 1 : -1, true); return; }
       if (t === P.ov) closeOv();
@@ -639,7 +675,7 @@
     if (OPENED || !F) return;
     OPENED = true;
     var q = A.qs, k = q.get("node");
-    if (k && F.by[k]) { openCard([F.by[k]]); return; }
+    if (k && Object.prototype.hasOwnProperty.call(F.by, k)) { openCard([F.by[k]]); return; }
     if (!A.test) return;
     var downs = notUpList().filter(function (n) { return n.c === "d"; });
     if (q.get("fleet") === "one" && downs.length) openCard([downs[0]]);

@@ -306,6 +306,58 @@ class Review1(unittest.TestCase):
         self.assertEqual(sum(1 for q, p in c.q if "Metadata.Entity" in q), 1)
 
 
+class Review1Neon(unittest.TestCase):
+    """review round 1 (Neon): two nodes for one VM, generic guest names, an empty read, the since gap after a restart, a
+    refused column asked once, counts of SolarWinds' nodes only, unread template flags"""
+
+    def setUp(self):
+        self.now = time.time()
+
+    def test_two_nodes_one_vm(self):
+        rows = [sw_row(1, "APP1", dns="", ip="192.0.2.5", status=2), sw_row(2, "app1", dns="", ip="192.0.2.6", status=2)]
+        fm = wf.model(snap(rows, now=self.now), view([vm("APP1", power="poweredOff", hb=None)], self.now), OPTS, self.now)
+        self.assertEqual([r[3] for r in fm["nodes"] if "v" not in r[12]], ["d", "d"])      # neither greyed by a VM that is one of them
+        fm = wf.model(snap(rows, now=self.now), view([vm("APP1", power="poweredOff", hb=None, ip="192.0.2.6")], self.now), OPTS, self.now)
+        self.assertEqual(sorted(r[3] for r in fm["nodes"] if "v" not in r[12]), ["d", "p"])   # the IP settles which
+
+    def test_generic_guest_names_never_match(self):
+        rows = [sw_row(1, "localhost", dns="", ip="")]
+        fm = wf.model(snap(rows, now=self.now), view([vm("SITEAVMX09", guest="localhost.localdomain")], self.now), OPTS, self.now)
+        self.assertEqual(fm["cmp"]["matched"], 0)
+
+    def test_an_empty_read_is_not_whole(self):
+        fm = wf.model(snap([], now=self.now), None, OPTS, self.now)
+        self.assertFalse(fm["complete"])
+
+    def test_since_after_a_long_gap_is_not_exact(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        s = wf.Since(os.path.join(d, "s.json"))
+        s.update({"sw:1": "u"}, 1000.0)
+        s2 = wf.Since(os.path.join(d, "s.json"))                            # the portal was off for an hour
+        self.assertEqual(s2.update({"sw:1": "d"}, 4600.0)["sw:1"], (4600.0, False))
+
+    def test_a_refused_column_is_asked_once(self):
+        c = FakeClient([sw_row(1, "A1")], NOGROUPS_Q, refuse=("LastSync",))
+        r = wf.Reader(lambda: c, OPTS)
+        r.read_once()
+        n1 = sum(1 for q, p in c.q if "LastSync" in q)
+        r.read_once()
+        self.assertEqual(sum(1 for q, p in c.q if "LastSync" in q), n1)
+
+    def test_counts_are_solarwinds_nodes(self):
+        fm = wf.model(snap([sw_row(1, "A1")], now=self.now), view([vm("SITEAVMX01", hb="red")], self.now), OPTS, self.now)
+        self.assertEqual((fm["counts"]["u"], fm["counts"]["d"]), (1, 0))
+        self.assertEqual(fm["cmp"]["vc_only"], 1)
+
+    def test_unread_template_flag(self):
+        fm = wf.model(snap([sw_row(1, "A1")], now=self.now), view([vm("T1", power="poweredOff", hb=None, template=None)], self.now), OPTS, self.now)
+        self.assertEqual(fm["cmp"]["vc_only"], 0)
+
+
+NOGROUPS_Q = {"list": [], "members": []}
+
+
 class StaleNeverGreen(unittest.TestCase):
     """the area through the wall's own model (wall_model.build / summary): green only when SolarWinds is current, the read whole
     and nothing down"""
@@ -411,7 +463,7 @@ class Payload(unittest.TestCase):
             self.assertTrue(-1 <= r[10] < len(fm["hosts"]))
             if r[3] == "u":
                 self.assertEqual((r[8], r[16]), ("", ""))                # nothing said of an up node but its numbers
-        self.assertEqual(fm["counts"]["d"], 5)
+        self.assertEqual(fm["counts"]["d"], 4)                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
         self.assertEqual(fm["cmp"]["disagree_names"], ["SITEASQLV05"])
         xss = [r for r in fm["nodes"] if "onerror" in r[1]]
         self.assertEqual(len(xss), 1)                                  # data as it came: the page and the share escape it
@@ -513,7 +565,7 @@ class LiveSwql(unittest.TestCase):
             self.assertEqual(len(sn["nodes"]), len(fx["nodes"]))
             now = time.time()
             fm = wf.model(sn, fd.view(now, fx), o, now)
-            self.assertEqual(fm["counts"]["d"], 5)
+            self.assertEqual(fm["counts"]["d"], 4)                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
             self.assertIn("Active Directory", [g[0] for g in fm["groups"]])
         before = sum(1 for r in sn["nodes"] if r["Status"] == 2)
         f.set_state({"down": [2002]})                                    # SITEADIRDCV02 goes down live

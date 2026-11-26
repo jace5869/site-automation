@@ -7348,8 +7348,9 @@ class WallLive(object):
                 self.fleet_body = body
                 self.fleet_tag = '"%s"' % hashlib.sha256(re.sub(r'"now":[0-9.]+,', "", body, count=1).encode("utf-8")).hexdigest()[:20]
             body, tag = self.fleet_body, self.fleet_tag
-        body = re.sub(r'^\{"v":1,"now":[0-9.]+,', '{"v":1,"now":%.3f,' % now, body, count=1)
-        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+        if etag_matches(etag_in, tag):          # unchanged: nothing copied
+            return 304, "", tag
+        return 200, re.sub(r'^\{"v":1,"now":[0-9.]+,', '{"v":1,"now":%.3f,' % now, body, count=1), tag
 
     def follow(self):
         """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""

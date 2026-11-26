@@ -250,7 +250,9 @@
       return "<tr>" + td(n.st, "color:" + c + ";font-weight:700;padding-right:10px") + "<td style=\"padding-right:10px\"><b>" + esc(n.name) + "</b></td>" +
         td(n.svc || "no group", "padding-right:10px") + td(n.ip || "no IP", "padding-right:10px") + td(n.phrase) + "</tr>";
     }).join("");
-    return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (L.length === 1 && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
+    var one = L.length === 1 ? L[0] : null;
+    return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (one && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
+      (one && one.vc ? "<p>vCenter: " + esc(one.vc) + (one.host ? " · host " + esc(one.host) : "") + "</p>" : "") +
       (L.length > TEXT_MAX ? "<p>+" + (L.length - TEXT_MAX) + " more on the wall</p>" : "") +
       (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
       '<p><a href="' + esc(safeLink(ctx.link)) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";

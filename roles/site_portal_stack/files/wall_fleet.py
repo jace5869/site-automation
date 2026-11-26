@@ -39,7 +39,7 @@ VC_ONLY = "vCenter only"
 GROUPS_EVERY = 900                         # the groups change seldom: read again every 15 min (and at the first read)
 IDLE = 300                                 # no viewer for this long: SolarWinds is not read until the next one
 LATE_S, STALE_S = 180, 600                 # the wall's own (wall_model.LATE_S / STALE_S)
-IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")      # a custom property's name goes into the SWQL text: nothing else
+IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}\Z")      # a custom property's name goes into the SWQL text: nothing else
 DEFAULTS = {"seconds": 60, "group_by": "groups", "groups": [], "vm_match": ["*VMware*"], "max_nodes": 10000, "page": 1000, "poll_stale_minutes": 15}
 NODE_COLS = ["N.NodeID", "N.Caption", "N.DNS", "N.IPAddress", "N.Status", "N.StatusDescription", "N.Vendor", "N.MachineType",
              "N.ResponseTime", "N.PercentLoss", "N.UnManaged"]
@@ -68,7 +68,8 @@ def opts_of(o):
     for k, d in (("groups", "fleet_groups"), ("vm_match", "fleet_vm_match")):
         v = o.get(d, DEFAULTS[k])
         if isinstance(v, (list, tuple)):
-            out[k] = [str(x).strip()[:200] for x in v if isinstance(x, str) and str(x).strip()]
+            seen = set()                        # once each, any case (a duplicate would draw an empty tile)
+            out[k] = [x for x in (str(y).strip()[:200] for y in v if isinstance(y, str)) if x and not (x.casefold() in seen or seen.add(x.casefold()))]
         elif v is not None:
             bad.append("portal_wall_fleet_%s is a list" % k)
     try:
@@ -133,15 +134,20 @@ def short(name):
 
 
 # ---- the reads ------------------------------------------------------------------------------------------------------------
-def read_nodes(client, o, prop=""):
+def read_nodes(client, o, prop="", refused=None):
     """-> (rows, cut, [not read]). Orion.Nodes, named columns only, paged; an optional column this Orion refuses is left out
-    (said). prop: a node custom property (IDENT checked) read as cp_group."""
-    extra = list(OPTIONAL)
-    notes = []
+    (said) - and, with refused (a set kept by the caller), not asked again at the next reads. prop: a node custom property
+    (IDENT checked) read as cp_group."""
+    refused = refused if refused is not None else set()
+    extra = [x for x in OPTIONAL if x[1] not in refused]
+    notes = ["%s: not read (this Orion refused it earlier)" % x[2] for x in OPTIONAL if x[1] in refused]
     if prop:
         if not IDENT.match(prop):
             raise ValueError("not a property name: %r" % prop[:64])
-        extra.append(("N.CustomProperties.%s AS cp_group" % prop, "cp_group", "custom property %s" % prop))
+        if "cp_group" in refused:
+            notes.append("custom property %s: not read (this Orion refused it earlier) - is it one of your node custom properties? (the case counts)" % prop)
+        else:
+            extra.append(("N.CustomProperties.%s AS cp_group" % prop, "cp_group", "custom property %s" % prop))
     base = "SELECT %s FROM Orion.Nodes N"
     try:
         rows, cut = client.paged(base % ", ".join(NODE_COLS + [x[0] for x in extra]), "N.NodeID", None, o["page"], o["max_nodes"])
@@ -157,6 +163,7 @@ def read_nodes(client, o, prop=""):
         except site_swis.SwisError as e2:
             if getattr(e2, "kind", "") != "query":
                 raise
+            refused.add(x[1])
             notes.append("%s: not read (%s)%s" % (x[2], e2, " - is it one of your node custom properties? (the case counts)" if x[1] == "cp_group" else ""))
     rows, cut = client.paged(base % ", ".join(NODE_COLS + [x[0] for x in good]), "N.NodeID", None, o["page"], o["max_nodes"])
     return rows, cut, notes
@@ -199,6 +206,7 @@ class Reader(object):
         self.st = {"state": "never", "why": "", "at": None, "tried": None, "fail_since": None, "next_try": None,
                    "nodes": None, "cut": False, "notes": [], "groups": None, "groups_at": None, "groups_tried": None, "groups_why": "", "reads": 0}
         self.fails = 0
+        self.refused = set()                    # optional columns this Orion refused: not asked again (Site portal - deploy restarts it)
 
     def viewed(self):
         now = self.clock()
@@ -230,10 +238,11 @@ class Reader(object):
 
     def _failed(self, e, now):
         kind = getattr(e, "kind", "other")
-        why = (site_swis.explain(e, getattr(self, "url", ""), 60) if site_swis is not None and isinstance(e, getattr(site_swis, "SwisError", ())) else
+        why = (site_swis.explain(e, getattr(self, "url", ""), getattr(self, "timeout", 60)) if site_swis is not None and isinstance(e, getattr(site_swis, "SwisError", ())) else
                "%s: %s" % (e.__class__.__name__, _txt(e, 200)))
+        kind_state = "auth" if kind == "auth" else "error"
         with self.lock:
-            first = self.st["state"] not in ("auth", "error")
+            first = self.st["state"] != kind_state             # every change of state is said (an error that becomes a refusal too)
             self.fails += 1
             wait = self.auth_retry if kind == "auth" else min(self.o["seconds"] * 4, 15 * 2 ** min(self.fails, 6))
             self.st.update(state="auth" if kind == "auth" else "error", why=_txt(why, 300), tried=now, next_try=now + wait,
@@ -246,9 +255,10 @@ class Reader(object):
         """one read (the groups too when due) -> the snapshot. Raises on a failed node read (the last good one is kept)."""
         o, now = self.o, self.clock()
         client = self.client_fn()
-        self.url = getattr(client, "url", "")
+        self.url, self.timeout = getattr(client, "url", ""), getattr(client, "timeout", 60)
         prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
-        groups, gwhy, gat, gtried = self.st["groups"], self.st["groups_why"], self.st["groups_at"], self.st["groups_tried"]
+        with self.lock:
+            groups, gwhy, gat, gtried = self.st["groups"], self.st["groups_why"], self.st["groups_at"], self.st["groups_tried"]
         if not prop and (gtried is None or now - gtried >= GROUPS_EVERY):
             gtried = now                        # an attempt, good or not: the next one GROUPS_EVERY s later (never each minute)
             try:
@@ -257,7 +267,7 @@ class Reader(object):
                 if getattr(e, "kind", "") == "auth":
                     raise
                 gwhy = "the groups were not read: %s" % _txt(e, 200) + (" - the last read's groups are shown" if groups else "")
-        rows, cut, notes = read_nodes(client, o, prop)
+        rows, cut, notes = read_nodes(client, o, prop, self.refused)
         done = self.clock()
         with self.lock:
             was = self.st["state"]
@@ -278,14 +288,18 @@ class Since(object):
     """{key: [code, since, exact]} - since: when this code was first seen; exact: the read before said otherwise (else the
     node was already so at the first read: "since then or earlier"). Kept in path (0600, written whole) when given."""
 
+    GAP = STALE_S                       # no update for longer than this (a portal stopped): a change seen after it is not exact
+
     def __init__(self, path=None, log=None):
         self.path, self.log = path, log or (lambda d: None)
-        self.d = {}
+        self.d, self.last = {}, None
         if path:
             try:
                 with open(path, encoding="utf-8") as fh:
-                    d = json.load(fh)
+                    f = json.load(fh)
+                d = f.get("d") if isinstance(f, dict) else None
                 if isinstance(d, dict):
+                    self.last = f.get("at") if isinstance(f.get("at"), (int, float)) else None
                     self.d = dict((str(k), v) for k, v in d.items()
                                   if isinstance(v, list) and len(v) == 3 and isinstance(v[0], str) and isinstance(v[1], (int, float)))
             except FileNotFoundError:
@@ -298,16 +312,19 @@ class Since(object):
         its own. whole: the read covers every node - only then is a key not in it forgotten (a cut read keeps the others)."""
         out, new = {}, ({} if whole else dict(self.d))
         changed = False
+        gap = self.last is not None and at is not None and float(at) - float(self.last) > self.GAP
         for k, c in codes.items():
             c, t = (c if isinstance(c, tuple) else (c, at))
             old = self.d.get(k)
             if old and old[0] == c:
                 new[k] = old
             else:
-                new[k] = [c, float(t if t is not None else at), bool(old)]
+                new[k] = [c, float(t if t is not None else at), bool(old) and not gap]
                 changed = True
             out[k] = (new[k][1], new[k][2])
-        if changed or len(new) != len(self.d):
+        if at is not None:
+            self.last = max(float(at), float(self.last or 0))
+        if changed or len(new) != len(self.d) or gap:
             self.d = new
             self._save()
         return out
@@ -323,7 +340,7 @@ class Since(object):
                 pass
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(self.d, fh, separators=(",", ":"))
+                json.dump({"at": self.last, "d": self.d}, fh, separators=(",", ":"))
             os.replace(tmp, self.path)
         except OSError as e:
             self.log({"event": "wall", "fleet": "since file not written", "why": _txt(e, 200)})
@@ -358,6 +375,11 @@ def _vm_code(v):
     return "6"
 
 
+def _generic(name):
+    """a guest host name that says nothing (a fresh install's): never a match key"""
+    return short(name) in ("localhost", "localhost-live", "") or str(name or "").strip().casefold() in ("localhost.localdomain",)
+
+
 def vcenter_vms(view, now, late=LATE_S):
     """the collector's view -> (vms, vcenters): each VM {vc, current, name, host, power, heartbeat, tools, ip[], guest, id};
     vcenters [[name, current, at, state]]. current: that vCenter's last read worked and is younger than LATE."""
@@ -367,15 +389,18 @@ def vcenter_vms(view, now, late=LATE_S):
             continue
         at = s.get("at")
         cur = s.get("state") == "ok" and at is not None and now - float(at) <= late
-        vcs.append([str(s.get("name") or k), bool(cur), at, s.get("state") or "never"])
+        vcs.append([_txt(s.get("name") or k, 120), bool(cur), at, s.get("state") or "never"])
         for v in ((s.get("snap") or {}).get("vms") or []):
             if not isinstance(v, dict) or v.get("template") is True or v.get("vcls") is True:
                 continue                        # a template, a vCLS agent: never a workload
+            if v.get("template") is not False and v.get("power") != "poweredOn":
+                continue                        # its template flag not read and not running: maybe a template - left out
             ips = v.get("ip")
             ips = [str(x).strip() for x in (ips if isinstance(ips, list) else [ips]) if x]
-            vms.append({"vc": len(vcs) - 1, "current": bool(cur), "name": str(v.get("name") or ""), "host": str(v.get("host") or ""),
+            vms.append({"vc": len(vcs) - 1, "current": bool(cur), "name": _txt(v.get("name"), 120), "host": _txt(v.get("host"), 120),
                         "power": v.get("power"), "heartbeat": v.get("heartbeat"), "tools": v.get("tools"), "tools_version": v.get("tools_version"),
-                        "tools_seen": v.get("tools_seen"), "ip": ips, "guest": str(v.get("guest") or ""), "id": str(v.get("id") or v.get("name") or "")})
+                        "tools_seen": v.get("tools_seen"), "ip": ips, "guest": "" if _generic(v.get("guest")) else _txt(v.get("guest"), 120),
+                        "id": _txt(v.get("id") or v.get("name"), 120)})
     return vms, vcs
 
 
@@ -435,6 +460,18 @@ def match(nodes, vms):
                                                                                 " (the IP does not settle it)" if nip else ""), sorted(ok))
                 continue
         out[ni] = (ok.pop(), "", [])
+    # one VM claimed by two nodes (two SolarWinds nodes of one name): the node whose IP is the VM's keeps it, else neither
+    claims = {}
+    for ni, (vi, why, maybe) in out.items():
+        if vi is not None:
+            claims.setdefault(vi, []).append(ni)
+    for vi, nis in claims.items():
+        if len(nis) < 2:
+            continue
+        byip = [ni for ni in nis if _ip(nodes[ni]["ip"]) and _ip(nodes[ni]["ip"]) in vms[vi]["_ips"]]
+        for ni in nis:
+            if len(byip) != 1 or ni != byip[0]:
+                out[ni] = (None, "ambiguous: %d SolarWinds nodes fit one VM in vCenter (%s) - not compared" % (len(nis), vms[vi]["name"]), [vi])
     return out
 
 
@@ -480,13 +517,16 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         rows = []
     if snap.get("cut"):
         out["incomplete"].append("only the first %d nodes were read (portal_wall_fleet_max_nodes)" % o["max_nodes"])
+    if rows == [] and feed["state"] == "ok":
+        out["incomplete"].append("SolarWinds answered with no node (does the account see the nodes?)")
     prop = o["group_by"].split(":", 1)[1] if o["group_by"].startswith("custom:") else ""
     nodes = []
     for r in rows:
         if not isinstance(r, dict) or r.get("NodeID") is None:
             continue
         rt, loss = _num(r.get("ResponseTime")), _num(r.get("PercentLoss"))
-        c = sw_code(r.get("Status"), bool(r.get("UnManaged")))
+        um = r.get("UnManaged")
+        c = sw_code(r.get("Status"), um is True or str(um).strip().lower() in ("true", "1"))
         nodes.append({"id": str(r.get("NodeID")), "name": _txt(r.get("Caption") or r.get("DNS") or r.get("IPAddress") or r.get("NodeID")),
                       "dns": _txt(r.get("DNS")), "ip": _txt(r.get("IPAddress"), 45), "c": c, "rt": rt, "loss": loss,
                       "desc": _txt(r.get("StatusDescription")), "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
@@ -557,7 +597,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             out["cmp"]["ambiguous"] += 1
         elif mwhy:
             flags += "c"                        # a VM of the name is another machine: it stays "vCenter only"
-        pa = round(at - n["polled"]) if at and n["polled"] else None
+        pa = max(0, round(at - n["polled"])) if at and n["polled"] else None
         if pa is not None and pa > poll_stale and c in (UP, WARN, DOWN):
             flags += "o"                        # Orion's own poll of it is old: its status is not current (never green)
             why = (why + " · " if why else "") + "SolarWinds last polled it %d min before the read" % (pa // 60)
@@ -622,10 +662,8 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     built.sort(key=lambda r: (r[0], r[1].casefold()))
     out["groups"], out["nodes"] = groups, built
     cnt = dict((k, 0) for k in (UP, WARN, DOWN, OFF, UNMANAGED, UNKNOWN))
-    seen = set()
     for r in built:
-        if r[13] not in seen:
-            seen.add(r[13])
+        if "v" not in r[12]:                    # SolarWinds' nodes only: the vCenter-only VMs are the VMware area's (counted in cmp)
             cnt[r[3]] += 1
     out["counts"] = cnt
     out["complete"] = not out["incomplete"]
