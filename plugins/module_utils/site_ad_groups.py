@@ -45,13 +45,8 @@ CARD_FORMS = {
     ("sAMAccountName", "{edipi}.mil"): re.compile(r"([0-9]{10})\.mil", re.ASCII),
 }
 ALL_FORMS = [{"attribute": a, "match": m} for a, m in CARD_FORMS]      # every form: what an account's values name
-DEFAULT_CARD_MATCHES = [
-    {"attribute": "userPrincipalName", "match": "{edipi}@mil"},
-    {"attribute": "sAMAccountName", "match": "{edipi}.ctr"},
-    {"attribute": "sAMAccountName", "match": "{edipi}.civ"},
-    {"attribute": "sAMAccountName", "match": "{edipi}.mil"},
-    {"attribute": "userPrincipalName", "match": "{edipi}{digits6}@mil"},
-]
+# 1.133.0 (release gate R1): nothing written = exactly 1.132.0's rule; the other four forms only when listed
+DEFAULT_CARD_MATCHES = [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}]
 WILD_AFTER = re.compile(r"[*?]")
 WILD_WHY = "would match other accounts of the same person or other people - list the exact suffixes"
 FORMS_WHY = ("a card is matched by these forms only: userPrincipalName {edipi}@mil or {edipi}{digits6}@mil, sAMAccountName "
@@ -214,6 +209,7 @@ class Reader(object):
         # Codex 1.133.0 #11, #12: one bind at a time; a refused login (seen in the raw answer, before any redaction) stops
         # every later bind of this process - the group reads' and the card lookups' alike
         self.bind_lock = threading.Lock()
+        self.card_lock = threading.Lock()                 # R11: a card lookup's bind never waits on, nor delays, a group read's
         self.refused = False
 
     def servers(self):
@@ -244,10 +240,11 @@ class Reader(object):
         except Exception:                                 # noqa: BLE001 - no DC from DNS: said by read()
             return []
 
-    def open(self):
+    def open(self, card=False):
         """-> (conn, server, error): the first DC that takes the bind, LDAPS first, StartTLS on 389 when it is allowed. None
-        once a bind was refused (invalidCredentials): held until the next deploy."""
-        with self.bind_lock:
+        once a bind was refused (invalidCredentials): held until the next deploy. card: a card lookup's own connection,
+        under its own lock (the refusal hold is shared)."""
+        with (self.card_lock if card else self.bind_lock):
             if self.refused:
                 return None, "", "the bind was refused (invalidCredentials) - held until the next deploy"
             c, server, err = self._open()
@@ -479,7 +476,8 @@ class Groups(object):
         self.on_change = on_change
         self.lock = threading.Lock()
         self.last = None                                  # the last read (good or not)
-        self.next_at = 0.0
+        self.next_at = 0.0                                # the next read, wall clock (said on the page)
+        self.next_mono = 0.0                              # the same on the monotonic clock: what the reader waits by (R10)
         self.thread = None
         self.stop = threading.Event()
         # Codex 1.133.0 r2: one card's decision at a time - its lookup and the group read it is decided on, in one block
@@ -509,7 +507,9 @@ class Groups(object):
             self.last = r
             if refused:
                 self._held = True
-            self.next_at = r["at"] + (self.seconds if r["ok"] else 10 ** 9 if self.__dict__.get("_held") else RETRY)
+            wait = self.seconds if r["ok"] else 10 ** 9 if self.__dict__.get("_held") else RETRY
+            self.next_at = r["at"] + wait
+            self.next_mono = time.monotonic() + wait
         if self.on_change and (before is None or before["ok"] != r["ok"] or (not r["ok"] and before.get("error") != r["error"])):
             self.on_change(r)
         return r
@@ -520,9 +520,10 @@ class Groups(object):
 
         def run():
             while not self.stop.is_set():
-                if time.time() < self.next_at:
-                    # Codex r3 #7: a hold set meanwhile (a card lookup's refused login) is honoured - never a bind before it
-                    self.stop.wait(min(60.0, max(1.0, self.next_at - time.time())))
+                if time.monotonic() < self.next_mono:
+                    # Codex r3 #7: a hold set meanwhile (a card lookup's refused login) is honoured - never a bind before it;
+                    # R10: waited by the monotonic clock (a wall clock set back never delays the next read)
+                    self.stop.wait(min(60.0, max(1.0, self.next_mono - time.monotonic())))
                     continue
                 try:
                     self.refresh()
@@ -533,7 +534,8 @@ class Groups(object):
                         self.last = {"ok": False, "error": "LDAP: " + sl.short_err(self.reader.scrub(getattr(e, "message", "") or e)), "at": time.time(), "server": "",
                                      "groups": dict((r, []) for r in ROLES)}
                         self.next_at = time.time() + RETRY
-                self.stop.wait(max(5.0, self.next_at - time.time()))
+                        self.next_mono = time.monotonic() + RETRY
+                self.stop.wait(max(5.0, self.next_mono - time.monotonic()))
         self.thread = threading.Thread(target=run, name="ad-groups", daemon=True)
         self.thread.start()
 
@@ -605,7 +607,7 @@ class Groups(object):
             return hit[2], hit[1]
         res, ttl = (None, "not looked up"), RETRY
         try:
-            c, _server, err = self.reader.open()
+            c, _server, err = self.reader.open(card=True)
             if c is None:
                 res = (None, "AD did not answer")
                 if self.reader.refused or "invalidCredentials" in str(err):
@@ -616,6 +618,7 @@ class Groups(object):
                             self.last = dict(self.last or {}, ok=False, error=err + " - not tried again until the portal is deployed "
                                              "again with the right login (the account would lock out)", at=time.time())
                             self.next_at = time.time() + 10 ** 9
+                            self.next_mono = time.monotonic() + 10 ** 9
                             last = self.last
                         cache.clear()                     # Neon 1330s #3: no cached answer outlives the refusal
                     if last is not None and self.on_change:

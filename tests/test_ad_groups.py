@@ -252,7 +252,7 @@ class NeonR132(unittest.TestCase):
     """1.133.0 (Neon #2, #3): a card matches only its own account - the subject's whole CN, exact UPN suffixes"""
 
     def test_3_exact_forms(self):
-        rules = G.card_matches(None)
+        rules = G.card_matches(G.ALL_FORMS)
         cn = "DOE.JANE.Q.1234567890"
         pats = [(r["attribute"], G.card_pattern(cn, r["match"])) for r in rules]
         for attr, value, ok in (("userPrincipalName", "1234567890@mil", True), ("userPrincipalName", "1234567890197005@MIL", True),
@@ -317,13 +317,13 @@ class CodexR2(unittest.TestCase):
         reg, adm = dn("Doe Regular", "Users"), dn("Doe Contractor", "Users")
         extra = {reg: {"upn": "1234567890@mil", "uac": 512, "alt": []},
                  adm: {"upn": "doe.adm@example.invalid", "sam": "1234567890.ctr", "uac": 512, "alt": []}}
-        g = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE}, opener=opener())
+        g = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE, "matches": G.ALL_FORMS}, opener=opener())
         g.last = {"ok": True, "at": _t.time(), "error": "", "groups": {"approvers": [{"name": "Portal-Admins", "found": True,
                   "count": 1, "keys": [{"dn": adm, "guid": guid(adm), "sAMAccountName": ["1234567890.ctr"], "userPrincipalName": [extra[adm]["upn"]]}]}]}}
         with patch.dict(USERS, extra):
             self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))
             self.assertIn("more than one AD account", g.account("DOE.JANE.Q.1234567890")[1])
-        g2 = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE}, opener=opener())
+        g2 = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE, "matches": G.ALL_FORMS}, opener=opener())
         g2.last = g.last
         with patch.dict(USERS, {adm: extra[adm]}):                     # only the one account: its membership counts
             self.assertTrue(g2.has("approvers", "DOE.JANE.Q.1234567890"))
@@ -358,7 +358,7 @@ class DirectorC(unittest.TestCase):
 
     def group(self, member_dn, attrs):
         import time as _t
-        g = G.Groups({"approvers": ["Portal-Admins"]}, {"base": "OU=Staff," + BASE}, opener=opener())
+        g = G.Groups({"approvers": ["Portal-Admins"]}, {"base": "OU=Staff," + BASE, "matches": G.ALL_FORMS}, opener=opener())     # the five listed
         g.last = {"ok": True, "at": _t.time(), "error": "", "groups": {"approvers": [{"name": "Portal-Admins",
                   "found": True, "count": 1, "keys": [dict({"dn": member_dn, "guid": guid(member_dn)}, **attrs)]}]}}
         return g
@@ -454,7 +454,8 @@ class CodexR3Cards(DirectorC):
                             ("userPrincipalName", "{cn}@mil")):
             with self.assertRaisesRegex(ValueError, "these forms only"):
                 G.card_matches([{"attribute": attr, "match": match}])
-        self.assertEqual(len(G.card_matches(None)), 5)
+        self.assertEqual(len(G.card_matches(G.ALL_FORMS)), 5)
+        self.assertEqual(G.card_matches(None), [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}])   # R1: 1.132.0's rule
 
     def test_02_an_account_naming_two_edipis_is_nobodys(self):
         d = dn("Shared", "Staff")
@@ -641,10 +642,17 @@ class Codex1330s(DirectorC):
         self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_MATCH": "{edipi}@mil"}), one)
         self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "sAMAccountName", "PORTAL_AD_CARD_MATCH": "{edipi}.ctr"}),
                          [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}])
-        self.assertIsNone(sp.card_rules_of({}))                                     # nothing set: the five
-        # Codex r2: the attribute alone (userPrincipalName) keeps 1.132.0's 16-digit form too; both kinds set: AD off
-        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "userPrincipalName"}),
-                         one + [{"attribute": "userPrincipalName", "match": "{edipi}{digits6}@mil"}])
+        self.assertEqual(sp.card_rules_of({}), one)                                 # R1: nothing set - 1.132.0's rule only
+        self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "userPrincipalName"}), one)       # R2: exactly {edipi}@mil
+        for bad in ("", "  ", [], {}, None, 7, ["userPrincipalName"]):                                # R5/R6: AD off, never a default
+            for key in ("PORTAL_AD_CARD_ATTRIBUTE", "PORTAL_AD_CARD_MATCH"):
+                self.assertEqual(sp.card_rules_of({key: bad}), "unreadable", (key, bad))
+        c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_BASE": BASE,
+                       "PORTAL_AD_CARD_MATCH": ""})
+        self.assertIsNone(c.ad_groups)
+        self.assertIn("card rules are not usable", c.ad_groups_why)
+        c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_BASE": BASE})
+        self.assertEqual(c.ad_groups.reader.matches, one)
         self.assertEqual(sp.card_rules_of({"PORTAL_AD_CARD_ATTRIBUTE": "sAMAccountName", "PORTAL_AD_CARD_MATCH": "{edipi}.civ",
                                            "PORTAL_AD_CARD_MATCHES": '[{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}]'}), "conflict")
         c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_BASE": BASE,
@@ -862,6 +870,37 @@ class Codex1330s(DirectorC):
         self.assertEqual(tries, [])
 
 
+    def test_gate_r10_reads_are_timed_by_the_monotonic_clock(self):
+        import threading
+        g = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE}, opener=opener())
+        ran = threading.Event()
+        g.refresh = lambda: (ran.set(), g.stop.set())
+        g.next_at, g.next_mono = time.time() + 10 ** 6, 0.0          # the wall clock says later, the monotonic one: now
+        g.start()
+        self.assertTrue(ran.wait(3))
+        g2 = self.group(dn("Doe", "Staff"), {})
+        g2.reader.opener = opener()
+        g2.refresh()
+        self.assertAlmostEqual(g2.next_mono, time.monotonic() + g2.seconds, delta=5)
+
+    def test_gate_r11_a_card_bind_never_waits_on_a_group_bind(self):
+        import threading
+        d = dn("Doe", "Staff")
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        done = []
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            with g.reader.bind_lock:                                  # a group read's bind under way
+                t = threading.Thread(target=lambda: done.append(g.account("DOE.JANE.Q.1234567890")[0]))
+                t.start()
+                t.join(3)
+            self.assertEqual(len(done), 1)
+            with g.reader.card_lock:                                  # a card's bind under way: a group read's bind goes on
+                t = threading.Thread(target=lambda: done.append(g.reader.open()[0]))
+                t.start()
+                t.join(3)
+            self.assertEqual(len(done), 2)
+
+
 for _n in [n for n in vars(DirectorC) if n.startswith("test_")]:
     setattr(Codex1330s, _n, None)
 
@@ -1018,7 +1057,7 @@ class Portal(unittest.TestCase):
         env = {"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVERS": '["NAMED.ONE.A.1111111111"]', "PORTAL_REQUESTERS": "[]",
                "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_REQUESTER_GROUPS": '["AAP-Operators"]',
                "PORTAL_LDAP_LOGIN": '{"user": "svc_aap_adreader@corp.example.mil", "password": "x"}', "PORTAL_LDAP_BASE": BASE,
-               "PORTAL_TIME_ZONE": "Europe/Berlin"}
+               "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_AD_CARD_MATCHES": json.dumps(G.ALL_FORMS)}      # the five listed
         env.update(kw)
         c = sp.Config(env)
         return sp, c

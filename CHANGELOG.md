@@ -8,11 +8,13 @@ list as one name instead of a list (`portal_runners: [DOE.JANE.Q.1234567890]`, n
 Account must be able to read every user object in the domain (a domain user can by default).
 
 - **A card is one AD account, by five forms only** (`portal_ad_card_matches`): `userPrincipalName` `{edipi}@mil` or
-  `{edipi}{digits6}@mil` (16 digits), `sAMAccountName` `{edipi}.ctr`, `.civ` or `.mil`. All five by default; a site
-  keeps a subset. Any other form, attribute, `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute`
+  `{edipi}{digits6}@mil` (16 digits), `sAMAccountName` `{edipi}.ctr`, `.civ` or `.mil`. Default: `{edipi}@mil` only,
+  as 1.132.0; add the others with `portal_ad_card_matches`. Any other form, attribute, `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute`
   / `portal_ad_card_match` work as before: either one set is exactly ONE rule (the other at its 1.132.0 default), and
-  cannot be set with the list; `userPrincipalName` alone keeps both UPN forms; `false`, `null` or blank stops the deploy.
-  A settings value the portal cannot read, or both kinds in the settings, means no card is matched in AD (said in the log).
+  cannot be set with the list; `false`, `null` or blank stops the deploy. A settings value the portal cannot read (an
+  empty or non-text 1.132.0 key too), or both kinds in the settings, means no card is matched in AD (said in the log).
+- **Group reads are timed by the monotonic clock**, and a card lookup binds on its own connection: it never delays a
+  group read.
 - **No doubt counts.** The account is looked up over the whole domain with `userPrincipalName` and `sAMAccountName`
   read for every candidate, whatever forms the site kept. No group counts when no account or more than one matches (one
   DN with two objectGUIDs is two), a returned account lacks either attribute, the paged search did not end cleanly, a

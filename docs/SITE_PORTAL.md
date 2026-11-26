@@ -643,8 +643,8 @@ portal_run_groups: []                            # the same for who may run the 
 - **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
   account never counts. The named lists (`portal_viewers`, `portal_approvers`, `portal_runners`) count as well.
 - **A card and its AD account (1.133.0).** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). The portal
-  finds the person's ONE AD account by `portal_ad_card_matches`, a closed list of five forms - a site keeps the ones it
-  uses:
+  finds the person's ONE AD account by `portal_ad_card_matches`, a closed list of five forms. Default: `{edipi}@mil`
+  (userPrincipalName, as 1.132.0); add others with `portal_ad_card_matches`:
 
   | Attribute | Form | Example |
   |---|---|---|
@@ -654,11 +654,10 @@ portal_run_groups: []                            # the same for who may run the 
   | `sAMAccountName` | `{edipi}.civ` | `1234567890.civ` |
   | `sAMAccountName` | `{edipi}.mil` | the ten digits, then `.mil` |
 
-  All five are on when neither the list nor a 1.132.0 setting is set. Any other form, attribute (`altSecurityIdentities`,
+  Only `userPrincipalName` `{edipi}@mil` is on when nothing is set. Any other form, attribute (`altSecurityIdentities`,
   `employeeID` ...), `*` or `?` stops the deploy. The 1.132.0 settings `portal_ad_card_attribute` /
   `portal_ad_card_match` still work as they did: set either one (or both) and the portal uses exactly ONE rule - that
-  attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out); `userPrincipalName` set
-  alone keeps 1.132.0's two UPN forms (`{edipi}@mil` and the 16-digit one). It must be one of the five, and cannot be
+  attribute (`userPrincipalName` when left out) with that form (`{edipi}@mil` when left out). It must be one of the five, and cannot be
   set together with the list. Set to `false`, `null` or blank, either stops the deploy: remove the line instead. Values are compared in ASCII lower case only.
 - **The card's name.** Only a card whose CN has the shape LAST.FIRST.EDIPI with up to three more name parts between (a middle name, a generation such as JR) is looked up in
   AD. A certificate with two CNs is refused.

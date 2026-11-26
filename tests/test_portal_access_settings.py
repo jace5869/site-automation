@@ -64,14 +64,15 @@ class DeployAccess(unittest.TestCase):
                     {"attribute": "userPrincipalName", "match": "{edipi}{digits6}@mil"}]
         custom = [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}]
         run = self.deploy({
-            "defaults": {"expected_rules": defaults},
+            "defaults": {"expected_rules": [defaults[0]]},                    # release gate R1: 1.132.0's rule only
             "pattern_only": {"portal_ad_card_match": "{edipi}{digits6}@mil", "expected_rules": [defaults[4]]},
             "legacy": {"portal_ad_card_attribute": "sAMAccountName", "portal_ad_card_match": "{edipi}.ctr", "expected_rules": custom},
             "custom": {"portal_ad_card_matches": custom, "expected_rules": custom},
+            "all_five": {"portal_ad_card_matches": defaults, "expected_rules": defaults},
             "empty": {"portal_ad_card_matches": [], "expected_rules": []},
             # Codex 1.133.0 #2: either 1.132.0 setting alone is ONE rule, the other at its 1.132.0 default - never the five
             "match_only_default": {"portal_ad_card_match": "{edipi}@mil", "expected_rules": [defaults[0]]},
-            "attribute_only_default": {"portal_ad_card_attribute": "userPrincipalName", "expected_rules": [defaults[0], defaults[4]]},
+            "attribute_only_default": {"portal_ad_card_attribute": "userPrincipalName", "expected_rules": [defaults[0]]},   # R2
             "attribute_only_sam": {"portal_ad_card_attribute": "sAMAccountName", "portal_ad_card_match": "{edipi}.civ",
                                    "expected_rules": [defaults[2]]},
             "both_defaults": {"portal_ad_card_attribute": "userPrincipalName", "portal_ad_card_match": "{edipi}@mil",

@@ -30,7 +30,7 @@
           - portal_ad_card_match is not defined or (portal_ad_card_match is string and portal_ad_card_match | trim | length > 0)
         fail_msg: >-
           portal_ad_card_attribute / portal_ad_card_match is set but empty (false, null or blank). Remove the line to use the
-          card forms in portal_ad_card_matches (all five by default), or give a value such as userPrincipalName and "{edipi}@mil".
+          card forms in portal_ad_card_matches (userPrincipalName {edipi}@mil by default), or give a value such as userPrincipalName and "{edipi}@mil".
           Nothing was changed.
         quiet: true
 
@@ -48,11 +48,8 @@
     - name: Preflight | select the AD card match rules
       ansible.builtin.set_fact:
         _portal_ad_card_matches: >-
-          {{ ([{'attribute': portal_ad_card_attribute | trim, 'match': '{edipi}@mil'},
-               {'attribute': portal_ad_card_attribute | trim, 'match': '{edipi}{digits6}@mil'}]
-              if portal_ad_card_match is not defined and (portal_ad_card_attribute | trim | lower) == 'userprincipalname'
-              else [{'attribute': (portal_ad_card_attribute | trim) if portal_ad_card_attribute is defined else 'userPrincipalName',
-                     'match': (portal_ad_card_match | trim) if portal_ad_card_match is defined else '{edipi}@mil'}])
+          {{ [{'attribute': (portal_ad_card_attribute | trim) if portal_ad_card_attribute is defined else 'userPrincipalName',
+               'match': (portal_ad_card_match | trim) if portal_ad_card_match is defined else '{edipi}@mil'}]
              if _portal_legacy_card_rule else portal_ad_card_matches }}
 
     - name: Preflight | every AD card match identifies the person

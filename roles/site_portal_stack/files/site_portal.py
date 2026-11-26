@@ -730,11 +730,13 @@ def dn_parts(dn):
 
 
 def card_rules_of(e):
-    """1.133.0: the card forms from the settings. PORTAL_AD_CARD_MATCHES (the deploy writes it) is taken as it is; set but
-    not a list (null, empty, not JSON - Codex 1.133.0 #10): "unreadable", so no card is matched in AD (said in the log),
-    never the five defaults. Not set (a settings file from 1.132.0 or before): its one attribute / match pair is the ONE
-    rule, each at its 1.132.0 default when left out, exactly as 1.132.0 matched (Codex 1.133.0 #2). Neither: the five."""
-    if "PORTAL_AD_CARD_MATCHES" in e and ("PORTAL_AD_CARD_ATTRIBUTE" in e or "PORTAL_AD_CARD_MATCH" in e):
+    """1.133.0: the card forms from the settings. Both kinds present (the list and a 1.132.0 key): "conflict" - AD off,
+    said. PORTAL_AD_CARD_MATCHES (the deploy writes it) is taken as it is; set but not a list (null, empty, not JSON -
+    Codex #10): "unreadable", so no card is matched in AD (said in the log). A 1.132.0 key present: each one present must
+    be non-blank text (else "unreadable" - R5/R6), and the pair is ONE rule, the missing one at its 1.132.0 default
+    (userPrincipalName, {edipi}@mil). Neither: 1.132.0's rule, userPrincipalName {edipi}@mil (R1)."""
+    legacy = [k for k in ("PORTAL_AD_CARD_ATTRIBUTE", "PORTAL_AD_CARD_MATCH") if k in e]
+    if "PORTAL_AD_CARD_MATCHES" in e and legacy:
         return "conflict"                                 # Codex 1.133.0 r2: both kinds set - AD off, said (as the deploy refuses it)
     if "PORTAL_AD_CARD_MATCHES" in e:
         cm = e.get("PORTAL_AD_CARD_MATCHES")
@@ -744,13 +746,12 @@ def card_rules_of(e):
             except ValueError:
                 cm = None
         return cm if isinstance(cm, list) else "unreadable"
-    attr, match = e.get("PORTAL_AD_CARD_ATTRIBUTE"), e.get("PORTAL_AD_CARD_MATCH")
-    if attr not in (None, "") or match not in (None, ""):
-        a = str(attr or "userPrincipalName").strip()
-        if match in (None, "") and a.lower() == "userprincipalname":    # the attribute alone: 1.132.0's UPN forms, the 16-digit too
-            return [{"attribute": a, "match": "{edipi}@mil"}, {"attribute": a, "match": "{edipi}{digits6}@mil"}]
-        return [{"attribute": a, "match": str(match or "{edipi}@mil").strip()}]
-    return None
+    if legacy:
+        if any(not isinstance(e.get(k), str) or not e.get(k).strip() for k in legacy):
+            return "unreadable"                           # R5/R6: present but empty, null, a list ... - AD off, never a default
+        return [{"attribute": str(e.get("PORTAL_AD_CARD_ATTRIBUTE") or "userPrincipalName").strip(),
+                 "match": str(e.get("PORTAL_AD_CARD_MATCH") or "{edipi}@mil").strip()}]
+    return [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}]
 
 
 def who(headers):

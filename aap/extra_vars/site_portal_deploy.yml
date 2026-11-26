@@ -108,8 +108,8 @@ portal_public_url: https://stigman.example.mil/portal/
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 
-## 1.132.0's setting, unset by default. Set: the rule's attribute (userPrincipalName when left out;
-## set alone, its {edipi}@mil and {edipi}{digits6}@mil). Never with portal_ad_card_matches.
+## 1.132.0's setting, unset by default. Set: the one rule's attribute (userPrincipalName when left
+## out). Never with portal_ad_card_matches.
 # portal_ad_card_attribute: "{{ undef() }}"
 
 ## 1.132.0's setting, unset by default: the one rule's form ({edipi}@mil when left out). Never with
@@ -119,8 +119,8 @@ portal_public_url: https://stigman.example.mil/portal/
 ## 1.133.0: the card forms, a closed list of five - a site picks a subset: userPrincipalName
 ## {edipi}@mil or {edipi}{digits6}@mil (the 16-digit form), sAMAccountName {edipi}.ctr, {edipi}.civ
 ## or {edipi}.mil ({edipi} = the last ten digits of the card CN). Nothing else; never a * or ?. A
-## card must be exactly one enabled account in the domain whose values name no other EDIPI. All five
-## when neither this nor a 1.132.0 setting (portal_ad_card_attribute / _match) is set.
+## card must be exactly one enabled account in the domain whose values name no other EDIPI. Default:
+## userPrincipalName {edipi}@mil only (as 1.132.0); add the others by listing them here.
 # portal_ad_card_matches: >-
 #   {{ undef() if _portal_legacy_card_rule else _portal_default_card_matches }}
 
