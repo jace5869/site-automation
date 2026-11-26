@@ -752,6 +752,48 @@ class Codex1330s(DirectorC):
         self.assertTrue(r.refused)
 
 
+    def test_neon_1_the_matched_account_without_its_sam_grants_nothing(self):
+        d = dn("Shared", "Staff")
+        g = self.group(d, {"userPrincipalName": ["1111111111@mil"]})
+        for rules in (None, [{"attribute": "userPrincipalName", "match": "{edipi}@mil"}]):
+            with self.subTest(rules=rules):
+                g2 = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE, "matches": rules}, opener=opener())
+                g2.last = g.last
+                # the real sAMAccountName (2222222222.ctr) is hidden from the bind account
+                with patch.dict(USERS, {d: {"upn": "1111111111@mil", "sam": None, "uac": 512, "alt": []}}):
+                    self.assertFalse(g2.has("approvers", "ONE.A.A.1111111111"))
+
+    def test_neon_2_odd_root_values_fall_back_to_the_domain(self):
+        for v in ([None], [b"DC=corp,DC=example,DC=mil"], [7]):
+            class Odd(FakeConn):
+                def search(self, base, flt, scope, attributes=None, **kw):
+                    return self._set([{"dn": "", "attributes": {"defaultNamingContext": v}}])
+            self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).root(Odd()), BASE, v)
+
+    def test_neon_3_a_refusal_drops_cached_answers_and_is_said(self):
+        d = dn("Doe", "Staff")
+        said = []
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        g.on_change = said.append
+        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
+            self.assertIsNotNone(g.account("DOE.JANE.Q.1234567890")[0])       # cached yes
+            g.reader.opener = lambda _o: (None, "", "dc01.corp.example.mil:636 the bind was refused (invalidCredentials)")
+            self.assertIn("held until the next deploy", g.account("ROE.RICH.A.2222222222")[1])
+            self.assertIsNone(g.account("DOE.JANE.Q.1234567890")[0])          # the cached yes no longer counts
+        self.assertTrue(said and not said[-1]["ok"])
+
+    def test_neon_6_nothing_to_look_up_binds_nothing(self):
+        d = dn("Doe", "Staff")
+        tries = []
+        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
+        g2 = G.Groups({"approvers": ["Portal-Admins"]}, {"base": BASE, "matches": []}, opener=opener())
+        g2.last = g.last
+        for gg, cn in ((g, "NOT.A.CARD"), (g2, "DOE.JANE.Q.1234567890")):
+            gg.reader.opener = lambda _o: (tries.append(1), (FakeConn(), "dc01", ""))[1]
+            self.assertFalse(gg.has("approvers", cn))
+        self.assertEqual(tries, [])
+
+
 for _n in [n for n in vars(DirectorC) if n.startswith("test_")]:
     setattr(Codex1330s, _n, None)
 

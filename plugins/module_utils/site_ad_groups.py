@@ -326,11 +326,13 @@ class Reader(object):
         try:
             r = self.search(c, "", "(objectClass=*)", ["defaultNamingContext"], "base")
             v = ((r[0].get("attributes") or {}).get("defaultNamingContext") if r else "") or ""
-            v = v[0] if isinstance(v, list) and v else str(v or "")
+            v = v[0] if isinstance(v, list) and v else v
+            v = v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else v      # Neon 1330s #2: odd values -> the fallback
+            v = v.strip() if isinstance(v, str) else ""
         except Exception:                                 # noqa: BLE001
             v = ""
-        if v.strip():
-            return v.strip()
+        if v:
+            return v
         # Codex 1.133.0 #8: never a base guessed from a DC's name (another domain's DC may have answered): the configured
         # domain only, else '' (the lookup fails closed)
         return base_of(str(self.o.get("domain") or "").strip())
@@ -567,11 +569,13 @@ class Groups(object):
         now = time.monotonic() if now is None else now           # Neon r2 #3: the cache's clock never steps back
         if not card_cn(cn):
             return (None, "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup")     # Codex 1.133.0 #9
+        if not self.reader.matches:
+            return (None, "no card form is set - no AD lookup")                                     # Neon 1330s #6
         with self.lock:
             cache = self.__dict__.setdefault("_accts", {})
             gen = self.__dict__.setdefault("_gen", 0)
             hit = cache.get(cn)
-            if hit and hit[3] == gen and 0 <= now - hit[0] < hit[2]:
+            if hit and hit[3] == gen and 0 <= now - hit[0] < hit[2] and not self.held():
                 return hit[1]
             self._seq = self.__dict__.get("_seq", 0) + 1
             seq = self._seq
@@ -586,8 +590,15 @@ class Groups(object):
                 if self.reader.refused or "invalidCredentials" in str(err):
                     with self.lock:                       # the same hold as a group read's (the account would lock)
                         self._held = True
-                        self.last = dict(self.last or {}, ok=False, error=err, at=time.time())
+                        self.last = dict(self.last or {}, ok=False, error=err + " - not tried again until the portal is deployed again "
+                                         "with the right login (the account would lock out)", at=time.time())
                         self.next_at = time.time() + 10 ** 9
+                        self._gen = self.__dict__.get("_gen", 0) + 1      # Neon 1330s #3: no cached answer outlives the refusal
+                        cache.clear()
+                        last = self.last
+                    if self.on_change:
+                        self.on_change(last)              # said in the portal's log, as a group read's refusal is
+                    return (None, "the LDAP login was refused - held until the next deploy")
             else:
                 try:
                     root = self.reader.root(c)
