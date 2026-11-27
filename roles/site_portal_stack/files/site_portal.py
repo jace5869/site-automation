@@ -83,6 +83,10 @@ try:
 except ImportError:                     # an older deploy's files: the wall from the report database only
     wall_live = None
 try:
+    import wall_fleet  # noqa: E402  1.136.0: the wall's Ops monitor area (SolarWinds' nodes, SWQL only, vs vCenter)
+except ImportError:                     # an older deploy's files: no Ops monitor area
+    wall_fleet = None
+try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
 except ImportError:                     # an older deploy's files: the named lists only
     site_ad_groups = None
@@ -727,6 +731,23 @@ class Config(object):
         except Exception as werr:  # pylint: disable=broad-except  (never "as e": e is this method's settings)
             self.wall_why = "the wall's settings could not be read (%s) - the wall is off; fix them and run Site portal - deploy" % clean(str(werr), 120)
             self.wall, self.wall_logins = False, {}
+        monitor = e.get("PORTAL_WALL_MONITOR_OPTS")
+        self.wall_fleet = self.wall and isinstance(monitor, dict)
+        self.wall_fleet_notes, self.wall_fleet_why = [], ""
+        if self.wall_fleet:
+            try:
+                if wall_fleet is None:
+                    raise ValueError("monitor reader is missing from the service files - deploy again")
+                self.wall_fleet_opts, self.wall_fleet_notes = wall_fleet.opts_of(monitor)
+                if not self.wall_fleet_opts["swis_url"]:
+                    self.wall_fleet_why = 'no SolarWinds address: attach the "SolarWinds (read-only)" credential on Site portal - deploy'
+                elif not (self.swis_user and self.swis_password):
+                    self.wall_fleet_why = 'no SolarWinds login: attach the "SolarWinds (read-only)" credential on Site portal - deploy'
+                elif site_swis is None:
+                    self.wall_fleet_why = "the SolarWinds reader is missing"
+            except Exception as err:
+                self.wall_fleet = False
+                self.wall_fleet_notes.append("Ops monitor off: " + clean(str(err), 120))
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
@@ -2995,6 +3016,7 @@ class Portal(object):
         self.admin_catalog = cfg.admin_catalog = portal_admin.Catalog(self.aap, cfg)
         cfg.access_rows = lambda: access_rows(cfg)
         if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
+            cfg.ad_groups.on_card_refused = lambda cn, why: self.log.add({"event": "ad", "card_lookup": "refused", "user": cn, "why": why})
             if start_ad:                                  # 1.122.2: never from --aap-check - one bind per deploy, not two
                 cfg.ad_groups.on_change = self._ad_groups_changed
                 cfg.ad_groups.start()
@@ -7165,6 +7187,7 @@ def netapp_page(cfg, cn, statics, token=""):
 
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
+FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
 LOOKS_STATIC = ("portal-looks.js",)
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
@@ -7241,11 +7264,17 @@ class WallLive(object):
     anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
     someone looks), made into one model by wall_model.build. One answer every viewer shares, with an ETag."""
 
-    def __init__(self, cfg, log, nal=None, collector=None):
+    def __init__(self, cfg, log, nal=None, collector=None, fleet=None):
         self.cfg, self.log, self.nal = cfg, log, nal
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
+        self.fleet = None
+        notes = getattr(cfg, "wall_fleet_notes", [])
+        for note in notes if isinstance(notes, list) else []:
+            _safe_add(log, {"event": "wall", "fleet": "setting", "why": note})
+        if getattr(cfg, "wall_fleet", False) is True:
+            self.fleet = wall_fleet.Board(cfg, lambda d: _safe_add(log, d), reader=fleet)
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
         for k in (bad if isinstance(bad, list) else []):
@@ -7267,7 +7296,7 @@ class WallLive(object):
                 try:
                     self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
                                                          log=lambda d: _safe_add(log, dict({"event": "wall"}, **d)), keep_seconds=keep,
-                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"))
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), fleet=cfg.wall_fleet)
                     self.collector.start()
                 except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
                     why = "collector not started: " + clean(str(e), 200)
@@ -7307,18 +7336,24 @@ class WallLive(object):
         at = ad_when((m.get("run") or {}).get("read_at"))
         return m, at, stale or ""               # a failed refresh is said on the path card (the DB is never a light on the wall)
 
-    def model(self, now=None):
+    def model(self, now=None, monitor=True):
         nm, at, why = self.netapp()
         with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
             now = time.time() if now is None else now      # enters the tracker after a newer one
             view = self.collector.view() if self.collector is not None else None
+            if monitor and getattr(self, "fleet", None) is not None:
+                fm = self.fleet.model(view, now)
+                return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
+                                        title=self.cfg.wall_title, nm_why=why, off_why=self.no_source,
+                                        fleet=fm, fleet_why=self.cfg.wall_fleet_why)
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
                                     title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
 
     def summary(self, now=None):
         """1.135.0: the areas in short (wall_model.summary) - the same rule as the wall: stale is never green"""
         now = time.time() if now is None else now
-        out = wall_model.summary(self.model(now), now)
+        base = self.model(now, monitor=False) if getattr(self, "fleet", None) is not None else self.model(now)
+        out = wall_model.summary(base, now)
         out["zone"] = self.cfg.tz_name or "UTC"
         return out
 
@@ -7463,14 +7498,17 @@ def wall_page(cfg, cn, statics, token=""):
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
-            '<script src="%sstatic/wall-styles.js?v=%s" defer></script><script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-styles.js?v=%s" defer></script>%s<script src="%sstatic/wall-page.js?v=%s" defer></script>'
             % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
                (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
                ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
-               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"), cfg.path, v("wall-page.js")))
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"),
+               ('<script src="%sstatic/wall-fleet.js?v=%s" defer></script>' % (cfg.path, v("wall-fleet.js"))) if cfg.wall_fleet else "",
+               cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
                  head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s"><link rel="stylesheet" href="%sstatic/wall-styles.css?v=%s">'
-                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")))
+                 % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")) +
+                 (('<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">' % (cfg.path, v("wall-fleet.css"))) if cfg.wall_fleet else ""))
 
 
 def make_handler(cfg, portal, static_dir, wall=None):
@@ -7485,7 +7523,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + LOOKS_STATIC + ("admin.css", "admin.js"):
+    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + (FLEET_STATIC if cfg.wall_fleet else ()) + LOOKS_STATIC + ("admin.css", "admin.js"):
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -7744,11 +7782,17 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 except Exception as e:  # pylint: disable=broad-except  - the section says "not reachable", never a stale green
                     portal.log.add({"event": "wall", "summary": "not made", "why": clean(str(e), 200)})
                     return self._send(503, {"error": "The wall's summary could not be made (the portal's log says why)."})
+            if path == "/api/wall/fleet" and wall and getattr(wall, "fleet", None) is not None:
+                with wall.lock:
+                    code, body = wall.fleet.answer(wall.collector)
+                return self._send(code, body, "application/json")
             if path in ("/wall", "/api/wall"):
                 if not wall:
                     return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),
                                       "text/html; charset=utf-8") if path == "/wall" else self._send(404, {"error": "The wall is off here (portal_wall: false)."})
                 wall.viewed()
+                if getattr(wall, "fleet", None) is not None:
+                    wall.fleet.viewed()
                 if path == "/wall":
                     return self._send(200, wall_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 try:

@@ -3,6 +3,7 @@
 use of it, the deploy's). A fake LDAP directory answers the reader's searches as a DC does - nested groups through
 LDAP_MATCHING_RULE_IN_CHAIN, a disabled account, a DC that is down - so it runs anywhere.
     python3 tests/test_ad_groups.py"""
+import errno
 import json
 import os
 import re
@@ -159,6 +160,138 @@ class Card(unittest.TestCase):
         self.assertEqual(G.short_name(dn("AAP-Approvers")), "AAP-Approvers")
         self.assertTrue(G.is_dn(dn("AAP-Approvers")))
         self.assertFalse(G.is_dn("AAP-Approvers"))
+
+
+class CardLookup1353(unittest.TestCase):
+    def test_domain_reference_still_counts_in_all_three_groups(self):
+        names = ["Grp Portal Approver", "Grp Portal User", "Grp Service Administrators"]
+        settings = ["DOMAIN\\" + name for name in names]
+        user = dn("Last First", "Users")
+        others = [dn("Member %d" % i, "Users") for i in range(10)]
+        groups = {dn(name): [user] + others[:n - 1] for name, n in zip(names, [5, 4, 11])}
+        users = {u: {"upn": "member%d@corp.example.mil" % i, "uac": 512} for i, u in enumerate(others)}
+        users[user] = {"sam": "1234567890.ctr", "upn": "1234567890123456@mil", "uac": 512}
+
+        class Ref(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if base == BASE and "(sAMAccountName=1234567890.ctr)" in flt:
+                    self.response.append({"type": "searchResRef", "uri": ["ldap://dc.corp.example.mil/DC=DomainDnsZones," + BASE]})
+                return ok
+
+        rules = [r for r in G.ALL_FORMS if r["attribute"] == "sAMAccountName"]
+        ad = G.Groups({"requesters": settings}, {"base": BASE, "matches": rules}, opener=opener(Ref()))
+        with patch.dict(USERS, users, clear=True), patch.dict(GROUPS, groups, clear=True):
+            read = ad.refresh()
+            self.assertEqual([g["count"] for g in read["groups"]["requesters"]], [5, 4, 11])
+            self.assertEqual(list(ad.group_matches("requesters", "LAST.FIRST.M.1234567890")),
+                             [(name, "sAMAccountName") for name in settings])
+
+    def test_hidden_continuation_must_reach_the_card_search(self):
+        class Ref(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    # AD suppresses subordinate continuations when domain scope is requested.
+                    if all(oid != "1.2.840.113556.1.4.1339" for oid, _, _ in kw.get("controls", [])):
+                        self.response.append({"type": "searchResRef", "uri": ["ldap://dc.corp.example.mil/OU=Hidden," + BASE]})
+                return ok
+
+        ad = G.Groups(WANT, {"base": BASE}, opener=opener(Ref()))
+        self.assertTrue(ad.refresh()["ok"])
+        self.assertFalse(ad.has("requesters", "OPERATOR.SAM.2345678901"))
+
+    def test_only_exact_partition_references_are_ignored(self):
+        forest = "DC=example,DC=mil"
+        url = "ldap://dc.corp.example.mil/"
+        cn = "OPERATOR.SAM.2345678901"
+
+        class Ref(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if base == "" and "rootDomainNamingContext" in attributes:
+                    self.response[0]["attributes"]["rootDomainNamingContext"] = [forest]
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    self.response.append({"type": "searchResRef", "uri": urls})
+                return ok
+
+        for urls, counts in (([url + "OU=Hidden," + BASE], False),
+                             ([url + "dc%3DdomainDnsZones%2C" + BASE.lower() + "??base"], True),
+                             ([url + "DC=ForestDnsZones," + forest, url + "CN=Configuration," + forest], True),
+                             ([url + "CN=Configuration," + BASE], False),
+                             ([url + "DC=DomainDnsZones," + BASE + "??invalid"], False),
+                             ([url + "DC=DomainDnsZones," + BASE, url + "OU=Hidden," + BASE], False),
+                             ([], False)):
+            with self.subTest(urls=urls):
+                ad = G.Groups(WANT, {"base": BASE}, opener=opener(Ref()))
+                self.assertTrue(ad.refresh()["ok"])
+                self.assertEqual(ad.has("requesters", cn), counts)
+
+    def test_partition_url_must_parse_completely(self):
+        partition = "DC=DomainDnsZones," + BASE
+        allowed = {partition.casefold()}
+        url = "ldap://dc.corp.example.mil/" + partition
+        for good in (url, url + "??base", url + "??SUB", url + "??one"):
+            with self.subTest(url=good):
+                self.assertTrue(G._partition_reference({"uri": [good]}, allowed))
+        for bad in (url + "?", url + "??", url + "???", url + "????", url + "??base??", url + "??base?", url + "?cn", url + "???(cn=*)", url + "????x",
+                    url + "?????", url + "#", url + "%", url + "%FF",
+                    "ldap://dc.corp.example.mil:bad/" + partition, "ldap://[::1]junk/" + partition):
+            with self.subTest(url=bad):
+                self.assertFalse(G._partition_reference({"uri": [bad]}, allowed))
+
+    def test_replacement_at_same_dn_without_usable_guid_is_refused(self):
+        cn = "LAST.FIRST.M.1234567890"
+        user = dn("Sam Operator", "Users")
+        for value in (None, b"short", "malformed"):
+            with self.subTest(value=value), patch.dict(USERS[user], sam="1234567890.ctr", upn="1234567890123456@mil", guid=value):
+                ad = G.Groups(WANT, {"base": BASE, "matches": [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}]}, opener=opener())
+                self.assertTrue(ad.refresh()["ok"])
+                replacement = dict(USERS[user])
+                with patch.dict(USERS, {user: replacement}), patch.dict(GROUPS, {dn("AAP-Operators"): []}):
+                    self.assertFalse(ad.has("requesters", cn))
+                    self.assertEqual(ad.account(cn), (None, "the card's AD account state is not known"))
+
+    def test_same_dn_with_unusable_guids_across_pages_is_ambiguous(self):
+        class TwoPages(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(sAMAccountName=1234567890.ctr)" in flt:
+                    attrs = self.response[0]["attributes"]
+                    if kw["paged_cookie"]:
+                        attrs["objectGUID"] = b"short"
+                    else:
+                        del attrs["objectGUID"]
+                        self.result["controls"]["1.2.840.113556.1.4.319"]["value"]["cookie"] = b"next"
+                return ok
+
+        ad = G.Groups(WANT, {"base": BASE, "matches": [{"attribute": "sAMAccountName", "match": "{edipi}.ctr"}]}, opener=opener(TwoPages()))
+        with patch.dict(USERS[dn("Sam Operator", "Users")], sam="1234567890.ctr", upn="1234567890123456@mil"):
+            self.assertEqual(ad.account("LAST.FIRST.M.1234567890"),
+                             (None, "more than one AD account matches this card (2) - none counts"))
+
+    def test_log_write_failure_preserves_refusal(self):
+        class Limited(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    self.result.update(result=4, description="sizeLimitExceeded")
+                return ok
+
+        ad = G.Groups(WANT, {"base": BASE}, opener=opener(Limited()))
+        with patch.object(ad, "on_card_refused", side_effect=OSError(errno.ENOSPC, "No space left on device")) as log:
+            self.assertEqual(ad.account("OPERATOR.SAM.2345678901"), (None, "the card's AD account could not be looked up"))
+            self.assertIn("sizeLimitExceeded", log.call_args.args[1])
+
+    def test_non_string_cn_is_refused_before_cache_access(self):
+        ad = G.Groups(WANT, {"base": BASE}, opener=opener())
+        self.assertTrue(ad.refresh()["ok"])
+        ad.__dict__.pop("_accts", None)
+        for cn in ([], 123, None):
+            with self.subTest(cn=cn):
+                self.assertEqual(ad.account(cn), (None, "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup"))
+                self.assertFalse(ad.has("requesters", cn))
+                self.assertNotIn("_accts", ad.__dict__)
 
 
 class Read(unittest.TestCase):
@@ -395,12 +528,12 @@ class DirectorC(unittest.TestCase):
         real = g.reader.accounts
         inside, most, go = [0], [0], threading.Event()
 
-        def slow(c, base, card):
+        def slow(c, base, card, forest):
             inside[0] += 1
             most[0] = max(most[0], inside[0])
             go.wait(2)
             try:
-                return real(c, base, card)
+                return real(c, base, card, forest)
             finally:
                 inside[0] -= 1
         g.reader.accounts = slow
@@ -724,30 +857,14 @@ class Codex1330s(DirectorC):
         self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))        # a failed read
         self.assertEqual(tries, [])
 
-    def test_r2_6_a_reference_in_the_card_lookup_fails_it(self):
-        d = dn("Doe", "Staff")
-        test = self
-
-        class Ref(FakeConn):
-            def search(self, base, flt, scope, attributes=None, **kw):
-                ok = FakeConn.search(self, base, flt, scope, attributes, **kw)
-                if flt.startswith(test.LOOKUP) and "(|" in flt:
-                    self.response = self.response + [{"type": "searchResRef", "uri": ["ldap://other.corp.example.mil/OU=Hidden," + BASE]}]
-                return ok
-        g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
-        g.reader.opener = opener(Ref())
-        with patch.dict(USERS, {d: {"upn": "1234567890@mil", "uac": 512, "alt": []}}):
-            self.assertFalse(g.has("approvers", "DOE.JANE.Q.1234567890"))
-            self.assertIn("could not be looked up", g.account("DOE.JANE.Q.1234567890")[1])
-
     def test_04_a_group_read_during_the_lookup_decides(self):
         import time as _t
         d = dn("Doe", "Staff")
         g = self.group(d, {"userPrincipalName": ["1234567890@mil"]})
         real = g.reader.accounts
 
-        def read_lands(c, base, card):
-            out = real(c, base, card)
+        def read_lands(c, base, card, forest):
+            out = real(c, base, card, forest)
             g.reader.read = lambda want: {"ok": True, "at": _t.time(), "error": "", "server": "", "groups": {"approvers": [
                 {"name": "Portal-Admins", "found": True, "count": 0, "keys": []}]}}          # Jane is no longer a member
             g.refresh()
@@ -795,8 +912,8 @@ class Codex1330s(DirectorC):
             def search(self, base, flt, scope, attributes=None, **kw):
                 self.response, self.result = [], {"result": 1, "description": "operationsError"}
                 return False
-        self.assertEqual(r.root(NoRoot()), "")
-        self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).root(NoRoot()), BASE)
+        self.assertEqual(r.roots(NoRoot())[0], "")
+        self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).roots(NoRoot())[0], BASE)
 
     def test_09_only_a_card_shaped_cn_is_looked_up(self):
         import site_portal as sp
@@ -844,7 +961,7 @@ class Codex1330s(DirectorC):
             class Odd(FakeConn):
                 def search(self, base, flt, scope, attributes=None, **kw):
                     return self._set([{"dn": "", "attributes": {"defaultNamingContext": v}}])
-            self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).root(Odd()), BASE, v)
+            self.assertEqual(G.Reader({"domain": "corp.example.mil"}, opener()).roots(Odd())[0], BASE, v)
 
     def test_neon_3_a_refusal_drops_cached_answers_and_is_said(self):
         d = dn("Doe", "Staff")

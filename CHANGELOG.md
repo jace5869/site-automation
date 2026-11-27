@@ -1,14 +1,68 @@
 # Changelog
 
-## 1.135.4 — 2026-11-27
+## 1.136.2 — 2026-11-27
 
 - The STIG answer-file draft trial skips Podman/CNI namespace handles identified as `nsfs` in mountinfo and still refuses writable host storage under `/run/netns`.
-
-## 1.135.3 — 2026-11-27
-
 - The VM outage watch skips alerts for VMs uniquely matched to nodes currently unmanaged in SolarWinds.
   It logs the maintenance end and checks again each run. An unavailable SolarWinds reader leaves alerts enabled.
 - Attach the **SolarWinds (read-only)** credential to **VM - outage watch** to enable maintenance checks.
+
+## 1.136.0 — 2026-11-27
+
+**Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.
+
+**To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
+Network map uses - nothing new to create). Set `portal_wall_monitor: true` to enable the preview. Optional: group by a
+node custom property instead of SolarWinds' groups (`portal_wall_monitor_group_by: custom:ServiceGroup`), show only some
+groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`portal_wall_monitor_vm_match`), how often
+(`portal_wall_monitor_seconds`, 60).
+
+- **Ops monitor on the ops wall** (`?area=monitor`, in every wall style and in *rotate areas*): every node SolarWinds
+  watches as one square, up or down, grouped by service group; the services strip (one verdict per group), *Not up · worst
+  first*, *SolarWinds vs vCenter* and a Spotlight that steps through the groups, problems first. 3,000 nodes fit at 1080p.
+- **vCenter inventory is information only.** SolarWinds determines node, service and area status. A unique FQDN
+  or guest IP match adds a dated vCenter note to the node card and its Teams share. VMs seen only in vCenter
+  appear in grey and are excluded from the monitored totals.
+- **A card for each node** (click a square, a row or a chip): service, IP, status and why, since when, response and
+  loss, a dated vCenter note, the source and its age, where to check - with **Copy text / Copy picture / Copy both /
+  Save picture** for Teams. **Several at once:** tick them (or Ctrl+click squares, or *Select all down*) and **Share
+  selected to Teams** - one line a node (*DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since
+  05:21)*), a table and a picture of up to 40 lines.
+- **What lights the wall:** one condition per service group with a node down (critical) or warning - in every style's
+  Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile alongside the existing areas.
+- SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
+  60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
+  vCenter read takes each VM's guest IP and host name only with the monitor on. The map and monitor share the login.
+  The monitor's CA goes to its reader only. The shared trust bundle stays the same.
+- The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. The line stays the same with the preview off.
+- Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
+  stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
+
+### Known limits (to 1.136.1)
+- Monitor needs a browser with async/await (any current Edge/Chrome/Firefox); a 2016-era script engine does not load it.
+
+- Even on a converged host with the monitor and Network map off, AAP records successful monitor setup and file-cleanup tasks. The job recap differs from 1.135.1.
+- Browsers without `globalThis` cannot load the wall, even with the monitor off and both `fetch` and `URLSearchParams` available. Startup stops before the first `/api/wall` request.
+- Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
+- A slow node read gives an early observation extra time before it expires.
+- Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.
+- A large Teams preview can redraw when unrelated polls expire.
+- Refreshing a list can move keyboard focus off its controls.
+- A node card can show the last page's time for a node read on an earlier page.
+- After a board request fails, Overview can stay grey until someone reopens the board.
+- The Actions page and its Atlas map have no monitor tile. The wall shows an all-unmanaged group as *no monitored nodes*.
+- A shared group condition can still say critical after a member's poll expires.
+- A VM match can look unique while another vCenter is offline.
+- A container count exactly at the limit can mark a complete read as cut.
+- An expired comparison can leave a vCenter-only square on the canvas that still opens its card.
+- The board and Overview poll separately. A newer critical Overview response no longer makes the board stale by its sequence alone.
+- *What the wall watches* can label a SolarWinds monitor condition as vCenter.
+- The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
+- A cleared group share can still show recovery when the board has already seen the outage reopen.
+- On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
+## 1.135.3 — 2026-11-27
+
+- Portal: AD groups now count people whose card lookup met a normal AD referral (no access before)
 
 ## 1.135.2 — 2026-11-26
 

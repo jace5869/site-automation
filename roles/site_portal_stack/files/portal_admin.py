@@ -389,6 +389,8 @@ def activity_tab(log, query):
     for rec in reversed(log.read(limit=5000)):
         event = rec.get("event")
         label = labels.get(event)
+        if event == "ad" and rec.get("card_lookup") == "refused":
+            label = "Refused"
         if event == "decision":
             label = {"approve": "Approved", "deny": "Denied"}.get(rec.get("decision"))
         if not label or query.get("event") not in (None, "", label):

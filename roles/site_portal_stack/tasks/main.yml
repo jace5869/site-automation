@@ -362,6 +362,14 @@
       {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
          or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
+- name: Settings | the wall's Ops monitor area (portal_wall_monitor)
+  ansible.builtin.set_fact:
+    _portal_wall_monitor: "{{ portal_wall | bool and (portal_wall_monitor | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
+
+- name: Settings | SolarWinds login for the map or monitor
+  ansible.builtin.set_fact:
+    _portal_swis: "{{ _portal_netmap | bool or _portal_wall_monitor | bool }}"
+
 # 1.130.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
 # deploy has their credentials); the thresholds are checked here, the service checks them again
 - name: Settings | the ops-center wall (portal_wall_*)
@@ -594,12 +602,29 @@
     label: "{{ item.path }}"
   register: _portal_dirs
 
+- name: Settings | prepare the Ops monitor
+  ansible.builtin.include_tasks: wall_monitor.yml
+  when: _portal_wall_monitor | bool
+
+- name: Files | remove disabled monitor files
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/app/{{ item }}"
+    state: absent
+  loop: [wall_fleet.py, static/wall-fleet.js, static/wall-fleet.css]
+  when: not (_portal_wall_monitor | bool)
+
 - name: Files | the service, its pages, the actions' rules, AAP's client
   ansible.builtin.copy:
     src: "{{ item.src }}"
     dest: "{{ portal_config_dir }}/app/{{ item.dest }}"
     mode: "0644"
-  loop:
+  loop: "{{ _base_files + (_monitor_files if _portal_wall_monitor | bool else []) }}"
+  vars:
+    _monitor_files:
+      - {src: wall_fleet.py, dest: wall_fleet.py}
+      - {src: static/wall-fleet.js, dest: static/wall-fleet.js}
+      - {src: static/wall-fleet.css, dest: static/wall-fleet.css}
+    _base_files:
     - {src: portal_access.py, dest: portal_access.py}
     - {src: portal_admin.py, dest: portal_admin.py}
     - {src: static/admin.css, dest: static/admin.css}
@@ -815,13 +840,13 @@
   ansible.builtin.set_fact:
     _portal_swis_login: "{{ {'user': portal_solarwinds_username, 'password': portal_solarwinds_password} | to_json }}"
   no_log: true
-  when: _portal_netmap | default(false) | bool
+  when: _portal_swis | default(false) | bool
 
 - name: Secret | SolarWinds' login - the old value removed first (podman before 4.7), or the map turned off
   ansible.builtin.command:
     argv: [podman, secret, rm, site-portal-swis]
   when: >-
-    _portal_swis_state.rc == 0 and (not _portal_netmap | default(false) | bool or
+    _portal_swis_state.rc == 0 and (not _portal_swis | default(false) | bool or
     ((_portal_swis_state.stdout | trim) != (_portal_swis_login | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
   changed_when: true
   register: _portal_swis_gone
@@ -835,7 +860,7 @@
          + ['--label', 'site.sha256=' ~ (_portal_swis_login | hash('sha256')), 'site-portal-swis', '-'] }}
     stdin: "{{ _portal_swis_login }}"
     stdin_add_newline: false
-  when: _portal_netmap | default(false) | bool and (_portal_swis_state.rc != 0 or (_portal_swis_state.stdout | trim) != (_portal_swis_login | hash('sha256')))
+  when: _portal_swis | default(false) | bool and (_portal_swis_state.rc != 0 or (_portal_swis_state.stdout | trim) != (_portal_swis_login | hash('sha256')))
   changed_when: true
   failed_when: false                      # said by the next task, with podman's reason
   no_log: true
@@ -1094,7 +1119,7 @@
   ansible.builtin.copy:
     dest: "{{ portal_config_dir }}/settings.json"
     mode: "0644"
-    content: "{{ _settings | to_nice_json }}\n"
+    content: "{{ _settings | combine({'PORTAL_WALL_MONITOR_OPTS': _portal_wall_monitor_opts} if _portal_wall_monitor | bool else {}) | to_nice_json }}\n"
   vars:
     _settings:
       PORTAL_PATH: "{{ portal_path }}"
@@ -1377,7 +1402,7 @@
   loop: "{{ ['site-portal-data.volume', 'site-portal-app.container'] + (['site-portal-nginx.container'] if portal_own_nginx | bool else []) }}"
   vars:
     _portal_has_trust: "{{ _portal_trust_parts.matched | int > 0 }}"
-    _portal_has_swis: "{{ _portal_netmap | bool }}"
+    _portal_has_swis: "{{ _portal_swis | bool }}"
     _portal_has_rdb: "{{ _portal_rdb | bool }}"
     _portal_has_ldap: "{{ _portal_ldap_on | bool }}"
     _portal_has_wall_vc: "{{ _portal_wall_vc | bool }}"
@@ -1440,7 +1465,7 @@
     _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
          or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
-         or _portal_swis_set is changed or _portal_swis_gone is changed
+         or (_portal_swis_ca_mon | default({})) is changed or _portal_swis_set is changed or _portal_swis_gone is changed
          or _portal_rdb_set is changed or _portal_rdb_gone is changed
          or _portal_ldap_set is changed or _portal_ldap_gone is changed
          or _portal_wall_set is changed
@@ -1621,6 +1646,7 @@
           'ontap_on': _portal_wall_ontap | bool, 'ontap_mode': portal_wall_ontap | string,
           'clusters': portal_wall_ontap_clusters | default([], true), 'ontap_user': portal_wall_ontap_username | default(''),
           'ontap_pass': portal_wall_ontap_password | default('') | length > 0, 'netmap_sites': netmap_sites | default({}, true)}
+         | combine({'monitor_on': true, 'monitor_group_by': portal_wall_monitor_group_by} if _portal_wall_monitor | bool else {})
          | site_portal_wall_summary }}
     _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-

@@ -148,6 +148,26 @@ class Admin(unittest.TestCase):
         self.assertEqual(code, 303, body)
         self.cfg.ad_groups.refresh()
 
+    def test_partial_card_lookup_refused_once_in_activity(self):
+        class Limited(Directory):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    self.result.update(result=4, description="sizeLimitExceeded")
+                return ok
+
+        ad = self.cfg.ad_groups
+        ad.reader.opener = opener(Limited())
+        for _ in range(2):
+            self.assertFalse(ad.has("admins", RUN))
+        events = self.portal.log.read("ad")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["user"], RUN)
+        self.assertIn("sizeLimitExceeded", events[0]["why"])
+        page = self.http("/admin?tab=activity&event=Refused")[1]
+        self.assertIn(RUN, page)
+        self.assertIn("sizeLimitExceeded", page)
+
     def test_admin_gate_explicit_fallback_and_outage(self):
         self.cfg.readers = ["READ"]
         for cn in (ADMIN, RUN):

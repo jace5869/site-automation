@@ -132,8 +132,9 @@ def netapp_db(minutes_old=11):
     return T.fill(now=now)
 
 
-def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True, health=True):
-    """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it"""
+def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector=None, netapp=True, health=True, fleet=None, env_more=None):
+    """-> (base URL behind the header front, stop()) - a portal with the demo wall, as the tests and the screenshots use it.
+    1.136.0: fleet - a wall_fleet.Reader stand-in (tests/wall/fleet_demo.py FakeReader): the Ops monitor area on"""
     import json
     import shutil
     import tempfile
@@ -144,6 +145,9 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector
     env = {"PORTAL_WALL_OPTS": json.dumps(dict(OPTS, **(opts or {}))), "PORTAL_WALL_TITLE": "Ops center", "PORTAL_WALL_ENCLAVE": "SITEA-UNCLASS",
            "PORTAL_TIME_ZONE": "Europe/Berlin", "PORTAL_APPROVERS": json.dumps([CN]),
            "PORTAL_WALL_TEST": "1"}   # the test harness: ?freeze= and ?pull= honoured
+    if fleet is not None:
+        env.update({"PORTAL_WALL_MONITOR_OPTS": {"swis_url": "https://swis.example.invalid"}, "PORTAL_SWIS_LOGIN": json.dumps({"user": "svc_swis_ro", "password": "x"})})
+    env.update(env_more or {})
     cfg = T.cfg_for(tmp, **env)
     p = sp.Portal(cfg)
     p.aap.ready = ""
@@ -155,7 +159,7 @@ def portal(port=0, vc2_state="auth", netapp_minutes_old=11, opts=None, collector
         nal = sp.NetappLive(cfg, p.log, p, db=nl.Database(lambda: db, mark="?"))
         nal.refresh()
     cfg.netapp_tab = True
-    wall = sp.WallLive(cfg, p.log, nal, collector=collector or FakeCollector(lambda: view(vc2_state=vc2_state)))
+    wall = sp.WallLive(cfg, p.log, nal, collector=collector or FakeCollector(lambda: view(vc2_state=vc2_state)), fleet=fleet)
     if collector is None:
         wall.model(time.time() - 3 * 3600)              # a first read 3 h ago: the tracker's starts, so durations read like a running wall
     srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, p, os.path.join(FILES, "static"), wall=wall))

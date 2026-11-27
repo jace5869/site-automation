@@ -1,0 +1,120 @@
+{
+  "etag": "\"b8e0284f231bb17fe23c\"",
+  "repeat": 304,
+  "fleet": [
+    404,
+    {
+      "Server": "site-portal ",
+      "Date": "Tue, 14 Nov 2023 22:13:20 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "same-origin",
+      "X-Frame-Options": "DENY"
+    },
+    "{\"error\": \"not found\"}"
+  ],
+  "viewed": 0,
+  "refresh": 0,
+  "static": {
+    "js": [
+      404,
+      ""
+    ],
+    "css": [
+      404,
+      ""
+    ]
+  },
+  "vm_paths": [
+    "name",
+    "runtime.host",
+    "runtime.powerState",
+    "summary.quickStats.overallCpuUsage",
+    "summary.runtime.maxCpuUsage",
+    "summary.quickStats.guestMemoryUsage",
+    "summary.config.memorySizeMB",
+    "guestHeartbeatStatus",
+    "guest.toolsRunningStatus",
+    "guest.toolsVersionStatus2",
+    "config.template",
+    "config.managedBy.extensionKey",
+    "config.managedBy.type"
+  ],
+  "retrieve": [
+    "RetrievePropertiesEx",
+    "<_this type=\"PropertyCollector\">pc</_this><specSet><propSet><type>HostSystem</type><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>runtime.connectionState</pathSet><pathSet>runtime.powerState</pathSet><pathSet>runtime.inMaintenanceMode</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.quickStats.overallMemoryUsage</pathSet><pathSet>summary.hardware.cpuMhz</pathSet><pathSet>summary.hardware.numCpuCores</pathSet><pathSet>summary.hardware.memorySize</pathSet><pathSet>vm</pathSet><pathSet>datastore</pathSet><pathSet>overallStatus</pathSet><pathSet>triggeredAlarmState</pathSet></propSet><propSet><type>ClusterComputeResource</type><pathSet>name</pathSet><pathSet>host</pathSet></propSet><propSet><type>Datastore</type><pathSet>name</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.accessible</pathSet><pathSet>summary.type</pathSet><pathSet>summary.multipleHostAccess</pathSet><pathSet>host</pathSet><pathSet>vm</pathSet></propSet><propSet><type>VirtualMachine</type><pathSet>name</pathSet><pathSet>runtime.host</pathSet><pathSet>runtime.powerState</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.runtime.maxCpuUsage</pathSet><pathSet>summary.quickStats.guestMemoryUsage</pathSet><pathSet>summary.config.memorySizeMB</pathSet><pathSet>guestHeartbeatStatus</pathSet><pathSet>guest.toolsRunningStatus</pathSet><pathSet>guest.toolsVersionStatus2</pathSet><pathSet>config.template</pathSet><pathSet>config.managedBy.extensionKey</pathSet><pathSet>config.managedBy.type</pathSet></propSet><objectSet><obj type=\"ContainerView\">view</obj><skip>true</skip><selectSet xsi:type=\"TraversalSpec\"><name>view</name><type>ContainerView</type><path>view</path><skip>false</skip></selectSet></objectSet></specSet><options><maxObjects>1000</maxObjects></options>"
+  ],
+  "shape": {
+    "hosts": [
+      {
+        "name": "host-a",
+        "cluster": "",
+        "overall": null,
+        "triggered": [],
+        "state": "connected",
+        "maint": null,
+        "power": "",
+        "cpu_pct": null,
+        "mem_pct": null,
+        "vms": [],
+        "datastores": [],
+        "alarms": []
+      },
+      {
+        "name": "host-b",
+        "cluster": "",
+        "overall": null,
+        "triggered": [],
+        "state": "disconnected",
+        "maint": null,
+        "power": "",
+        "cpu_pct": null,
+        "mem_pct": null,
+        "vms": [],
+        "datastores": [],
+        "alarms": []
+      }
+    ],
+    "clusters": [],
+    "datastores": [
+      {
+        "name": "store",
+        "type": "",
+        "capacity": 2048,
+        "shared": null,
+        "free": 1024,
+        "accessible": null,
+        "hosts": [],
+        "vms": 0
+      }
+    ],
+    "vms": [
+      {
+        "id": "v1",
+        "template": null,
+        "vcls": false,
+        "tools": null,
+        "tools_version": null,
+        "name": "app",
+        "host": "host-a",
+        "power": "",
+        "cpu_pct": null,
+        "mem_pct": null,
+        "heartbeat": null
+      }
+    ]
+  },
+  "deploy": [
+    "Wall: VMware off (no vCenter credential attached (VMWARE_HOST empty)), Storage off (ontap_clusters empty), Map places from netmap_sites: 0",
+    "Wall: off (portal_wall: false)",
+    "Wall: VMware on, Storage on, Map places from netmap_sites: 0",
+    "Wall: VMware off (portal_wall_vcenter: false), Storage off (ontap_clusters empty), Map places from netmap_sites: 0"
+  ],
+  "hashes": {
+    "wall-share.js": "4b7b76ff72e25cc0a79280d627370317b909ac13df34f16636759fb3b67b93b0",
+    "portal-looks.js": "876d10c715b1128dcced1e2722f466c9114f7267b5856ad92d4728bd3a141f1c"
+  }
+}

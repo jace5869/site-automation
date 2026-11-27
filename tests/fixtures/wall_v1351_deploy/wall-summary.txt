@@ -1,0 +1,1 @@
+Wall: VMware off (no vCenter credential attached (VMWARE_HOST empty)), Storage off (ontap_clusters empty), Map places from netmap_sites: 0

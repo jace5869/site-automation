@@ -2292,6 +2292,13 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_vm_heartbeat` | `true` | previously running Tools stop or heartbeat turns red on a powered-on workload VM |
 | `portal_wall_site_pattern` | `"{{ netmap_site_pattern \| default('', true) }}"` | the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01) |
 | `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
+| `portal_wall_monitor` | `false` | 1.136.0: Ops monitor (opt-in preview, off by default; docs/SITE_PORTAL.md, "Ops monitor") - a wall area (?area=monitor, in every style, in the rotation) with every node SolarWinds watches as one square, up or down, grouped by service, and a dated vCenter note for a matching VM. SolarWinds supplies the status. Click a… (all of it: the role file) |
+| `portal_wall_monitor_seconds` | `60` | SolarWinds is read every this many seconds while the wall is open (60 to 3600); LATE / STALE stretch with it |
+| `portal_wall_monitor_group_by` | `groups` | groups (SolarWinds' groups, a node in each group it is a direct member of) \| custom:<a node custom property, e.g. custom:ServiceGroup> |
+| `portal_wall_monitor_groups` | `[]` | only these groups, in this order (names, any case; [] = every group with a node in it, A to Z); the rest under "Workloads (no group)" |
+| `portal_wall_monitor_vm_match` | `["*VMware*"]` | a SolarWinds node whose Vendor or MachineType matches (globs, any case) is a VM: counted "not found in vCenter" when vCenter has none of its name |
+| `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK |
+| `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (LastSync) longer ago than this is not current: never green, never a recovery (5 to 1440) |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approve_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
