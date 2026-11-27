@@ -2842,6 +2842,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_traffic` | `true` | The third signal, from vCenter itself (no network path needed): a silent suspect that sent network packets since the first check - vCenter's real-time statistics, 20-second samples - is alive, not hung (Tools died, or a firewall stops the probe). A hung guest sends none. false = the heartbeat and the probe only |
 | `vm_watch_traffic_packets` | `1` | packets sent from which a VM counts as alive |
 | `vm_watch_one_signal_severity` | `warning` | A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only. |
+| `vm_watch_solarwinds_unmanaged` | `true` | Skip VM outage alerts during a uniquely matched SolarWinds node's maintenance window. |
 | `vm_watch_skip_vms` | `[]` | VMs never judged: names, * and ? allowed (e.g. [LAB-*]) |
 | `vm_watch_skip_folders` | `[]` | VM folders never judged, as vCenter shows them (e.g. ["/DC1/vm/Lab*"]) |
 | `vm_watch_protect` | `[]` | Phase 2 (not built yet) would restart the hung VMs - never these (names, * and ?), never the AAP server or the VMs of vmware_protected_vms / vmware_protected_groups: their hung state is a ticket only. e.g. [DC*, SQL*, VCSA*] |

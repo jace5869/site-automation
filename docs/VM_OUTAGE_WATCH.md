@@ -82,6 +82,24 @@ between runs. What one signal alone means:
 
 A VM without VMware Tools is never judged on its heartbeat: vCenter has none to give.
 
+## VMs unmanaged in SolarWinds
+
+Before reporting a hung VM, a heartbeat warning, a VM waiting on a question, or an inaccessible VM,
+the watch queries Orion.Nodes with the outage review's **SolarWinds (read-only)** credential and
+`netmap_solarwinds_url`. It matches the VM name to the full Caption or the short DNS or SysName
+(case-insensitive), or the primary guest IP to IPAddress. DNS and SysName must be hostnames.
+Exactly one node must match, and that node must match just one VM in the inventory.
+
+The watch skips the VM while UnManaged is true and the current UTC time falls within its maintenance
+window, including the start and excluding the end. Times without an offset are UTC. The job log
+names the VM, node and end time. Maintenance skips probes for that VM. Requested reviews and
+previously held email changes follow their usual rules. The watch checks again
+on the next run. When maintenance ends, a continuing outage follows the usual alert and email rules.
+
+Missing credentials, an unreadable Orion, zero matches, or multiple matches leave the usual alerts
+in place. A read failure prints its reason in the job log. Set `vm_watch_solarwinds_unmanaged: false`
+to skip this check entirely.
+
 ## What you see
 
 **Nothing down** - the job is green, one line:
@@ -516,6 +534,7 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 
 | Setting | Default | What |
 |---|---|---|
+| `vm_watch_solarwinds_unmanaged` | true | check for VM maintenance using the review's `netmap_solarwinds_url`, `netmap_validate_certs`, `netmap_ca_path` and `netmap_timeout` settings |
 | `vm_watch_window_minutes` | 15 | how far back HA and storage events are read; the schedule's interval |
 | `vm_watch_min_up_minutes` | 15 | a VM up for less than this is not judged |
 | `vm_watch_confirm_checks` | 3 | checks of a suspect in one run (1 = once, no waiting) |

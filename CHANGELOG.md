@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.135.3 — 2026-11-27
+
+- The VM outage watch skips alerts for VMs uniquely matched to nodes currently unmanaged in SolarWinds.
+  It logs the maintenance end and checks again each run. An unavailable SolarWinds reader leaves alerts enabled.
+- Attach the **SolarWinds (read-only)** credential to **VM - outage watch** to enable maintenance checks.
+
 ## 1.135.2 — 2026-11-26
 
 **To set up:** run **Site portal - deploy**.
