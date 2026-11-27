@@ -45,9 +45,9 @@ TITLES = {
 
 def on_page(c, doc):
     title, sub = TITLES.get(doc.page, TITLES[2])
-    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s  \u00b7  %s" % (VERSION, DATE),
-               "Source: ACT Automated Triage Guide (ACT %s) and the service-watch pilot "
-               "guide. Details, setup steps and FAQ are in the full guide." % VERSION,
+    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s  \u00b7  site-automation %s  \u00b7  %s" % (VERSION, SA_VERSION, DATE),
+               "Source: ACT Automated Triage Guide (ACT %s, checked with site-automation %s) and the service-watch pilot "
+               "guide. Details, setup steps and FAQ are in the full guide." % (VERSION, SA_VERSION),
                "Page %d of 2" % doc.page)
 
 

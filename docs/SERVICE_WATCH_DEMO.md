@@ -50,7 +50,7 @@ Nothing is installed by hand on the hosts.
 1. The playbook finds the containers that should be running (root's and each user's) and checks
    each one with `podman container inspect`, as its owner. If all are running, the run ends here:
    ACT is not used and nothing is sent to GenAI.
-2. If one is down, the playbook finds Python 3.8 or newer on the host.
+2. If one is down, the playbook finds Python 3.6 or newer on the host. RHEL 8's default `python3` works.
 3. It copies the ACT script to `/opt/act/act` (only when the file changed).
 4. It runs ACT once, as root, with the GenAI key in ACT's environment (never on the command line,
    never printed). In approval mode the command looks like this:
@@ -111,8 +111,8 @@ This proves the host can reach GenAI and the key works, before AAP is involved.
 
 1. Copy the script from the repository to the host:
    `scp vendor/act/act you@stigman01:/tmp/act`
-2. Log in to the host and check Python: `python3 --version` must show 3.8 or newer.
-   (RHEL 8: `sudo dnf install -y python3.11`, then use `python3.11` below.)
+2. Log in to the host and check Python: `python3 --version` must show 3.6 or newer.
+   RHEL 8's default `python3` works. Nothing to install.
 3. Load the key without it showing on screen or in your history:
    `read -rs GENAI_KEY && export GENAI_KEY` (paste the key, press Enter).
 4. Ask ACT something harmless:
@@ -197,20 +197,12 @@ What it does, in order:
 1. Checks that every watched container is running (and their pages answer, if you gave URLs).
 2. All up: ends, green.
 3. One down: records it, runs ACT (Part 2), checks again.
-4. Approval mode: ACT's report is printed (task `Watch | ACT's report`), the record says
-   `awaiting_approval`, and the job **fails on purpose** with
-   `NEEDS APPROVAL ... Fix to approve (ACT): systemctl start stigman.service`. That failure is
-   what sends the workflow to the approval step. The fix is made right before it is shown: a
-   `podman start` ACT proposes for a container a unit runs becomes `systemctl start <unit>`;
-   a command for a user's container is written the one way that works (`runuser -u alice -- env
-   XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service`), whichever way ACT wrote it
-   (`sudo -u alice ...`, `systemctl --user -M alice@ ...`); a down container ACT's fix does not
-   cover gets the standard fix added; and when ACT proposes nothing (or cannot run: no key, no
-   network), the standard fix is proposed, labelled `the standard fix (ACT proposed nothing)`. The
-   commands are in dependency order. Example with a user's container down:
-   `NEEDS APPROVAL on stigman01: container web (user alice) is not running: its systemd user unit
-   web.service is failed ... Fix to approve (the standard fix (ACT proposed nothing)): runuser -u
-   alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service`.
+4. Approval mode:
+   - ACT's report is printed in task `Watch | ACT's report`.
+   - The incident record says `awaiting_approval`.
+   - The job fails on purpose with `NEEDS APPROVAL ... Fix to approve (ACT): <command>`. This sends the workflow to the approval step.
+   - Before showing the fix, the playbook makes it safe: a `podman start` for a systemd-managed container becomes `systemctl start <unit>`, and a rootless command uses `runuser -u <user> -- env XDG_RUNTIME_DIR=/run/user/<uid> ...`.
+   - Any down container ACT missed gets the standard fix in dependency order. If ACT proposes nothing (or cannot run), the standard fix is shown and labelled `the standard fix (ACT proposed nothing)`.
 5. Self-heal mode: if ACT's start worked and the re-check confirms it, the record says
    `self_healed` and the job ends **green**. Still down after ACT: the playbook runs the standard
    fix itself (`systemctl start <unit>` / `podman start <name>`) and checks again.
@@ -335,7 +327,7 @@ template: it runs the commands it is handed.
 
 ## Part 6. The workflow
 
-**AAP - set up job templates makes this workflow (1.107.0)**, with the gate between the check and the approval (*Workflow gate - has a plan*,
+**AAP - set up job templates makes this workflow**, with the gate between the check and the approval (*Workflow gate - has a plan*,
 `workflow_gate_var: service_watch_fix`: an error of the check never reaches the approval) and the `watch_mode` survey.
 Run it with Check, then without ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070)). The
 steps below are the manual way. The workflow's Inventory stays empty: each step uses its template's.
@@ -459,7 +451,7 @@ this job`, see Part 9.
 
 | What you see | What to do |
 |---|---|
-| `ACT needs Python 3.8+` | RHEL 8: `sudo dnf install -y python3.11` on the host |
+| `ACT needs Python 3.6+` (or `no python3`) | Install `python3` on the host (RHEL 8's default works) |
 | `ACT produced no result` or `status: error` | the host cannot reach GenAI or the key is wrong: repeat Part 2's hand test |
 | `ASYNC FAILED` on the ACT task | normal when ACT is waiting for approval; read the next tasks |
 | No approval step appears | the link from the check box must be **Run on fail** |

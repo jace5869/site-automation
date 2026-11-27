@@ -11,6 +11,13 @@
 - **Sidebar counts, narrow-screen selector, and dashboard promotion**: added item counts across section kinds in the rail and a narrow-screen jump `<select>` (`<= 900 px`) in `atlas`, `brief` and `ops`; included `report_dash.html.j2` and `report_dash.css.j2` in `atlas` and `brief` alongside `ops`.
 - **Docs and tests**: documented `report_servers_view` and the dashboard/sidebar updates in `docs/WEB_REPORTS.md`; added `tests/test_server_view.py` and updated `tests/test_report_dash.py`.
 
+## 1.136.3 — 2026-11-27
+
+- Fixed documentation links, versions and facts: `docs/pdf/README.md` PDF paths and AAP-Keycloak guide row, `guides/` path and EE requirements in `docs/START_HERE.md`, ACT `0.6.27` and Python `3.6+` across docs and guide scripts, broken `#the-act-analysis` anchor in `docs/SERVICENOW_WAR.md`, AAP 2.5+ / 2.7 wording, and removed AAP 2.4 notes.
+- Rewrote dense paragraphs into short numbered steps and tables across `docs/SITE_PORTAL.md`, `docs/SERVICENOW_WAR.md`, `docs/STIG_DRIFT.md`, `docs/NETWORK_CONFIG.md`, `docs/RUNBOOKS.md`, `docs/VM_OUTAGE_WATCH.md`, `docs/EMAIL_REPORTS.md`, `docs/SETUP_AAP.md`, `docs/SERVICE_WATCH_DEMO.md`, and `README.md`; removed inline release tags from steps.
+- Updated PDF guide build scripts (`docs/pdf/*.py`) to ACT `0.6.27`, site-automation `1.136.3`, Python `3.6+`, smaller monospace table text, and copy-from-repository reminders (PDFs not rebuilt here).
+- Template descriptions pass: verified all 235 entries in `aap/job_descriptions.yml` and `aap/job_templates.yml`; added commented `aap_templates_description_owner` and `aap_templates_description_contact` placeholders to `playbooks/group_vars/all.yml` and documented setting them there in `docs/SETUP_AAP.md` so all three AAP setup jobs write the Contact line.
+
 ## 1.136.2 — 2026-11-27
 
 - The STIG answer-file draft trial skips Podman/CNI namespace handles identified as `nsfs` in mountinfo and still refuses writable host storage under `/run/netns`.

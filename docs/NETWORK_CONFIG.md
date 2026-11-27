@@ -51,20 +51,13 @@ net_config_devices:
 
 ## The backup
 
-**git** (`net_config_store: git`, the default) - set `net_config_git_repo` to the repository
-(`ssh://git@git.example.mil/netops/configs.git`, or `https://...`), with the **Network config git repository**
-credential (`aap/credential_types/net_config_git.yml`): an SSH **deploy key with write access**, or for https a
-username and an access token. Each run clones `net_config_git_branch` (`main`; made when the repository is new
-and empty), compares each device with its file - `configs/<device>.cfg` (IOS) or `.xml` (PAN-OS) in
-`net_config_git_path` - and commits the new and changed ones in **one commit** ("Backup 2026-10-21 06:00 UTC: 2
-changed (rtr01..., fw01...)"), then pushes. Nothing changed: no commit. The git server's SSH host key is learned
-on the first connection (`net_config_git_host_key_checking: accept-new`), or give it
-(`net_config_git_known_hosts`, `net_config_git_host_key_checking: yes`). In an execution environment ssh's own
-`known_hosts` starts empty every job, so `accept-new` learns the key every time and checks nothing: give the key
-(`ssh-keyscan -t ed25519 git.example.mil`, compared with what the git server's admin says) with `yes` - the only
-real check. An https token goes to git as a header in a git config file in the job's work folder (mode 0600,
-deleted at the end), never on a command line or in the environment. `git log -p configs/rtr01.example.mil.cfg`
-is then every change of rtr01, with its date.
+**git** (`net_config_store: git`, the default):
+
+1. Set `net_config_git_repo` to your private repository (`ssh://git@git.corp.example.mil/netops/configs.git`, or `https://...`). Set `net_config_git_branch` if not `main` (created when the repository is empty).
+2. Attach the **Network config git repository** credential (`aap/credential_types/net_config_git.yml`): an SSH deploy key with write access, or a username and access token for HTTPS (written to a mode-0600 git config in the job's temp folder and deleted at the end).
+3. For SSH, set `net_config_git_known_hosts` (from `ssh-keyscan -t ed25519 git.corp.example.mil`, verified with the git server's admin) and `net_config_git_host_key_checking: yes`. In an execution environment `known_hosts` starts empty every job, so `accept-new` learns the key every time and checks nothing.
+4. Run the job. Each device is saved under `net_config_git_path` (`configs/<device>.cfg` for IOS, `.xml` for PAN-OS). One commit is made and pushed per run, only when something changed.
+5. View a device's history with `git log -p configs/rtr01.corp.example.mil.cfg`.
 
 **A file share** (`net_config_store: share`, or `both`) - `net_config_share_dir` on the AAP node (only kept if
 AAP exposes that path to jobs) or on `net_config_share_host` (a Linux host, or a Windows file server; its

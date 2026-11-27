@@ -1289,7 +1289,7 @@ at the end ([SOLARWINDS_REPORTS.md](SOLARWINDS_REPORTS.md)).
 the AAP server (or the execution node that runs the job). Not on the ESXi hosts, not on the VMs. So:
 
 - The **ESXi hosts need nothing**: no Python, no network path to ACT.
-- **Python** is in every execution environment (Ansible itself runs on it; ACT needs 3.8 or later).
+- **Python** is in every execution environment (Ansible itself runs on it; ACT needs 3.6 or later).
 - The **AAP node must reach the model's address over HTTPS** (port 443): `https://api.genai.mil` for
   GenAI.mil, or your `site_act_url`. The job checks this first and says plainly when it cannot:
   - *"cannot reach the model ... Open HTTPS ... or set a proxy"*: ask for a firewall rule from the

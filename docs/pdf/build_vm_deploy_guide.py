@@ -154,7 +154,7 @@ def settings_table(rows, ex):
         e = ex[name]
         label, color = LEVELS[e["level"]]
         data.append([
-            [Paragraph(md("`%s`" % name), cell), gap, Paragraph(md("Default: %s" % default), cell), gap,
+            [Paragraph(md("`%s`" % name, 7.6), cell), gap, Paragraph(md("Default: %s" % default, 7.6), cell), gap,
              Paragraph('<font name="Sans-Bold" size="7.8" color="%s">%s</font>' % (_hex(color), label), cell)],
             [Paragraph(md(doc), cell), gap,
              Paragraph("<b>Example:</b> " + md("`%s: %s`" % (name, e["example"]), 8.2), cell), gap,
@@ -225,7 +225,7 @@ def build():
             "step by step*, in order - each step says what you should see. A message to fix: *When "
             "something goes wrong*.",
             "Rendered from `docs/VM_DEPLOY_GUIDE.md` and `roles/vmware_vm/defaults/main.yml` in the "
-            "site-automation repository (version %s)."
+            "site-automation repository (version %s). Copy settings from the repository, not from this PDF."
             % g.SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()

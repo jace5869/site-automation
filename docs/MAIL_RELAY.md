@@ -284,7 +284,7 @@ Launch the **workflow**, not a job template: a job template has no approval. Wit
 survey's variables from a launch, so send exactly these names:
 
 ```
-POST https://<aap>/api/controller/v2/workflow_job_templates/<id>/launch/      (AAP 2.4: /api/v2/...)
+POST https://<aap>/api/controller/v2/workflow_job_templates/<id>/launch/
 {"extra_vars": {"mail_relay_ip": "198.51.100.3, 198.51.100.4", "mail_relay_comment": "Payroll app (svc-payroll)",
                 "mail_relay_requested_by": "jdoe"}}
 ```

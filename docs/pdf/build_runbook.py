@@ -124,6 +124,7 @@ story.append(callout("note", "About the menu labels", [
     "the AAP 2.5 documentation (the 2.7 pages were not retrievable when it was written), so an "
     "occasional label may be worded slightly differently in your 2.7 console. The objects and the "
     "order of the steps are the same.",
+    "Checked with site-automation %s. Copy settings and YAML from the repository, not from this PDF." % SA_VERSION,
 ]))
 story.append(NextPageTemplate("content"))
 story.append(PageBreak())
@@ -155,8 +156,7 @@ story.append(figure(diagram_network(), "Figure 2. Network connections to allow")
 # ============================================================================ Part A
 story += section("Part A. Prepare (once)", [H2("A1. Prepare the managed hosts")])
 story += steps([
-    "**Python 3.8 or newer** on every host. RHEL 9: the default `python3` is fine. RHEL 8: "
-    "`dnf install -y python3.11` (installs next to the default; the role finds it).",
+    "**Python 3.6 or newer** on every host. RHEL 8 and RHEL 9's default `python3` works. Nothing to install.",
     "**Network**: each host must reach the model endpoint over HTTPS. Test from one host, for "
     "example `curl -sI https://api.genai.mil`. (GenAI.mil only: Ask Sage is retired for now.)",
     "**Privilege**: the SSH user of your Machine credential needs `sudo`. The playbooks use "
@@ -550,7 +550,7 @@ story.append(H2("H3. Troubleshooting"))
 story.append(table(["symptom", "cause", "fix"], [
     ["`error`, \"No API key is configured\"", "ACT model key credential not attached",
      "attach it, with the GenAI key in it"],
-    ["\"ACT needs Python 3.8+\"", "RHEL 8 default Python", "`dnf install -y python3.11`"],
+    ["\"ACT needs Python 3.6+\"", "No Python 3.6+ on the host", "Install `python3` (RHEL 8 default works)"],
     ["`error`, network or TLS error", "host cannot reach the model endpoint",
      "open egress; set `GENAI_CA` in `act_triage_env` for an internal CA"],
     ["Podman checks see no containers", "containers are rootless",

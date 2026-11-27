@@ -212,7 +212,7 @@ def build():
             "one step at a time. Every setting you can change, with its default, is in the "
             "*Settings Reference* PDF.",
             "Rendered from `docs/HOW_IT_FITS_TOGETHER.md` and `playbooks/group_vars/` in the "
-            "site-automation repository (version %s)." % g.SA_VERSION]),
+            "site-automation repository (version %s). Copy settings from the repository, not from this PDF." % g.SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()
     toc.levelStyles = [ST["toc1"], ST["toc2"]]

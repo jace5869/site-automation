@@ -111,22 +111,14 @@ another organization; templates in more than one organization cannot be exported
 
 **Groups** shows the last AD read, enabled member counts and which grants use each group. **Ansible connection** shows the account, address, read time and inventory counts. **Activity** reads the portal audit log, including the person, time and settings changed.
 
-The named data volume holds `/data/access.json`. Each save replaces it atomically. A corrupt or unreadable file shows a banner and permits only the configured lists for their respective operations - the default run and approve lists in `all.yml` and an action's own `who` list (it comes from the actions file, not from `access.json`); no saved template group counts, and the open run default never applies. **Export as YAML (.txt)** downloads a versioned backup. **Import (.txt)** validates IDs, names, group lists and switches against the visible AAP inventory, then shows additions, edits and removals. **Apply import** replaces the saved settings after review. A concurrent save requires a fresh preview (every save counts, even one that puts a row back as it was).
-**One controller (1.134.0).** The file belongs to one AAP controller (the normalized `portal_aap_url`). Template
-numbers and names mean other templates on another controller, so when the portal is deployed for another controller the
-saved grants are **dropped** on the first read: the file is emptied for the new controller, every dropped row is listed in
-**Activity**, and the Admin page says how many were dropped and when. Save the templates again, or import a backup, to give
-access there. A reviewed import is bound to the controller it was previewed for. A saved grant applies only while AAP's
-template list - read every `portal_discover_seconds`, never older than 15 minutes from the START of that read - still has
-that template id under the saved name; a deleted or renamed template's grant is listed as **stale** and adds nobody (until
-the list has been read after a start, no saved grant applies). What a saved row restricts holds even then: **Ask once more
-before launch** still asks, and a placement helper with saved run groups or the switch is still checked. A damaged
-`access.json` keeps the rows last read whole for that (so does a file gone for a moment); damaged with none read whole since the
-portal started, nothing launches until an admin recovers it (import a backup). Every launch checks the template's live name. A run's job page and its approval count a
-saved grant only for the template key and name the run was started under; a run recorded with another controller is never
-shown or matched by its job number. A run recorded before 1.134.0 is shown as in 1.133.0 (its starter, the approvers, the
-action's run rule), with no saved grant. A file whose rows differ from its last
-recorded change is treated as damaged (banner, defaults only). The default groups stay in `all.yml`. Behind an existing reverse proxy, updating its generated nginx include enables imports larger than 64 KiB.
+**Access list (`/data/access.json`):**
+
+1. Saved grants live in `/data/access.json` on the named data volume. Each save replaces the file atomically.
+2. If the file is damaged or unreadable, a banner shows and only the default lists in `all.yml` (and an action's own `who` list) apply. The open run default never applies, and saved restrictions from the last good read still hold (if none was read since startup, nothing launches until recovered). A file whose rows differ from its last recorded change is treated as damaged.
+3. To back up: press **Export as YAML (.txt)**.
+4. To restore: press **Import (.txt)** to validate against AAP and preview changes, then press **Apply import**. A concurrent save requires a fresh preview. Behind an existing reverse proxy, update its generated nginx include to allow imports larger than 64 KiB.
+5. One controller per file (normalized `portal_aap_url`). If the portal moves to another controller, saved grants are dropped on the first read and listed in **Activity**; save them again or import a backup. A reviewed import is bound to the controller it was previewed for, and runs from another controller are never matched by job number.
+6. A saved grant counts only while AAP's template list (refreshed every `portal_discover_seconds`, max 15 minutes old) still matches both the template id and name; deleted or renamed templates are marked **stale** and add nobody. Every launch checks the live name, and saved restrictions (**Ask once more before launch**, placement helper switches) still apply. Pre-1.134.0 runs keep their starter, approver and action rules with no saved grant.
 
 A refused reader receives HTTP 403 with their card CN and the contact in `portal_access_contact` (default
 “your portal administrator”). The refusal page explains when AD groups are unavailable. The portal logs one
@@ -1033,20 +1025,29 @@ portal_area_rules:
   - {match: "Site - patch *", area: Patching}
 ```
 
-## The live Network map (1.85.0)
+## The live Network map
 
-With a "SolarWinds (read-only)" credential on the deploy job (`portal_netmap: auto`), the portal has a **Network map**
-page in its menu: the network map of [NETWORK_MAP.md](NETWORK_MAP.md), live, level by level. 1.95.0: the page shows the
-last map the server kept (on disk, also after a restart) at once - *as of HH:MM · refreshing* - and never waits for
-SolarWinds. Behind it, while someone has the page open, the server reads the status (2 or 3 queries) every
-`netmap_live_seconds` (60; 30 at least) and the whole map every `netmap_full_seconds` (1800; 300 at least) - one read
-every viewer shares, never one per viewer - and the page asks the server for it (`/portal/api/netmap`, with an ETag: an
-unchanged map costs nothing).
-A node that goes down pulses red, a link that drops stops and turns red, a toast says what changed, and *updated N s
-ago* says how fresh it is. A read that fails keeps the last map and says why; a whole read that fails is followed by
-a status read of the kept map. The kept map names SolarWinds' address and the netmap settings: after a deploy that
-changes the address it is not shown; one that changes a setting shows it, and the next read is whole. A netmap
-setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_roles`) stops the deploy, with the reason.
+The portal can show the [NETWORK_MAP.md](NETWORK_MAP.md) map live in its menu, level by level. Every viewer shares one server-side read.
+
+**Set it up:**
+
+1. Attach the **SolarWinds (read-only)** credential to **Site portal - deploy**.
+2. Keep `portal_netmap: auto` (default) and set your map settings in `all.yml`.
+3. Run **Site portal - deploy**. The page loads the last saved map at once (*as of HH:MM · refreshing*) and updates in the background.
+4. Watch live status: down nodes pulse red, dropped links turn red, toasts announce changes, and *updated N s ago* shows freshness.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_netmap` | `auto` | `auto` enables with the SolarWinds credential; `false` turns the page off |
+| `netmap_live_seconds` | `60` | Status poll interval in seconds while open (minimum `30`; 2-3 queries) |
+| `netmap_full_seconds` | `1800` | Full map refresh interval in seconds (minimum `300`) |
+
+**If a read or deploy fails:**
+
+- If a read fails, the portal keeps the last saved map and shows why. A failed full read falls back to a status read of the kept map.
+- If a deploy changes SolarWinds' address, the old saved map is not shown. Changing a map setting keeps it until the next full read.
+- An invalid `netmap_site_pattern`, `netmap_hierarchy`, or `netmap_roles` stops the deploy with the reason.
+- Clients poll `/portal/api/netmap` with an ETag, so an unchanged map transfers nothing.
 
 - The login is one podman secret on the server (`site-portal-swis`), as the AAP token: never in a file, the unit or
   the logs. The service's log says each read that fails (once) and when it reads again.
@@ -1426,18 +1427,16 @@ condition needs the full window again).
   answer), and when the portal itself does not answer a read it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
-- **One rule for every status on the page:** green only when the check ran, its source is there and current, and the
-  value is OK - every counter, gauge, light, list row, map dot and detail-card row follows it. It fails closed: a value
-  not read (a capacity, a CPU, an aggregate's size) is "?", never 0 % or OK; a source missing from the answer is not
-  current; while one vCenter has not returned its inventory, or one host or datastore lacks a value, nothing of VMware is
-  green (its criticals and warnings still show) - the same for Storage. A seeded fuzz test takes inputs away at random
-  and draws every style and card: nothing may be green.
-  A check that did not run (a cluster's SnapMirror or node collection not read whole) is grey "Not on the wall", never
-  "None broken". **Green only from an allow-list:** a host is OK only when vCenter says exactly "connected" and its
-  maintenance mode is known and overallStatus is green; a watched VM's heartbeat only when "green" (gray, yellow or missing: unknown); a datastore only when
-  "accessible" is true; a SnapMirror relationship only when healthy is true and its state is snapmirrored or in_sync with measured lag within the warning threshold; a
-  volume or LUN only when "online". Anything else is unknown: grey, the area not whole. On Lights the hosts are listed critical first, then warnings, then the rest;
-  none that is not OK is ever left out.
+- **One rule for every status on the page:** green only when the check ran, its source is present and current, and the value is OK.
+   - **Fail closed:** unread values show `?`, never `0 %` or OK. A missing source is not current. If one vCenter or ONTAP cluster lacks complete data, that whole area is never green (its criticals and warnings still show).
+   - **Not run stays grey:** an incomplete collection (such as SnapMirror or nodes) shows grey "Not on the wall", never "None broken". A seeded fuzz test drops random inputs across every style and card to verify nothing turns green.
+   - **Green allow-list:**
+      - Host: `connected`, maintenance mode known, and `overallStatus` is green.
+      - Watched VM heartbeat: `green` (gray, yellow or missing = unknown).
+      - Datastore: `accessible` is true.
+      - SnapMirror: `healthy` is true, state is `snapmirrored` or `in_sync`, and lag is within warning threshold.
+      - Volume or LUN: `online`.
+   - Anything else is unknown (grey). On Lights, hosts sort critical first, then warnings, then the rest; no non-OK item is hidden.
 - Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), Storage
   is not on the wall without live ONTAP, and a wall with nothing read yet shows "No current data".
 - A live ONTAP read is all or nothing: a collection with an error, without records or with a next page left over counts
@@ -1450,14 +1449,19 @@ condition needs the full window again).
   as **last known**: grey, "last seen 14:20", never current and never "cleared". (A deleted object stays so until the
   portal restarts.)
 
-**Set it up:** attach the site's existing **VMware vCenter** credential (the one the VMware jobs use) and, for live
-storage, the **NetApp ONTAP** credential to *Site portal - deploy* (both optional on that template), keep the
-read-only **Report database** credential on it (the storage path), and run the deploy. No new account is needed. The
-deploy copies each login to the portal server as a podman secret (`site-portal-vcenter`, `site-portal-ontap`) the same
-way as the LDAP bind account: never in a file, a unit, the page, the API or the logs; the service gets them as
-environment variables (`PORTAL_WALL_VCENTER_LOGIN`, `PORTAL_WALL_ONTAP_LOGIN`). The vCenters read are the credential's
-and `vmware_vcenters`; the clusters are `ontap_clusters`. `portal_wall_vcenter: false` / `portal_wall_ontap: false`
-keep a credential on the template but out of the portal; `portal_wall: false` turns the page and its tab off.
+**Set it up:**
+
+1. Attach your existing **VMware vCenter** credential to **Site portal - deploy** (optional, no new account needed).
+2. For live storage, also attach the **NetApp ONTAP** credential and set `ontap_clusters`.
+3. Keep the read-only **Report database** credential attached for the storage path details.
+4. Run **Site portal - deploy**. Logins are stored as podman secrets (`site-portal-vcenter`, `site-portal-ontap`) and passed as `PORTAL_WALL_VCENTER_LOGIN` / `PORTAL_WALL_ONTAP_LOGIN` — never written to files, units, pages, APIs or logs.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_wall` | `true` | `false` turns the wall page and tab off |
+| `portal_wall_vcenter` | `auto` | `false` keeps the vCenter credential out of the portal |
+| `portal_wall_ontap` | `auto` | `false` keeps the ONTAP credential out of the portal |
+| `vmware_vcenters` / `ontap_clusters` | `[]` | Extra vCenters and ONTAP clusters read live |
 
 ### What the wall watches and excludes
 

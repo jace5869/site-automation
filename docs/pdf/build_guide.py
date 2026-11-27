@@ -190,7 +190,9 @@ story.append(Paragraph(md(
     "server the way an engineer would: it runs real commands, reads the output, and explains the "
     "root cause. Version %s adds what is needed to run it safely from automation. This guide "
     "explains what it is, how its safety model works, how it plugs into Ansible Automation "
-    "Platform (AAP), how to set it up, and what to expect, with worked examples." % VERSION), ST["lead"]))
+    "Platform (AAP), how to set it up, and what to expect, with worked examples. "
+    "Checked with site-automation %s. Copy settings from the repository, not from this PDF."
+    % (VERSION, SA_VERSION)), ST["lead"]))
 story.append(space(6))
 cover_rows = [
     ["**For decision makers**", "Section 1 (at a glance), 3 (safety), 8 (rollout plan), 9 (FAQ), "
@@ -248,7 +250,7 @@ story.append(callout("good", "Three guardrails", [
 ]))
 story.append(H2("What it needs"))
 story.append(table(["", "Requirement"], [
-    ["Hosts", "Linux with systemd and Python 3.8+ (RHEL 8: install `python3.11` alongside the default). "
+    ["Hosts", "Linux with systemd and Python 3.6+ (RHEL 8's default `python3` works; nothing to install). "
               "ACT itself is one script the automation copies in: no agent, no daemon."],
     ["Network", "Each host must reach the model endpoint (GenAI.mil) over HTTPS."],
     ["AAP", "A project pointing at the ACT-Linux repository, one custom credential type for the model "
@@ -377,7 +379,7 @@ story += numbered([
     "The role runs **cheap checks**: failed systemd units, required units, filesystem usage, and the "
     "number of error-priority journal lines in the last hour.",
     "**If nothing tripped**, the host is reported healthy. No AI call is made.",
-    "Otherwise the role copies the `act` script to `/opt/act/act`, finds a Python 3.8+ interpreter, "
+    "Otherwise the role copies the `act` script to `/opt/act/act`, finds a Python 3.6+ interpreter, "
     "and runs ACT in diagnose-only mode (plus any pre-approved patterns) with a prompt built from "
     "the findings.",
     "ACT investigates, talking to the model endpoint over HTTPS, and writes its result file.",
@@ -514,8 +516,8 @@ story += bullets([
 
 # ============================================================================ 6. Setup
 story += section("6. Setup, step by step", [H2("6.1 Before you start"), table(["", "check"], [
-    ["1", "Hosts have Python 3.8+ (`python3 --version`). On RHEL 8: `dnf install -y python3.11`. The "
-          "role finds it automatically."],
+    ["1", "Hosts have Python 3.6+ (`python3 --version`). RHEL 8's default `python3` works. Nothing to "
+          "install."],
     ["2", "Hosts can reach the model endpoint over HTTPS. Test from one host before rolling out."],
     ["3", "You have a GenAI.mil API key for automation use."],
     ["4", "AAP execution environments with ansible-core 2.14 or newer."],
@@ -524,8 +526,8 @@ story += section("6. Setup, step by step", [H2("6.1 Before you start"), table(["
 story.append(H2("6.2 Step 1: Project"))
 story.append(P(
     "*Resources > Projects > Add*. Source control type **Git**. URL: the ACT-Linux repository (or an "
-    "internal mirror). Branch or tag: `v%s`. Sync it. (Menu names differ slightly between AAP 2.4 "
-    "and 2.5+; the objects are the same.)" % VERSION))
+    "internal mirror). Branch or tag: `v%s`. Sync it. (Menu names differ slightly between AAP 2.5, "
+    "2.6 and 2.7; the objects are the same.)" % VERSION))
 story.append(H2("6.3 Step 2: Credential type for the model key"))
 story.append(P("*Administration > Credential Types > Add* (AAP 2.5+: *Automation Execution > "
                "Infrastructure > Credential Types*). Name: **ACT model key**."))
@@ -762,7 +764,7 @@ faq = [
      "To read the full journal and to apply fixes, yes: the playbooks use `become`. A diagnose-only run "
      "can work as a user in the `systemd-journal` group, with less visibility."),
     ("Does it install anything on our hosts?",
-     "One script, copied to `/opt/act/act`, which needs Python 3.8+. No agent, no daemon, no open ports."),
+     "One script, copied to `/opt/act/act`, which needs Python 3.6+ (RHEL 8 default works). No agent, no daemon, no open ports."),
     ("What if the model endpoint is down?",
      "The run ends with status `error` (exit 3), AAP reports it, and nothing on the host changes."),
     ("Who controls what it may fix?",
@@ -784,13 +786,13 @@ for q, a in faq:
 # ============================================================================ 10. Status and limits
 story += section("10. Current status and limits", [callout("note", "Where things stand", [
     "ACT %s was released in %s for Linux and Windows. Its automated test suites pass on Linux "
-    "(Python 3.8, 3.11, 3.13) and Windows (PowerShell 5.1 and 7)." % (VERSION, DATE),
+    "(Python 3.6, 3.8, 3.11, 3.13) and Windows (PowerShell 5.1 and 7)." % (VERSION, DATE),
     "ACT runs against GenAI.mil from AAP: `:probe` on GenAI.mil and a site-automation analysis (the "
     "VMware capacity planning, section 4.4) found what 0.6.23 and 0.6.25 fix (below). The `act_triage` role and the approval workflow "
     "of this guide were run end to end against a simulated model endpoint; their first run against "
     "GenAI.mil is Phase 1 of the rollout.",
 ])])
-story.append(H2("What changed in 0.6.22 to 0.6.25"))
+story.append(H2("What changed in 0.6.22 to 0.6.27"))
 story += bullets([
     "**0.6.22:** the model's answer is streamed (`ACT_STREAM`; ESC cancels at once; a gateway that cannot "
     "stream falls back by itself); `ACT_TEMPERATURE=auto` (Gemini 3 and the reasoning models get their "
@@ -802,6 +804,8 @@ story += bullets([
     "**0.6.24:** `podman_app_health.yml` finds the containers by itself (`podman_apps: []`, the new "
     "default); found containers are diagnosed only.",
     "**0.6.25:** a reply cut off on its way back is asked for again instead of ending the run.",
+    "**0.6.26:** key pools added; key values removed from the result file, audit log and `--json` output.",
+    "**0.6.27:** Python 3.6 supported (RHEL 8's default `python3` works in ACT and `act_triage`).",
 ])
 story += bullets([
     "**Templates, not yet tested:** the Windows Ansible play, the Event-Driven Ansible rulebook, and the "
@@ -873,7 +877,7 @@ story += section("Appendix B. Troubleshooting", [table(["symptom", "cause", "fix
      "Fix the pattern; escape `( ) . +` where you mean them literally."],
     ["`error`, exit 3, network or TLS error", "Host cannot reach the endpoint, or an internal CA.",
      "Open egress; set `GENAI_CA` to the CA bundle path."],
-    ["Role fails \"ACT needs Python 3.8+\"", "RHEL 8 default Python 3.6.", "`dnf install python3.11`."],
+    ["Role fails \"ACT needs Python 3.6+\"", "No Python 3.6+ on the host.", "Install `python3` (RHEL 8 default works)."],
     ["Always `needs_approval` for a fix you expected to run",
      "The pattern does not match the model's exact command, or the command can never be pre-approved.",
      "Compare with `denied[].command`; check `pre_approvable` (quotes, pipes, `&&`, `rm -f` never "
