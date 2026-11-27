@@ -1,0 +1,72 @@
+TASK 2 - GUIDES PASS  (12 PDFs in guides/, read as text with pdftotext -layout; placeholders only)
+Format: guide (text line) - problem - suggested text. Worst first.
+Line numbers are lines of the extracted text, not page numbers.
+Most guide text comes from docs/*.md, so fixing the doc and rebuilding fixes the PDF.
+
+CHECKED
+- Stamp: 9 guides say "site-automation 1.136.2, November 2026" = the repo version. Good.
+- New 1.136.x features (portal looks, wall monitor, shares) are in the Ops and Settings guides. Good.
+- Setting names and defaults in the Settings Reference match roles/*/defaults/main.yml (1,720 rows). Good.
+
+1. ACT-AAP-2.7-Runbook (line 8 and every page header), ACT-Automated-Triage-Guide (cover),
+   ACT-5Ws-Leadership-Brief (60, 111), ACT-5Ws-Standalone-Brief (60, 111) - all say "ACT 0.6.25".
+   The repo carries 0.6.27 (vendor/act/VERSION, vendor/act-windows/VERSION).
+   Suggested text: "ACT 0.6.27", then rebuild. Source of these 4 is the ACT repo's docs.
+
+2. Site-Automation-Ops-Runbooks-Guide (line 16205) - "This release carries 0.6.25".
+   Suggested text: "This release carries 0.6.27." (source docs/ADDING_ACT.md:238).
+   Same guide, line 37363: "this project carries 0.6.22" -> remove "this project carries 0.6.22"
+   (source docs/APPROVED_COMMANDS.md:267).
+
+3. Wrong Python minimum. These say "Python 3.8 or newer / 3.8+". The code accepts 3.6
+   (vendor/act/ansible/roles/act_triage/defaults/main.yml:6, tasks/main.yml:93):
+   - ACT-Automated-Triage-Guide lines 80, 306, 492, 823
+   - ACT-AAP-2.7-Runbook lines 124, 608
+   - Service-Watch-Demo-AAP-ACT lines 152, 623
+   - ACT-5Ws-Standalone-Brief line 40 (check: this one is about ACT used alone, not through AAP)
+   Suggested text: "Python 3.6 or newer. RHEL 8's default python3 works. Nothing to install."
+   Remove "RHEL 8: dnf install -y python3.11" from the steps, or mark it "optional".
+
+4. Site-Automation-Ops-Runbooks-Guide (line 1229-1230) - "The Minimal execution environment is enough.
+   This repository needs no extra collections." Wrong for Windows, VMware, AD and network jobs.
+   Suggested text: "Minimal runs the Linux jobs. Other jobs need the EEs in the EE guide."
+
+5. Site-Automation-Ops-Runbooks-Guide (line 1333) - tells the reader PDFs are in "docs/pdf/".
+   They are in guides/. Suggested text: "PDFs: guides/".
+
+6. Site-Automation-Ops-Runbooks-Guide (line 33192) and Site-Automation-VM-Deploy-Guide (line 885) -
+   "(AAP 2.4: /api/v2/...)". AAP 2.4 is not supported (README: 2.5+). Delete the note.
+
+7. Long names are cut in the middle, so they cannot be read or copied. Examples:
+   Settings-Reference "aap_health_mem_headroom_warn_p" / "ct"; VM-Deploy-Guide lines 2426-2430
+   "vm_deploy_ass" / "ignment_group_by_table"; AAP-Keycloak-Guide 1388-1389
+   "gateway_nginx_clie" / "nt_max_body_size"; Ops guide about 120 more (act_triage_fin, check_stig_updat e_workflow).
+   About 450 in all. Suggested text: let the table break after "_", or use a smaller monospace font
+   in the name column. Until then add one line at the top of each guide: "Copy settings from the
+   repository, not from this PDF."
+
+8. Site-Automation-AAP-Keycloak-Guide (line 50) - "For: AAP 2.5 or later"; line 498 gives the 2.6 and
+   2.5 field differences only. Other guides use 2.7 menu names. Suggested text: add "Menu names are
+   from AAP 2.7" and say what 2.7 shows at line 498.
+
+9. Site-Automation-EE-Guide (cover) - "AAP 2.7, ansible-builder 3" but no site-automation version;
+   line 202-204 says built in October 2026 on a stand-in with ansible-core 2.16, while README says
+   2.16 and 2.21 were tested. Suggested text: add "site-automation 1.136.2" to the cover and make
+   the tested versions match README.
+
+10. ACT-AAP-2.7-Runbook, ACT-Automated-Triage-Guide, ACT-5Ws briefs - the cover shows an ACT version
+    but not the site-automation version they were checked against. Suggested text: add
+    "checked with site-automation 1.136.2".
+
+11. Site-Automation-Ops-Runbooks-Guide (40,160 lines) - the one guide for new admins is about 40,000
+    lines and "Step 9" alone is about 790 doc lines. Suggested text: split into (a) Setup steps 1-12
+    and (b) a reference part with one chapter per job. The short guide stays what a new admin reads first.
+
+12. Version tags inside steps in the Ops guide, for example "(1.67.0: 3.6, was 3.8 ...)" (line 16473)
+    and "(1.107.0)" in workflow steps. Suggested text: remove from steps; keep in CHANGELOG.
+
+NOT FOUND WRONG
+- Report-Share guide (322 lines): steps and names match docs/REPORT_SHARE.md.
+- Service-Watch demo: steps match docs/SERVICE_WATCH_DEMO.md except item 3 above.
+- Tokens such as approval_node_name, job_friendly_name, workflow_url, approval_status in the ACT
+  runbook are AAP notification variables, not site settings. They are correct.

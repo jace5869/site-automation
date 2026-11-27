@@ -1,0 +1,278 @@
+TASK 3 - AAP JOB TEMPLATE DESCRIPTIONS  (placeholders only)
+
+RESULT
+The catalog is aap/job_templates.yml (text source: aap/job_descriptions.yml).
+It holds 235 entries: 178 job templates, 53 workflows, 4 vendored ACT playbooks.
+Checked by script, every entry:
+- Does, Targets, Produces, Supports: all four present, none empty, none over 160 characters.
+- Names in job_templates.yml and job_descriptions.yml match 1 to 1 (178 of 178).
+- The portal's own templates and workflows (roles/site_portal_stack/files/workflows.yml) are all
+  covered by catalog entries (matched by playbook or name).
+- Contact: MISSING FOR ALL 235. By design it is not in the catalog. The job
+  "AAP - set up job templates" adds it from two site settings, and writes NO Contact line while both
+  are empty (roles/aap_templates/defaults/main.yml:52-53, both ""). The shipped default is empty,
+  so every description in AAP ends after Supports until the settings are filled.
+
+FIX (one change for all 235)
+Set these two settings, then run "AAP - set up job templates" and "AAP - set up portal actions"
+(and the workflow gates job) with aap_templates_describe_overwrite as needed:
+  aap_templates_description_owner: "SITEA operations team"
+  aap_templates_description_contact: "SITEA automation team, automation@corp.example.mil"
+Where: playbooks/group_vars/all.yml (one place, all three jobs read it), or the Variables of each
+job: aap/extra_vars/aap_templates_setup.yml, aap_portal_setup.yml, aap_workflow_gates.yml
+(commented lines 87-90, 130-133, 61-64).
+Suggested line each template gets:
+  ** Contact: Owner=SITEA operations team, Developer=SITEA automation team, automation@corp.example.mil
+Use the same wording on all, or one owner per area (Linux, Windows, VMware, Network, Portal)
+if different teams own them.
+
+WATCH OUT
+- 22 entries have made_by: AAP - set up portal actions. The PORTAL job writes their
+  description, so it needs the same two settings, or those 22 stay without Contact.
+- Descriptions already written by hand are not changed unless aap_templates_describe_overwrite: true.
+- Contact is the only part that is not in git. If the settings are lost, the next run writes
+  descriptions with no Contact line. Keep the settings in group_vars so they survive.
+
+TEMPLATES MISSING Contact (every entry; the other four parts are complete)
+Suggested text for each: the Contact line above.
+
+--- 178 job templates (aap/job_templates.yml) ---
+  Health check
+  Troubleshoot
+  Patch hosts
+  Patch hosts (dry run)
+  Linux - disk space report
+  Linux - software inventory
+  Linux - tmp cleanup
+  ACT - find and replace old copies
+  Apply approved ACT fix
+  Database health - MariaDB / MySQL
+  Service watch - check
+  Service watch - check (approval only)
+  Service watch - apply approved fix
+  POA&M status
+  STIG drift report
+  Windows STIG drift report
+  STIG recheck
+  Windows STIG recheck
+  STIG - full scan - Linux check
+  STIG - full scan - Windows check
+  STIG - drift scan - Linux check
+  STIG - drift scan - Windows check
+  STIG - answer file generator
+  STIG answer keys - try my answer file
+  ACT - triage finding
+  Disk - plan a clean up
+  Disk - clean up one mount
+  Service - restart
+  fapolicyd - allow this
+  Disk - space request
+  Site portal - open ticket
+  STIG - recheck one finding
+  Windows STIG - recheck one finding
+  STIG - fix one rule
+  STIG - fix one rule - apply
+  Evaluate-STIG - update
+  STIG Manager - update
+  Workflow gate - has a plan
+  STIG Manager - import checklists
+  STIG Manager - health
+  STIG Manager - availability
+  STIG Manager - deploy
+  STIG Manager - deploy (dry run)
+  Network performance report
+  Log analysis
+  fapolicyd denials
+  Linux - auditd tuning
+  Linux - auditd tuning - check
+  fapolicyd
+  fapolicyd - check
+  fapolicyd - approved
+  Security - Java4Shell check (Keycloak)
+  Windows connection test
+  Windows health check
+  Windows troubleshoot
+  Windows patch
+  Windows patch (dry run)
+  ACT for Windows - install
+  ACT for Windows - install (dry run)
+  Active Directory health report
+  Active Directory - account lockout
+  Certificate report
+  Certificate renewal - CSRs
+  Certificate install - check
+  Certificate install - approved
+  Certificate restore
+  Windows certificate report
+  Windows certificate renewal - CSRs
+  Windows certificate install - check
+  Windows certificate install - approved
+  Windows certificate restore
+  Trust store report
+  Windows - trust store report
+  Windows - local group members
+  Windows - schedule a restart
+  Windows - cancel a scheduled restart
+  VMware - trust store report
+  VMware - certificate report
+  VMware - certificate renewal
+  VMware - certificate request
+  VMware - certificate install - check
+  VMware - certificate install - approved
+  VMware - version report
+  VMware - hardware inventory
+  VMware - VM placement snapshot
+  Network device certificate report
+  Network device certificate renewal
+  PKI - <org> bundle check (name edited: placeholder)
+  VM - restart
+  VM - shut down
+  VM - snapshot
+  VM - delete snapshot
+  VM - notes
+  VM - change VLAN
+  VM - secure boot report
+  VM - datastore report
+  VM - inventory report
+  VM - VMware Tools inventory
+  VM - right-sizing report
+  VM - snapshot report
+  VM - snapshot cleanup
+  VM - refresh the pick lists
+  VM - delete picked snapshots
+  VM - restart picked VMs
+  VM - health report
+  VM - alarms report
+  VM - alarms ACT analysis
+  VM - ask a question
+  VMware ask - deploy
+  Site portal - deploy
+  VM - outage watch
+  VM - vCenter log analysis
+  VM - capacity planning
+  VM - VMs created report
+  ESXi - security settings
+  ESXi - network check
+  VM - deploy settings finder
+  VM - deploy placement change
+  VM - deploy from ServiceNow ticket
+  VM - pick up deploy tickets
+  Horizon - API test
+  Horizon - health report
+  Horizon - capacity report
+  Horizon - events report
+  Horizon - settings report
+  Horizon - sessions report
+  Horizon - logon times report
+  Horizon - FSLogix profiles report
+  Horizon - internal VMs report
+  Horizon - message users
+  Horizon - host maintenance plan
+  Horizon - host maintenance start
+  Horizon - host maintenance end
+  Horizon - desktops check
+  Horizon - fix the approved desktops
+  Horizon - golden image check
+  Horizon - image push plan
+  Horizon - push the approved image
+  Horizon - user help
+  Horizon - session cleanup
+  Network config backup
+  Network config load
+  Network config load (dry run)
+  Mail relay - whitelist plan
+  Mail relay - apply the approved whitelist change
+  Mail relay - unused addresses plan
+  Mail relay - format the whitelist
+  NetApp ONTAP health report
+  NetApp ONTAP hardware inventory
+  NetApp ONTAP - capacity trends
+  NetApp - refresh volume list
+  NetApp - expand a volume
+  Cisco UCS inventory
+  Network map
+  SolarWinds - snapshot
+  Tenable.sc - scan
+  ServiceNow - test ticket
+  ServiceNow - catalog test
+  ServiceNow tickets
+  ServiceNow health
+  ServiceNow health - nodes
+  ServiceNow - availability
+  ServiceNow - weekly activity report
+  ServiceNow - ticket insights
+  AAP - report email question
+  AAP - set execution environment
+  AAP - add workflow gates
+  AAP - set up portal actions
+  AAP - set up job templates
+  AAP - describe templates
+  AAP - move templates to another inventory
+  AAP - set up credentials
+  AAP - health check
+  AAP - template variables audit
+  Report website - copy
+  Outage AAR - Word document
+  SOP - Word document
+  AAP - incident document surveys
+
+--- 53 workflows ---
+  Auditd tuning, with an approval
+  Checklists imported into STIG Manager
+  ACT - triage finding
+  STIG - recheck one host
+  STIG - recheck and update STIG Manager
+  STIG - fix one rule
+  STIG - create the asset in STIG Manager
+  Disk - clean up (approved)
+  Service - restart
+  fapolicyd - allow this
+  Service watch - approve or self-heal
+  Horizon - fix broken desktops (workflow)
+  Horizon - image push (workflow)
+  Horizon - host maintenance (workflow)
+  VM snapshot cleanup (with approval)
+  VM - delete picked snapshots (workflow)
+  VM - restart picked VMs (workflow)
+  VM - outage watch (workflow)
+  VM - deploy from ServiceNow ticket (workflow)
+  VM - deploy from change (no touch)
+  Network config load (workflow)
+  Mail relay - add an IP
+  Mail relay - remove an IP
+  Mail relay - remove unused addresses
+  Daily health
+  Weekly compliance
+  Patch with checks
+  Patch with a dry run first
+  Fix with approval (ACT)
+  Security posture
+  Certificate watch
+  Certificate install, with an approval
+  Windows certificate install, with an approval
+  fapolicyd, with an approval
+  STIG - full scan and upload
+  STIG - drift scan and upload
+  STIG Manager updated, with an approval
+  STIG Manager updated, with an approval (Windows)
+  STIG drift
+  Network performance
+  Database watch: MariaDB and MySQL
+  Investigate a host
+  STIG Manager deploy with checks
+  Disk space and the tmp cleanup, with an approval
+  STIG Manager availability, with tickets
+  Windows daily health
+  Windows weekly compliance
+  Windows patch with a dry run first
+  ACT for Windows rollout
+  Windows: investigate a server
+  Everything, every morning
+  VMware daily checks: health, alarms, then ACT''s analysis
+  vCenter and ESXi certificate install, with an approval
+
+--- 4 vendored ACT playbooks (used when a site template runs one) ---
+  ACT - apply approved (vendored)
+  ACT - fapolicyd denials (vendored)
+  ACT - podman health (vendored)
+  ACT - triage (vendored)

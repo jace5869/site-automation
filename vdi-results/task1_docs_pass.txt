@@ -1,0 +1,196 @@
+TASK 1 - DOCS PASS  (repo at 1.136.2; placeholders only)
+Format: file:line - problem - suggested text. Worst first. 30 items.
+
+HOW CHECKED
+- Links: every relative link and #anchor in README.md and docs/*.md was tested by script.
+- Settings: 1,720 rows of docs/VARIABLES_REFERENCE.md were compared with roles/*/defaults/main.yml.
+  Result: every setting exists and every default matches. No fix needed there.
+- Other `setting_names` in docs that are in no file of the repo: about 35. All are examples, AAP
+  installer names or host names (db_servers, svc_aap_inventory, gateway_main_url ...). No fix needed.
+- Version numbers: compared with vendor/act/VERSION (0.6.27) and CHANGELOG.md (1.136.2).
+- Long paragraphs: found by script (7+ lines, 700+ characters, not a table, list or code).
+
+---------------------------------------------------------------------
+A. BROKEN OR WRONG (fix first)
+---------------------------------------------------------------------
+
+1. docs/pdf/README.md:10-20 - 11 links are broken. The PDFs are in guides/, not in docs/pdf/.
+   Suggested text: [Site-Automation-Ops-Runbooks-Guide.pdf](../../guides/Site-Automation-Ops-Runbooks-Guide.pdf)
+   (same change on every row 10-20). Also: guides/ holds 12 PDFs, the table has 11 rows.
+   Add a row for Site-Automation-AAP-Keycloak-Guide.pdf (built from docs/AAP_KEYCLOAK.md).
+
+2. docs/START_HERE.md:138 - "PDFs in `docs/pdf/`" is wrong. That folder holds only build scripts.
+   Suggested text: "PDFs: `guides/`".
+
+3. docs/START_HERE.md:75 - says "The Minimal execution environment is enough. This repository needs
+   no extra collections." README.md:31-33 says Windows, VMware, AD and network jobs need the EEs in ee/.
+   Suggested text: "Minimal runs the Linux jobs. Windows, VMware, AD and network jobs need the
+   EEs in ee/ (see EXECUTION_ENVIRONMENT.md)."
+
+4. docs/ADDING_ACT.md:238 - "This release carries 0.6.25". vendor/act/VERSION says 0.6.27, and
+   ADDING_ACT.md:443 itself says 0.6.27.
+   Suggested text: "This release carries 0.6.27." Move the 0.6.24/0.6.25 notes to CHANGELOG.md.
+
+5. docs/APPROVED_COMMANDS.md:267 - "this project carries 0.6.22" is old (now 0.6.27).
+   Suggested text: "0.6.21 and later do not." Drop the "carries" part so it cannot go old again.
+
+6. docs/SERVICE_WATCH_DEMO.md:53 and :462 - "Python 3.8 or newer" / "ACT needs Python 3.8+".
+   The code needs 3.6 (vendor/act/ansible/roles/act_triage/defaults/main.yml:6 and
+   tasks/main.yml:93; ADDING_ACT.md:451 says 3.6).
+   Suggested text: "ACT needs Python 3.6 or newer. RHEL 8's default python3 works."
+   Table row at :462: change the message to "ACT needs Python 3.6+" and the fix to
+   "install python3 on the host (RHEL 8 default is enough)". Check the exact message in the role first.
+
+7. docs/SERVICENOW_WAR.md:169 - anchor VMWARE.md#act-analysis does not exist.
+   Suggested text: link to VMWARE.md#the-act-analysis (heading at VMWARE.md:1276).
+
+8. docs/MAIL_RELAY.md:287 and docs/VM_DEPLOY_GUIDE.md:581 - "(AAP 2.4: /api/v2/...)". README says
+   AAP 2.5+. Suggested text: delete the AAP 2.4 note.
+
+9. README.md:35 - "Tested with ansible-core 2.16 and 2.21". EXECUTION_ENVIRONMENT.md:45-48 says
+   2.16 (and an earlier build on 2.20); STIG_ANSWER_KEYS.md:889 talks about 2.19.
+   Suggested text: list only the versions a test really ran on, one sentence, same wording in
+   README, VARIABLES.md:213 and EXECUTION_ENVIRONMENT.md. (Owner to confirm the true list.)
+
+10. README.md:3 / docs/SETUP_AAP.md:4 / docs/AAP_KEYCLOAK.md:385 and :1228 - AAP versions differ:
+    README "2.5+", SETUP_AAP "menus from 2.7", AAP_KEYCLOAK "2.5 and 2.6".
+    Suggested text, all places: "Works on AAP 2.5 and later. Menu names are from 2.7."
+
+11. docs/START_HERE.md:8 - "jobs that check Linux servers and help troubleshoot them" is old.
+    README lists Linux, Windows, VMware, AD, storage, network and more.
+    Suggested text: "This repository holds runbooks for servers and infrastructure: Linux, Windows,
+    VMware, AD, storage and network. You run them from AAP."
+
+---------------------------------------------------------------------
+B. WALLS OF TEXT -> SHORT NUMBERED STEPS
+---------------------------------------------------------------------
+
+12. docs/SITE_PORTAL.md:114-129 - one 2,600-character block about access.json (16 lines).
+    Suggested text:
+      Access list (access.json)
+      1. The list is saved in /data/access.json. Each save replaces the file in one step.
+      2. If the file is damaged, a banner shows. Only the default lists in all.yml apply.
+      3. To back up: press "Export as YAML (.txt)".
+      4. To restore: press "Import (.txt)", read the preview, press "Apply import".
+      5. If the portal is moved to another controller, saved grants are dropped on the first read.
+         Save them again or import a backup.
+      6. A grant counts only while the template id and name match AAP. Others are marked "stale".
+
+13. docs/SERVICENOW_WAR.md:155-169 - 1,800 characters about the ACT answer, one paragraph.
+    Suggested text:
+      With servicenow_war_act: true and an ACT model key credential on the template:
+      1. The job sends the week's lists to ACT. ACT runs no command.
+      2. ACT writes accomplishments (3-8 bullets), work in progress, what needs attention, and a short note for a manager.
+      3. Names are masked before the model sees them and put back after.
+      4. If ACT does not answer, the report says so. The tables are still there.
+      5. An answer that cannot be read is shown as it came, cut at 40 lines.
+
+14. docs/STIG_DRIFT.md:518-531 - 1,500 characters. Suggested text:
+      The STIG recheck is report only.
+      - It never fails the job for open rules. A host it could not recheck is a warning.
+      - Tiles: Open findings, Status updates, Manual review, Held back, Not rechecked.
+      - Colour: red = a CAT I rule is open; amber = another rule is open; blue = only updates.
+      - The checklist stays on the host (path in check_stig_dir). Check your import options before you import it.
+      - Workflow 37 writes to STIG Manager after an approval. This job never does.
+
+15. docs/NETWORK_CONFIG.md:54-67 - 14-line paragraph for the git store. Suggested text:
+      1. Set net_config_git_repo to your repository (ssh://git@git.corp.example.mil/netops/configs.git).
+      2. Attach the "Network config git repository" credential (deploy key with write access, or user + token).
+      3. Set net_config_git_known_hosts and net_config_git_host_key_checking: yes.
+         (accept-new learns the key on every job and checks nothing.)
+      4. Run the job. One commit is made per run, only when something changed.
+      5. See a device's history: git log -p configs/rtr01.cfg
+
+16. docs/RUNBOOKS.md:377-391 - database login: 14 lines mixing cause, message and fix. Suggested text:
+      1. No credential: the check logs in as root over the local socket.
+      2. A container database usually has a root password, so the check says "Access denied".
+      3. Each container has its own root password. One credential cannot fit all.
+      4. Fix: ask the DBA for a monitoring account with no data access, the same password in every
+         container. Or set check_mariadb_containers to the ones the credential may use.
+      5. Attach the "MariaDB monitor" credential to the Health check template.
+
+17. docs/VM_OUTAGE_WATCH.md:147-160 - 14 lines about incidents. Suggested text:
+      1. Set the ServiceNow tickets step to run "Always" (not "On failure"). Clean runs must reach it.
+      2. One incident is opened per problem. A work note is added while it lasts.
+      3. When a clean run no longer finds it, it is noted (or resolved with servicenow_resolve_cleared: true).
+      4. A lost datastore or a down host is ONE incident that lists every VM it affects.
+      5. To keep one-signal warnings out of ServiceNow: servicenow_min_severity: critical.
+
+18. docs/EMAIL_REPORTS.md:256-268 - history strip, 13 lines. Suggested text:
+      1. Attach a credential of type "Red Hat Ansible Automation Platform" to the template.
+      2. Give its user "Organization Auditor" on your organization
+         (Access Management > Users > the user > Roles > Assign roles > Organization).
+      3. Without it the email still goes out, without the strip, and the job says why.
+      4. To turn the strip off: report_history: false.
+
+19. docs/RUNBOOKS.md:968-980 and docs/SITE_PORTAL.md:1038-1049, :1430-1440, :1453-1460 - 9-13 line
+    blocks mixing settings, timings and error cases. Suggested text: one "Set it up" numbered list
+    (3-6 steps), then a short table "Setting | Default | What it does", then "If it fails" as bullets.
+
+20. docs/SETUP_AAP.md:672-700 - "Create the job templates from the catalog": step 2 is one 20-line
+    item with version tags inside ("1.123.0: ontap_write ..."). Suggested text: split step 2 into
+    2a inventory, 2b credentials (a small table: kind | your credential name), 2c Windows inventory.
+    Remove the "1.123.0" tag; the CHANGELOG has it.
+
+21. docs/SETUP_AAP.md:249-1035 - "Step 9" is about 790 lines. START_HERE and README send people to "step 9".
+    Suggested text: keep Step 9 as a short table (template | playbook | credentials | link) and move
+    each how-to into its own doc (many already exist). New readers get lost here.
+
+22. docs/SETUP_AAP.md:469-480 - 12-line paragraph for the certificate install. Suggested text:
+      1. Make "Certificate install - check" (cert_install_check.yml). Credentials: Linux ssh (sudo), ServiceNow API.
+      2. Put it in a workflow with an Approval step (Run on fail).
+      3. Make "Certificate install - approved" (cert_install_approved.yml). Same credentials and inventory. No Limit, no Prompt for Variables.
+      4. Windows: the same with the win_cert_* playbooks and the Windows machine credential.
+      5. Details: CERT_INSTALL.md.
+
+23. docs/SERVICE_WATCH_DEMO.md:196-215 - item 4 is 13 lines. Suggested text:
+      4. Approval mode:
+         a. ACT's report is printed.
+         b. The record says awaiting_approval.
+         c. The job fails on purpose with "NEEDS APPROVAL ... Fix to approve". This sends the workflow to the approval step.
+         d. The fix shown is made safe first (a "podman start" becomes "systemctl start <unit>").
+         e. If ACT proposes nothing, the standard fix is shown and labelled so.
+
+24. README.md:121, 130, 139, 140, 144, 151 - table cells of 700-1,450 characters (ticket insights, AD,
+    VMware, inventories, site portal, Horizon). Suggested text: one cell = one sentence (max 200
+    characters) + a link. Put the detail in the linked doc. Same for the 4 bold rows 90-110.
+
+25. README.md:349-351 - "Job template STIG Manager - deploy ..." sits inside "Using it in AAP"
+    and before "The STIG Manager deployment". Suggested text: move it to be the first line of
+    "The STIG Manager deployment" (line 353).
+
+---------------------------------------------------------------------
+C. STEPS THAT ARE UNCLEAR
+---------------------------------------------------------------------
+
+26. docs/START_HERE.md:142-152 - "steps 1 to 8", "step 9", "step 10" point at SETUP_AAP.md, but
+    "Workflows" and "Schedule" (steps 11, 12) are named without numbers.
+    Suggested text: "1. SETUP_AAP steps 1-8. 2. Step 9. 3. Step 10. 4. Step 11 (workflows and schedules). 5. Step 12 (who can do what). 6. Later: ACT."
+
+27. docs/ADDING_ACT.md:451 and similar - release tags inside instructions
+    "(1.67.0: 3.6, was 3.8 - ACT 0.6.26 passes its tests ...)". Also HORIZON.md:163/279/497,
+    CERT_INSTALL.md:277, DISK_SPACE.md:84, DRY_RUNS.md:23 ("(1.107.0)"), SETUP_AAP.md:675.
+    Suggested text: remove release tags from steps; keep them in CHANGELOG.md only.
+
+28. docs/SITE_PORTAL.md:1038 and VARIABLES_REFERENCE.md:2165 - first sentences are 60+ words.
+    Suggested text: one fact per sentence, max 20 words.
+
+---------------------------------------------------------------------
+D. CHANGELOG.md (top 5 entries)
+---------------------------------------------------------------------
+
+29. CHANGELOG.md:10-14 (1.136.1) - "Replace any `portal_look` set to `chroma`, `press` or `tower` before
+    redeploying" does not say with what.
+    Suggested text: "If portal_look is chroma, press or tower, change it to metro-atlas (or any look
+    in SITE_PORTAL.md), then run Site portal - deploy." Also the entry has no "To set up" line
+    (1.136.0 and 1.135.2 do).
+
+30. CHANGELOG.md:17-69 (1.136.0) - one entry is 52 lines. "To set up" is a paragraph (lines 21-25)
+    and "Known limits" lists 17 edge cases (lines 49-68). Line 69 has no blank line before
+    "## 1.135.3". Suggested text:
+      To set up:
+      1. Run "Site portal - deploy" with the "SolarWinds (read-only)" credential attached.
+      2. Set portal_wall_monitor: true.
+      3. Optional: portal_wall_monitor_group_by, portal_wall_monitor_groups, portal_wall_monitor_vm_match, portal_wall_monitor_seconds (60).
+    Move "Known limits" to docs/SITE_PORTAL.md. Keep 4 bullets here. Also :3-8 (1.136.2):
+    turn "Attach the SolarWinds (read-only) credential to VM - outage watch" into a "To set up:" step.
