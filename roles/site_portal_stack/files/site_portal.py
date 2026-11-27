@@ -136,7 +136,10 @@ SKINS = (
     ("atlas", "Contour Atlas", "Rounded Atlas surfaces with plain status tiles and counts"),
 )
 SKIN_KEYS = tuple(k for k, _, _ in SKINS)
-REMOVED_SKINS = ("chroma", "press", "tower")
+# The monitor-off wall retains the release picker and the assets linked by its versioned URLs.
+WALL_SKINS = (("strata", "Strata Console"), ("metro", "Metro Live Tiles"), ("relay", "Relay Panel"),
+              ("chroma", "Chroma Perspex"), ("press", "Signal Press"), ("atlas", "Contour Atlas"), ("tower", "Timing Tower"))
+WALL_SHELL_ASSETS = {"portal-looks.css": "wall-looks.css", "portal-theme.js": "wall-theme.js"}
 ACTIONS_OPS_MODES = ("line", "off", "full")
 CONTOUR_SVG = (
     '<div class="appbar-contour" aria-hidden="true"><svg viewBox="0 0 520 96" preserveAspectRatio="xMaxYMid slice">'
@@ -598,6 +601,7 @@ class Config(object):
         self.look = self.look if self.look in LOOKS else "atlas"
         # 1.136.1: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
         self.skin = str(g("PORTAL_LOOK", DEFAULT_SKIN)).strip().lower()
+        self.wall_skin = self.skin if self.skin in dict(WALL_SKINS) else "strata"
         self.skin = self.skin if self.skin in SKIN_KEYS else DEFAULT_SKIN
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
@@ -4766,10 +4770,6 @@ def static_version(name):
     return _STATIC_V[name]
 
 
-def looks_version():
-    return static_version("portal-looks.css")
-
-
 def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_end=""):
     """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
     scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style).
@@ -4794,9 +4794,17 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
                   % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
-    skin = getattr(cfg, "skin", DEFAULT_SKIN)
+    classic_wall = page == "wall" and not cfg.wall_fleet
+    if classic_wall:
+        skin = cfg.wall_skin
+        options = [(k, label, "") for k, label in WALL_SKINS]
+    else:
+        skin = getattr(cfg, "skin", DEFAULT_SKIN)
+        options = SKINS
+    assets = WALL_SHELL_ASSETS if classic_wall else {}
     looks = ('<label class="lookpick" title="The portal\'s look - kept in this browser"><span>Look</span><select id="look" aria-label="Look">%s</select></label>'
-             % "".join('<option value="%s" title="%s"%s>%s</option>' % (k, esc(cue), " selected" if k == skin else "", esc(t)) for k, t, cue in SKINS))
+             % "".join('<option value="%s"%s%s>%s</option>' % (k, ' title="%s"' % esc(cue) if cue else "",
+                                                                " selected" if k == skin else "", esc(t)) for k, t, cue in options))
     # 1.115.0: the Christmas theme, when portal_theme_season has it on today (site_festive: the report website's decor and files)
     until = site_festive.season_until(cfg.season, datetime.datetime.now(cfg.tz or datetime.timezone.utc).date())
     fz = (lambda part: part) if until else (lambda part: "")
@@ -4806,7 +4814,7 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
     bar = ('<div class="appbar">%s<div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
            '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s%s'
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s%s</div>'
-           % (CONTOUR_SVG, cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
+           % ("" if classic_wall else CONTOUR_SVG, cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
               fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), looks, seg,
               fz(until and site_festive.lights(st, "sleigh" in site_festive.parts_of(st, cfg.season_parts))), bar_end))
@@ -4819,7 +4827,9 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
             '<body data-page="%s">%s%s%s%s<main>%s</main>%s</body></html>'
             % (cfg.look, skin, skin, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
                site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
-               cfg.path, cfg.path, looks_version(), cfg.path, cfg.path, static_version("portal-theme.js"), cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
+               cfg.path, cfg.path, static_version(assets.get("portal-looks.css", "portal-looks.css")), cfg.path,
+               cfg.path, static_version(assets.get("portal-theme.js", "portal-theme.js")), cfg.path, head, festive_head, esc(page),
+               CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -5049,11 +5059,11 @@ def home_page(cfg, portal, cn, query=None):
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
             % (strip + ops, why_panel(cfg, portal) if cfg.label and cfg.viewer_133(cn) else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
     return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home",
-                 head=('<script src="%sstatic/portal-looks.js?v=%s" defer></script>' % (cfg.path, static_version("portal-looks.js"))) if ops else "")
+                 head=('<script src="%sstatic/portal-ops.js?v=%s" defer></script>' % (cfg.path, static_version("portal-ops.js"))) if ops else "")
 
 
 def ops_section(cfg):
-    """1.136.1: the Actions page's Ops center section - drawn by static/portal-looks.js from /api/wall/summary in the
+    """1.136.1: the Actions page's Ops center section - drawn by static/portal-ops.js from /api/wall/summary in the
     viewer's look. portal_actions_ops_center selects line (one clickable strip, default), full (status tiles and limit
     charts; plain status tiles for Atlas looks) or off (omitted). Only with the wall on; hidden until its first answer."""
     mode = getattr(cfg, "actions_ops_center", "line")
@@ -7218,7 +7228,7 @@ def netapp_page(cfg, cn, statics, token=""):
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
 FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
-LOOKS_STATIC = ("portal-looks.js",)
+LOOKS_STATIC = ("portal-looks.js", "portal-ops.js")
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
 
 
@@ -7725,6 +7735,9 @@ def make_handler(cfg, portal, static_dir, wall=None):
             if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js",
                         "/static/portal-looks.css"):
                 name = path.rsplit("/", 1)[1]
+                wall_asset = WALL_SHELL_ASSETS.get(name)
+                if wall_asset and u.query == "v=" + static_version(wall_asset):
+                    name = wall_asset
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(name)[1]])
             if path in ("/static/festive.css", "/static/festive.js"):      # 1.115.0: the Christmas theme's files (site_festive.py)

@@ -66,8 +66,9 @@ class Fit(unittest.TestCase):
                     self.assertTrue(r["motion"]["icon"] in ("", "spin"), r["page"])
 
     def test_every_page_fits_in_every_portal_look(self):
-        """1.135.0: the seven looks (portal_look) over the palette: every page, light and dark, 1280 and 800 px - nothing overflows"""
-        for i, skin in enumerate(("strata", "metro", "relay", "chroma", "press", "atlas", "tower")):
+        """1.135.0: the portal looks (portal_look) over the palette: every page, light and dark, 1280 and 800 px - nothing overflows"""
+        for i, skin in enumerate(("metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite",
+                                  "strata", "metro", "relay", "atlas")):
             rows = self.run_look("atlas", PORT + 10 + i, skin=skin)
             self.assertEqual(len(rows), 21 * 2 * 2, skin)
             for r in rows:

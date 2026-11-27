@@ -35,11 +35,13 @@ class Settings(unittest.TestCase):
                                "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"}, **env))
 
     def test_portal_look(self):
-        self.assertEqual(self.cfg().skin, "strata")                                               # the default
-        for v, want in (("metro", "metro"), (" Relay ", "relay"), ("PRESS", "press"), ("tower", "tower"), ("violet", "strata"),
-                        ("bento", "strata"), ("", "strata"), ('x"><b>', "strata")):
+        self.assertEqual(self.cfg().skin, "metro-atlas")                                               # the default
+        for v, want in (("metro", "metro"), (" Relay ", "relay"), ("PRESS", "metro-atlas"), ("tower", "metro-atlas"),
+                        ("chroma", "metro-atlas"), ("violet", "metro-atlas"),
+                        ("bento", "metro-atlas"), ("", "metro-atlas"), ('x"><b>', "metro-atlas")):
             self.assertEqual(self.cfg(PORTAL_LOOK=v).skin, want, v)
-        self.assertEqual(sp.SKIN_KEYS, ("strata", "metro", "relay", "chroma", "press", "atlas", "tower"))
+        self.assertEqual(sp.SKIN_KEYS, ("metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite",
+                                        "strata", "metro", "relay", "atlas"))
 
     def test_portal_wall_style(self):
         self.assertEqual(self.cfg().wall_style, "cockpit")                                        # unchanged for current users
@@ -50,8 +52,8 @@ class Settings(unittest.TestCase):
         page = sp.shell(self.cfg(PORTAL_LOOK="relay"), "T", "<p>x</p>")
         self.assertIn('data-skin="relay" data-skin-default="relay"', page)
         self.assertIn('<select id="look" aria-label="Look">', page)
-        self.assertEqual(re.findall(r'<option value="([a-z]+)"', page), list(sp.SKIN_KEYS))
-        self.assertIn('<option value="relay" selected>Relay Panel</option>', page)
+        self.assertEqual(re.findall(r'<option value="([a-z-]+)"', page), list(sp.SKIN_KEYS))
+        self.assertRegex(page, r'<option value="relay" title="[^"]+" selected>Relay Panel</option>')
         self.assertRegex(page, r'<link rel="stylesheet" href="/portal/static/portal-looks\.css\?v=[0-9a-f]{10}">')
         self.assertNotIn("style=", page)
         self.assertNotRegex(page, r"<script>(?!</script>)")                                        # no inline script
@@ -76,15 +78,15 @@ class Settings(unittest.TestCase):
 
     def test_the_deploy_checks_both_settings(self):
         y = read(ROLE, "tasks", "main.yml")
-        m = re.search(r"in \[('strata'.*?)\]\n", y)
-        self.assertEqual(tuple(re.findall(r"'([a-z]+)'", m.group(1))), sp.SKIN_KEYS)
+        m = re.search(r"portal_look \| default\('metro-atlas'\) \| string \| lower \| trim\) in \[(.*?)\]", y)
+        self.assertEqual(tuple(re.findall(r"'([a-z-]+)'", m.group(1))), sp.SKIN_KEYS)
         m = re.search(r"portal_wall_style \| default\('cockpit'\) \| string \| lower \| trim\) in \[(.*?)\]", y)
         self.assertEqual(tuple(re.findall(r"'([a-z]+)'", m.group(1))), sp.WALL_STYLES)
         self.assertIn('PORTAL_LOOK: "{{ portal_look', y)
         self.assertIn('PORTAL_WALL_STYLE: "{{ portal_wall_style', y)
         self.assertIn("src: static/fonts/", y)
         d = read(ROLE, "defaults", "main.yml")
-        self.assertIn("\nportal_look: strata\n", d)
+        self.assertIn("\nportal_look: metro-atlas\n", d)
         self.assertIn("\nportal_wall_style: cockpit\n", d)
         for n in ("wall-styles.js", "wall-styles.css", "wall-share.js", "portal-looks.css", "portal-looks.js"):
             self.assertIn("{src: static/%s, dest: static/%s}" % (n, n), y)
@@ -151,8 +153,8 @@ class LookFiles(unittest.TestCase):
             self.assertNotIn("eval(", js, n)
 
     def test_cues_say_what_things_do(self):
-        js = read(STATIC, "portal-looks.js") + read(STATIC, "wall-styles.js")
-        for cue in ("click an area for its wall", "tiles turn over every", "spotlight steps every", "ranked worst first", "Open on the wall",
+        js = read(STATIC, "portal-ops.js") + read(STATIC, "wall-styles.js")
+        for cue in ("click an area for its wall", "tiles turn over every", "spotlight steps every", "Open on the wall",
                     "Click: on stage", "problems first", "Tiles turn over every", "Share to Teams", "click a row for its detail card", "live · read "):
             self.assertIn(cue, js, cue)
         share = read(STATIC, "wall-share.js")
