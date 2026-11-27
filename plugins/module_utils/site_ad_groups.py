@@ -12,6 +12,7 @@ import contextlib
 import re
 import threading
 from threading import local as _thread_local
+from urllib.parse import unquote, urlsplit
 import uuid
 import time
 
@@ -105,6 +106,7 @@ def edipi(cn):
 
 # 1.133.0: LAST.FIRST then up to three more name parts (middle, a generation such as JR or III) and the 10-digit EDIPI
 CARD_CN = re.compile(r"[A-Za-z][A-Za-z' -]*\.[A-Za-z][A-Za-z' -]*(?:\.[A-Za-z][A-Za-z' -]*){0,3}\.[0-9]{10}", re.ASCII)
+BAD_CARD = "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup"
 
 
 def card_cn(cn):
@@ -174,6 +176,21 @@ def _guid(v):
         return uuid.UUID(bytes_le=bytes(v)).hex if len(v) == 16 else ""
     t = str(v or "").strip().strip("{}").replace("-", "").lower()
     return t if re.fullmatch(r"[0-9a-f]{32}", t, re.ASCII) else ""
+
+
+def _partition_reference(entry, partitions):
+    urls = entry.get("uri")
+    if not isinstance(urls, (list, tuple)) or not urls:
+        return False
+    for url in urls:
+        if not isinstance(url, str) or not url.lower().startswith("ldap://") or any(ch.isspace() for ch in url):
+            return False
+        target = urlsplit(url)
+        if target.fragment or not target.path.startswith("/"):
+            return False
+        if unquote(target.path[1:], errors="strict").casefold() not in partitions:
+            return False
+    return True
 
 
 def is_dn(name):
@@ -285,7 +302,7 @@ class Reader(object):
         pw = str(self.o.get("password") or "")
         return t.replace(pw, "***") if len(pw) >= 2 else t
 
-    def search(self, c, base, flt, attrs, scope="sub", missing_ok=False, strict=False):
+    def search(self, c, base, flt, attrs, scope="sub", missing_ok=False, strict=False, partitions=()):
         """Every page; any result but success (and noSuchObject where missing_ok: a group DN that is not there) fails the
         whole read - never a part of the members taken for all of them. strict (a card's lookup, Codex 1.133.0 #6): a page
         without the paging control fails too - only the last page's empty cookie says the search is complete."""
@@ -297,6 +314,8 @@ class Reader(object):
                 kw["controls"] = [("1.2.840.113556.1.4.1339", True, None)]  # LDAP_SERVER_DOMAIN_SCOPE_OID
             c.search(base, flt, sc, attributes=attrs, **kw)
             page = [e for e in (c.response or []) if e.get("type") == "searchResEntry"]
+            if strict and any(not _partition_reference(e, partitions) for e in (c.response or []) if e.get("type") == "searchResRef"):
+                raise LookupError("the search returned a reference it does not follow - not complete")
             res = c.result or {}
             code = res.get("result")
             if code == 32 and missing_ok:
@@ -323,22 +342,27 @@ class Reader(object):
         v = ((r[0].get("attributes") or {}).get("defaultNamingContext") if r else "") or ""
         return v[0] if isinstance(v, list) and v else str(v or "")
 
-    def root(self, c):
-        """1.133.0 (director C): the domain root - the DC's defaultNamingContext, else the domain's own base - never
-        portal_ldap_base (an account elsewhere in the domain must still count); '' when not known (the lookup fails closed)"""
+    def roots(self, c):
+        """Read both naming contexts from the same DC. Only the account domain has a configured fallback."""
+        attrs = ["defaultNamingContext", "rootDomainNamingContext"]
         try:
-            r = self.search(c, "", "(objectClass=*)", ["defaultNamingContext"], "base")
-            v = ((r[0].get("attributes") or {}).get("defaultNamingContext") if r else "") or ""
-            v = v[0] if isinstance(v, list) and v else v
-            v = v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else v      # Neon 1330s #2: odd values -> the fallback
-            v = v.strip() if isinstance(v, str) else ""
+            rows = self.search(c, "", "(objectClass=*)", attrs, "base")
+            values = (rows[0].get("attributes") or {}) if rows else {}
         except Exception:                                 # noqa: BLE001
-            v = ""
-        if v:
-            return v
-        # Codex 1.133.0 #8: never a base guessed from a DC's name (another domain's DC may have answered): the configured
-        # domain only, else '' (the lookup fails closed)
-        return base_of(str(self.o.get("domain") or "").strip())
+            values = {}
+
+        def context(name):
+            v = values.get(name)
+            v = v[0] if isinstance(v, list) and v else v
+            if isinstance(v, (bytes, bytearray)):
+                try:
+                    v = v.decode("utf-8")
+                except UnicodeDecodeError:
+                    return ""
+            return v.strip() if isinstance(v, str) else ""
+
+        domain = context("defaultNamingContext") or base_of(str(self.o.get("domain") or "").strip())
+        return domain, context("rootDomainNamingContext")
 
     def group_dn(self, c, base, name):
         """-> (dn, why): the group's DN, or '' and why not (not found; two or more of that name: give its DN)."""
@@ -376,7 +400,7 @@ class Reader(object):
             out.append(member)              # Codex #21: every enabled member counts; one with no card value just matches no card
         return out
 
-    def accounts(self, c, base, cn):
+    def accounts(self, c, base, cn, forest=""):
         """1.133.0: the candidate accounts of a card, from the domain root -> {(dn, guid): {"dn", "attr", "enabled", "full", "edipis", "guid"}}.
         The filter takes the site's forms; userPrincipalName AND sAMAccountName are read for every entry, whatever forms the
         site enabled (Codex r4 #2). edipis: every EDIPI its values name under ANY of the five forms (two: refused for both
@@ -396,7 +420,10 @@ class Reader(object):
         attrs = ["userPrincipalName", "sAMAccountName", "userAccountControl", "objectGUID"]
         flt = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:%s:=%d))(|%s))" % (BIT_AND, DISABLED, "".join(terms))
         out = {}
-        for n, e in enumerate(self.search(c, base, flt, attrs, strict=True)):
+        partitions = {"dc=domaindnszones," + base.casefold()}
+        if forest:
+            partitions.update(prefix + forest.casefold() for prefix in ("dc=forestdnszones,", "cn=configuration,"))
+        for n, e in enumerate(self.search(c, base, flt, attrs, strict=True, partitions=partitions)):
             a = e.get("attributes") or {}
             uac = a.get("userAccountControl")
             uac = uac[0] if isinstance(uac, list) and uac else uac
@@ -415,7 +442,7 @@ class Reader(object):
             dn = str(e.get("dn") or "") or "<no dn %d>" % n
             guid = _guid(a.get("objectGUID"))
             # Codex 1.133.0 #5: one entry per (DN, objectGUID) - the same DN seen with two GUIDs is two accounts (ambiguous)
-            key = (dn.casefold(), guid)
+            key = (dn.casefold(), guid or "<no guid %d>" % n)
             row = {"dn": dn, "attr": attr, "enabled": enabled, "full": full, "edipis": entry_edipis(ALL_FORMS, a), "guid": guid}
             old = out.get(key)
             if old is not None:                           # Codex r2: the same account twice - any doubt in either row stays
@@ -594,7 +621,7 @@ class Groups(object):
         """Yield each of the role's groups the card's one AD account is a member of (its name) and the attribute that matched.
         Codex 1.133.0 r2: under the card's lock - the lookup (or a cached answer made after the current group read began),
         then the group read taken ONCE, after it; a group read that began after the answer was made: nothing counts."""
-        if not self.want.get(role):
+        if not isinstance(cn, str) or not self.want.get(role):
             return
         with self.lock:
             ready = self.fresh(self.current()) and not self.held()
@@ -614,11 +641,10 @@ class Groups(object):
             for g in r["groups"].get(role) or []:
                 if names is not None and g.get("setting") not in names:
                     continue                        # 1.134.0: only the groups asked for (a template's saved groups)
-                # the member entry must be that account - its DN (any case) and its objectGUID when available - its values must
+                # the member entry must be that account - its DN (any case) and its objectGUID - its values must
                 # name this card's EDIPI only under any of the five forms (Codex r4 #2), AND name it under one of the site's
                 # forms in this same read (Codex r2: never an old match joined to a new membership)
-                if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") == guid
-                       and (guid or (m.get("userPrincipalName") and m.get("sAMAccountName")))
+                if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") and m.get("guid") == guid
                        and entry_edipis(ALL_FORMS, m) == {e_} and e_ in entry_edipis(rules, m) for m in g.get("keys") or []):
                     out.append((g.get("setting") or g["name"], attr))     # 1.134.0: the group as the settings name it
         for x in out:
@@ -626,6 +652,8 @@ class Groups(object):
 
     def account(self, cn, now=None):
         """-> (the card's one enabled AD account's DN, the attribute that matched, its objectGUID) or (None, why)."""
+        if not isinstance(cn, str):
+            return None, BAD_CARD
         with self.cn_lock(cn):
             return self._account(cn, now)[0]
 
@@ -642,7 +670,7 @@ class Groups(object):
             held = self.held() or (self.last and "invalidCredentials" in str(self.last.get("error") or ""))
         skip = ""
         if not card_cn(cn):
-            skip = "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup"
+            skip = BAD_CARD
         elif not self.reader.matches:
             skip = "no card form is set - no AD lookup"
         elif held:
@@ -660,7 +688,8 @@ class Groups(object):
                 for k in sorted(cache, key=lambda k: cache[k][0])[:1000]:
                     cache.pop(k, None)
         if res[0] is None and self.on_card_refused:
-            self.on_card_refused(cn, res[1] + (" - " + detail if detail else ""))
+            with contextlib.suppress(Exception):           # a failed activity-log write must still return the refusal
+                self.on_card_refused(cn, res[1] + (" - " + detail if detail else ""))
         return res, made
 
     def _lookup(self, cn, cache):
@@ -686,8 +715,8 @@ class Groups(object):
                     return (None, "the LDAP login was refused - held until the next deploy"), ttl, ""
             else:
                 try:
-                    root = self.reader.root(c)
-                    found = self.reader.accounts(c, root, cn) if root else None
+                    root, forest = self.reader.roots(c)
+                    found = self.reader.accounts(c, root, cn, forest) if root else None
                 finally:
                     try:
                         c.unbind()
@@ -700,7 +729,7 @@ class Groups(object):
                     if len(found) == 1:
                         x = next(iter(found.values()))
                         dn = x["dn"]
-                        if x["enabled"] is not True or dn.startswith("<no dn") or not x["attr"] or not x["full"]:
+                        if x["enabled"] is not True or dn.startswith("<no dn") or not x["guid"] or not x["attr"] or not x["full"]:
                             res = (None, "the card's AD account state is not known")
                         elif x["edipis"] != {edipi(cn)}:
                             # Codex r3 #2: an account whose values name two EDIPIs is nobody's (refused for both cards)
