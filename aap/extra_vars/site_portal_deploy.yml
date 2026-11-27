@@ -71,12 +71,13 @@ portal_public_url: https://stigman.example.mil/portal/
 ## still in every mode. auto | always | off
 # portal_motion: auto
 
-## 1.135.0: the portal's look - the one every viewer starts with; each viewer may pick another in
-## the bar's Look list (kept in their browser), and a link may carry ?look=KEY. strata (Strata
-## Console, the default) | metro (Metro Live Tiles) | relay (Relay Panel) | chroma (Chroma Perspex)
-## | press (Signal Press) | atlas (Contour Atlas) | tower (Timing Tower). Light and dark in every
-## look; the fonts are bundled (offline, SIL OFL).
-# portal_look: strata
+## The initial portal look. Viewers can pick another in the bar or open a link with ?look=KEY.
+## metro-atlas | metro-calm | metro-wall | atlas-clean | atlas-night | contour-lite | strata | metro
+## | relay | atlas
+# portal_look: metro-atlas
+
+## 1.136.1: line|full|off
+# portal_actions_ops_center: line
 
 ## 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas |
 ## auto (Dec 1 to Jan 6, decided on each page). Default: the report website's report_theme_season,

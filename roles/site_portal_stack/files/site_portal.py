@@ -120,11 +120,32 @@ def after_approval(nodes):
     return seen
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 LOOKS = ("atlas", "brief", "ops")            # the report website's looks made for a browser (report_web_theme)
-# 1.135.0: the portal's looks (portal_look; a viewer's own pick kept per browser) - html[data-skin], static/portal-looks.css on top
-# of the report palette above (html[data-look]). The order is the picker's.
-SKINS = (("strata", "Strata Console"), ("metro", "Metro Live Tiles"), ("relay", "Relay Panel"), ("chroma", "Chroma Perspex"),
-         ("press", "Signal Press"), ("atlas", "Contour Atlas"), ("tower", "Timing Tower"))
-SKIN_KEYS = tuple(k for k, _ in SKINS)
+# 1.136.1: the portal's looks (portal_look; a viewer's own pick kept per browser) - html[data-skin], static/portal-looks.css on top
+# of the report palette above (html[data-look]). Each entry is (key, label, one-line cue for the option title). The order is the picker's.
+DEFAULT_SKIN = "metro-atlas"
+SKINS = (
+    ("metro-atlas", "Metro Atlas", "Hybrid: Atlas typography & calm surfaces with Metro modular tile grid & subtle live motion"),
+    ("metro-calm", "Metro Calm", "Muted Metro tiles with colour only on status edges & badges - easy on the eyes for all-day use"),
+    ("metro-wall", "Metro Wall", "Room-screen Metro with oversized numbers, high contrast, and trimmed text"),
+    ("atlas-clean", "Atlas Clean", "Atlas paper/ink typography & lines, no map - areas shown as plain status tiles with counts"),
+    ("atlas-night", "Atlas Night", "Soft low-glare dark Atlas (no pure black, no neon) tuned for evening shifts"),
+    ("contour-lite", "Contour Lite", "Faint Atlas contour lines in the header band only - plain surfaces everywhere else"),
+    ("strata", "Strata Console", "Console tiles with lamp modules and a spotlight stage stepping through areas worst first"),
+    ("metro", "Metro Live Tiles", "Flat colour tiles that turn over to their worst items on a timer"),
+    ("relay", "Relay Panel", "Annunciator plates with lamps and a colour edge per area"),
+    ("atlas", "Contour Atlas", "Rounded Atlas surfaces with plain status tiles and counts"),
+)
+SKIN_KEYS = tuple(k for k, _, _ in SKINS)
+ACTIONS_OPS_MODES = ("line", "off", "full")
+CONTOUR_SVG = (
+    '<div class="appbar-contour" aria-hidden="true" hidden><svg viewBox="0 0 520 96" preserveAspectRatio="xMaxYMid slice">'
+    '<g fill="none" class="contour-stroke" stroke-width="1.1">'
+    '<path d="M110 105 C180 54, 290 22, 415 36 C465 42, 500 58, 535 48"/>'
+    '<path d="M165 105 C230 62, 325 36, 425 48 C470 54, 502 66, 535 58"/>'
+    '<path d="M225 105 C282 70, 355 52, 438 62 C475 66, 505 74, 535 68"/>'
+    '<path d="M290 105 C338 80, 392 68, 456 76 C485 80, 512 85, 535 80"/>'
+    '</g></svg></div>'
+)
 # 1.135.0: the wall's styles (static/wall-page.js draws lights, cockpit, map; static/wall-styles.js strata, relay, metro)
 WALL_STYLES = ("lights", "cockpit", "map", "strata", "relay", "metro")
 PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
@@ -574,9 +595,9 @@ class Config(object):
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
         self.look = self.look if self.look in LOOKS else "atlas"
-        # 1.135.0: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
-        self.skin = str(g("PORTAL_LOOK", "strata")).strip().lower()
-        self.skin = self.skin if self.skin in SKIN_KEYS else "strata"
+        # 1.136.1: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
+        self.skin = str(g("PORTAL_LOOK", DEFAULT_SKIN)).strip().lower()
+        self.skin = self.skin if self.skin in SKIN_KEYS else DEFAULT_SKIN
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
         try:
@@ -711,6 +732,12 @@ class Config(object):
         # 1.135.0: portal_wall_style - the wall's style when the address names none and the viewer picked none (cockpit, as before)
         self.wall_style = str(g("PORTAL_WALL_STYLE", "cockpit")).strip().lower()
         self.wall_style = self.wall_style if self.wall_style in WALL_STYLES else "cockpit"
+        # 1.136.1: portal_actions_ops_center - line (default one-line strip) | off | full (full Ops center section)
+        raw_ops = e.get("PORTAL_ACTIONS_OPS_CENTER")
+        ops_mode = "off" if raw_ops is False else str(g("PORTAL_ACTIONS_OPS_CENTER", "line")).strip().lower()
+        if ops_mode == "false":
+            ops_mode = "off"
+        self.actions_ops_center = ops_mode if ops_mode in ACTIONS_OPS_MODES else "line"
         self.wall_enclave = str(g("PORTAL_WALL_ENCLAVE", "")).strip()[:40]
         self.wall_why = ""                     # 1.130.0 (Codex r6 #15): settings that cannot be read turn the wall off - never a crash
         self.wall_opts = wall_model.opts_of({})
@@ -4739,10 +4766,6 @@ def static_version(name):
     return _STATIC_V[name]
 
 
-def looks_version():
-    return static_version("portal-looks.css")
-
-
 def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_end=""):
     """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
     scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style).
@@ -4767,19 +4790,21 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
                   % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
-    skin = getattr(cfg, "skin", "strata")
+    # 1.136.1: the classic wall shares the portal picker and its browser preference.
+    skin = getattr(cfg, "skin", DEFAULT_SKIN)
     looks = ('<label class="lookpick" title="The portal\'s look - kept in this browser"><span>Look</span><select id="look" aria-label="Look">%s</select></label>'
-             % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == skin else "", esc(t)) for k, t in SKINS))
+             % "".join('<option value="%s"%s%s>%s</option>' % (k, ' title="%s"' % esc(cue) if cue else "",
+                                                                " selected" if k == skin else "", esc(t)) for k, t, cue in SKINS))
     # 1.115.0: the Christmas theme, when portal_theme_season has it on today (site_festive: the report website's decor and files)
     until = site_festive.season_until(cfg.season, datetime.datetime.now(cfg.tz or datetime.timezone.utc).date())
     fz = (lambda part: part) if until else (lambda part: "")
     st = cfg.season_style
     if until:                                       # the snowman after the page's title (16-bit; the sleigh rides in the lights)
         body = body.replace("</h1>", site_festive.snowman(st) + "</h1>", 1)
-    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
+    bar = ('<div class="appbar">%s<div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
            '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s%s'
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s%s</div>'
-           % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
+           % (CONTOUR_SVG, cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
               fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), looks, seg,
               fz(until and site_festive.lights(st, "sleigh" in site_festive.parts_of(st, cfg.season_parts))), bar_end))
@@ -4792,7 +4817,9 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
             '<body data-page="%s">%s%s%s%s<main>%s</main>%s</body></html>'
             % (cfg.look, skin, skin, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
                site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
-               cfg.path, cfg.path, looks_version(), cfg.path, cfg.path, static_version("portal-theme.js"), cfg.path, head, festive_head, esc(page), CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
+               cfg.path, cfg.path, static_version("portal-looks.css"), cfg.path,
+               cfg.path, static_version("portal-theme.js"), cfg.path, head, festive_head, esc(page),
+               CARD_SPRITE, fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -5016,22 +5043,24 @@ def home_page(cfg, portal, cn, query=None):
         '<section class="grp tint-%s" data-area="%s"%s><h2>%s <span class="count">%d</span></h2><ul class="acts cols3">%s</ul></section>'
         % (CARD_GROUPS.get(g, CARD_GROUPS["Other"])[1], esc(g), "" if any(c in vis for c in groups[g]) else " hidden",
            esc(g), len([c for c in groups[g] if c in vis]), "".join(card(c) for c in groups[g])) for g in order)
+    ops = ops_section(cfg)
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
             '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
-            % (strip + ops_section(cfg), why_panel(cfg, portal) if cfg.label and cfg.viewer_133(cn) else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
+            % (strip + ops, why_panel(cfg, portal) if cfg.label and cfg.viewer_133(cn) else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. Check the run lists (portal_run_groups, portal_runners) and the action\'s own access settings.</p>'))
     return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home",
-                 head=('<script src="%sstatic/portal-looks.js?v=%s" defer></script>' % (cfg.path, static_version("portal-looks.js"))) if getattr(cfg, "wall", False) else "")
+                 head=('<script src="%sstatic/portal-ops.js?v=%s" defer></script>' % (cfg.path, static_version("portal-ops.js"))) if ops else "")
 
 
 def ops_section(cfg):
-    """1.135.0: the Actions page's Ops center section - the wall's areas in short, drawn by static/portal-looks.js from
-    /api/wall/summary in the viewer's look (each look its own shape: spotlight, live tiles, lamps, ledger, map, ranking).
-    Only with the wall on; hidden until its first answer (no answer: a muted line, never a made-up green)."""
-    if not getattr(cfg, "wall", False):
+    """1.136.1: the Actions page's Ops center section - drawn by static/portal-ops.js from /api/wall/summary in the
+    viewer's look. portal_actions_ops_center selects line (one clickable strip, default), full (status tiles and limit
+    charts; plain status tiles for Atlas looks) or off (omitted). Only with the wall on; hidden until its first answer."""
+    mode = getattr(cfg, "actions_ops_center", "line")
+    if not getattr(cfg, "wall", False) or mode == "off":
         return ""
-    return ('<section class="ops" id="ops" data-src="%sapi/wall/summary" data-wall="%swall" data-title="%s" aria-labelledby="ops-h" hidden>'
-            '<h2 class="ops-h" id="ops-h">%s</h2></section>' % (cfg.path, cfg.path, esc(cfg.wall_title), esc(cfg.wall_title)))
+    return ('<section class="ops" id="ops" data-mode="%s" data-src="%sapi/wall/summary" data-wall="%swall" data-title="%s" aria-labelledby="ops-h" hidden>'
+            '<h2 class="ops-h" id="ops-h">%s</h2></section>' % (esc(mode), cfg.path, cfg.path, esc(cfg.wall_title), esc(cfg.wall_title)))
 
 
 def details_html(cfg, portal, cn, name):
@@ -7189,7 +7218,7 @@ def netapp_page(cfg, cn, statics, token=""):
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
 FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
-LOOKS_STATIC = ("portal-looks.js",)
+LOOKS_STATIC = ("portal-looks.js", "portal-ops.js")
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
 
 

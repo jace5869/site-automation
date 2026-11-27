@@ -7,6 +7,13 @@
   It logs the maintenance end and checks again each run. An unavailable SolarWinds reader leaves alerts enabled.
 - Attach the **SolarWinds (read-only)** credential to **VM - outage watch** to enable maintenance checks.
 
+## 1.136.1 — 2026-11-27
+
+- The portal has ten looks. Metro Atlas is the new default, joined by Metro Calm, Metro Wall, Atlas Clean, Atlas Night and Contour Lite.
+- Pick a look from the portal bar to save it in your browser, or use `?look=metro-atlas` to preview it on one page. Replace any `portal_look` set to `chroma`, `press` or `tower` before redeploying.
+- With the wall enabled, Actions shows a clickable Ops center status strip by default. The portal's `PORTAL_ACTIONS_OPS_CENTER` setting supports `full` for status tiles and `off` to hide it. In full mode the Atlas looks show status tiles with counts in place of the map.
+- The Ops monitor treats conflicting SolarWinds status as unknown and keeps the node list available when the browser cannot draw the grid.
+
 ## 1.136.0 — 2026-11-27
 
 **Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.

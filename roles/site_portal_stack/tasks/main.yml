@@ -278,11 +278,11 @@
 - name: Settings | portal_look and portal_wall_style are known names
   ansible.builtin.assert:
     that:
-      - (portal_look | default('strata') | string | lower | trim) in ['strata', 'metro', 'relay', 'chroma', 'press', 'atlas', 'tower']
+      - (portal_look | default('metro-atlas') | string | lower | trim) in ['metro-atlas', 'metro-calm', 'metro-wall', 'atlas-clean', 'atlas-night', 'contour-lite', 'strata', 'metro', 'relay', 'atlas']
       - (portal_wall_style | default('cockpit') | string | lower | trim) in ['lights', 'cockpit', 'map', 'strata', 'relay', 'metro']
     fail_msg: >-
-      portal_look is {{ portal_look | default('strata') }} and portal_wall_style is {{ portal_wall_style | default('cockpit') }};
-      portal_look must be strata, metro, relay, chroma, press, atlas or tower, and portal_wall_style lights, cockpit, map, strata,
+      portal_look is {{ portal_look | default('metro-atlas') }} and portal_wall_style is {{ portal_wall_style | default('cockpit') }};
+      portal_look must be metro-atlas, metro-calm, metro-wall, atlas-clean, atlas-night, contour-lite, strata, metro, relay or atlas, and portal_wall_style lights, cockpit, map, strata,
       relay or metro - nothing was changed
     quiet: true
 
@@ -685,7 +685,8 @@
     - {src: static/wall-styles.css, dest: static/wall-styles.css}
     - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
-    - {src: static/portal-looks.js, dest: static/portal-looks.js}        # 1.135.0: the Actions page's Ops center section
+    - {src: static/portal-looks.js, dest: static/portal-looks.js}
+    - {src: static/portal-ops.js, dest: static/portal-ops.js}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -1141,7 +1142,8 @@
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
       PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
-      PORTAL_LOOK: "{{ portal_look | default('strata') | string | lower | trim }}"                 # 1.135.0
+      PORTAL_ACTIONS_OPS_CENTER: "{{ portal_actions_ops_center | default('line') | string | lower | trim }}"  # 1.136.1
+      PORTAL_LOOK: "{{ portal_look | default('metro-atlas') | string | lower | trim }}"                 # 1.135.0
       PORTAL_SEASON: "{{ _portal_season }}"
       PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
       PORTAL_SEASON_LIGHTS: "{{ '1' if report_theme_season_lights | default(true) | bool else '0' }}"

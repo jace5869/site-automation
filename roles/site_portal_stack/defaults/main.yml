@@ -38,10 +38,10 @@ portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if po
 # moves, toasts slide in, panels open smoothly. auto: unless the system asks for reduced motion (as now); always: even then (their image may turn animations off
 # by policy - use it only if the site agrees); off: never. Print is still in every mode.
 portal_motion: auto                              # auto | always | off
-# 1.135.0: the portal's look - the one every viewer starts with; each viewer may pick another in the bar's Look list (kept in their browser),
-# and a link may carry ?look=KEY. strata (Strata Console, the default) | metro (Metro Live Tiles) | relay (Relay Panel) | chroma (Chroma Perspex)
-# | press (Signal Press) | atlas (Contour Atlas) | tower (Timing Tower). Light and dark in every look; the fonts are bundled (offline, SIL OFL).
-portal_look: strata
+# The initial portal look. Viewers can pick another in the bar or open a link with ?look=KEY.
+# metro-atlas | metro-calm | metro-wall | atlas-clean | atlas-night | contour-lite | strata | metro | relay | atlas
+portal_look: metro-atlas
+portal_actions_ops_center: line                   # 1.136.1: line|full|off
 # 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas | auto (Dec 1 to Jan 6, decided on each page). Default: the
 # report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow, _sleigh.
 portal_theme_season: "{{ report_theme_season | default('none') }}"
