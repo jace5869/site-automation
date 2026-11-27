@@ -606,12 +606,6 @@
   ansible.builtin.include_tasks: wall_monitor.yml
   when: _portal_wall_monitor | bool
 
-- name: Files | remove unused monitor CA
-  ansible.builtin.file:
-    path: "{{ portal_config_dir }}/app/solarwinds-monitor.pem"
-    state: absent
-  when: not (_portal_wall_monitor | bool) or not portal_solarwinds_ca_file
-
 - name: Files | remove disabled monitor files
   ansible.builtin.file:
     path: "{{ portal_config_dir }}/app/{{ item }}"

@@ -51,6 +51,7 @@ html:not(.style-strata):not(.style-relay):not(.style-metro) .wx-fleet{
 .fl-svc .sv[role="button"]:hover{outline:2px solid var(--fl-accent)}
 .fl-svc .sv.more{border-left-style:dashed}.fl-svc .sv.more span{font:500 12px var(--wx-mono);color:var(--wx-mute)}
 .fl-gw{position:relative;flex:1;min-height:0}
+.fl-gw>.fl-evs.all{height:100%;max-height:none}
 .fl-cv{display:block}
 .fl-tip{position:absolute;pointer-events:none;background:var(--wx-raised);color:var(--wx-ink);border:1px solid var(--wx-line);border-radius:10px;padding:9px 12px;font-size:14px;line-height:1.45;
   box-shadow:0 10px 30px rgba(0,0,0,.35);display:none;z-index:5;max-width:330px}

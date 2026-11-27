@@ -67,19 +67,27 @@
             seconds: a.seconds || 60, feed: f, zone: a.zone || "UTC", title: a.title || "", enclave: a.enclave || "", group_by: a.group_by || "groups",
             vmRule: (a.cmp || {}).vm_rule || "", late: +a.late || 180, stale: +a.stale || 600};
   }
-  function load(first) {
+  async function load(first) {
     if (BUSY) return;
     BUSY = true;
-    var controller = new AbortController();
-    var timeout = setTimeout(function () { controller.abort(); }, 60000);
-    return fetch(url(), {headers: {Accept: "application/json"}, signal: controller.signal, credentials: "same-origin", cache: "no-store"}).then(function (res) {
+    var timeout;
+    try {
+      var opts = {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"};
+      if (typeof AbortController === "function") {
+        var controller = new AbortController();
+        opts.signal = controller.signal;
+        timeout = setTimeout(function () { controller.abort(); }, 60000);
+      }
+      var res = await fetch(url(), opts);
       if (res.status !== 200) {
         var error = new Error("HTTP " + res.status);
-        if (!res.json) throw error;
-        return res.json().then(function (a) { error.boot = a && a.boot; error.seq = a && a.seq; throw error; });
+        if (res.json) {
+          var body = await res.json();
+          error.boot = body && body.boot; error.seq = body && body.seq;
+        }
+        throw error;
       }
-      return res.json();
-    }).then(function (a) {
+      var a = await res.json();
       if (!a || !Array.isArray(a.nodes) || !Array.isArray(a.groups)) throw new Error("invalid fleet answer");
       if (!Number.isFinite(a.now)) throw new Error("missing fleet time");
       if (!accept(a)) return;
@@ -88,11 +96,11 @@
       Object.keys(SEL).forEach(function (k) { if (!F.by[k]) delete SEL[k]; });
       if (A && A.S.area === "monitor") { refresh(); firstOpen(); }
       else if (A && A.render) A.render();
-    }).catch(function (e) {
+    } catch (e) {
       if (e && Number.isSafeInteger(e.seq) && !accept(e)) return;
       FAIL = (e && e.message) || "not reachable";
       if (A && A.S.area === "monitor") refresh();
-    }).finally(function () { clearTimeout(timeout); BUSY = false; });
+    } finally { clearTimeout(timeout); BUSY = false; }
   }
 
   // ---------------------------------------------------------------- the one rule: green only when current
@@ -513,7 +521,18 @@
   function drawGrid() {
     if (!B || !F || !P.gw.isConnected) return;
     var Wd = Math.max(200, P.gw.clientWidth), Hd = Math.max(120, P.gw.clientHeight), dpr = (window.devicePixelRatio || 1) * (LAY.k || 1);
-    var cv = P.cv, x = cv.getContext("2d"), pw = Math.round(Wd * dpr), ph = Math.round(Hd * dpr);
+    var cv = P.cv, x = !P.gridList && cv.getContext("2d"), pw = Math.round(Wd * dpr), ph = Math.round(Hd * dpr);
+    if (!x) {
+      if (!P.gridList) {
+        clear(P.gw);
+        P.gridList = h("div", "fl-evs all");
+        P.gw.appendChild(P.gridList);
+        P.gcue.textContent = "click a row for its card · tick to select";
+      }
+      clear(P.gridList);
+      F.nodes.forEach(function (n) { P.gridList.appendChild(row(n)); });
+      return;
+    }
     if (cv.width !== pw || cv.height !== ph) {                    // the backing store only when the size changed
       cv.style.width = Wd + "px"; cv.style.height = Hd + "px";
       cv.width = pw; cv.height = ph;
@@ -729,6 +748,7 @@
       if (t === P.ov) closeOv();
     });
     B.addEventListener("keydown", function (e) {           // a source's chip ([data-d]) is the page's own: it opens the source's card
+      if (!F) return;
       if ((e.key === "Enter" || e.key === " ") && e.target.matches("[role=button]") && !e.target.closest("button,input,[data-d]")) { e.preventDefault(); e.target.click(); }
     });
     P.cv.addEventListener("mousemove", function (e) {
@@ -753,7 +773,7 @@
     });
     // Esc closes the card first (and never leaves kiosk while one is open); ← → step the Spotlight
     document.addEventListener("keydown", function (e) {
-      if (!A || A.S.area !== "monitor" || !B || !B.isConnected) return;
+      if (!F || !A || A.S.area !== "monitor" || !B || !B.isConnected) return;
       if (e.key === "Escape" && OV) { e.stopImmediatePropagation(); e.preventDefault(); closeOv(); return; }
       if (OV || (e.target.closest && e.target.closest("select,input,textarea"))) return;
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); step(e.key === "ArrowRight" ? 1 : -1, true); }
@@ -832,6 +852,7 @@
         "Text copied - in Teams click the chat box and press Ctrl+V.",
         function (e) { return blocked(e) ? "The browser blocked the clipboard - select the message above and press Ctrl+C." : "The copy did not work here - select the message above and press Ctrl+C."; });
     }, "The message, formatted (bold, the link) with a plain-text copy for apps that take only text");
+    if (!o.canvas) return [copyText];
     var copyPic = b("Copy picture", "", function () {
       if (!can()) { say.textContent = "This browser keeps pictures off the clipboard - use Save picture and drag the file into the chat."; return; }
       write({"image/png": blob()}, "Picture copied - in Teams press Ctrl+V.",
@@ -896,6 +917,7 @@
   }
   function npicture(L, ctx) {
     var cv = document.createElement("canvas"), x = cv.getContext("2d"), Wd = 1000, shown = L.slice(0, PIC_MAX), more = L.length - shown.length;
+    if (!x) return null;
     var one = L.length === 1, Hh = one ? 330 : 150 + shown.length * 62 + (more ? 40 : 0);
     var sans = "Figtree, 'Segoe UI', Arial, sans-serif", mono = "'Fira Code', Consolas, monospace";
     cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
@@ -947,23 +969,26 @@
     var msg = shareElement("div", "msg", [shareElement("p", "", [shareElement("b", "", [nhead(L, ctx)])]), tb,
       L.length > TEXT_MAX ? shareElement("p", "", ["+" + (L.length - TEXT_MAX) + " more on the wall"]) : null,
       ctx.stale ? shareElement("p", "", ["Not current: " + ctx.stale]) : null, shareElement("p", "", ["Wall: " + ctx.link])]);
-    var img = shareElement("img", "shi", null, {alt: "The picture: " + nhead(L, ctx)});
-    var CV = npicture(L, ctx);
-    img.src = CV.toDataURL("image/png");
-    if (document.fonts && document.fonts.load) {
-      Promise.all([document.fonts.load("700 30px Figtree"), document.fonts.load("600 16px 'Fira Code'")])
-        .then(function () { CV = npicture(L, ctx); img.src = CV.toDataURL("image/png"); }, function () { /* the system font stays */ });
+    var cv = npicture(L, ctx), picture;
+    if (cv) {
+      var img = shareElement("img", "shi", null, {alt: "The picture: " + nhead(L, ctx)});
+      img.src = cv.toDataURL("image/png");
+      picture = shareElement("div", "", [shareElement("p", "lab", ["Picture - drawn from the wall's data, not a screen grab" + (L.length > PIC_MAX ? " (the first " + PIC_MAX + ")" : "")]), img]);
+      if (document.fonts && document.fonts.load) {
+        Promise.all([document.fonts.load("700 30px Figtree"), document.fonts.load("600 16px 'Fira Code'")])
+          .then(function () { var updated = npicture(L, ctx); if (updated) img.src = updated.toDataURL("image/png"); }, function () { /* the system font stays */ });
+      }
     }
     var content;
     var acts = actions({prepare: function () { content = current(); },
                         text: function () { return ntext.apply(null, content); }, html: function () { return nhtml.apply(null, content); },
-                        canvas: function () { return npicture.apply(null, content); },
+                        canvas: cv && function () { return npicture.apply(null, content); },
                         file: (L.length === 1 ? L[0].name : "nodes-not-up").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) + "-" + String(ctx.stamp || "").replace(/[^0-9]/g, "") + ".png",
                         say: say, pic: "The picture on the right, as a PNG"});
     var panel = shareElement("div", "fl-share", [
       shareElement("div", "", [shareElement("p", "lab", ["Message - pastes formatted"]), msg, shareElement("div", "btns", acts.concat(extra || [])), say,
-        shareElement("p", "hint", ["In Teams: click the chat box, then Ctrl+V. Copy both puts the text and the picture on together; Teams may paste only one - then Copy picture and paste again."])]),
-      shareElement("div", "", [shareElement("p", "lab", ["Picture - drawn from the wall's data, not a screen grab" + (L.length > PIC_MAX ? " (the first " + PIC_MAX + ")" : "")]), img])]);
+        shareElement("p", "hint", [cv ? "In Teams: click the chat box, then Ctrl+V. Copy both puts the text and the picture on together; Teams may paste only one - then Copy picture and paste again." : "In Teams: click the chat box, then Ctrl+V."])]),
+      picture]);
     panel.__focus = acts[0];
     return panel;
   }

@@ -145,6 +145,10 @@ def where_ok(where, params):
             vals = set(params.get(m.group(2)) or [])
             tests.append(lambda r, c=m.group(1), v=vals: r.get(c) in v)
             continue
+        m = re.fullmatch(r"ToLower\((\w+)\) = @(\w+)", part)
+        if m:
+            tests.append(lambda r, c=m.group(1), v=params[m.group(2)]: isinstance(r.get(c), str) and r[c].lower() == v)
+            continue
         m = re.match(r"^(\w+) <> (\d+)$", part)
         if m:
             tests.append(lambda r, c=m.group(1), v=int(m.group(2)): r.get(c) != v)

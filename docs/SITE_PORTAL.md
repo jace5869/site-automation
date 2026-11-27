@@ -102,6 +102,8 @@ Type a group name or choose an LDAP suggestion. Untick a group to remove it and 
 | No Execute | The portal account needs Execute to launch this template. |
 | No Approve | The portal account needs Approve to decide a pending approval in this workflow. |
 | Label pending | **Show on the portal** differs from the label in AAP. Discovery picks up the actual label on its next refresh. |
+| Approval unknown | AAP did not say what one of the workflow's steps is (the card names the node to check). The card is never Ready and the header says *Approval unknown* (1.135.2). |
+| Not current - last read … | The last read of AAP failed or is older than the refresh interval. Every card says so instead of Ready - what it shows is what AAP said then; the header says *Disconnected* or *Not current* (1.135.2). |
 
 Use **Export for AAP - set up portal actions** to download the publish and unpublish lists. Review the exact template names and organization, paste the variables into **AAP - set up portal actions**, run in **Check**, then run to apply. The setup job applies the labels and grants Execute and, on published workflows with approval nodes, Approve to `portal_setup_portal_user` (Approve only from this export; a plain `portal_publish_templates` run grants Execute, as before). Unpublishing removes the label. Existing setup exclusions and the discovery checks for runnable templates still apply. Name patterns containing literal wildcards or ambiguous visible names require resolving the name before export. The export
 names the templates' organization (`portal_publish_organization`), so the setup job never matches a template of the same name in
