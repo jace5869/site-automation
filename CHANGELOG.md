@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.135.4 — 2026-11-27
+
+- The STIG answer-file draft trial skips Podman/CNI namespace handles identified as `nsfs` in mountinfo and still refuses writable host storage under `/run/netns`.
+
 ## 1.135.3 — 2026-11-27
 
 - The VM outage watch skips alerts for VMs uniquely matched to nodes currently unmanaged in SolarWinds.
