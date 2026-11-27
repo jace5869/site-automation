@@ -168,13 +168,18 @@ STATUS_CODES = dict([(x, ("SA-SWI-35", NO_SPACE)) for x in FULL_STATUS] + [
     (0xC0000022, ("SA-SWI-22", "give the account Modify on the folder (the share and NTFS)"))])
 
 
+INVALID_TOKEN = ("use sw_inventory_share_auth: negotiate (still Kerberos, sent the standard SMB way) - check the template's "
+                 "Variables box too: it overrides all.yml")
+LIST_SHARE = ("is a list, and sw_inventory_share is one folder", "the list belongs in sw_inventory_shares (with s)")
+
+
 def why_smb(what, e, auth, port, secret=""):
     """An SMB error as (code, what, fix) - the same hints as the report website's share; the password never in it."""
     text = str(e)
     if secret:
         text = text.replace(secret, "[redacted]")
     low = re.sub(r"'[^']*'|\"[^\"]*\"|\\\\\S+", " ", text).lower()   # the words only: a path never decides the code
-    line = "%s: %s" % (what, text.splitlines()[0][:300] if text else type(e).__name__)
+    line = "%s: %s (logged in with %s)" % (what, text.splitlines()[0][:300] if text else type(e).__name__, auth)  # the mode USED, apart from the fix
     status = getattr(e, "ntstatus", None) or getattr(e, "status", None)
     status = status if isinstance(status, int) else None
     if status in STATUS_CODES:                  # the server's own status first
@@ -195,7 +200,7 @@ def why_smb(what, e, auth, port, secret=""):
         return "SA-SWI-24", line, ("write the server by its full name in sw_inventory_share / sw_inventory_shares "
                                    "(\\\\fileserver.yourdomain.mil\\...)")
     if "invalid token was supplied" in low and auth == "kerberos":
-        return "SA-SWI-24", line, "sw_inventory_share_auth: negotiate"
+        return "SA-SWI-24", line, INVALID_TOKEN
     if "md4" in low or "unsupported hash" in low:
         return "SA-SWI-24", line, ("NTLM needs MD4, which FIPS does not have: negotiate, user@YOURDOMAIN.MIL and the server's "
                                    "full name, so Kerberos is used")
@@ -228,7 +233,7 @@ class SmbFolder(object):
         self.secret = password or os.environ.get("SMB_SHARE_PASSWORD") or os.environ.get("REPORT_WEB_PASSWORD") or ""
         if auth not in ("negotiate", "ntlm", "kerberos"):
             raise Fail("SA-SWI-20", "the share's auth is not negotiate, kerberos or ntlm",
-                       "sw_inventory_share_auth (or the entry's auth): negotiate, kerberos or ntlm")
+                       "sw_inventory_share_auth (or the entry's auth): negotiate")
         if not user and auth != "kerberos":
             raise Fail("SA-SWI-27", "no login for the share %s" % self.root,
                        'attach the "Windows file share" credential (user@YOURDOMAIN.MIL and its password) to the template')
@@ -245,7 +250,8 @@ class SmbFolder(object):
             except Exception as e:              # noqa: BLE001
                 raise Fail(*why_smb("opening %s" % self.root, e, auth, port, self.secret))
             if not ok:
-                raise Fail("SA-SWI-28", "the folder %s is not there" % self.root, "make it once by hand (the job never makes it)")
+                raise Fail("SA-SWI-28", "the folder %s is not there (logged in with %s)" % (self.root, auth),
+                           "make it once by hand (the job never makes it)")
         except Fail:
             self.close()                        # this destination's connections never left open
             raise
@@ -459,10 +465,11 @@ def destinations(p):
     raw = []
     if p.get("share") or p.get("share_refused"):
         path = str(p.get("share") or "")             # as written: a mounted folder's name may end in a space
-        refused = bool(p.get("share_refused")) or "@" in path
-        raw.append({"path": "" if refused else path, "subdir": str(p.get("share_subdir") or ""),
+        is_list = isinstance(p.get("share"), (list, tuple)) or (path.strip().startswith("[") and path.strip().endswith("]"))
+        refused = not is_list and (bool(p.get("share_refused")) or "@" in path)   # a list is said as a list, never its text
+        raw.append({"path": "" if refused or is_list else path, "subdir": str(p.get("share_subdir") or ""),
                     "user": "", "password": "", "auth": p.get("share_auth") or "negotiate",
-                    "encrypt": bool(p.get("share_encrypt")), "refused": refused, "bad": None, "legacy": True,
+                    "encrypt": bool(p.get("share_encrypt")), "refused": refused, "bad": LIST_SHARE if is_list else None, "legacy": True,
                     "what": "sw_inventory_share"})
     for i, e in enumerate(p.get("shares") or [], 1):
         e = e if isinstance(e, dict) else {"path": e}

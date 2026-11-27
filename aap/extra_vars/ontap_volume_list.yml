@@ -549,6 +549,14 @@
 ## 'host:app*'] (docs/WEB_REPORTS.md, "Teams").
 # report_teams: {}
 
+## ---- Server-first view (1.138.0): opt-in server list on the report website ----------------------
+## true = add a server-first section (At a glance tiles + expandable per-server rows, worst first,
+## with counts per severity, worst finding, checked time, Expand all / Collapse all and severity
+## chips) to the website copy of health reports (atlas, brief and ops). The flat Findings table
+## stays below it, and the email never changes. false (default) = every page as before. Set in
+## all.yml or on one template's Variables (docs/WEB_REPORTS.md).
+# report_servers_view: false
+
 ## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
 ## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report
 ## website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the

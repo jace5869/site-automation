@@ -42,6 +42,7 @@ options:
   confirm_checks: {description: How many times a suspect is checked in this run (1 = once, no waiting)., type: int, default: 2}
   confirm_seconds: {description: Seconds between those checks., type: float, default: 120}
   event_types: {description: The HA and storage event types read (vCenter's event type names)., type: list, elements: str}
+  solarwinds: {description: Read-only SolarWinds connection settings for unmanaged VM suppression., type: dict, default: {}}
   now: {description: The time to measure from (seconds since 1970; tests only)., type: float}
 author: site automation
 '''
@@ -435,7 +436,7 @@ def _alarm_entity_type(entity):
             "Datastore": "datastore", "Datacenter": "datacenter"}.get(name, "other")
 
 
-def _events(content, root, begin, types, cap=2000):
+def _events(content, root, begin, types, cap=2000, identify_vm=False):
     spec = vim.event.EventFilterSpec(time=vim.event.EventFilterSpec.ByTime(beginTime=begin), eventTypeId=list(types))
     if root is not None:
         spec.entity = vim.event.EventFilterSpec.ByEntity(entity=root, recursion="all")
@@ -467,6 +468,8 @@ def _events(content, root, begin, types, cap=2000):
                "vm": e.vm.name if e.vm else "",
                "cluster": e.computeResource.name if e.computeResource else "",
                "datacenter": e.datacenter.name if e.datacenter else ""}
+        if identify_vm and row["vm"]:
+            row["_watch_vm_moid"] = getattr(getattr(e.vm, "vm", None), "_moId", "")
         if row["type"] == "AlarmStatusChangedEvent":
             entity = getattr(e, "entity", None)
             ref = getattr(entity, "entity", None)
@@ -531,12 +534,16 @@ def _read(content, p, now, vcenter):
     lost_ds = dict((rec["moid"], rec) for rec in res["datastores"] if not rec["accessible"])
     folders = {}
     vms = _props(content, root, vim.VirtualMachine, VM_PROPS)
+    check_maintenance = (p.get("solarwinds") or {}).get("enabled", False)
     suspects = []
     excluded = set()
     for m, (o, pr) in vms.items():
         if pr.get("config.template"):
             excluded.add(m)
             continue
+        if check_maintenance:
+            res.setdefault("_watch_inventory", []).append(dict(vcenter=vcenter, moid=m, name=pr.get("name", ""),
+                                                               ip=pr.get("guest.ipAddress")))
         host_moid = getattr(pr.get("runtime.host"), "_moId", "")
         h = host_of.get(host_moid, {})
         folder = _folder(o, folders)
@@ -600,7 +607,7 @@ def _read(content, p, now, vcenter):
     ev_root = next((o for o, pr in dcs.values() if pr.get("name") == p["datacenter"]), None) if p["datacenter"] else None
     if p["window_minutes"] and p["window_minutes"] > 0:
         begin = datetime.datetime.fromtimestamp(now - p["window_minutes"] * 60, tz=datetime.timezone.utc)
-        for e in _events(content, ev_root, begin, p["event_types"]):
+        for e in _events(content, ev_root, begin, p["event_types"], identify_vm=check_maintenance):
             e["vcenter"] = vcenter
             res["events"].append(e)
         if p.get("usage_alarms"):
@@ -685,6 +692,7 @@ def main():
                            traffic=dict(type="bool", default=True), traffic_packets=dict(type="int", default=1),
                            probe_timeout=dict(type="float", default=3), max_suspects=dict(type="int", default=50),
                            confirm_checks=dict(type="int", default=2), confirm_seconds=dict(type="float", default=120),
+                           solarwinds=dict(type="dict", default={}),
                            event_types=dict(type="list", elements="str"), now=dict(type="float")),
         supports_check_mode=True,
     )
@@ -708,11 +716,16 @@ def main():
             module.warn(warning)
         for k in ("alarms", "hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected", "vms_unread"):
             res[k] += part[k]
+        if part.get("_watch_inventory"):
+            res.setdefault("_watch_inventory", []).extend(part["_watch_inventory"])
         res["alarms_unread"] += part.get("alarms_unread") or []
         res["vms_read"] += part["vms_read"]
         res["vms_checked"] += part["vms_checked"]
         res["vms_skipped"] += part["vms_skipped"]
     res["events"].sort(key=lambda x: x["time"], reverse=True)
+
+    from ansible.module_utils.vm_watch_unmanaged import suppress
+    suppress(res, p["solarwinds"], p["now"])
 
     # the suspects not busy: probe them, and check them again (only them), confirm_seconds apart
     judged = [v for v in res["suspects"] if not v["checks"][0]["busy"]]
@@ -762,7 +775,7 @@ def main():
             v["checks"].append(c)
         probe_all(live)
     for v in res["suspects"]:
-        v["verdict"] = verdict(v["checks"]) if v["name"] not in res["not_probed"] else "unprobed"
+        v["verdict"] = verdict(v["checks"])
     mark_incomplete(res)
     # the third signal, for the silent ones: did vCenter see the VM send anything since the first check?
     silent = [v for v in res["suspects"] if v["verdict"] == "hung"]

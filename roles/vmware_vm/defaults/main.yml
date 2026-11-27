@@ -399,6 +399,7 @@ vm_watch_traffic_packets: 1              # packets sent from which a VM counts a
 # A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not
 # the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only.
 vm_watch_one_signal_severity: warning
+vm_watch_solarwinds_unmanaged: true      # Skip VM outage alerts during a uniquely matched SolarWinds node's maintenance window.
 vm_watch_skip_vms: []                    # VMs never judged: names, * and ? allowed (e.g. [LAB-*])
 vm_watch_skip_folders: []                # VM folders never judged, as vCenter shows them (e.g. ["/DC1/vm/Lab*"])
 # Phase 2 (not built yet) would restart the hung VMs - never these (names, * and ?), never the AAP

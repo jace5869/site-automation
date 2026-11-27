@@ -59,6 +59,14 @@ def vm_watch_email_floor(conditions, runs=None, opts=None):
             source = "db"
         else:
             source = "none"
+    # Entering maintenance is silent, including when this VM was in the last email.
+    # Held changes describe earlier runs and follow the usual email floor.
+    ignored = set(o.get("unmanaged_ids") or [])
+    previous = _w._email_state(runs) if ignored else None
+    if previous:
+        ignored.difference_update(_w.vm_watch_email_ids(conditions, o.get("report_on")))
+        state = dict(previous, ids={i: v for i, v in (previous.get("ids") or {}).items() if i not in ignored})
+        runs = [{"artifacts": {_w.EMAIL_STATE: state}}]
     floor = max(0.0, float(o.get("min_minutes") or 0))
     now = float(o.get("now") or 0)
     clock = _ts(o.get("read_at")) or now
