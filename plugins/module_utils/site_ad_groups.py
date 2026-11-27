@@ -9,10 +9,11 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import contextlib
+import ipaddress
 import re
 import threading
 from threading import local as _thread_local
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 import uuid
 import time
 
@@ -178,17 +179,30 @@ def _guid(v):
     return t if re.fullmatch(r"[0-9a-f]{32}", t, re.ASCII) else ""
 
 
+# LDAP URL with an optional server, a DN, and only empty search fields or the default base scope.
+_PARTITION_URL = re.compile(
+    r"ldap://(?:(?:[a-z0-9._~-]+|\[(?P<ipv6>[0-9a-f:.]+)\])(?::(?P<port>[0-9]+))?)?/"
+    r"(?P<dn>(?:[a-z0-9._~!$&'()*+,;=:@-]|%[0-9a-f]{2})+)"
+    r"(?:\?{1,4}|\?\?base\?{0,2})?", re.IGNORECASE | re.ASCII)
+
+
 def _partition_reference(entry, partitions):
     urls = entry.get("uri")
     if not isinstance(urls, (list, tuple)) or not urls:
         return False
     for url in urls:
-        if not isinstance(url, str) or not url.lower().startswith("ldap://") or any(ch.isspace() for ch in url):
+        match = _PARTITION_URL.fullmatch(url) if isinstance(url, str) else None
+        if not match:
             return False
-        target = urlsplit(url)
-        if target.fragment or not target.path.startswith("/"):
+        try:
+            if match["ipv6"]:
+                ipaddress.IPv6Address(match["ipv6"])
+            if match["port"] and int(match["port"]) > 65535:
+                return False
+            dn = unquote(match["dn"], errors="strict")
+        except ValueError:
             return False
-        if unquote(target.path[1:], errors="strict").casefold() not in partitions:
+        if dn.casefold() not in partitions:
             return False
     return True
 
@@ -310,8 +324,6 @@ class Reader(object):
         out, cookie = [], None
         while True:
             kw = {} if scope == "base" else {"paged_size": 500, "paged_cookie": cookie}
-            if strict:
-                kw["controls"] = [("1.2.840.113556.1.4.1339", True, None)]  # LDAP_SERVER_DOMAIN_SCOPE_OID
             c.search(base, flt, sc, attributes=attrs, **kw)
             page = [e for e in (c.response or []) if e.get("type") == "searchResEntry"]
             if strict and any(not _partition_reference(e, partitions) for e in (c.response or []) if e.get("type") == "searchResRef"):

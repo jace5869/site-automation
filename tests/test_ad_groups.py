@@ -171,13 +171,11 @@ class CardLookup1353(unittest.TestCase):
         groups = {dn(name): [user] + others[:n - 1] for name, n in zip(names, [5, 4, 11])}
         users = {u: {"upn": "member%d@corp.example.mil" % i, "uac": 512} for i, u in enumerate(others)}
         users[user] = {"sam": "1234567890.ctr", "upn": "1234567890123456@mil", "uac": 512}
-        controls = []
 
         class Ref(FakeConn):
             def search(self, base, flt, scope, attributes=None, **kw):
                 ok = super().search(base, flt, scope, attributes, **kw)
                 if base == BASE and "(sAMAccountName=1234567890.ctr)" in flt:
-                    controls.extend(kw.get("controls", []))
                     self.response.append({"type": "searchResRef", "uri": ["ldap://dc.corp.example.mil/DC=DomainDnsZones," + BASE]})
                 return ok
 
@@ -188,7 +186,20 @@ class CardLookup1353(unittest.TestCase):
             self.assertEqual([g["count"] for g in read["groups"]["requesters"]], [5, 4, 11])
             self.assertEqual(list(ad.group_matches("requesters", "LAST.FIRST.M.1234567890")),
                              [(name, "sAMAccountName") for name in settings])
-            self.assertIn(("1.2.840.113556.1.4.1339", True, None), controls)
+
+    def test_hidden_continuation_must_reach_the_card_search(self):
+        class Ref(FakeConn):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    # AD suppresses subordinate continuations when domain scope is requested.
+                    if all(oid != "1.2.840.113556.1.4.1339" for oid, _, _ in kw.get("controls", [])):
+                        self.response.append({"type": "searchResRef", "uri": ["ldap://dc.corp.example.mil/OU=Hidden," + BASE]})
+                return ok
+
+        ad = G.Groups(WANT, {"base": BASE}, opener=opener(Ref()))
+        self.assertTrue(ad.refresh()["ok"])
+        self.assertFalse(ad.has("requesters", "OPERATOR.SAM.2345678901"))
 
     def test_only_exact_partition_references_are_ignored(self):
         forest = "DC=example,DC=mil"
@@ -208,12 +219,26 @@ class CardLookup1353(unittest.TestCase):
                              ([url + "dc%3DdomainDnsZones%2C" + BASE.lower() + "??base"], True),
                              ([url + "DC=ForestDnsZones," + forest, url + "CN=Configuration," + forest], True),
                              ([url + "CN=Configuration," + BASE], False),
+                             ([url + "DC=DomainDnsZones," + BASE + "??invalid"], False),
                              ([url + "DC=DomainDnsZones," + BASE, url + "OU=Hidden," + BASE], False),
                              ([], False)):
             with self.subTest(urls=urls):
                 ad = G.Groups(WANT, {"base": BASE}, opener=opener(Ref()))
                 self.assertTrue(ad.refresh()["ok"])
                 self.assertEqual(ad.has("requesters", cn), counts)
+
+    def test_partition_url_must_parse_completely(self):
+        partition = "DC=DomainDnsZones," + BASE
+        allowed = {partition.casefold()}
+        url = "ldap://dc.corp.example.mil/" + partition
+        for suffix in ("?", "??", "???", "????", "??base??"):
+            with self.subTest(suffix=suffix):
+                self.assertTrue(G._partition_reference({"uri": [url + suffix]}, allowed))
+        for bad in (url + "?cn", url + "??sub", url + "???(cn=*)", url + "????x",
+                    url + "?????", url + "#", url + "%", url + "%FF",
+                    "ldap://dc.corp.example.mil:bad/" + partition, "ldap://[::1]junk/" + partition):
+            with self.subTest(url=bad):
+                self.assertFalse(G._partition_reference({"uri": [bad]}, allowed))
 
     def test_replacement_at_same_dn_without_usable_guid_is_refused(self):
         cn = "LAST.FIRST.M.1234567890"
