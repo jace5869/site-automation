@@ -191,7 +191,12 @@ def _partition_reference(entry, partitions):
     if not isinstance(urls, (list, tuple)) or not urls:
         return False
     for url in urls:
-        match = _PARTITION_URL.fullmatch(url) if isinstance(url, str) else None
+        if not isinstance(url, str):
+            return False
+        url = re.sub(r"\?\?(?:base|one|sub)$", "", url, flags=re.IGNORECASE)   # a scope alone (DCs add it); nothing else
+        if "?" in url:                                  # any other query part: attributes, filter, extensions - refused
+            return False
+        match = _PARTITION_URL.fullmatch(url)
         if not match:
             return False
         try:

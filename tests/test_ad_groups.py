@@ -231,10 +231,10 @@ class CardLookup1353(unittest.TestCase):
         partition = "DC=DomainDnsZones," + BASE
         allowed = {partition.casefold()}
         url = "ldap://dc.corp.example.mil/" + partition
-        for suffix in ("?", "??", "???", "????", "??base??"):
-            with self.subTest(suffix=suffix):
-                self.assertTrue(G._partition_reference({"uri": [url + suffix]}, allowed))
-        for bad in (url + "?cn", url + "??sub", url + "???(cn=*)", url + "????x",
+        for good in (url, url + "??base", url + "??SUB", url + "??one"):
+            with self.subTest(url=good):
+                self.assertTrue(G._partition_reference({"uri": [good]}, allowed))
+        for bad in (url + "?", url + "??", url + "???", url + "????", url + "??base??", url + "??base?", url + "?cn", url + "???(cn=*)", url + "????x",
                     url + "?????", url + "#", url + "%", url + "%FF",
                     "ldap://dc.corp.example.mil:bad/" + partition, "ldap://[::1]junk/" + partition):
             with self.subTest(url=bad):
