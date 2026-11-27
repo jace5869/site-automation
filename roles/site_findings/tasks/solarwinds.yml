@@ -33,7 +33,7 @@
                                   'volume_critical_pct': solarwinds_report_volume_critical_pct | float})) }}
   run_once: true
 
-- name: Report | SolarWinds - list-only server view (1.138.0)
+- name: Report | SolarWinds - list-only server view (1.139.0)
   ansible.builtin.set_fact:
     _swr_view: >-
       {{ _swr_view | combine({'web_sections': (_swr_view.web_sections | default([])) + [_swr_sv | combine({'under_findings': true})]}) }}
@@ -45,7 +45,7 @@
                                       'volume_pct': solarwinds_report_volume_pct | float,
                                       'zone': report_time_zone | default('')}) }}
   run_once: true
-  when: report_servers_view | default(false) | bool and _swr_read.ok | default(false) | bool
+  when: report_servers_view | default(true) | bool and _swr_read.ok | default(false) | bool
 
 - name: Report | SolarWinds
   ansible.builtin.debug:

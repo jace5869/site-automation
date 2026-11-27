@@ -50,11 +50,11 @@
     name: site_email
   vars:
     _report: "{{ _ucs_doc | combine({'footer': 'Read-only: XML API queries to UCS Manager (configResolveClass), the session logged out after.'}) }}"
-    # 1.138.0: chrome-only web wrapper (native domain/chassis/blade/fault keys preserved)
+    # 1.139.0: chrome-only web wrapper (native domain/chassis/blade/fault keys preserved)
     _report_web: >-
       {{ (_ucs_doc | combine({'footer': 'Read-only: XML API queries to UCS Manager (configResolveClass), the session logged out after.'})
           | chrome_report_view({'kind_label': 'Compute · native UCS domain & chassis view'}))
-         if report_servers_view | default(false) | bool else {} }}
+         if report_servers_view | default(true) | bool else {} }}
     _report_xlsx: "{{ _ucs_xlsx }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 

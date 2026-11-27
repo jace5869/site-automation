@@ -137,7 +137,7 @@ def team_block(by_host, missing, team_map, names, cards, other=OTHER, report_tea
     -> {names, other, hosts {host: [teams]}, figures {team: {...}} ("" = everyone), todo {team: [cards]}, counts {team:
     [critical, warning, low]} (for the next runs), map (what report_teams says, in one line)}."""
     by_host = by_host or {}
-    # 1.138.0: missing may be {host: reason} or the legacy [host, ...] list
+    # 1.139.0: missing may be {host: reason} or the legacy [host, ...] list
     miss_dict = dict(missing) if isinstance(missing, dict) else None
     missing = list(missing or [])
     everyone = sorted(set(by_host) | set(missing))

@@ -124,7 +124,11 @@
     _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _web_report: >-
       {{ (_report_web if _report_web | default({}, true) and _report is defined
-          and report_web_theme | default('atlas') | string | trim | lower in (['atlas', 'brief', 'ops', 'glass'] if report_servers_view | default(false) | bool else ['atlas', 'brief', 'ops'])
+          and (report_web_theme | default('atlas') | string | trim | lower in ['atlas', 'brief', 'ops']
+               or (report_web_theme | default('atlas') | string | trim | lower == 'glass' and report_servers_view | default(true) | bool
+                   and (_report_web.sections | default([]) | selectattr('server_view', 'defined') | list
+                        or _report_web.sections | default([]) | selectattr('cert_rollup', 'defined') | list
+                        or _report_web.sections | default([]) | selectattr('chrome_view', 'defined') | list)))
           else _report if _report is defined else
           {'title': _report_subject | default('Report'), 'status': 'info',
            'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool)

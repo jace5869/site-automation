@@ -121,7 +121,7 @@
       {%- set base = _ad.report | ad_swis_insert(_ad_swis_view | default({})) | ad_repl_insert(_ad_repl.web_sections | default([]))
                      | ad_repl_insert(_ad_map.sections | default([]), 'Replication matrix' if _ad_repl.web_sections is defined else 'Inbound replication') -%}
       {{ (base | ad_web_doc(_ad, {'zone': report_time_zone | default('')})
-          if report_servers_view | default(false) | bool
+          if report_servers_view | default(true) | bool
           else (base if _ad_repl.web_sections is defined or (_ad_swis_view | default({})).section | default(none) or _ad_map.sections | default([]) else {})) }}
     _ad_xlsx: >-
       {{ (_ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections)

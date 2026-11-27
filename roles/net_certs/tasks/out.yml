@@ -50,12 +50,12 @@
     name: site_email
   vars:
     _report: "{{ _net_doc | cert_timeline_doc(_net_timeline | default({})) }}"
-    # 1.138.0 (step 12): host rollup on top + tagged certificate table on the website when report_servers_view is on
+    # 1.139.0 (step 12): host rollup on top + tagged certificate table on the website when report_servers_view is on
     _report_web: >-
       {%- set base = _net_doc | cert_timeline_doc(_net_timeline, true) if _net_timeline is defined else _net_doc -%}
       {{ (base | cert_web_doc(_net.certs, {'warn_days': net_cert_warn_days | int, 'crit_days': net_cert_crit_days | int,
                                            'notice_days': net_cert_notice_days | int, 'missing': _net.not_read | default([])}))
-         if report_servers_view | default(false) | bool
+         if report_servers_view | default(true) | bool
          else (_net_doc | cert_timeline_doc(_net_timeline, true) if _net_timeline is defined else {}) }}
     _report_xlsx: >-
       {{ (_net_doc | cert_timeline_doc(_net_timeline) | report_xlsx_sheets) + [_net_timeline.sheet]

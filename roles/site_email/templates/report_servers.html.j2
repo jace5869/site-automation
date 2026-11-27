@@ -1,4 +1,4 @@
-{#- 1.138.0: Server-first, cert host-rollup, list-only, and chrome-only report section
+{#- 1.139.0: Server-first, cert host-rollup, list-only, and chrome-only report section
     (report_servers_view; plugins/filter/server_view_filters.py).
     Matches reports-by-server-all.html in light and dark, 1280 and 800 px wide, across atlas, brief, ops and glass
     using only existing look tokens (report_servers.css.j2). Reuses button.xb + tr.xr (defer-detail / unpack),
@@ -10,7 +10,7 @@
 {%- set _list_only = s.list_only | default(false) %}
 {%- set _chk_hdr = s.columns[5] if (_list_only and s.columns is defined and s.columns | length > 5) else (s.columns[8] if s.columns is defined and s.columns | length > 8 else 'Checked (UTC)') %}
 {%- if s.tiles | default([]) %}
-<div class="srv-glance" aria-label="At a glance">
+<div class="srv-glance"{% if s.chrome_view | default(false) %} id="s{{ si }}"{% endif %} aria-label="At a glance">
 <div class="srv-ghead"><span class="srv-gic" aria-hidden="true"><svg class="ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><h2 class="srv-gh">At a glance</h2>{% if s.kind_label | default('') %}<span class="srv-chrome-tag">{{ s.kind_label | e }}</span>{% endif %}</div>
 <div class="srv-tiles">
 {%- for t in s.tiles %}
@@ -57,7 +57,6 @@
 <details class="{{ _card_cls }}sec srv-sec srv-rollup-sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }} data-cert-rollup>
 <summary><h2>{{ s.title | e }}<span class="count">{{ s.rollup_hosts | default([]) | length }}</span></h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
-<button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.rollup_hosts | default([]) %}
@@ -96,7 +95,6 @@
 <details class="{{ _card_cls }}sec srv-sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
 <summary><h2>{{ s.title | e }}<span class="count">{{ s.servers | default(s.rows | default([])) | length }}</span></h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
-<button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.servers | default([]) %}
@@ -143,7 +141,6 @@
 <tbody>
 {%- set _colspan = 6 if _list_only else 9 %}
 {%- for srv in s.servers %}
-{%- if loop.index == 101 %}<!--defer-main {{ loop.length }}-->{% endif %}
 {%- set ri = loop.index0 %}
 {%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
 {%- set tgd = tg.data | default({}) | safe_data %}
@@ -155,13 +152,13 @@
 <td class="nw" data-l="Status" data-v="{{ srv.status_label | e }}">{{ chip(rst, srv.status_label) }}</td>
 {%- if _list_only %}
 <td class="k-mid srv-meta-col" data-l="{{ s.meta_col_label | default('Details') | e }}" data-v="{{ (srv.meta or '-') | e }}"><span class="cv">{{ (srv.meta or '-') | e }}</span></td>
-<td class="k-long srv-worst" data-l="{{ s.summary_col_label | default('Summary') | e }}" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
+<td class="k-long srv-worst" data-l="{{ s.summary_col_label | default('Summary') | e }}" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.findings[0].title if not _list_only and srv.findings else srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
 {%- else %}
 <td class="k-num srv-cnt" data-l="Critical" data-v="{{ '-' if hide_nums else srv.counts.critical }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.critical %}<b class="c-critical">{{ srv.counts.critical }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
 <td class="k-num srv-cnt" data-l="Warning" data-v="{{ '-' if hide_nums else srv.counts.warning }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.warning %}<b class="c-warning">{{ srv.counts.warning }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
 <td class="k-num srv-cnt" data-l="Low" data-v="{{ '-' if hide_nums else srv.counts.low }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.low %}<b class="c-low">{{ srv.counts.low }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
 <td class="k-num srv-cnt" data-l="Info" data-v="{{ '-' if hide_nums else srv.counts.info }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.info %}<b class="c-info">{{ srv.counts.info }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
-<td class="k-long srv-worst" data-l="Worst finding" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
+<td class="k-long srv-worst" data-l="Worst finding" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.findings[0].title if not _list_only and srv.findings else srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
 {%- endif %}
 <td class="k-nw srv-time mono" data-l="{{ _chk_hdr | e }}" data-v="{{ (srv.checked or '-') | e }}">{% if srv.checked and srv.checked != '-' %}<time{% if srv.checked_iso %} datetime="{{ srv.checked_iso | e }}"{% endif %}>{{ keep(srv.checked) }}</time>{% else %}-{% endif %}</td>
 </tr>
@@ -195,7 +192,6 @@
 {%- endif %}
 </div></details></td></tr><!--/defer-detail-->
 {%- endfor %}
-{%- if s.servers | length > 100 %}<!--/defer-main-->{% endif %}
 </tbody>
 </table></div>
 {%- if s.note | default('') %}<p class="srv-note">{{ s.note | e }}</p>{% endif %}

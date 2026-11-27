@@ -225,7 +225,7 @@ class Scorecard(unittest.TestCase):
                 self.assertIn(g["href"][1:], ids, g)
 
     def test_all_web_looks_draw_it(self):
-        """1.138.0 (step 8): atlas, brief and ops all draw report_dash.html.j2 when r.dashboard and s.glance are set."""
+        """1.139.0 (step 8): atlas, brief and ops all draw report_dash.html.j2 when r.dashboard and s.glance are set."""
         import test_report_fit as T
         doc = fixture_dash("stig_scorecard_cora_web")
         for look in ("ops", "atlas", "brief"):

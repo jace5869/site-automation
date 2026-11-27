@@ -1,4 +1,4 @@
-/* 1.138.0: Controls for Servers, Cert Rollup, Chrome-only bars, and Glass web view.
+/* 1.139.0: Controls for Servers, Cert Rollup, Chrome-only bars, and Glass web view.
    ASCII-only, strict ES5, idempotent, no HTML sinks. */
 (function(){
   if(window.siteReportServers)return;
@@ -6,16 +6,9 @@
 
   function toList(nl){return Array.prototype.slice.call(nl||[])}
 
-  function applyVis(row,api){
-    if(api&&api.vis){api.vis(row);return}
-    row.hidden=!!(row._f||row._sv||row._hr||row._cf);
-    if(row._x)row._x.hidden=row.hidden||!row._o;
-  }
-
-  function notifyChanged(api){if(api&&api.rowsChanged)api.rowsChanged()}
-
   function setup(){
-    var api=window.siteReport||null;
+    var api=window.siteReport;
+    if(!api||!api.vis)return;
 
     /* Narrow-screen section jump select (800px and below) */
     var select=document.querySelector('.rail-sel');
@@ -34,55 +27,6 @@
         var current=rail.querySelector('a.on');
         if(current)select.value=current.hash.slice(1);
       }).observe(rail,{subtree:true,attributes:true,attributeFilter:['class']});
-    }
-
-    /* Standalone fallback for Glass web view (when site_report.js is not loaded) */
-    if(!api){
-      document.documentElement.classList.add('js');
-      document.addEventListener('click',function(ev){
-        var xb=ev.target.closest('button.xb');
-        if(xb){
-          var tr=xb.closest('tr');
-          var xr=tr&&tr.nextElementSibling;
-          if(xr&&xr.classList.contains('xr')){
-            var open=xb.getAttribute('aria-expanded')!=='true';
-            xb.setAttribute('aria-expanded',String(open));
-            tr._x=xr;tr._o=open;
-            xr.hidden=!open;
-            var det=xr.querySelector('.srv-det');
-            if(det&&open)det.open=true;
-          }
-          return;
-        }
-        var cp=ev.target.closest('button.copy');
-        if(cp){
-          var code=cp.getAttribute('data-copy');
-          if(!code){
-            var box=cp.closest('.code');
-            var pre=box&&box.querySelector('pre');
-            code=pre?pre.textContent:'';
-          }
-          if(code&&navigator.clipboard&&navigator.clipboard.writeText){
-            navigator.clipboard.writeText(code).then(function(){
-              var old=cp.textContent;cp.textContent='Copied';
-              setTimeout(function(){cp.textContent=old},1400);
-            },function(){});
-          }
-        }
-      });
-      toList(document.querySelectorAll('button.copy')).forEach(function(b){b.hidden=false});
-      toList(document.querySelectorAll('input.filter')).forEach(function(inp){inp.hidden=false});
-      var pr=document.getElementById('print');
-      if(pr){pr.hidden=false;pr.addEventListener('click',function(){window.print()})}
-      toList(document.querySelectorAll('input[name="site-report-theme"]')).forEach(function(r){
-        var cur=document.documentElement.getAttribute('data-theme')||'auto';
-        if(r.value===cur)r.checked=true;
-        r.addEventListener('change',function(){
-          if(r.value==='auto')document.documentElement.removeAttribute('data-theme');
-          else document.documentElement.setAttribute('data-theme',r.value);
-          try{localStorage.setItem('site-report-theme',r.value)}catch(e){}
-        });
-      });
     }
 
     /* Server-first tables (standard & list-only) */
@@ -114,7 +58,7 @@
           button.hidden=false;
           button.addEventListener('click',function(){
             var open=button.classList.contains('srv-exp');
-            if(open)expand();
+            if(open){table._open=true;expand();api.rowsChanged()}
             rows().forEach(function(row){if(!open||!row.hidden)toggle(row,open)});
           });
         });
@@ -124,16 +68,6 @@
           inp.hidden=false;
           inp.addEventListener('input',function(){
             var query=this.value.trim().toLowerCase();
-            if(!api){
-              rows().forEach(function(row){
-                if(!query){row._f=false;applyVis(row,null);return}
-                var xr=row._x||row.nextElementSibling;
-                var txt=(row.textContent+' '+(xr?xr.textContent:'')).toLowerCase();
-                row._f=txt.indexOf(query)<0;
-                applyVis(row,null);
-              });
-              return;
-            }
             if(!query)return;
             rows().forEach(function(row){
               if(!row._f)return;
@@ -163,9 +97,9 @@
             rows().forEach(function(row){
               if(wantChg)row._sv=row.getAttribute('data-changed')!=='1';
               else row._sv=!!severity&&row.getAttribute('data-sev')!==severity;
-              applyVis(row,api);
+              api.vis(row);
             });
-            notifyChanged(api);
+            api.rowsChanged();
           });
         }
       }
@@ -181,7 +115,7 @@
       var selectedSev='';
       var query='';
 
-      function certRows(){return toList(document.querySelectorAll('table:not(.srv-tbl) tbody>tr[data-host]'))}
+      function certRows(){return toList(document.querySelectorAll('table[data-cert-table] tbody>tr[data-host]'))}
 
       function filterRollup(){
         items.forEach(function(it){
@@ -200,18 +134,18 @@
           if(act)act.textContent=on?'Showing (click to clear)':'Filter table ->';
         });
         if(clr)clr.hidden=!host;
-        certRows().forEach(function(row){
-          var tbl=row.closest('table');
-          if(tbl&&tbl._expand)tbl._expand();
-          row._hr=!!host&&row.getAttribute('data-host')!==host;
-          if(api&&api.vis){
-            row._sv=row._hr;
-            api.vis(row);
-          }else{
-            applyVis(row,null);
-          }
+        // Certificate and native infrastructure tables have no outage timeline.
+        // Its external-filter input composes with the table search and severity chips.
+        toList(document.querySelectorAll('table')).forEach(function(table){
+          if(!table.hasAttribute('data-cert-table'))return;
+          table._otFree=!!host;
+          if(host&&table._expand)table._expand();
         });
-        notifyChanged(api);
+        certRows().forEach(function(row){
+          row._ot=!!host&&row.getAttribute('data-host')!==host;
+          api.vis(row);
+        });
+        api.rowsChanged();
       }
 
       items.forEach(function(it){
@@ -252,15 +186,16 @@
 
       function applyChrome(){
         var total=0,vis=0;
+        toList(document.querySelectorAll('details.sec table')).forEach(function(table){
+          table._otFree=!!(curQ||curSev);
+          if(table._otFree&&table._expand)table._expand();
+        });
         allRows().forEach(function(row){
-          var tbl=row.closest('table');
-          if(tbl&&tbl._expand)tbl._expand();
           total++;
           var matchSev=!curSev||row.getAttribute('data-sev')===curSev;
           var matchQ=!curQ||row.textContent.toLowerCase().indexOf(curQ)>=0;
-          row._sv=!matchSev;
-          row._f=!matchQ;
-          applyVis(row,api);
+          row._ot=!(matchSev&&matchQ);
+          api.vis(row);
           if(matchSev&&matchQ){
             vis++;
             var d=row.closest('details.sec');
@@ -268,7 +203,7 @@
           }
         });
         if(shownEl)shownEl.textContent=(curQ||curSev)?(vis+' of '+total+' shown'):'';
-        notifyChanged(api);
+        api.rowsChanged();
       }
 
       if(qInp){

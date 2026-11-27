@@ -323,7 +323,7 @@ The next run of each report draws its page in the ops look (the index on the nex
 `report_web_theme: atlas` goes back. Checked at 1280 and 800 px wide, light and dark; no phone layout of its own (a
 phone gets the page as at 800 px, its tables as in atlas).
 
-### The dashboard: the first screen (1.71.0; all web looks since 1.138.0)
+### The dashboard: the first screen (1.71.0; all web looks since 1.139.0)
 
 A report can open with a dashboard in `atlas`, `brief` and `ops`: everything at a glance on the first screen, the full detail one
 click down. The STIG scorecard is the first report with one. The dashboard is the report's **At a glance** section:
@@ -430,14 +430,14 @@ team its own part. The email does not change.
 The ticket insights' pages have their own teams: the assignment groups. Chips over *At a glance* link to each group's
 page, and the one last chosen is offered as *Your team* on the other pages.
 
-## Server-first view (1.138.0)
+## Server-first view (1.139.0)
 
 **On by default on the report website (`atlas`, `brief`, `ops`, and `glass`).** Report pages lead with *At a glance* tiles on top and a server-first layout (or host rollup / chrome-only wrapper where the report is not server-keyed). Emails and Excel workbooks do not change.
 
-To restore the byte-identical pre-1.138.0 layout in `playbooks/group_vars/all.yml` (or on one template's Variables):
+To restore the byte-identical pre-1.139.0 layout in `playbooks/group_vars/all.yml` (or on one template's Variables):
 
 ```yaml
-report_servers_view: false               # true (default since 1.138.0 step 16)
+report_servers_view: false               # true (default since 1.139.0 step 16)
 ```
 
 The default lives in `roles/site_findings/defaults/main.yml` and `roles/site_email/defaults/main.yml`.

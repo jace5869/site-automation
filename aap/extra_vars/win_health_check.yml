@@ -479,6 +479,16 @@
 ## seconds for the syslog query
 # solarwinds_report_timeout: 60
 
+# ---- check_certs ---------------------------------------------------------------------------------
+## a certificate expiring within this many days -> warning (and amber in the certificate report)
+# check_certs_warn_days: 30
+
+## the certificate report shows these as Low (an early heads-up; not a finding)
+# check_certs_notice_days: 60
+
+## within this many days (or expired) -> critical
+# check_certs_crit_days: 14
+
 # ---- check_trust ---------------------------------------------------------------------------------
 ## More certificates to look for, besides the shipped list: name, sha256 (the certificate's
 ## fingerprint, with or without colons), spki_sha256 (its public key, optional), kind (root /
@@ -911,6 +921,9 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
 # site_fail_on: [critical, warning]
@@ -981,14 +994,6 @@
 
 ## the team of a host no team matches - always shown, with its count
 # report_team_other: Unassigned
-
-## ---- Server-first view (1.138.0): opt-in server list on the report website ----------------------
-## true = add a server-first section (At a glance tiles + expandable per-server rows, worst first,
-## with counts per severity, worst finding, checked time, Expand all / Collapse all and severity
-## chips) to the website copy of health reports (atlas, brief and ops). The flat Findings table
-## stays below it, and the email never changes. false (default) = every page as before. Set in
-## all.yml or on one template's Variables (docs/WEB_REPORTS.md).
-# report_servers_view: false
 
 ## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
 ## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report

@@ -31,11 +31,11 @@
 {#- a verdict only where there is one to give: a report that only informs leads with its title -#}
 {%- set verdict = st in ['ok', 'warning', 'critical'] -%}
 {%- set opsword = {'ok': 'Healthy', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Not rated', 'unknown': 'Unavailable', 'low': 'Low'} -%}
-{#- The findings role supplies its default false. Standalone report documents describe their own sections. -#}
+{#- The website enables the server view by default. Standalone report documents describe their own sections. -#}
 {%- set server_features = report_servers_view | default(true) | string | lower in ['true', 'yes', 'on', '1'] -%}
 {%- set has_servers = server_features and ((r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0) or (r.sections | default([]) | selectattr('cert_rollup', 'defined') | selectattr('cert_rollup') | list | length > 0) or (r.sections | default([]) | selectattr('chrome_view', 'defined') | selectattr('chrome_view') | list | length > 0)) -%}
 {%- set _kind_web = true -%}
-{#- 1.138.0: shared macros extracted to report_macros.html.j2 (pure refactor) -#}
+{#- 1.139.0: shared macros extracted to report_macros.html.j2 (pure refactor) -#}
 {%- from 'report_macros.html.j2' import icon, copyicons, nbw, keep, dw, chip, breakable, xmini with context -%}
 {%- from 'report_macros.html.j2' import section_count with context -%}
 <!DOCTYPE html>
@@ -861,7 +861,7 @@ footer{margin-top:32px}
 <p class="say">{{ say }}</p>
 {%- endif %}
 </div>
-{%- if hd.t is not none and not r.dashboard | default({}) %}
+{%- if not has_servers and hd.t is not none and not r.dashboard | default({}) %}
 {%- set hv = ('' if hd.t.value is none else hd.t.value) | string %}
 <div class="hn"><div class="bn{{ ' long' if hv | length > 6 else '' }}{{ (' c-' ~ hd.t.status) if hd.t.status | default('') in ['critical', 'warning'] else '' }}">{{ hv | e }}</div><div class="cap">{{ hd.t.label | e }}{{ (' - ' ~ hd.t.note) | e if hd.t.note | default('') else '' }}</div></div>
 {%- endif %}
@@ -1237,7 +1237,7 @@ footer{margin-top:32px}
 {%- endif %}
 <button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
 </div>
-<div class="tw"><table{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}{% if s.cell_keys | default(false) %} data-keys="{{ s.cell_keys | tojson | forceescape }}"{% endif %}>
+<div class="tw"><table{% if s.cert_table | default(false) %} data-cert-table{% endif %}{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}{% if s.cell_keys | default(false) %} data-keys="{{ s.cell_keys | tojson | forceescape }}"{% endif %}>
 <thead><tr>
 {%- for c in s.columns %}
 {%- if kinds[loop.index0] == 'x' %}

@@ -217,7 +217,7 @@ class _Report(object):
         if severity in ("critical", "warning"):
             self.problems.append({"domain": domain, "area": area, "object": obj, "severity": severity, "text": text})
         elif severity == "low":
-            # 1.138.0: keep low findings in a separate list so ad_server_view shows them (never amber) without affecting problems
+            # 1.139.0: keep low findings in a separate list so ad_server_view shows them (never amber) without affecting problems
             self.low_problems.append({"domain": domain, "area": area, "object": obj, "severity": severity, "text": text})
 
     def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False):

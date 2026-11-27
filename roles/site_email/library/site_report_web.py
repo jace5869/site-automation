@@ -1103,6 +1103,9 @@ def deferred_page(html, rel, js, name):
     # Inner blocks are encoded first, so unopened details and their nested tables stay inert when outer rows load.
 
     def block(m):
+        # Server findings already have native details controls for readers without JavaScript.
+        if kind == 'detail' and m.group(2).startswith('<tr class="xr" hidden><td class="xd srv-xd"'):
+            return m.group(2)
         rows = _RowNodes()
         rows.feed(m.group(2))
         rows.close()

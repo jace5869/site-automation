@@ -36,7 +36,7 @@ def stigman_health_findings(keycloak, targets, opts=None):
     out = []
 
     def add(sev, key, summary, hint="", host=""):
-        # 1.138.0: attach host on each finding so server_view groups by real node/service rather than localhost
+        # 1.139.0: attach host on each finding so server_view groups by real node/service rather than localhost
         d = {"check": check, "id": "%s:%s" % (check, key), "severity": sev, "summary": summary, "hint": hint}
         if host:
             d["host"] = host
@@ -198,7 +198,14 @@ def stigman_health_line(keycloak, targets):
     return "; ".join(parts)
 
 
+def stigman_collector_findings(findings):
+    """Qualify host findings only in the collector's flat report and collector-keyed artifact."""
+    return [dict(f, id=f["host"] + ":" + f["id"], server_summary=f["summary"],
+                 summary=f["host"] + ": " + f["summary"]) if f.get("collected_host_finding") else f
+            for f in findings]
+
+
 class FilterModule(object):
     def filters(self):
-        return {"stigman_health_findings": stigman_health_findings, "stigman_health_sections": stigman_health_sections,
+        return {"stigman_collector_findings": stigman_collector_findings, "stigman_health_findings": stigman_health_findings, "stigman_health_sections": stigman_health_sections,
                 "stigman_health_line": stigman_health_line}

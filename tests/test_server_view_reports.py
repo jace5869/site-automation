@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""1.138.0: Unit and template tests for steps 9-16 of plan-reports-by-server.md, all 24 items of
+"""1.139.0: Unit and template tests for steps 9-16 of plan-reports-by-server.md, all 24 items of
 vdi-design-check.txt, chrome-only reports (ONTAP, UCS, Netmap), the glass web look, and the shared
 section-kind dispatcher across all seven top-level report templates.
 Placeholders only: SITEA, corp.example.mil, 192.0.2.x.
@@ -58,7 +58,7 @@ def _render(template_name, report, web=True, **extra):
 
 
 class DesignCheckAndSteps9To14Tests(unittest.TestCase):
-    """1.138.0: Covers all 24 items of vdi-design-check.txt and build steps 9-14."""
+    """1.139.0: Covers all 24 items of vdi-design-check.txt and build steps 9-14."""
 
     def test_item1_no_host_reporting_shows_not_checked_no_zeroes(self):
         sec = svf.server_view({}, missing={"srv01.corp.example.mil": "SSH refused", "srv02.corp.example.mil": "timeout"})
@@ -259,6 +259,34 @@ class DesignCheckAndSteps9To14Tests(unittest.TestCase):
         # Skipped host noted
         self.assertIn("1 left out on purpose", sec["summary_text"])
 
+    def test_real_denial_and_inventory_fields(self):
+        from collections import UserDict
+        host = "sitea-app.corp.example.mil"
+        sec = svf.fapolicyd_server_view([UserDict({"_fr": {"state": "read", "blocks": [
+            {"kind": "would deny", "exe": "/usr/bin/cat", "path": "/opt/sitea/data", "count": 2}
+        ]}}), {}], [host, "sitea-unread"])
+        by = {s["host"]: s for s in sec["servers"]}
+        self.assertEqual(by[host]["status"], "low")
+        self.assertEqual(by["sitea-unread"]["status"], "unknown")
+        inv = svf.sw_inventory_server_view({"hosts": [{"host": host, "packages": 1}],
+            "changes_by_host": {host: [{"change": "updated", "name": "sitea", "old_evr": "1", "new_evr": "2"}]}})
+        self.assertIn("1 -> 2", inv["servers"][0]["findings"][0]["evidence"])
+
+    def test_cert_read_empty_unknown_expiry_and_zero_days(self):
+        hosts = svf.cert_host_rollup([{"host": "SITEA", "days": -99999}], {"read_hosts": ["SITEA", "sitea-empty"]})
+        by = {h["host"]: h for h in hosts["rollup_hosts"]}
+        self.assertEqual(by["SITEA"]["status"], "unknown")
+        self.assertEqual(by["sitea-empty"]["summary"], "No certificates found")
+        tagged = svf.cert_table_tag(sf.cert_report_section([{"host": "SITEA", "days": 0}]))
+        self.assertEqual(tagged["row_tags"][0]["data"]["sev"], "critical")
+
+    def test_fix_and_operator_prose_do_not_get_hint_copy(self):
+        sec = svf.server_view({"SITEA": [{"severity": "low", "hint": "Review the service logs",
+                                         "fix": "Review retention."}]})
+        f = sec["servers"][0]["findings"][0]
+        self.assertEqual(f["hint"], "")
+        self.assertIn("Review the service logs", f["evidence"])
+
     def test_item14_step11_sw_inventory_list_only_and_skipped_count(self):
         data = {
             "hosts": [
@@ -343,7 +371,7 @@ class DesignCheckAndSteps9To14Tests(unittest.TestCase):
 
 
 class ChromeOnlyGlassAndDispatcherTests(unittest.TestCase):
-    """1.138.0: Chrome-only ONTAP/UCS/Netmap, Glass web vs email, byte-identical off-mode, Step 15 dispatcher."""
+    """1.139.0: Chrome-only ONTAP/UCS/Netmap, Glass web vs email, byte-identical off-mode, Step 15 dispatcher."""
 
     def test_chrome_only_preserves_native_keys_for_ontap_ucs_netmap(self):
         doc = {

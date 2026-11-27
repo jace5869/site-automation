@@ -1963,9 +1963,9 @@ _CELL_SOFT = re.compile(r"(?<=[_./\\,-])(?=[^\s_./\\,-])")
 _TIDY_CONTENT = ("rows", "lines", "text", "cards", "board", "squares", "matrix", "timeline", "heat", "outage", "details", "groups", "tiles", "glance",
                  "buttons", "links", "sparks", "actions", "passed", "rule_texts", "cell_links",
                  "team_view",              # 1.86.0 review: the team view has no rows of its own - an all-clear run keeps it
-                 "server_view",            # 1.138.0: the server-first view (report_servers.html.j2)
-                 "cert_rollup",            # 1.138.0: certificate host rollup (report_servers.html.j2)
-                 "chrome_view")            # 1.138.0: chrome-only At a glance bar (ONTAP, UCS, Netmap)
+                 "server_view",            # 1.139.0: the server-first view (report_servers.html.j2)
+                 "cert_rollup",            # 1.139.0: certificate host rollup (report_servers.html.j2)
+                 "chrome_view")            # 1.139.0: chrome-only At a glance bar (ONTAP, UCS, Netmap)
 _ALL_CLEAR = re.compile(r"^Every [^.]{3,100} (?:is|are) (?:OK|up|online|healthy|fine|clear|reachable|connected|running|answering|in sync|available|on|at|below|within|under|in)\b[^.]*\.?$", re.I)
 _NOTHING = re.compile(r"^(none|nothing|nothing found|nothing is [a-z ]{1,40}|-)\.?$", re.I)
 
@@ -2713,7 +2713,7 @@ CHECK_KIND = {"certs": "Certificate", "net_certs": "Certificate", "vmware_certs"
 def findings_cards(by_host, missing=None, max_cards=6):
     """The findings of a check run as "Start here" cards: critical first, then warning (each by host), at most max_cards,
     then one card for the hosts that did not report -> (cards, how many findings were left out).
-    1.138.0: missing accepts either {host: reason} or the legacy [host, ...] list."""
+    1.139.0: missing accepts either {host: reason} or the legacy [host, ...] list."""
     sv_mod = server_view_module()
     found = []
     for h in sorted(by_host or {}):
@@ -2759,8 +2759,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     team view (a section "Your team", team_view) takes the place of Start here and of the findings' own tiles. Without
     it, or with no names, the report is as before. 1.97.0 (SolarWinds): an extra section with first: true goes above Start
     here (the very first on the page), one with under_findings: true right under the findings table.
-    1.138.0: missing accepts either {host: reason} or the legacy [host, ...] list; counts are computed once in
-    server_view_filters.host_counts; servers (report_servers_view, website copy only, off by default) adds a server-first
+    1.139.0: missing accepts either {host: reason} or the legacy [host, ...] list; counts are computed once in
+    server_view_filters.host_counts; servers (report_servers_view, website copy only, on by default) adds a server-first
     section above the flat Findings table."""
     by_host = by_host or {}
     sv_mod = server_view_module()
@@ -2771,7 +2771,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     tv = teams if isinstance(teams, dict) and (teams.get("names") or []) else None
     tmap = (tv.get("map") or {}) if tv else {}
     sv_on = bool(servers.get("enabled", True)) if isinstance(servers, dict) else bool(servers)
-    # 1.138.0: compute per-host and fleet counts once in server_view_filters so every view agrees
+    # 1.139.0: compute per-host and fleet counts once in server_view_filters so every view agrees
     hc = sv_mod.host_counts(by_host, missing)
     miss_map = hc["missing"]
     miss_names = sorted(miss_map, key=str.lower) if sv_on else sorted(miss_map)
@@ -2791,7 +2791,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
             # a finding's "fix" is what to do, for a person: shown with the finding, never run (the hint is what ACT runs as evidence)
             row = [sev.upper(), f.get("check", ""), str(f.get("summary", "")) + ((" What to do: %s" % f["fix"]) if f.get("fix") else ""), f.get("hint", "")]
             # 1.86.0 review: the row's teams as a JSON list - a team name may hold any character (OPS never matches OPS|WEB)
-            # 1.138.0 (vdi-design-check #17): when server view is on, always emit data.sev row_tags even without report_teams
+            # 1.139.0 (vdi-design-check #17): when server view is on, always emit data.sev row_tags even without report_teams
             if tv:
                 tag = {"data": {"team": json.dumps(tmap.get(h) or [tv.get("other") or "Unassigned"], separators=(",", ":")), "sev": sev}}
             elif sv_on:
@@ -2800,7 +2800,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                 tag = None
             rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []) + ([tag] if (tv or sv_on) else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 3 if "INFO" in r[:2] else 1, r[0]))
-    tags = [r.pop() for r in rows] if (tv or sv_on) else []  # each row's team and/or severity (1.86.0 / 1.138.0)
+    tags = [r.pop() for r in rows] if (tv or sv_on) else []  # each row's team and/or severity (1.86.0 / 1.139.0)
     links = [r.pop() for r in rows] if ask else []          # each row's buttons: [{label, url}]
     n = len(rows)
     if n:
@@ -2849,7 +2849,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                             "cards": cards, "text": text})
     sv_sec = None
     if sv_on:
-        # 1.138.0: server-first / rollup view (report_servers_view, website only); placed FIRST so At a glance is on top
+        # 1.139.0: server-first / rollup view (report_servers_view, website only); placed FIRST so At a glance is on top
         sopts = dict(servers) if isinstance(servers, dict) else {}
         if ask:
             sopts["portal"] = ask
@@ -2893,6 +2893,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                             "hint": "ausearch -m FANOTIFY -ts today | tail -n 20",
                             "buttons": btns,
                         })
+            # The artifact and display each truncate denial entries at a different boundary.
+            # The artifact's omitted tail is additional to entries hidden by the display cap.
+            if fap_e:
+                sopts["artifact_kinds"] = ("fapolicyd_deny",)
             sv_sec = sv_mod.server_view(sv_by, health=sopts.get("health"), missing=miss_map, capped=sopts.get("capped"), opts=sopts)
         if not (tv and not own):
             sv_sec["tiles_kept"] = [b for s in first + list(extra or []) + under for b in list(s.get("boxes") or [])]
@@ -2915,12 +2919,14 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                          "lines": miss_lines})
     sections += [s for s in extra or [] if not s.get("top")]
     healthy = [h for h in hosts if h not in bad]
+    if sv_sec and sv_sec.get("servers") is not None:
+        healthy = [s["host"] for s in sv_sec["servers"] if s["status"] == "ok"]
     if healthy and not single and not (head and head.get("summary_only")):
         # passed / passed_checks: the web look (report_web_theme: atlas) shows them with check marks; the emails, the text
         sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy), "passed": healthy,
                          "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})
     if sv_sec is not None:
-        # 1.138.0 (vdi-design-check #16): At a glance / server view ALWAYS goes at index 0, above SolarWinds first:true sections
+        # 1.139.0 (vdi-design-check #16): At a glance / server view ALWAYS goes at index 0, above SolarWinds first:true sections
         sections[:0] = [sv_sec] + first
     else:
         sections[:0] = first
@@ -2935,6 +2941,14 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         h_counts = h_scope = None
     out = {"title": t, "head_counts": h_counts, "head_scope": h_scope or None, "status": status, "summary": summary, "sections": sections,
            "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
+    if sv_sec and sv_sec.get("server_view") and not head:
+        counts = sv_sec["counts"]
+        scope = counts["total_hosts"]
+        unseen = counts["unchecked"] + counts["missing"]
+        out.update(title=title, status=sv_sec["status"], head_scope=["%d server%s" % (scope, "" if scope == 1 else "s")],
+                   head_counts=[[counts[k], k, k] for k in ("critical", "warning", "low", "info") if counts[k]]
+                               + ([[unseen, "not checked", "unknown"]] if unseen else [])
+                               or [["no", "findings", "ok"]])
     if tv and not own:
         # the findings' own tiles make way for the team's (the extra sections' boxes stay: patch age, the Console)
         block["tiles_kept"] = [b for s in first + list(extra or []) + under for b in list(s.get("boxes") or [])]
@@ -2948,7 +2962,7 @@ _SERVER_VIEW = []
 
 
 def server_view_module():
-    """1.138.0: plugins/filter/server_view_filters.py, loaded by its path (see portal_module)."""
+    """1.139.0: plugins/filter/server_view_filters.py, loaded by its path (see portal_module)."""
     if not _SERVER_VIEW:
         import importlib.util
         import os

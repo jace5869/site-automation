@@ -120,6 +120,9 @@ report_web_url: ""                       # the address people open that folder a
 # colours. Or one of the email looks: standard, command, portal or glass (as report_email_theme - the index page is
 # then in the portal look).
 report_web_theme: atlas
+
+# Group website reports by server (1.139.0). Set false for the previous layout.
+report_servers_view: true
 # The motion of the report website's pages (1.86.0; the atlas, brief and ops looks, the ticket insights): numbers count
 # up, cards and tiles come in as they scroll into view, chart lines draw in and bars grow, a line chart gets a crosshair,
 # rows a filter brings back fade in, a slim header with the title, the status and the first tiles stays on top once the

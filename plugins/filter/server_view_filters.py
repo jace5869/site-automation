@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""1.138.0: Server-first report view and shared severity / per-host counting (plugins/filter/server_view_filters.py).
+"""1.139.0: Server-first report view and shared severity / per-host counting (plugins/filter/server_view_filters.py).
 
 Turns per-host findings (site_findings / hostvars), health metadata (site_health), missing hosts with
 reasons ({host: reason} or legacy [host, ...]), capped counts (site_findings_capped), and report-specific
@@ -23,6 +23,8 @@ import importlib.util
 import json
 import os
 import re
+import shlex
+from functools import lru_cache
 
 __metaclass__ = type
 
@@ -63,7 +65,7 @@ CHECK_KIND = {
     "events": "Events", "sites": "Sites", "privileged": "Privileged groups", "backup": "Backup",
 }
 
-# 1.138.0: Five severity vocabularies + cert/infra words -> canonical set (critical | warning | low | info | ok | unknown)
+# 1.139.0: Five severity vocabularies + cert/infra words -> canonical set (critical | warning | low | info | ok | unknown)
 _SEV_MAP = {
     # Common four + ok / unknown
     "critical": "critical",
@@ -133,10 +135,8 @@ _SEV_MAP = {
 }
 
 _TIME_MOD = []
-_STIG_TEXT_MOD = []
 _SV_RE = re.compile(r"\bSV-\d+")
 _STIGMAN_HOST_MISSING_RE = re.compile(r"^stigman:host:(.+)$")
-_SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>]+\Z")
 _DEFAULT_KIND_CAPS = {"fapolicyd_deny": 10}
 
 
@@ -151,19 +151,17 @@ def _site_time():
     return _TIME_MOD[0]
 
 
-def _stig_text():
-    """Load plugins/filter/stig_text_filters.py by path for read-only check command extraction."""
-    if not _STIG_TEXT_MOD:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stig_text_filters.py")
-        spec = importlib.util.spec_from_file_location("stig_text_for_server_view", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        _STIG_TEXT_MOD.append(mod)
-    return _STIG_TEXT_MOD[0]
+@lru_cache(maxsize=None)
+def _report_filter(name):
+    path = os.path.join(os.path.dirname(__file__), name + ".py")
+    spec = importlib.util.spec_from_file_location(name + "_for_server_view", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def normalize_severity(raw, default="warning"):
-    """1.138.0: Normalize any of the repo's five severity vocabularies (plus cert/infra words) into
+    """1.139.0: Normalize any of the repo's five severity vocabularies (plus cert/infra words) into
     critical | warning | low | info | ok | unknown.
 
     Vocabularies handled:
@@ -183,7 +181,7 @@ def normalize_severity(raw, default="warning"):
 
 
 def missing_map(missing):
-    """1.138.0: Normalize missing hosts from {host: reason}, [host, ...], or [{host, reason}, ...]
+    """1.139.0: Normalize missing hosts from {host: reason}, [host, ...], or [{host, reason}, ...]
     into {host: reason_str}. Keeps the legacy list form working."""
     if not missing:
         return {}
@@ -197,7 +195,7 @@ def missing_map(missing):
     for item in missing:
         if isinstance(item, dict):
             name = str(item.get("host") or item.get("name") or "").strip()
-            reason = " ".join(str(item.get("reason") or item.get("error") or "").split()).strip()
+            reason = " ".join(str(item.get("reason") or item.get("why") or item.get("error") or "").split()).strip()
         else:
             name = str(item or "").strip()
             reason = ""
@@ -207,7 +205,7 @@ def missing_map(missing):
 
 
 def missing_lines(missing):
-    """1.138.0: Case-insensitively sorted missing-host lines: 'host: reason' when reason is present, else 'host'."""
+    """1.139.0: Case-insensitively sorted missing-host lines: 'host: reason' when reason is present, else 'host'."""
     mm = missing_map(missing)
     return [("%s: %s" % (h, mm[h])) if mm[h] else h for h in sorted(mm, key=str.lower)]
 
@@ -229,7 +227,7 @@ def _host_status(counts, unknown_n=0):
 
 
 def host_counts(by_host, missing=None):
-    """1.138.0: Single source of truth for per-host and fleet finding counts.
+    """1.139.0: Single source of truth for per-host and fleet finding counts.
 
     Returns:
       {
@@ -265,7 +263,7 @@ def host_counts(by_host, missing=None):
             if sev in c:
                 c[sev] += 1
             elif sev == "unknown":
-                # 1.138.0 (vdi-design-check #20): unknown never increments warning
+                # 1.139.0 (vdi-design-check #20): unknown never increments warning
                 unk_n += 1
             chk = str(f.get("check") or f.get("kind") or "").strip()
             if chk and chk not in seen_chk:
@@ -332,7 +330,7 @@ def host_counts(by_host, missing=None):
 
 
 def fleet_summary_lines(by_host, missing=None):
-    """1.138.0: Fleet summary lines for roles/site_findings/tasks/report.yml (replaces inline Jinja counting)."""
+    """1.139.0: Fleet summary lines for roles/site_findings/tasks/report.yml (replaces inline Jinja counting)."""
     hc = host_counts(by_host, missing)
     hosts = hc["hosts"]
     miss = hc["missing"]
@@ -401,6 +399,37 @@ def _clip_prose(text, limit=600):
     return s[:limit].rsplit(" ", 1)[0].rstrip() + " ..."
 
 
+def _copyable_hint(text):
+    """Offer Copy for recognized diagnostic commands. Keep other operator guidance as text."""
+    if not text or any(c in text for c in "`$(){}\\"):
+        return False
+    for command in re.split(r"\s*(?:&&|\||;|\n)\s*", text):
+        if re.search(r"""[&<>]""", re.sub(r"'[^']*'", "", command)):
+            return False
+        try:
+            args = shlex.split(command)
+        except ValueError:
+            return False
+        if not args:
+            return False
+        name = args[0].lower()
+        if name in ("df", "du", "cat", "echo", "head", "tail", "ls", "stat", "grep",
+                    "get-computerinfo", "get-content", "get-item", "get-childitem", "get-service"):
+            continue
+        if name == "sort" and all(a in ("-h", "-n", "-r", "-u") for a in args[1:]):
+            continue
+        if name == "systemctl" and args[1:2] in (["status"], ["is-active"], ["is-enabled"], ["show"]):
+            continue
+        if name == "fapolicyd-cli" and args[1:] in (["--check-trustdb"], ["--list"]):
+            continue
+        if name == "ausearch" and re.fullmatch(r"ausearch -m FANOTIFY -ts [\w-]+", command):
+            continue
+        if name == "reg" and args[1:2] == ["query"]:
+            continue
+        return False
+    return True
+
+
 def _normalize_finding(host, f, ask=None, tz=None):
     """Turn one raw finding dict (health finding or site_findings artifact entry) into a display dict.
     hint = read-only command (gets Copy); fix = prose for a person (never run, no Copy)."""
@@ -410,7 +439,7 @@ def _normalize_finding(host, f, ask=None, tz=None):
         sev = "info" if sev == "ok" else ("unknown" if sev == "unknown" else "warning")
     chk_raw = str(f.get("check") or f.get("kind") or "").strip()
     chk_label = str(f.get("check_label") or CHECK_KIND.get(chk_raw, chk_raw.replace("_", " ") if chk_raw else "")).strip()
-    title = str(f.get("summary") or f.get("title") or chk_label or f.get("id") or "").strip()
+    title = str(f.get("server_summary") or f.get("summary") or f.get("title") or chk_label or f.get("id") or "").strip()
     evidence = str(f.get("note") or f.get("evidence") or "").strip()
     fid = str(f.get("id") or "").strip()
     if not evidence and fid and fid != title:
@@ -419,6 +448,9 @@ def _normalize_finding(host, f, ask=None, tz=None):
     fix = str(f.get("fix") or "").strip()
     # hint is a read-only command a person may paste; gets Copy only when non-empty.
     hint = str(f.get("hint") or "").strip()
+    if hint and not _copyable_hint(hint):
+        evidence = " · ".join(x for x in (evidence, hint) if x)
+        hint = ""
     since_raw = str(f.get("since") or f.get("time") or "").strip()
     since = _fmt_checked(since_raw, tz) if since_raw else ""
     buttons = []
@@ -466,14 +498,11 @@ def _capped_items(cap_map):
 
 
 def _regroup_by_finding_host(by_host, missing, opts):
-    """1.138.0 (vdi-design-check #5 / step 14): When a report runs on one play host (such as stigman_health
+    """1.139.0 (vdi-design-check #5 / step 14): When a report runs on one play host (such as stigman_health
     on localhost) and findings carry their own 'host' field, regroup findings by each finding's host and
     surface known_hosts (healthy nodes) + unread stigman hosts as missing."""
     known = [str(x).strip() for x in (opts.get("known_hosts") or []) if str(x).strip()]
     want = bool(opts.get("group_by_finding_host"))
-    if not want and len(by_host) == 1:
-        only_fs = next(iter(by_host.values())) or []
-        want = any(isinstance(f, dict) and str(f.get("host") or "").strip() for f in only_fs)
     if not want:
         return by_host, missing
 
@@ -507,8 +536,8 @@ def _regroup_by_finding_host(by_host, missing, opts):
     return new_by, new_miss
 
 
-def _cap_host_findings(norm_fs, raw_cap, max_per_kind, kind_caps):
-    """1.138.0 (vdi-design-check #2 & #13): Cap rendered findings per kind (worst first) and merge omitted
+def _cap_host_findings(norm_fs, raw_cap, max_per_kind, kind_caps, artifact_kinds):
+    """1.139.0 (vdi-design-check #2 & #13): Cap rendered findings per kind (worst first) and merge omitted
     counts with site_findings_capped without double-counting."""
     cap_merged = {}
     if isinstance(raw_cap, dict):
@@ -538,12 +567,13 @@ def _cap_host_findings(norm_fs, raw_cap, max_per_kind, kind_caps):
         kept.append(f)
 
     for fk, om in omitted_by_kind.items():
-        cap_merged[fk] = max(cap_merged.get(fk, 0), om)
+        prior = cap_merged.get(fk, 0)
+        cap_merged[fk] = prior + om if fk in artifact_kinds else max(prior, om)
     return kept, cap_merged
 
 
 def server_view(by_host, health=None, missing=None, capped=None, opts=None):
-    """1.138.0: Build the server-first report section from per-host findings, health, missing and capped data.
+    """1.139.0: Build the server-first report section from per-host findings, health, missing and capped data.
 
     Arguments:
       by_host: {host: [finding_dict, ...]}
@@ -561,7 +591,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
     capped = capped if isinstance(capped, dict) else {}
     o = opts if isinstance(opts, dict) else {}
 
-    # 1.138.0 (vdi-design-check #5 / step 14): regroup single-play-host findings by finding['host']
+    # 1.139.0 (vdi-design-check #5 / step 14): regroup single-play-host findings by finding['host']
     by_host, missing = _regroup_by_finding_host(by_host, missing, o)
 
     tm = _site_time()
@@ -597,7 +627,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
     miss_c = hc["missing"]
     totals = dict(hc["totals"])
 
-    # 1.138.0 (vdi-design-check #18): join health strictly on inventory host; surface unmatched entries as 'other'
+    # 1.139.0 (vdi-design-check #18): join health strictly on inventory host; surface unmatched entries as 'other'
     other_health = sorted([k for k in health if k not in hosts_c and k not in miss_c], key=str.lower)
 
     servers = []
@@ -617,20 +647,21 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
         norm_fs = [_normalize_finding(h, f, ask=ask, tz=tz) for f in raw_fs]
         norm_fs.sort(key=lambda x: (SEV_ORDER.get(x["severity"], 9), x["check"], x["title"].lower()))
 
-        # 1.138.0 (vdi-design-check #2 & #13): cap displayed findings per kind & merge with site_findings_capped
-        norm_fs, cap_merged = _cap_host_findings(norm_fs, capped.get(h), max_per_kind, kind_caps)
+        # 1.139.0 (vdi-design-check #2 & #13): cap displayed findings per kind & merge with site_findings_capped
+        norm_fs, cap_merged = _cap_host_findings(norm_fs, capped.get(h), max_per_kind, kind_caps, o.get("artifact_kinds", ()))
         cap_list = _capped_items(cap_merged)
         cap_n = sum(x["count"] for x in cap_list)
         total_capped += cap_n
 
-        # 1.138.0 (vdi-design-check #4 & #22): ignore site_health.status; empty site_checks_run -> Not checked (unknown)
+        # 1.139.0 (vdi-design-check #4 & #22): ignore site_health.status; empty site_checks_run -> Not checked (unknown)
         st = cnt["status"]
         st_label = STATUS_LABELS.get(st, st.capitalize())
         unchecked = False
-        if has_checks_key and not (hmeta.get("checks") or []) and cnt["total"] == 0 and cap_n == 0:
+        if has_checks_key and not (hmeta.get("checks") or []) and st == "ok" and cap_n == 0:
             st = "unknown"
             st_label = "Not checked"
             unchecked = True
+            checked = "-"
             unchecked_hosts += 1
             if totals["clear"] > 0:
                 totals["clear"] -= 1
@@ -643,7 +674,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
         elif norm_fs:
             worst = norm_fs[0]["title"]
             if cap_n:
-                worst = "%s (+%d more, not listed)" % (worst, cap_n)
+                worst += " (+%d more, not listed)" % cap_n
         elif cap_n:
             worst = "%d more finding(s), not listed" % cap_n
         else:
@@ -776,14 +807,14 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
         })
 
     # At a glance tiles (4-up grid matching reports-by-server-all.html)
-    none_checked = (totals["hosts"] == 0 or totals["hosts"] == unchecked_hosts) and (totals["missing"] > 0 or unchecked_hosts > 0)
+    none_checked = totals["hosts"] == unchecked_hosts
     rep_mask = _meter_mask([not s["missing"] and not s["unchecked"] for s in servers])
     find_mask = _meter_mask([s["counts"]["total"] > 0 for s in servers])
     crit_mask = _meter_mask([s["status"] == "critical" for s in servers])
     clear_mask = _meter_mask([s["status"] == "ok" for s in servers])
 
     if none_checked:
-        # 1.138.0 (vdi-design-check #1): no host reported -> show "N not checked" tiles, NEVER zero green counts
+        # 1.139.0 (vdi-design-check #1): no host reported -> show "N not checked" tiles, NEVER zero green counts
         not_chk = totals["missing"] + unchecked_hosts
         tiles = [
             {
@@ -866,12 +897,12 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
             },
         ]
 
-    # 1.138.0 (vdi-design-check #20): not-reached / unchecked gives status 'unknown', never 'warning'
+    # 1.139.0 (vdi-design-check #20): not-reached / unchecked gives status 'unknown', never 'warning'
     if totals["critical"] or totals["critical_hosts"]:
         sec_status = "critical"
     elif totals["warning"] or totals["warning_hosts"]:
         sec_status = "warning"
-    elif totals["missing"] or unchecked_hosts or totals.get("unknown_hosts"):
+    elif none_checked or totals["missing"] or unchecked_hosts or totals.get("unknown_hosts"):
         sec_status = "unknown"
     elif totals["low"]:
         sec_status = "low"
@@ -970,7 +1001,7 @@ def _stig_rule_text(rec, texts):
 
 
 def stig_server_view(results, missing=None, texts=None, opts=None):
-    """1.138.0 (Step 9 + vdi-design-check #9, #10, #11, #12): Fold multi-checklist STIG drift results
+    """1.139.0 (Step 9 + vdi-design-check #9, #10, #11, #12): Fold multi-checklist STIG drift results
     into one row per server with checklist pills, per-checklist breakdown, and per-rule expander cards
     (DISA check command -> read-only hint with Copy; DISA fix text -> plain 'What to do' prose, no Copy)."""
     o = opts if isinstance(opts, dict) else {}
@@ -999,7 +1030,7 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
     if texts or any((r.get("check_text") for c in (results or []) if isinstance(c, dict)
                      for g in ("drift", "new", "disagree") for r in (c.get(g) or []) if isinstance(r, dict))):
         try:
-            st_mod = _stig_text()
+            st_mod = _report_filter("stig_text_filters")
         except Exception:
             st_mod = None
 
@@ -1028,6 +1059,7 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
             fixed_open = c.get("fixed_open") or []
             scanned = bool(c.get("scanned"))
 
+            start = len(fs)
             # Non-aggregate host/checklist findings (not-scanned, answers-unused, stigman missing)
             for raw_f in c.get("findings") or []:
                 if not isinstance(raw_f, dict):
@@ -1057,8 +1089,6 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
                             cmd = str(st_mod.commands_of(chk_txt, registry=True) or "").strip()
                         except Exception:
                             cmd = ""
-                    if not cmd:
-                        cmd = str(rec.get("check") or "").strip()
                     fix_prose = _clip_prose(fix_txt, 600) if fix_txt else ""
                     if not fix_prose and group_label == "fixed on host, still Open in STIG Manager":
                         fix_prose = "Update the review in STIG Manager to Not a Finding (this job never writes to STIG Manager)."
@@ -1082,19 +1112,8 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
             _add_rules(fixed_open, "fixed on host, still Open in STIG Manager", fixed_sev="low")
 
             # Checklist breakdown badge status
-            cl_st = "ok"
-            if not scanned:
-                cl_st = "warning"
-            else:
-                for rec in list(drift) + list(new):
-                    rs = normalize_severity(smap.get(rec.get("severity")) or rec.get("level") or rec.get("severity"), default="warning")
-                    if rs == "critical":
-                        cl_st = "critical"
-                        break
-                    if rs == "warning" and cl_st != "critical":
-                        cl_st = "warning"
-                if cl_st == "ok" and (disagree or fixed_open):
-                    cl_st = "low"
+            cl_st = min((normalize_severity(f["severity"]) for f in fs[start:]),
+                        key=SEV_ORDER.get, default="ok" if scanned else "unknown")
             if cl_st in ("critical", "warning"):
                 has_actionable = True
             cl_break.append({
@@ -1114,8 +1133,10 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
         by_host[h] = fs
         checklists_map[h] = cl_pills
         breakdown_map[h] = cl_break
-        if has_actionable and _SAFE_URL_RE.match(portal_url):
-            host_buttons[h] = [{"label": "Recheck host", "url": "%s/actions/stig_recheck?target=%s" % (portal_url, h)}]
+        if has_actionable and portal_url:
+            link = _report_filter("portal_filters").portal_link(portal_url, "stig_recheck", {"target": h})
+            if link:
+                host_buttons[h] = [{"label": "Recheck host", "url": link}]
 
     sv_opts = dict(o)
     sv_opts.setdefault("title", "Servers")
@@ -1123,33 +1144,27 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
     sv_opts["checklist_breakdown"] = breakdown_map
     sv_opts["host_buttons"] = host_buttons
     sv_opts["kind_caps"] = dict(sv_opts.get("kind_caps") or {}, stig_rule=max_per_host)
-    return server_view(by_host, health=health, missing=missing, capped=o.get("capped"), opts=sv_opts)
+    return server_view(by_host, health=health, missing=missing, opts=sv_opts)
 
 
 # ---- Step 10: fapolicyd (fapolicyd.yml / fapolicyd_denials.yml) ------------------------------------
 
 def fapolicyd_server_view(hostvars_list, names, opts=None):
-    """1.138.0 (Step 10 + vdi-design-check #13): One row per server for fapolicyd / fapolicyd_denials.
+    """1.139.0 (Step 10 + vdi-design-check #13): One row per server for fapolicyd / fapolicyd_denials.
     - Permissive 'would deny' entries are low (never amber).
     - Denials capped per host (default 10) with 'and N more of fapolicyd_deny, not listed'.
     - Read-only ausearch / fapolicyd-cli / rpm hints get Copy; proposed allow rules are prose only (no Copy).
     - Portal buttons folded into the host's finding cards."""
     o = opts if isinstance(opts, dict) else {}
-    since = str(o.get("since") or "today").strip()
+    since = shlex.quote(str(o.get("since") or "today").strip())
     max_denials = int(o.get("max_denials") or 10)
     portal = o.get("portal") if isinstance(o.get("portal"), dict) else None
 
     # Optional portal button builder from finding_filters
     btn_fn = None
     if portal and portal.get("url") and str(portal.get("job") or "").isdigit() and portal.get("actions"):
-        try:
-            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finding_filters.py")
-            spec = importlib.util.spec_from_file_location("finding_filters_for_fapolicyd_sv", path)
-            ff = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(ff)
-            btn_fn = lambda e: ff.finding_buttons(e, portal["actions"], portal["url"], str(portal["job"]))
-        except Exception:
-            btn_fn = None
+        ff_mod = _report_filter("finding_filters")
+        btn_fn = lambda e: ff_mod.finding_buttons(e, portal["actions"], portal["url"], str(portal["job"]))
 
     by_host = {}
     health = {}
@@ -1161,7 +1176,7 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
         h = str(name or "").strip()
         if not h:
             continue
-        hv = hv if isinstance(hv, dict) else {}
+        hv = hv if hasattr(hv, "get") else {}
         un = str(hv.get("site_host_unreached") or "").strip()
         if un:
             missing[h] = un
@@ -1189,14 +1204,33 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
         mode = str(ff.get("mode") or fr.get("mode") or "").strip().lower()
         permissive = mode == "permissive"
 
+        if ff.get("error") or fr.get("error") or "not read" in (ff.get("state"), fr.get("state")):
+            missing[h] = ff.get("error") or fr.get("error") or "fapolicyd was not read"
+            continue
+        blocks = fr.get("blocks") or []
+        if not ff and not fr:
+            reader = _report_filter("fapolicyd_filters")
+            host = reader.host_result(h, hv)
+            if host["state"] == "not read":
+                missing[h] = "No fapolicyd result for this host"
+                continue
+            if host["state"] == "read":
+                blocks = [dict(group, exe=exe, path=path) for (exe, path), group in reader._groups(hv).items()]
+                if host["count"] and not blocks:
+                    fs.append({"check": "fapolicyd", "severity": "warning",
+                               "summary": "%d denials in the audit log" % host["count"]})
+                for service in ("active", "auditd"):
+                    if host[service] != "active":
+                        fs.append({"check": "fapolicyd", "severity": "critical" if service == "active" else "warning",
+                                   "summary": "%s is %s" % ("fapolicyd" if service == "active" else service, host[service])})
         # Service / health issues
-        st_ff = str(ff.get("state") or "").strip().lower()
-        if st_ff in ("down", "failed", "still down", "not read"):
+        st_ff = str(ff.get("active") or ff.get("state") or "").strip().lower()
+        if st_ff in ("down", "failed", "still down", "inactive"):
             fs.append({
                 "check": "fapolicyd",
                 "kind": "fapolicyd_health",
                 "id": "fapolicyd:service",
-                "severity": "critical" if st_ff in ("down", "still down", "failed") else "warning",
+                "severity": "critical",
                 "summary": "fapolicyd is %s%s" % (st_ff, (": " + str(ff.get("error") or "")) if ff.get("error") else ""),
                 "note": "Check fapolicyd service status and trust database integrity.",
                 "fix": "Resolve the trust or configuration fault and verify fapolicyd starts cleanly.",
@@ -1216,7 +1250,6 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
                 })
 
         # Denials / blocks (permissive 'would deny' -> low, NEVER amber!)
-        blocks = fr.get("blocks") or []
         if not blocks and act.get("denials"):
             blocks = act.get("denials") or []
         for idx, b in enumerate(blocks):
@@ -1225,7 +1258,7 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
             prog = str(b.get("exe") or b.get("program") or b.get("comm") or "?").strip()
             path = str(b.get("path") or b.get("obj") or b.get("file") or "?").strip()
             cnt_b = int(b.get("count") or 1)
-            b_perm = bool(b.get("permissive")) or permissive or ("would" in str(b.get("action") or "").lower())
+            b_perm = b.get("kind") in ("would", "would deny") or bool(b.get("permissive")) or permissive or ("would" in str(b.get("action") or "").lower())
             sev = "low" if b_perm else normalize_severity(b.get("severity") or "warning", default="warning")
             verb = "would deny" if b_perm else "denied"
             prop = str(b.get("proposal") or b.get("rule") or b.get("line") or "").strip()
@@ -1236,8 +1269,6 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
             btns = btn_fn(e_match) if (btn_fn and e_match) else []
             ev = "%s -> %s (%d event%s%s)" % (prog, path, cnt_b, "" if cnt_b == 1 else "s", ", permissive" if b_perm else "")
             hint_cmd = "ausearch -m FANOTIFY -ts %s | tail -n 20" % since
-            if path.startswith("/"):
-                hint_cmd = "rpm -qf -- '%s' 2>&1; ausearch -m FANOTIFY -ts %s | tail -n 10" % (path.replace("'", "'\\''"), since)
             fs.append({
                 "check": "fapolicyd",
                 "kind": "fapolicyd_deny",
@@ -1360,7 +1391,7 @@ def _list_only_section(title, servers_in, tiles, opts=None):
 
 
 def sw_inventory_server_view(data, opts=None):
-    """1.138.0 (Step 11 + vdi-design-check #14): List-only server view for Linux software inventory.
+    """1.139.0 (Step 11 + vdi-design-check #14): List-only server view for Linux software inventory.
     No Crit/Warn/Low/Info counts; Read / Not read; package changes in expander; 'N left out on purpose'."""
     o = opts if isinstance(opts, dict) else {}
     d = data.get("server_view_input") if isinstance(data, dict) and isinstance(data.get("server_view_input"), dict) else (data if isinstance(data, dict) else {})
@@ -1420,8 +1451,8 @@ def sw_inventory_server_view(data, opts=None):
                 if isinstance(c, dict):
                     act = str(c.get("change") or c.get("action") or "changed").strip()
                     pkg = str(c.get("name") or c.get("package") or "").strip()
-                    frm = str(c.get("before") or c.get("old") or "").strip()
-                    to = str(c.get("after") or c.get("new") or c.get("version") or "").strip()
+                    frm = str(c.get("old_evr") or c.get("before") or c.get("old") or "").strip()
+                    to = str(c.get("new_evr") or c.get("after") or c.get("new") or c.get("version") or "").strip()
                     ev = "%s -> %s" % (frm, to) if (frm and to) else (to or frm)
                     fs.append({
                         "severity": "info", "severity_label": act.capitalize(), "check": "sw_inventory",
@@ -1546,7 +1577,7 @@ def _swr_skipped(host, patterns):
 
 
 def swr_server_view(read, findings_by_host=None, opts=None):
-    """1.138.0 (Step 11 + vdi-design-check #15): List-only SolarWinds server view (counted: False).
+    """1.139.0 (Step 11 + vdi-design-check #15): List-only SolarWinds server view (counted: False).
     - Read / Not read / Not certain (uncertain hosts get 'Not certain', status 'unknown', NEVER green,
       and are kept OUT of the matched/read counts).
     - No Crit/Warn/Low/Info columns."""
@@ -1576,19 +1607,20 @@ def swr_server_view(read, findings_by_host=None, opts=None):
         name = str(h.get("host") or "").strip()
         if not name:
             continue
-        if _swr_skipped(name, skip_pats):
+        if not h.get("node") and _report_filter("solarwinds_report_filters")._skipped(name, skip_pats, h.get("fqdn")):
             skipped_n += 1
             continue
         seen_hosts.add(name.lower())
 
-        # 1.138.0 (vdi-design-check #15): uncertain host -> "Not certain", status "unknown", NEVER green, OUT of matched count
+        # 1.139.0 (vdi-design-check #15): uncertain host -> "Not certain", status "unknown", NEVER green, OUT of matched count
         if h.get("uncertain"):
             uncertain_n += 1
             cands = h.get("candidates") or []
             cand_names = [str(c.get("name") or c.get("dns") or c.get("ip") or c) if isinstance(c, dict) else str(c) for c in cands]
             ev = ("Candidate Orion nodes: " + ", ".join(cand_names)) if cand_names else "Multiple Orion nodes share this short name; set an FQDN or ansible_host to disambiguate."
+            ev = h.get("unmatched_why") or ev
             servers.append({
-                "host": name, "ip": str(h.get("ip") or ""), "meta": "Multiple matches",
+                "host": name, "ip": str(h.get("ip") or ""), "meta": "Match not certain",
                 "status": "unknown", "status_label": "Not certain",
                 "missing": False, "unchecked": True, "changed": False,
                 "reason": ev,
@@ -1627,8 +1659,8 @@ def swr_server_view(read, findings_by_host=None, opts=None):
         nname = str(node.get("name") or name)
         nstat = str(node.get("status") or "Up")
         nid = node.get("node_id")
-        alerts = h.get("alerts") or []
-        apps = [a for a in (h.get("apps") or []) if isinstance(a, dict) and str(a.get("status") or "").lower() not in ("up", "ok")]
+        alerts = (h.get("alerts") or []) if r.get("alerts_read", True) else []
+        apps = [a for a in (h.get("apps") or []) if isinstance(a, dict) and a.get("status") in ("Down", "Warning", "Critical")]
         vols = [v for v in (h.get("volumes") or []) if isinstance(v, dict) and float(v.get("used_pct") or v.get("pct") or 0) >= vol_pct]
         sys_info = syslog_by.get(nid) or syslog_by.get(str(nid)) or {}
         sys_n = int(sys_info.get("count") or 0)
@@ -1637,7 +1669,7 @@ def swr_server_view(read, findings_by_host=None, opts=None):
         for al in alerts:
             if not isinstance(al, dict):
                 continue
-            al_sev = "critical" if int(al.get("severity") or 0) >= 2 else "warning"
+            al_sev = _report_filter("solarwinds_report_filters")._sev(al)
             fs.append({
                 "severity": al_sev, "severity_label": SEV_LABELS[al_sev], "check": "solarwinds",
                 "kind": "swr_alert", "check_label": "Orion alert", "id": "",
@@ -1649,8 +1681,8 @@ def swr_server_view(read, findings_by_host=None, opts=None):
             fs.append({
                 "severity": "warning", "severity_label": "SAM", "check": "solarwinds",
                 "kind": "swr_app", "check_label": "SAM application", "id": "",
-                "title": "%s is %s" % (ap.get("name") or "Application", ap.get("status") or "Down"),
-                "evidence": ", ".join(str(c) for c in (ap.get("down") or ap.get("components") or [])),
+                "title": "%s is %s" % (ap.get("app") or ap.get("name") or "Application", ap.get("status") or "Down"),
+                "evidence": ", ".join(str(c.get("name") or "") for c in (ap.get("components_not_up") or [])),
                 "since": "", "fix": "", "hint": "", "buttons": [],
             })
         for vl in vols:
@@ -1682,7 +1714,7 @@ def swr_server_view(read, findings_by_host=None, opts=None):
             sum_bits.append("%d volume%s >= %.0f%%" % (len(vols), "" if len(vols) == 1 else "s", vol_pct))
         if sys_n:
             sum_bits.append("%d syslog" % sys_n)
-        worst = ", ".join(sum_bits) if sum_bits else "Orion node %s · no alerts" % nstat
+        worst = ", ".join(sum_bits) if sum_bits else "Orion node %s · %s" % (nstat, "no alerts" if r.get("alerts_read", True) else "alerts not read")
 
         servers.append({
             "host": name, "ip": str(node.get("ip") or h.get("ip") or ""),
@@ -1722,9 +1754,9 @@ def swr_server_view(read, findings_by_host=None, opts=None):
          "status": "unknown" if not_in_n else "ok", "icon": "unknown",
          "mask": _meter_mask([s["missing"] for s in servers])},
         {"label": "Not certain" if uncertain_n else "Orion alerts",
-         "value": uncertain_n if uncertain_n else total_alerts,
+         "value": uncertain_n if uncertain_n else (total_alerts if r.get("alerts_read", True) else "-"),
          "note": "Excluded from counts · ambiguous match" if uncertain_n else ("Across %d host%s" % (alert_hosts, "" if alert_hosts == 1 else "s")),
-         "status": "unknown" if uncertain_n else ("warning" if total_alerts else "ok"),
+         "status": "unknown" if uncertain_n or not r.get("alerts_read", True) else ("warning" if total_alerts else "ok"),
          "icon": "unknown" if uncertain_n else "findings",
          "mask": _meter_mask([s["status_label"] == "Not certain" for s in servers]) if uncertain_n else _meter_mask([s.get("changed") for s in servers])},
         {"label": "Snapshot", "value": age_text, "note": str(r.get("orion") or "SolarWinds snapshot"),
@@ -1783,7 +1815,7 @@ def _cert_sev(days, raw_status, warn_days, notice_days, crit_days):
 
 
 def cert_host_rollup(certs, opts=None):
-    """1.138.0 (Step 12 + vdi-design-check #8): Build the host rollup section directly from a certificate
+    """1.139.0 (Step 12 + vdi-design-check #8): Build the host rollup section directly from a certificate
     record list ({host, days, expires, subject, where, status}) + optional missing hosts.
     One line per host ('N certificates, worst D days'), clicking a host filters the certificate table below."""
     o = opts if isinstance(opts, dict) else {}
@@ -1806,6 +1838,11 @@ def cert_host_rollup(certs, opts=None):
         by_host.setdefault(hk, []).append(c)
         total_certs += 1
 
+    missing_keys = {m.lower() for m in miss}
+    for h in o.get("read_hosts") or []:
+        if h and h.lower() not in missing_keys:
+            display.setdefault(h.lower(), h)
+            by_host.setdefault(h.lower(), [])
     rollup_hosts = []
     crit_hosts = warn_hosts = ok_hosts = unk_hosts = 0
 
@@ -1820,6 +1857,8 @@ def cert_host_rollup(certs, opts=None):
             try:
                 d_int = int(d_raw) if d_raw is not None and str(d_raw).strip() != "" else None
             except (TypeError, ValueError):
+                d_int = None
+            if d_int is not None and d_int <= -99999:
                 d_int = None
             st = _cert_sev(d_int, c.get("status"), warn_days, notice_days, crit_days)
             if SEV_ORDER.get(st, 9) < SEV_ORDER.get(worst_st, 9):
@@ -1860,7 +1899,7 @@ def cert_host_rollup(certs, opts=None):
             "critical": crit_n,
             "warning": warn_n,
             "worst_days": worst_days,
-            "summary": "%d certificate%s, %s" % (n, "" if n == 1 else "s", worst_txt),
+            "summary": "%d certificate%s, %s" % (n, "" if n == 1 else "s", worst_txt) if n else "No certificates found",
         })
 
     for mh, mreason in sorted(miss.items(), key=lambda kv: kv[0].lower()):
@@ -1887,7 +1926,7 @@ def cert_host_rollup(certs, opts=None):
     ))
 
     n_hosts = len(rollup_hosts)
-    none_checked = len(by_host) == 0 and unk_hosts > 0
+    none_checked = not by_host
     if none_checked:
         tiles = [
             {"label": "Not checked", "value": unk_hosts, "note": "0 hosts read", "status": "unknown", "icon": "unknown", "mask": []},
@@ -1915,7 +1954,7 @@ def cert_host_rollup(certs, opts=None):
              "mask": _meter_mask([x["status"] in ("ok", "info") for x in rollup_hosts])},
         ]
 
-    sec_status = "critical" if crit_hosts else ("warning" if warn_hosts else ("unknown" if unk_hosts else "ok"))
+    sec_status = "critical" if crit_hosts else ("warning" if warn_hosts else ("unknown" if unk_hosts or none_checked else "ok"))
     return {
         "title": str(o.get("title") or "Hosts by certificate status"),
         "status": sec_status,
@@ -1930,7 +1969,7 @@ def cert_host_rollup(certs, opts=None):
 
 
 def cert_table_tag(section, warn_days=30, notice_days=60, crit_days=7):
-    """1.138.0 (Step 12): Attach data-host and data-sev row_tags to a certificate table section so
+    """1.139.0 (Step 12): Attach data-host and data-sev row_tags to a certificate table section so
     cert_host_rollup clicks and severity chips filter it cleanly."""
     if not isinstance(section, dict) or not section.get("rows") or not section.get("columns"):
         return section
@@ -1938,7 +1977,8 @@ def cert_table_tag(section, warn_days=30, notice_days=60, crit_days=7):
     cols = [str(c).strip().lower() for c in section["columns"]]
     host_idx = next((i for i, c in enumerate(cols) if c in ("host", "device", "server", "vcenter / host")), -1)
     days_idx = next((i for i, c in enumerate(cols) if c.startswith("days")), -1)
-    rs = section.get("row_status") or []
+    if host_idx < 0 or days_idx < 0:
+        return section
     existing = section.get("row_tags") or []
     tags = []
     for ri, row in enumerate(section["rows"]):
@@ -1946,13 +1986,12 @@ def cert_table_tag(section, warn_days=30, notice_days=60, crit_days=7):
         data = dict(prev.get("data") or {})
         if host_idx >= 0 and host_idx < len(row):
             data["host"] = str(row[host_idx] or "").strip().lower()
-        r_st = rs[ri] if ri < len(rs) else ""
         d_val = None
         if days_idx >= 0 and days_idx < len(row):
-            m = re.search(r"-?\d+", str(row[days_idx] or ""))
+            m = re.search(r"-?\d+", str(row[days_idx]))
             if m:
                 d_val = int(m.group(0))
-        data["sev"] = _cert_sev(d_val, r_st, int(warn_days), int(notice_days), int(crit_days))
+        data["sev"] = _cert_sev(d_val, "", int(warn_days), int(notice_days), int(crit_days))
         prev["data"] = data
         tags.append(prev)
     out["row_tags"] = tags
@@ -1961,7 +2000,7 @@ def cert_table_tag(section, warn_days=30, notice_days=60, crit_days=7):
 
 
 def cert_web_doc(doc, certs, opts=None):
-    """1.138.0 (Step 12): Wrap a certificate report doc for the web view: prepend cert_host_rollup on top
+    """1.139.0 (Step 12): Wrap a certificate report doc for the web view: prepend cert_host_rollup on top
     and tag certificate table sections with data-host + data-sev."""
     if not isinstance(doc, dict):
         return doc
@@ -1982,7 +2021,7 @@ def cert_web_doc(doc, certs, opts=None):
 # ---- Step 13: Active Directory (ad_report) ---------------------------------------------------------
 
 def ad_server_view(ad_result, opts=None):
-    """1.138.0 (Step 13 + vdi-design-check #6, #7): Build the AD server-first sections:
+    """1.139.0 (Step 13 + vdi-design-check #6, #7): Build the AD server-first sections:
     1. Domain controllers keyed by lower-case inventory host (two spellings never duplicate a DC; dc is label only),
        with DC-scoped critical/warning AND low_problems folded under their DC (low never turns a DC amber).
     2. Separate 'Domain & forest objects' section for non-DC objects (site links, NCs, GPOs, domain settings)."""
@@ -1991,7 +2030,7 @@ def ad_server_view(ad_result, opts=None):
     dcs = ad.get("dcs") or []
     problems = list(ad.get("problems") or []) + list(ad.get("low_problems") or [])
 
-    # 1.138.0 (vdi-design-check #7): canonical key = lower-case inventory host; alias map prevents duplicates
+    # 1.139.0 (vdi-design-check #7): canonical key = lower-case inventory host; alias map prevents duplicates
     alias = {}
     canonical = {}
     by_dc = {}
@@ -2007,14 +2046,16 @@ def ad_server_view(ad_result, opts=None):
             continue
         key = inv_host.lower()
         if key not in canonical:
-            canonical[key] = inv_host
+            canonical[key] = key
         display_host = canonical[key]
         dc_short = str(d.get("dc") or "").strip()
         fqdn = str(d.get("fqdn") or "").strip()
         for a in (inv_host, fqdn, dc_short, inv_host.split(".", 1)[0], fqdn.split(".", 1)[0]):
             al = a.strip().lower()
             if al:
-                alias[al] = display_host
+                domain = str(d.get("domain") or "").lower()
+                alias[(domain, al)] = display_host
+                alias[al] = display_host if alias.get(al, display_host) == display_host else None
         if dc_short and dc_short.lower() != display_host.lower():
             dc_meta[display_host] = "DC %s%s" % (dc_short, (" · " + str(d["domain"])) if d.get("domain") else "")
         elif d.get("domain"):
@@ -2036,13 +2077,7 @@ def ad_server_view(ad_result, opts=None):
         sev = normalize_severity(p.get("severity"), default="warning")
         txt = str(p.get("text") or "").strip()
 
-        # Match DC by full object, first token, or short name before '.'
-        matched_dc = None
-        for cand in (obj, obj.split(" ", 1)[0], obj.split(":", 1)[0], obj.split(".", 1)[0]):
-            cl = cand.strip().lower()
-            if cl and cl in alias:
-                matched_dc = alias[cl]
-                break
+        matched_dc = alias.get((dom.lower(), obj.lower())) or alias.get(obj.lower())
 
         if matched_dc and matched_dc not in dc_missing:
             by_dc.setdefault(matched_dc, []).append({
@@ -2089,7 +2124,7 @@ def ad_server_view(ad_result, opts=None):
 
 
 def ad_web_doc(doc, ad_result, opts=None):
-    """1.138.0 (Step 13): Prepend AD server view (DCs + non-DC domain objects) above the detailed AD tables."""
+    """1.139.0 (Step 13): Prepend AD server view (DCs + non-DC domain objects) above the detailed AD tables."""
     if not isinstance(doc, dict):
         return doc
     secs = ad_server_view(ad_result, opts)
@@ -2117,7 +2152,7 @@ def _row_sev(sec, ri):
 
 
 def chrome_report_view(doc, opts=None):
-    """1.138.0: Chrome-only enhancement for native non-server reports (ONTAP, UCS, Netmap).
+    """1.139.0: Chrome-only enhancement for native non-server reports (ONTAP, UCS, Netmap).
     Keeps EVERY native section, column, key and row intact; adds a top 4-tile 'At a glance' chrome
     section (chrome_view: True) and normalized row_tags[i].data.sev on native tables so unified
     search, severity chips and sidebar counts/select work across all four looks."""

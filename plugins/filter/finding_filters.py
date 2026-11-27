@@ -142,7 +142,7 @@ def os_of(text):
 
 def _stig_entries(res, host, severity_map=None):
     """One stig_compare result (check_stig_result) -> stig_rule_fail, stig_fixed_open, stig_no_asset entries.
-    1.138.0: honours configured severity_map (check_stig_severity) or stig_compare's rec['level'] instead of hard-coding high->critical."""
+    1.139.0: honours configured severity_map (check_stig_severity) or stig_compare's rec['level'] instead of hard-coding high->critical."""
     r = res or {}
     sm = r.get("stigman") or {}
     stig = r.get("benchmark") or ""

@@ -860,7 +860,7 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
             for k in ("where", "error", "fix", "why", "dest"):
                 x[k] = scrub(x.get(k, ""), secrets)
     res["not_read"], res["first_seen"] = bad, first
-    # 1.138.0: track hosts left out on purpose (skipped) and compact per-host details for sw_inventory_server_view
+    # 1.139.0: track hosts left out on purpose (skipped) and compact per-host details for sw_inventory_server_view
     skipped_hosts = [str(h.get("host") or "") for h in (p.get("hosts") or []) if str(h.get("host") or "") and h.get("skipped")]
     hosts_detail = [{"host": h["host"], "os": h.get("os", ""), "kernel": h.get("kernel", ""),
                      "read_at": h.get("read_at", ""), "packages": len(h["packages"]),

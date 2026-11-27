@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""1.138.0: Unit and template tests for the server-first report view (steps 1-8 of plan-reports-by-server.md):
+"""1.139.0: Unit and template tests for the server-first report view (steps 1-8 of plan-reports-by-server.md):
 - plugins/filter/server_view_filters.py: normalize_severity (all 5 vocabularies), host_counts,
   fleet_summary_lines, missing_map / missing_lines, server_view (3-host capped + not-reached case,
   low never amber, hint Copy vs fix prose, timezone formatting, row_tags data.sev).
 - plugins/filter/site_filters.py: findings_report with {host: reason} missing + legacy list form,
-  report_servers_view opt-in (off by default), report_tidy keeping server_view.
+  report_servers_view switch (on by default), report_tidy keeping server_view.
 - roles/site_email/templates/: report_macros.html.j2 shared import across atlas/brief/ops,
   report_servers.html.j2 + report_servers.css.j2 rendering & escaping & <= 34px in brief,
   sidebar counts & narrow-screen select, dashboard rendered in atlas/brief/ops,
@@ -54,7 +54,7 @@ def _render_look(look, report, **extra):
 
 
 class NormalizeSeverityTests(unittest.TestCase):
-    """1.138.0: One severity normalizer across all five vocabularies."""
+    """1.139.0: One severity normalizer across all five vocabularies."""
 
     def test_five_vocabularies(self):
         cases = [
@@ -101,7 +101,7 @@ class NormalizeSeverityTests(unittest.TestCase):
 
 
 class ServerViewFilterTests(unittest.TestCase):
-    """1.138.0: server_view(by_host, health, missing, capped, opts) and per-host counts."""
+    """1.139.0: server_view(by_host, health, missing, capped, opts) and per-host counts."""
 
     def setUp(self):
         # Required 3-host scenario: one host with findings + capped, one healthy, one not reached with reason
@@ -255,7 +255,7 @@ class ServerViewFilterTests(unittest.TestCase):
 
 
 class FindingsReportIntegrationTests(unittest.TestCase):
-    """1.138.0: findings_report missing reasons, single count source, and report_servers_view opt-in."""
+    """1.139.0: findings_report missing reasons, single count source, and report_servers_view switch."""
 
     def test_missing_reason_and_legacy_list(self):
         by_host = {"srv01.corp.example.mil": []}
@@ -303,7 +303,7 @@ class FindingsReportIntegrationTests(unittest.TestCase):
 
 
 class TemplateRenderingTests(unittest.TestCase):
-    """1.138.0: Templates (atlas, brief, ops) render server_view, macros, sidebar counts/select, and dashboard."""
+    """1.139.0: Templates (atlas, brief, ops) render server_view, macros, sidebar counts/select, and dashboard."""
 
     def _sample_report(self):
         by_host = {
@@ -414,7 +414,7 @@ class TemplateRenderingTests(unittest.TestCase):
 
 
 class ScriptMacrosAndDefaultsTests(unittest.TestCase):
-    """1.138.0: JS hygiene, macro deduplication, and default-off setting."""
+    """1.139.0: JS hygiene, macro deduplication, and default-on setting."""
 
     def test_scripts_ascii_safe_and_idempotent(self):
         for name, guard in (
@@ -444,11 +444,11 @@ class ScriptMacrosAndDefaultsTests(unittest.TestCase):
             for name in ("icon", "copyicons", "nbw", "keep", "dw", "chip", "breakable", "xmini"):
                 self.assertNotIn("macro %s(" % name, src, (look, name))
 
-    def test_setting_off_by_default(self):
+    def test_setting_on_by_default(self):
         path = os.path.join(REPO, "roles", "site_findings", "defaults", "main.yml")
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
-        self.assertRegex(text, r"(?m)^report_servers_view:\s*false\b")
+        self.assertRegex(text, r"(?m)^report_servers_view:\s*true\b")
 
 
 if __name__ == "__main__":

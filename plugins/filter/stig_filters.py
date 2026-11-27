@@ -90,7 +90,7 @@ def _title(it, smr):
 
 def _worst(items, sev_map):
     sevs = [sev_map.get(i.get("severity"), "warning") for i in items]
-    return "critical" if "critical" in sevs else "warning"
+    return next((level for level in ("critical", "warning", "low", "info") if level in sevs), "warning")
 
 
 def _short_list(items, n=5):
@@ -217,7 +217,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}
     if not out["scanned"] and win:
-        # 1.138.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
+        # 1.139.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
         out["findings"].append({"check": "stig", "id": "stig:not-scanned" + tag, "severity": "warning",
                                 "summary": say + "the STIG scan did not run: " + (out["why"] or "unknown reason"),
                                 "hint": (("Get-Content -Tail 40 '%s'" % scan["evaluate_log"]) if scan.get("evaluate_log") else
@@ -229,7 +229,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         return out
     if not out["scanned"]:
         es = scanner == "evaluate_stig"
-        # 1.138.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
+        # 1.139.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
         out["findings"].append({"check": "stig", "id": "stig:not-scanned" + tag, "severity": "warning",
                                 "summary": say + "the STIG scan did not run: " + (out["why"] or "unknown reason"),
                                 "hint": (("less " + scan["evaluate_log"]) if scan.get("evaluate_log") else ("ls -l " + (scan.get("evaluate") or "check_stig_evaluate")))
