@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.138.0 — 2026-11-27
+
+**Opt-in server-first report view (steps 1–8), off by default.** With `report_servers_view: false` (default in `roles/site_findings/defaults/main.yml`), health-check web reports keep their previous layout; emails and Excel workbooks do not change.
+
+- **New filter `plugins/filter/server_view_filters.py`**: one severity normalizer covering all five vocabularies (common four, STIG `high/medium/low`, `CAT I/II/III`, `aap_health` `PASS/WARN/FAIL/INFO/SKIP`, UCS `critical/major/minor`), single-source per-host and fleet counting (`host_counts`, `fleet_summary_lines`), and `server_view(by_host, health, missing, capped, opts)` producing At a glance tiles (with coverage meters) and worst-first expandable server rows (`low` has its own count column and never turns a host amber; capped hosts explicitly state *"and N more of <kind>, not listed"*; `hint` gets Copy while `fix` renders as plain *"What to do"* prose).
+- **Missing-host reasons carried into reports**: `roles/site_findings/tasks/report.yml` builds `{host: reason}` from `site_host_unreached` and `site_host_skipped` and passes it to `findings_report` (which keeps the legacy list form working) and `fleet_summary_lines` (replacing the inline counting `debug` task).
+- **Shared web report macros**: extracted `icon`, `copyicons`, `nbw`, `keep`, `dw`, `chip`, `breakable`, and `xmini` into `roles/site_email/templates/report_macros.html.j2` and imported them from `report_atlas.html.j2`, `report_brief.html.j2`, and `report_ops.html.j2` (pure refactor).
+- **Server-first template and controls**: added `roles/site_email/templates/report_servers.html.j2` and `roles/site_email/templates/report_servers.css.j2` (reusing existing look tokens only, light and dark, 1280 and 800 px wide) behind `report_servers_view: false`. Wired rows into the existing `button.xb` / `tr.xr` (`defer-detail`) expander and Copy button, added **Expand all / Collapse all** (idempotent ES5 in `site_report.js`, with `<details>` fallback when scripts are blocked), and emitted `row_tags[i].data.sev` so `report_pop.js` `sevChips()` filters severities including `info`, `unknown` (*Not reached*) and `ok`.
+- **Sidebar counts, narrow-screen selector, and dashboard promotion**: added item counts across section kinds in the rail and a narrow-screen jump `<select>` (`<= 900 px`) in `atlas`, `brief` and `ops`; included `report_dash.html.j2` and `report_dash.css.j2` in `atlas` and `brief` alongside `ops`.
+- **Docs and tests**: documented `report_servers_view` and the dashboard/sidebar updates in `docs/WEB_REPORTS.md`; added `tests/test_server_view.py` and updated `tests/test_report_dash.py`.
+
 ## 1.136.0 — 2026-11-27
 
 **Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.

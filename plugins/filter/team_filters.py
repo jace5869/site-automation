@@ -137,6 +137,8 @@ def team_block(by_host, missing, team_map, names, cards, other=OTHER, report_tea
     -> {names, other, hosts {host: [teams]}, figures {team: {...}} ("" = everyone), todo {team: [cards]}, counts {team:
     [critical, warning, low]} (for the next runs), map (what report_teams says, in one line)}."""
     by_host = by_host or {}
+    # 1.138.0: missing may be {host: reason} or the legacy [host, ...] list
+    miss_dict = dict(missing) if isinstance(missing, dict) else None
     missing = list(missing or [])
     everyone = sorted(set(by_host) | set(missing))
     tm = dict((h, list(team_map.get(h) or [other])) for h in everyone)
@@ -156,7 +158,8 @@ def team_block(by_host, missing, team_map, names, cards, other=OTHER, report_tea
                                 "healthy": len(rep) - len(bad), "critical": crit, "warning": warn, "low": low,
                                 "findings": len(fs), "owned": len(owned), "shared": len(hs) - len(owned)}
         # 1.86.0 review: the team's hosts that did not report too - never a green "nothing to do" for a team nobody heard from
-        c, _ = cards(dict((h, by_host[h]) for h in rep), [h for h in hs if h not in by_host], 3)
+        team_miss = dict((h, miss_dict.get(h, "")) for h in hs if h not in by_host) if miss_dict is not None else [h for h in hs if h not in by_host]
+        c, _ = cards(dict((h, by_host[h]) for h in rep), team_miss, 3)
         out["todo"][team] = c
         out["counts"][team] = [crit, warn, low]          # "" = everyone, each finding once
     rules, _ = _rules(report_teams, other)

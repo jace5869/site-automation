@@ -1,0 +1,92 @@
+/* 1.138.0: Server-first report section (report_servers.html.j2) - written strictly against the existing look tokens
+   (--ok, --warning, --critical, --low, --info, --unknown with -bg/-bd, --accent, --accent-soft, --card, --card-strong,
+   --edge, --line, --ink, --muted, --label, --code, --hover). No new palette colour tokens. Every font-size <= 34px.
+   Matches reports-by-server.html in light and dark, 1280 and 800 px wide. */
+.srv-glance{margin:16px 0 18px}
+.srv-ghead{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.srv-gic{color:var(--accent);display:inline-flex;align-items:center}
+.srv-gh{margin:0;font-size:18px;font-weight:700;letter-spacing:-.015em;color:var(--ink)}
+.srv-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.srv-tile{border:1px solid var(--edge);background:var(--card);border-radius:12px;padding:14px 16px 12px;min-width:0;display:flex;flex-direction:column}
+.srv-tile.st-ok{--srv-tone:var(--ok);--srv-tint:var(--ok-bg)}
+.srv-tile.st-warning{--srv-tone:var(--warning);--srv-tint:var(--warning-bg)}
+.srv-tile.st-critical{--srv-tone:var(--critical);--srv-tint:var(--critical-bg)}
+.srv-tile.st-low{--srv-tone:var(--low);--srv-tint:var(--low-bg)}
+.srv-tile.st-info{--srv-tone:var(--info);--srv-tint:var(--info-bg)}
+.srv-tile.st-unknown{--srv-tone:var(--unknown);--srv-tint:var(--unknown-bg)}
+.srv-thead{display:flex;align-items:center;gap:8px;color:var(--label);font-size:13px;font-weight:600}
+.srv-ticon{display:grid;place-items:center;color:var(--srv-tone);background:var(--srv-tint);width:28px;height:28px;border-radius:7px;flex:none}
+.srv-ticon .ic{width:15px;height:15px}
+.srv-tlab{min-width:0;overflow-wrap:anywhere}
+.srv-metric{display:block;font-size:clamp(24px,2.2vw,32px);font-weight:700;line-height:1.15;letter-spacing:-.025em;margin:8px 0 3px;color:var(--ink);font-variant-numeric:tabular-nums}
+.srv-tnote{color:var(--muted);font-size:12px;line-height:1.35}
+.srv-meter{display:flex;gap:3px;margin-top:auto;padding-top:12px}
+.srv-meter i{height:4px;background:var(--line);flex:1;border-radius:1px;display:block}
+.srv-meter i.on{background:var(--srv-tone)}
+/* Servers panel, toolbar, table and opened finding cards */
+.sec.srv-sec>summary{display:flex;align-items:center;gap:10px}
+.sec.srv-sec>summary h2{margin:0;flex:1;min-width:0}
+.sec.srv-sec .tools2.srv-tools{display:flex}
+.srv-tools{margin-bottom:10px}
+.srv-tools .btn .ic{width:14px;height:14px}
+table.srv-tbl tbody tr:not(.xr){cursor:pointer}
+table.srv-tbl tbody tr:not(.xr):hover>td{background:var(--hover)}
+.srv-name .srv-host{display:block;font-size:12.5px;font-weight:650;line-height:1.4;color:var(--ink);overflow-wrap:anywhere}
+.srv-name .srv-ip{display:block;font-size:11.5px;line-height:1.4;color:var(--muted)}
+.srv-cnt{font-variant-numeric:tabular-nums}
+.srv-cnt b{font-weight:700}
+.srv-zero{color:var(--muted);font-weight:400}
+.srv-worst{font-size:13px;line-height:1.45}
+.srv-time{font-size:12px;color:var(--muted);white-space:nowrap}
+/* Opened host row: findings list (JS opens via .xb; without JS, tr.xr unhides and <details class="srv-det"> opens by hand) */
+tr.xr>td.srv-xd{padding:10px 16px 14px 44px;background:var(--card-strong)}
+.js .srv-det-s{display:none}
+:root:not(.js) table.srv-tbl .xb{display:none}
+:root:not(.js) table.srv-tbl tr.xr[hidden]{display:table-row!important}
+.srv-det-s{cursor:pointer;font-size:13px;font-weight:650;color:var(--accent);padding:4px 0}
+.srv-detail{display:grid;gap:8px;padding:2px 0}
+.srv-finding{background:var(--card);border:1px solid var(--edge);border-left:3px solid var(--srv-tone,var(--unknown));border-radius:8px;padding:11px 14px;min-width:0}
+.srv-finding.sf-critical{--srv-tone:var(--critical)}
+.srv-finding.sf-warning{--srv-tone:var(--warning)}
+.srv-finding.sf-low{--srv-tone:var(--low)}
+.srv-finding.sf-info{--srv-tone:var(--info)}
+.srv-finding.sf-unknown{--srv-tone:var(--unknown)}
+.srv-finding.sf-ok{--srv-tone:var(--ok)}
+.srv-fhead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px}
+.srv-fhead h3{margin:0;font-size:14px;font-weight:650;line-height:1.35;color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.srv-fmeta{margin-left:auto;font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.srv-ev{margin:7px 0 0;font-size:12px;line-height:1.55;color:var(--label);overflow-wrap:anywhere}
+.srv-since{margin-top:4px;font-size:12px;color:var(--muted)}
+.srv-fix{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.srv-fix b{color:var(--label)}
+.srv-finding .code{margin-top:8px;padding-top:0;align-items:center}
+.srv-finding .code pre{margin:0;flex:1;min-width:0;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.srv-finding .copy{margin-top:0;flex:none}
+.srv-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.srv-ok{margin:4px 0;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.srv-capped{margin:2px 0 0;padding:8px 11px;border:1px solid var(--warning-bd);background:var(--warning-bg);color:var(--warning);border-radius:8px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.srv-capped .ic{width:15px;height:15px;flex:none}
+.srv-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 12px;padding:10px 2px 8px;margin-top:6px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+/* Severity chips over server table (report_pop.js .pt-sev) */
+.srv-sec .pt-sev{margin:0 0 10px}
+.pt-sev button.s-critical[aria-pressed=false]{border-color:var(--critical-bd);color:var(--critical)}
+.pt-sev button.s-warning[aria-pressed=false]{border-color:var(--warning-bd);color:var(--warning)}
+.pt-sev button.s-low[aria-pressed=false]{border-color:var(--low-bd);color:var(--low)}
+.pt-sev button.s-info[aria-pressed=false]{border-color:var(--info-bd);color:var(--info)}
+.pt-sev button.s-unknown[aria-pressed=false]{border-color:var(--unknown-bd);color:var(--unknown)}
+.pt-sev button.s-ok[aria-pressed=false]{border-color:var(--ok-bd);color:var(--ok)}
+/* Responsive: 800px and narrow screens match reports-by-server.html */
+@media (max-width:900px){
+  .srv-tiles{gap:10px}
+  .srv-tile{padding:12px 13px 10px}
+  tr.xr>td.srv-xd{padding:8px 10px 12px 18px}
+}
+@media (max-width:680px){
+  .srv-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  tr.xr>td.srv-xd{padding:6px 8px 10px}
+  .srv-finding .code{align-items:flex-start}
+}
+@media print{
+  .srv-exp,.srv-col,.srv-foot{display:none!important}
+  .srv-meter i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}

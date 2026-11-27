@@ -323,13 +323,12 @@ The next run of each report draws its page in the ops look (the index on the nex
 `report_web_theme: atlas` goes back. Checked at 1280 and 800 px wide, light and dark; no phone layout of its own (a
 phone gets the page as at 800 px, its tables as in atlas).
 
-### The dashboard: the first screen (1.71.0, the ops look)
+### The dashboard: the first screen (1.71.0; all web looks since 1.138.0)
 
-In the ops look, a report can open with a dashboard: everything at a glance on the first screen, the full detail one
+A report can open with a dashboard in `atlas`, `brief` and `ops`: everything at a glance on the first screen, the full detail one
 click down. The STIG scorecard is the first report with one. The dashboard is the report's **At a glance** section:
 its heading, its place in the rail and its link stay, and its short lines stay under the dashboard. The tile row and
-Start here give way to it, and the header card is one line (its status and the verdict). Atlas and brief, the emails
-and the workbook do not change.
+Start here give way to it. The emails and the workbook do not change.
 
 The STIG scorecard's dashboard, at 1280 px:
 
@@ -430,6 +429,27 @@ team its own part. The email does not change.
 
 The ticket insights' pages have their own teams: the assignment groups. Chips over *At a glance* link to each group's
 page, and the one last chosen is offered as *Your team* on the other pages.
+
+## Server-first view (1.138.0)
+
+**Opt-in preview, off by default.** Health-check report pages on the report website (`atlas`, `brief` and `ops`) can lead with a server-first layout instead of only a flat findings table. Emails and Excel workbooks do not change.
+
+Turn it on in `playbooks/group_vars/all.yml` (or on one template's Variables to try it on one report first):
+
+```yaml
+report_servers_view: true                # false (default) = every page as before
+```
+
+The default lives in `roles/site_findings/defaults/main.yml`.
+
+**What the page shows when enabled:**
+
+- **At a glance** tiles on top: *Servers checked* (reporting vs not reached), *Findings*, *Critical servers*, and *Clear servers*, each with a per-server coverage meter.
+- **Servers**, worst first: server name (with IP when known), status chip (icon and word - never colour alone), counts for *Crit*, *Warn*, *Low* and *Info* (`low` findings keep their own column and never turn a server amber), worst finding, and checked time (in `report_time_zone`, or UTC when unset).
+- **Click any server row** to open its findings in place: severity chip, summary, evidence, *What to do* prose (`fix`, never given a Copy button), read-only check command (`hint`, with the Copy button), and any Site portal action buttons. A host whose findings hit `site_findings_max_per_kind` explicitly shows *and N more of &lt;kind&gt;, not listed*. A host that did not report appears as *Not reached* with its reason from `site_host_unreached` or `site_host_skipped`.
+- **Controls**: search filter (matches server names, IPs and findings), severity filter chips (*All*, *Critical*, *Warning*, *Low*, *Info*, *Not reached*, *OK*), **Expand all / Collapse all**, and **CSV**. With scripts blocked, every server's findings stay readable and openable by hand (`<details>`).
+- **The flat *Findings* table stays below it** during the rollout, using the same counts computed once in `plugins/filter/server_view_filters.py`.
+- **Sidebar counts and narrow-screen selector** (all web reports since 1.138.0): every section in the rail shows its item count, and below 900 px a section jump `<select>` replaces the rail (with scripts blocked, the top bar's section links remain usable).
 
 ## Motion (1.86.0)
 

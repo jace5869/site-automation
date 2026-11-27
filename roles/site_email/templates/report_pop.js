@@ -177,13 +177,15 @@
 
   /* the severity chips over a table whose rows say their severity (data-sev) */
   function sevChips(){var SR=window.siteReport||{};
+    /* 1.138.0: include info, unknown (Not reached) and ok when a table's rows carry them (e.g. report_servers) */
+    var labels={critical:'Critical',warning:'Warning',low:'Low',info:'Info',unknown:'Not reached',ok:'OK'};
     all('table').forEach(function(tb){if(!tb.querySelector('tbody tr[data-sev]')||!tb.closest('.tw'))return;
       var w=tb.closest('.tw'),seen={};all('tbody tr[data-sev]',tb).forEach(function(r){seen[r.getAttribute('data-sev')]=1});
-      var keys=['critical','warning','low'].filter(function(k){return seen[k]});if(keys.length<2)return;
+      var keys=['critical','warning','low','info','unknown','ok'].filter(function(k){return seen[k]});if(keys.length<2)return;
       var g=el('div','pt-sev');g.setAttribute('role','group');g.setAttribute('aria-label','Severity');
-      [['','All']].concat(keys.map(function(k){return [k,k.charAt(0).toUpperCase()+k.slice(1)]})).forEach(function(x){
+      [['','All']].concat(keys.map(function(k){return [k,labels[k]||(k.charAt(0).toUpperCase()+k.slice(1))]})).forEach(function(x){
         var b=el('button','pt-sb'+(x[0]?' s-'+x[0]:''),x[1]);b.type='button';b.setAttribute('data-sev',x[0]);b.setAttribute('aria-pressed',String(!x[0]));
-        b.addEventListener('click',function(){all('button',g).forEach(function(y){y.setAttribute('aria-pressed',String(y===b))});
+        b.addEventListener('click',function(){if(tb._expand)tb._expand();tb._cf=!!x[0];all('button',g).forEach(function(y){y.setAttribute('aria-pressed',String(y===b))});
           all('tbody tr[data-sev]',tb).forEach(function(r){r._sv=!!x[0]&&r.getAttribute('data-sev')!==x[0];if(SR.vis)SR.vis(r);else r.hidden=r._sv});
           if(SR.rowsChanged)SR.rowsChanged()});g.appendChild(b)});
       w.parentNode.insertBefore(g,w)})}

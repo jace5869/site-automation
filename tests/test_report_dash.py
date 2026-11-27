@@ -224,23 +224,21 @@ class Scorecard(unittest.TestCase):
             for g in p.get("groups") or []:
                 self.assertIn(g["href"][1:], ids, g)
 
-    def test_only_the_ops_look_draws_it(self):
+    def test_all_web_looks_draw_it(self):
+        """1.138.0 (step 8): atlas, brief and ops all draw report_dash.html.j2 when r.dashboard and s.glance are set."""
         import test_report_fit as T
         doc = fixture_dash("stig_scorecard_cora_web")
-        ops = T.render("ops", doc)
-        self.assertIn('<div class="dash" data-dash>', ops)
-        self.assertEqual(ops.count('<h2>At a glance</h2>'), 1)                 # the section stays (the user: never dropped)
-        self.assertIn('class="glance"', ops)                                   # its lines under the dashboard
-        self.assertNotIn('<div class="tiles t', ops)                            # the tiles are the dashboard's
-        self.assertNotIn('class="todo"', ops)                                   # no Start here beside it
-        # the At a glance card: no second status chip (the user: too much critical)
-        h2 = ops.index('<h2>At a glance</h2>')
-        self.assertNotIn('class="stc', ops[ops.rindex('<details class="sec', 0, h2):h2])
-        self.assertNotIn("<script>", ops.split('class="dash-data">', 1)[1].split("</script>", 1)[0])
-        for look in ("atlas", "brief"):
+        for look in ("ops", "atlas", "brief"):
             page = T.render(look, doc)
-            self.assertNotIn('<div class="dash" data-dash>', page)
-            self.assertIn('class="glance"', page)
+            self.assertIn('<div class="dash" data-dash>', page, look)
+            self.assertEqual(page.count('<h2>At a glance</h2>'), 1, look)          # the section stays (the user: never dropped)
+            self.assertIn('class="glance"', page, look)                            # its lines under the dashboard
+            self.assertNotIn('<div class="tiles', page, look)                      # the tiles are the dashboard's
+            self.assertNotIn('class="todo"', page, look)                           # no Start here beside it
+            h2 = page.index('<h2>At a glance</h2>')
+            hdr = page[page.rindex('<details', 0, h2):h2 + 120]
+            self.assertNotIn('class="stc', hdr, look)
+            self.assertNotIn("<script>", page.split('class="dash-data">', 1)[1].split("</script>", 1)[0], look)
 
 
 def scorecard(runs):

@@ -1962,7 +1962,8 @@ _CELL_SOFT = re.compile(r"(?<=[_./\\,-])(?=[^\s_./\\,-])")
 
 _TIDY_CONTENT = ("rows", "lines", "text", "cards", "board", "squares", "matrix", "timeline", "heat", "outage", "details", "groups", "tiles", "glance",
                  "buttons", "links", "sparks", "actions", "passed", "rule_texts", "cell_links",
-                 "team_view")              # 1.86.0 review: the team view has no rows of its own - an all-clear run keeps it
+                 "team_view",              # 1.86.0 review: the team view has no rows of its own - an all-clear run keeps it
+                 "server_view")            # 1.138.0: the server-first view (report_servers.html.j2)
 _ALL_CLEAR = re.compile(r"^Every [^.]{3,100} (?:is|are) (?:OK|up|online|healthy|fine|clear|reachable|connected|running|answering|in sync|available|on|at|below|within|under|in)\b[^.]*\.?$", re.I)
 _NOTHING = re.compile(r"^(none|nothing|nothing found|nothing is [a-z ]{1,40}|-)\.?$", re.I)
 
@@ -2035,7 +2036,7 @@ def _humanize(sec, raw_keys=False):
 
 
 _PROSE_COLUMNS = ("why", "reason", "reasons", "note", "notes", "explanation", "comment", "comments", "advice", "what to do", "next step")
-_NOT_A_TABLE = ("cards", "matrix", "board", "squares", "timeline", "heat", "outage", "details", "groups", "glance", "tiles", "passed")
+_NOT_A_TABLE = ("cards", "matrix", "board", "squares", "timeline", "heat", "outage", "details", "groups", "glance", "tiles", "passed", "server_view")
 
 
 def _sentences(text):
@@ -2708,32 +2709,35 @@ CHECK_KIND = {"certs": "Certificate", "net_certs": "Certificate", "vmware_certs"
 
 def findings_cards(by_host, missing=None, max_cards=6):
     """The findings of a check run as "Start here" cards: critical first, then warning (each by host), at most max_cards,
-    then one card for the hosts that did not report -> (cards, how many findings were left out)."""
+    then one card for the hosts that did not report -> (cards, how many findings were left out).
+    1.138.0: missing accepts either {host: reason} or the legacy [host, ...] list."""
+    sv_mod = server_view_module()
     found = []
     for h in sorted(by_host or {}):
         for f in by_host.get(h) or []:
-            if str(f.get("severity")) == "low":       # 1.56.0: worth knowing, nothing to do now - no card
+            sev = sv_mod.normalize_severity(f.get("severity"), default="warning")
+            if sev in ("low", "info", "ok"):          # 1.56.0: worth knowing, nothing to do now - no card
                 continue
-            found.append((0 if str(f.get("severity")) == "critical" else 1, h, f))
+            found.append((0 if sev == "critical" else 1, h, f))
     found.sort(key=lambda x: (x[0], x[1]))
     cards = []
     for _, h, f in found[:int(max_cards)]:
-        sev = "critical" if str(f.get("severity")) == "critical" else "warning"
+        sev = "critical" if sv_mod.normalize_severity(f.get("severity"), default="warning") == "critical" else "warning"
         nxt = str(f.get("note") or "") or ((("What to do: %s. " % str(f["fix"]).rstrip(".")) if f.get("fix") else "") + ("Look further:" if f.get("hint") else ""))
         cards.append({"status": sev, "meta": CHECK_KIND.get(str(f.get("check")), str(f.get("check") or "")),
                       # a finding's own subject (a report made on the AAP side about other hosts: the host it is about), else its host
                       "title": str(f.get("summary") or f.get("check") or ""), "subject": str(f.get("subject") or h), "next": nxt,
                       "code": str(f.get("hint") or "")})
-    missing = sorted(missing or [])
-    if missing:
+    miss = sorted(sv_mod.missing_map(missing))
+    if miss:
         cards.append({"status": "warning", "chip": "Not checked", "meta": "Coverage",
-                      "title": "%d host(s) did not report: their health is unknown" % len(missing),
-                      "subject": ", ".join(missing[:6]) + (" and %d more" % (len(missing) - 6) if len(missing) > 6 else ""),
+                      "title": "%d host(s) did not report: their health is unknown" % len(miss),
+                      "subject": ", ".join(miss[:6]) + (" and %d more" % (len(miss) - 6) if len(miss) > 6 else ""),
                       "next": "See why in the job output (unreachable, or failed before the checks ran), then run the job again for them."})
     return cards, max(len(found) - int(max_cards), 0)
 
 
-def findings_report(by_host, title, missing=None, checks=None, extra=None, portal=None, teams=None):
+def findings_report(by_host, title, missing=None, checks=None, extra=None, portal=None, teams=None, servers=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
     not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
@@ -2751,36 +2755,41 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     teams (plugins/filter/team_filters.py): each findings row says its host's teams and its severity (row_tags), and the
     team view (a section "Your team", team_view) takes the place of Start here and of the findings' own tiles. Without
     it, or with no names, the report is as before. 1.97.0 (SolarWinds): an extra section with first: true goes above Start
-    here (the very first on the page), one with under_findings: true right under the findings table."""
+    here (the very first on the page), one with under_findings: true right under the findings table.
+    1.138.0: missing accepts either {host: reason} or the legacy [host, ...] list; counts are computed once in
+    server_view_filters.host_counts; servers (report_servers_view, website copy only, off by default) adds a server-first
+    section above the flat Findings table."""
     by_host = by_host or {}
+    sv_mod = server_view_module()
     ask = _portal_buttons(portal)
     first = [s for s in extra or [] if s.get("first")]
     under = [s for s in extra or [] if s.get("under_findings") and not s.get("first")]
     extra = [s for s in extra or [] if s not in first and s not in under]
     tv = teams if isinstance(teams, dict) and (teams.get("names") or []) else None
     tmap = (tv.get("map") or {}) if tv else {}
+    sv_on = bool(servers.get("enabled", True)) if isinstance(servers, dict) else bool(servers)
+    # 1.138.0: compute per-host and fleet counts once in server_view_filters so every view agrees
+    hc = sv_mod.host_counts(by_host, missing)
+    miss_map = hc["missing"]
+    miss_names = sorted(miss_map)
+    miss_lines = sv_mod.missing_lines(miss_map)
     hosts = sorted(by_host)
-    missing = sorted(missing or [])
-    single = len(hosts) + len(missing) <= 1
-    rows, bad, crit, warn, low = [], [], 0, 0, 0
+    single = len(hosts) + len(miss_names) <= 1
+    bad = [h for h in hosts if hc["hosts"][h]["actionable"]]
+    crit = hc["totals"]["critical"]
+    warn = hc["totals"]["warning"]
+    low = hc["totals"]["low"]
+    rows = []
     for h in hosts:
         fs = by_host.get(h) or []
-        # 1.56.0: a low finding (worth knowing, nothing to do now) is listed, never makes the host or the report amber
-        if any(str(f.get("severity") or "warning") != "low" for f in fs):
-            bad.append(h)
         for f in fs:
-            sev = str(f.get("severity") or "warning")
-            if sev == "low":
-                low += 1
-            else:
-                crit += sev == "critical"
-                warn += sev != "critical"
+            sev = sv_mod.normalize_severity(f.get("severity"), default="warning")
             # a finding's "fix" is what to do, for a person: shown with the finding, never run (the hint is what ACT runs as evidence)
             row = [sev.upper(), f.get("check", ""), str(f.get("summary", "")) + ((" What to do: %s" % f["fix"]) if f.get("fix") else ""), f.get("hint", "")]
             # 1.86.0 review: the row's teams as a JSON list - a team name may hold any character (OPS never matches OPS|WEB)
             tag = {"data": {"team": json.dumps(tmap.get(h) or [tv.get("other") or "Unassigned"], separators=(",", ":")), "sev": sev}} if tv else None
             rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []) + ([tag] if tv else []))
-    rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
+    rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 3 if "INFO" in r[:2] else 1, r[0]))
     tags = [r.pop() for r in rows] if tv else []           # each row's team and severity (1.86.0)
     links = [r.pop() for r in rows] if ask else []          # each row's buttons: [{label, url}]
     n = len(rows)
@@ -2788,9 +2797,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         t = "%s: %d finding(s)" % (title, n) + ("" if single else " on %d of %d host(s)" % (len(bad), len(hosts)))
     else:
         t = "%s: no findings" % title + ("" if single else " - all %d host(s) healthy" % len(hosts))
-    if missing:
-        t += ", %d host(s) did not report" % len(missing)
-    status = "critical" if crit else ("warning" if warn or missing else "ok")
+    if miss_names:
+        t += ", %d host(s) did not report" % len(miss_names)
+    status = "critical" if crit else ("warning" if warn or miss_names else "ok")
     box = lambda label, value, bad_status, note: {"label": label, "value": value, "status": bad_status if value else "ok", "note": note}
     summary = [] if single else [{"label": "Hosts checked", "value": len(hosts), "note": "reported this run"},
                                  {"label": "Healthy", "value": len(hosts) - len(bad), "status": "ok", "note": "no findings"},
@@ -2798,18 +2807,18 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     summary += [box("Critical", crit, "critical", "act now"), box("Warning", warn, "warning", "plan a fix")]
     if low:
         summary.append(box("Low", low, "low", "worth knowing"))
-    if missing:
-        summary.append(box("Did not report", len(missing), "warning", "health unknown"))
+    if miss_names:
+        summary.append(box("Did not report", len(miss_names), "warning", "health unknown"))
     top = [s for s in extra or [] if s.get("top")]
     head = next((s for s in top if s.get("headline")), None)
     if head:
         t = "%s: %s" % (title, head["headline"]) + ((" - %d finding(s)" % n) if n else "")
-        if missing:
-            t += ", %d host(s) did not report" % len(missing)
+        if miss_names:
+            t += ", %d host(s) did not report" % len(miss_names)
         order = {"critical": 0, "warning": 1, "low": 2, "info": 3, "ok": 4}
         status = min(status, head.get("headline_status") or status, key=lambda x: order.get(x, 2))
         if head.get("summary_only"):
-            summary = [box("Did not report", len(missing), "warning", "health unknown")] if missing else []
+            summary = [box("Did not report", len(miss_names), "warning", "health unknown")] if miss_names else []
     for s in first + list(extra or []) + under:   # a top section's boxes, and a lower one's (1.61.0: patch age)
         summary += list(s.get("boxes") or [])
     sections = list(top)
@@ -2818,16 +2827,27 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         cards = list(own[0]["start_here"] or [])
         text = own[0].get("start_here_text") or "What to act on first. Every finding is in the tables below."
     else:
-        cards, more = findings_cards(by_host, missing)
+        cards, more = findings_cards(by_host, miss_map)
         text = "What to act on first: critical, then warning%s. Every finding is in the tables below." % ((" - %d more there" % more) if more else "")
     if tv and not own:
         # 1.86.0: the team view instead of Start here - each team's own first steps, tiles, runs (team_filters.team_block)
-        block = team_module().team_block(by_host, missing, tmap, tv.get("names") or [], findings_cards,
+        block = team_module().team_block(by_host, miss_map, tmap, tv.get("names") or [], findings_cards,
                                          tv.get("other") or "Unassigned", tv.get("setting"))
         sections.insert(0, {"title": "Your team", "status": status, "team_view": True, "rail": True})
     elif cards:
         sections.insert(0, {"title": "Start here", "status": "critical" if any(c.get("status") == "critical" for c in cards) else status,
                             "cards": cards, "text": text})
+    if sv_on:
+        # 1.138.0: server-first view (report_servers_view, website only); flat Findings table stays below for the first pass
+        sopts = dict(servers) if isinstance(servers, dict) else {}
+        if ask:
+            sopts["portal"] = ask
+        if tv:
+            sopts["teams"] = tv
+        sv_sec = sv_mod.server_view(by_host, health=sopts.get("health"), missing=miss_map, capped=sopts.get("capped"), opts=sopts)
+        if not (tv and not own):
+            sv_sec["tiles_kept"] = [b for s in first + list(extra or []) + under for b in list(s.get("boxes") or [])]
+        sections.append(sv_sec)
     if rows:
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
@@ -2840,10 +2860,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
             sections[-1]["row_tags"] = tags
             sections[-1]["team_fold"] = True
     sections += under
-    if missing:
+    if miss_names:
         sections.append({"title": "Did not report", "status": "warning",
                          "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
-                         "lines": missing})
+                         "lines": miss_lines})
     sections += [s for s in extra or [] if not s.get("top")]
     healthy = [h for h in hosts if h not in bad]
     if healthy and not single and not (head and head.get("summary_only")):
@@ -2856,7 +2876,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     # 1.82.0: the head - the counts by severity, the hosts as the scope
     # a host that did not report is a count of its own (review: never lost, and never "0 findings" over them)
     h_counts = [[n, w, st] for n, w, st in ((crit, "critical", "critical"), (warn, "warning" if warn == 1 else "warnings", "warning"),
-                                             (len(missing), "did not report", "warning"), (low, "low", "info")) if n] or [["no", "findings", "ok"]]
+                                             (len(miss_names), "did not report", "warning"), (low, "low", "info")) if n] or [["no", "findings", "ok"]]
     h_scope = [] if single else ["%d of %d hosts with findings" % (len(bad), len(hosts))]
     if head:                                  # a top section's headline is the title's own words (STIG recheck: 2 rules open): the head reads them from it
         h_counts = h_scope = None
@@ -2871,6 +2891,20 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
 
 _PORTAL = []
 _TEAM = []
+_SERVER_VIEW = []
+
+
+def server_view_module():
+    """1.138.0: plugins/filter/server_view_filters.py, loaded by its path (see portal_module)."""
+    if not _SERVER_VIEW:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("server_view_filters_for_reports",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_view_filters.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SERVER_VIEW.append(mod)
+    return _SERVER_VIEW[0]
 
 
 def team_module():
