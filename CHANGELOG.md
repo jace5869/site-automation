@@ -32,6 +32,7 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
   stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
 
 ### Known limits (to 1.136.1)
+- Monitor needs a browser with async/await (any current Edge/Chrome/Firefox); a 2016-era script engine does not load it.
 
 - Even on a converged host with the monitor and Network map off, AAP records successful monitor setup and file-cleanup tasks. The job recap differs from 1.135.1.
 - Browsers without `globalThis` cannot load the wall, even with the monitor off and both `fetch` and `URLSearchParams` available. Startup stops before the first `/api/wall` request.

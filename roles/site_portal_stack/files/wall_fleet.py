@@ -21,6 +21,8 @@ import ipaddress
 import json
 import os
 import re
+
+UP_DESC = re.compile(r"node status is up\.?", re.IGNORECASE)
 import threading
 import time
 
@@ -598,7 +600,8 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         unmanaged = str(um).strip().lower() in ("true", "1")
         desc = _txt(r.get("StatusDescription"), None)
         up = (status == UP and not unmanaged and loss is not None and loss < 100 and rt is not None and rt >= 0
-              and (not desc or re.search(r"\bup\b", desc, re.I)))
+              and (not desc or UP_DESC.fullmatch(desc.strip())))   # only SolarWinds' own "Node status is Up." - a
+        #                                                   history ("previous status: Up") or any other text is not up
         c = UP if up else DOWN if status == DOWN and not unmanaged else UNKNOWN
         nid = str(r["NodeID"])
         if nid in by_id:

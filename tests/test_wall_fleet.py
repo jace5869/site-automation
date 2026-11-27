@@ -1671,7 +1671,9 @@ class Gate8(unittest.TestCase):
     def test_up_description_requires_a_whole_up_word(self):
         self.groups = {"list": [[10, "DB", 1]], "members": {"1": [10]}}
         for desc, up in (("Knotenstatus: Unbekannt.", False), ("Node is not responding.", False),
-                         ("Backup", False), ("", True), ("Node status: UP.", True)):
+                         ("Backup", False), ("", True), ("Node status is Up.", True), ("node status is up", True),
+                         ("Node status: UP.", False), ("Node is down (previous status: Up).", False),
+                         ("Node status is unknown; last known status was Up.", False)):
             with self.subTest(desc=desc):
                 self.rows = [dict(sw_row(1, "DB01"), StatusDescription=desc)]
                 fm = self.model()
