@@ -1,0 +1,859 @@
+{
+ "made_from": "1.136.0 (rel-1360, 2d9ead60) plugins/action/site_act_ask.py",
+ "scenarios": {
+  "batches": {
+   "results": [
+    {
+     "cache": {
+      "created": true,
+      "hits": 0,
+      "on": true,
+      "pruned": 0,
+      "saved": 2,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P1",
+        "P2"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by smart-model\", \"items\": [{\"id\": \"P1\", \"cause\": \"cause of P1 by smart-model\", \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"confidence\": 80}, {\"id\": \"P2\", \"cause\": \"cause of P2 by smart-model\", \"evidence\": \"line of P2\", \"fix\": \"fix P2\", \"confidence\": 40}]}\nEND_ACT_ANALYSIS",
+       "tries": 2
+      },
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P3"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by smart-model\", \"items\": [{\"id\": \"P3\", \"cause\": \"cause of P3 by smart-model\", \"evidence\": \"line of P3\", \"fix\": \"fix P3\", \"confidence\": 90}]}\nEND_ACT_ANALYSIS",
+       "tries": 2
+      },
+      {
+       "asked": false,
+       "cached": "",
+       "ids": [
+        "P4"
+       ],
+       "model": "smart-model",
+       "ran": false,
+       "reason": "No evidence to read: ACT was not asked.",
+       "status": "",
+       "stop_reason": "",
+       "summary": "",
+       "tries": 0
+      },
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P5"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by smart-model\", \"items\": [{\"id\": \"P4\", \"cause\": \"cause of P4 by smart-model\", \"evidence\": \"line of P4\", \"fix\": \"fix P4\", \"confidence\": 20}]}\nEND_ACT_ANALYSIS",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [
+    [
+     "2f34c0b5a877caa0593aaa60da1c6a5a50daeb824dcee88d6843143adc6e5b79",
+     "log_analysis",
+     "causes-1",
+     "smart-model",
+     "BEGIN_ACT_ANALYSIS\n{\"items\": [{\"cause\": \"cause of P1 by smart-model\", \"confidence\": 80, \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"id\": \"P1\"}, {\"cause\": \"cause of P2 by smart-model\", \"confidence\": 40, \"evidence\": \"line of P2\", \"fix\": \"fix P2\", \"id\": \"P2\"}], \"overall\": \"overall by smart-model\"}\nEND_ACT_ANALYSIS"
+    ],
+    [
+     "8fa83877f544307b6dc41abe8e54c5e6ffb9513fdc47f4bfdcbc3ab92a0ad01f",
+     "log_analysis",
+     "causes-1",
+     "smart-model",
+     "BEGIN_ACT_ANALYSIS\n{\"items\": [{\"cause\": \"cause of P3 by smart-model\", \"confidence\": 90, \"evidence\": \"line of P3\", \"fix\": \"fix P3\", \"id\": \"P3\"}], \"overall\": \"overall by smart-model\"}\nEND_ACT_ANALYSIS"
+    ]
+   ],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "t1"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01,db01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nP1 and P2 lines",
+     "task": "t1"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "t1"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01,db01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nP1 and P2 lines",
+     "task": "t1"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q1.result.json",
+      "--allow-piped-upload",
+      "t2"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nP3 lines",
+     "task": "t2"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q1.result.json",
+      "--allow-piped-upload",
+      "t2"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nP3 lines",
+     "task": "t2"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q3.result.json",
+      "--allow-piped-upload",
+      "t3"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nP5 lines",
+     "task": "t3"
+    }
+   ]
+  },
+  "cached-again": {
+   "results": [
+    {
+     "cache": {
+      "created": true,
+      "hits": 0,
+      "on": true,
+      "pruned": 0,
+      "saved": 1,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P1"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by smart-model\", \"items\": [{\"id\": \"P1\", \"cause\": \"cause of P1 by smart-model\", \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"confidence\": 80}]}\nEND_ACT_ANALYSIS",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    },
+    {
+     "cache": {
+      "created": false,
+      "hits": 1,
+      "on": true,
+      "pruned": 0,
+      "saved": 0,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": false,
+       "cached": "<when>",
+       "ids": [
+        "P1"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "cached",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"items\": [{\"cause\": \"cause of P1 by smart-model\", \"confidence\": 80, \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"id\": \"P1\"}], \"overall\": \"overall by smart-model\"}\nEND_ACT_ANALYSIS",
+       "tries": 0
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [
+    [
+     "d83e72bf4c0747ad73fe675bd7dd98faae5f4cf5cfa08be1d302bd839f009f3d",
+     "log_analysis",
+     "causes-1",
+     "smart-model",
+     "BEGIN_ACT_ANALYSIS\n{\"items\": [{\"cause\": \"cause of P1 by smart-model\", \"confidence\": 80, \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"id\": \"P1\"}], \"overall\": \"overall by smart-model\"}\nEND_ACT_ANALYSIS"
+    ]
+   ],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "t1"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\ne1",
+     "task": "t1"
+    }
+   ]
+  },
+  "many": {
+   "results": [
+    {
+     "cache": {
+      "created": false,
+      "hits": 0,
+      "on": false,
+      "pruned": 0,
+      "saved": 0,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "V-1"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "Here:\n```powershell\nGet-Item x  # smart-model\n```\nVALUES USED: none",
+       "tries": 1
+      },
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "V-2"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "no code here",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "code-a"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01,h1",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\ncheck text 1",
+     "task": "code-a"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q1.result.json",
+      "--allow-piped-upload",
+      "code-b"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01,h2",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\ncheck text 2",
+     "task": "code-b"
+    }
+   ]
+  },
+  "provider": {
+   "results": [
+    {
+     "cache": {
+      "created": true,
+      "hits": 0,
+      "on": true,
+      "pruned": 0,
+      "saved": 1,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P1"
+       ],
+       "model": "sage-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by sage-model\", \"items\": [{\"id\": \"P1\", \"cause\": \"cause of P1 by sage-model\", \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"confidence\": 85}]}\nEND_ACT_ANALYSIS",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [
+    [
+     "407051ba45211a6562d90e0b5dfda8749c9c1d7ab027bec2e7452ff7450ec0ad",
+     "log_analysis",
+     "causes-1",
+     "sage-model",
+     "BEGIN_ACT_ANALYSIS\n{\"items\": [{\"cause\": \"cause of P1 by sage-model\", \"confidence\": 85, \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"id\": \"P1\"}], \"overall\": \"overall by sage-model\"}\nEND_ACT_ANALYSIS"
+    ]
+   ],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "p"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": "asksage",
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": "sage-model",
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PROVIDER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "ASKSAGE_MODEL",
+      "ASKSAGE_URL",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\ne",
+     "task": "p"
+    }
+   ]
+  },
+  "single": {
+   "results": [
+    {
+     "cache": {
+      "created": false,
+      "hits": 0,
+      "on": false,
+      "pruned": 0,
+      "saved": 0,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "P1"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "BEGIN_ACT_ANALYSIS\n{\"overall\": \"overall by smart-model\", \"items\": [{\"id\": \"P1\", \"cause\": \"cause of P1 by smart-model\", \"evidence\": \"line of P1\", \"fix\": \"fix P1\", \"confidence\": 70}]}\nEND_ACT_ANALYSIS",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "one"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nthe whole thing",
+     "task": "one"
+    }
+   ]
+  },
+  "verdicts": {
+   "results": [
+    {
+     "cache": {
+      "created": false,
+      "hits": 0,
+      "on": false,
+      "pruned": 0,
+      "saved": 0,
+      "why": ""
+     },
+     "questions": [
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "V-1"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "NF\nbecause smart-model\nline",
+       "tries": 1
+      },
+      {
+       "asked": true,
+       "cached": "",
+       "ids": [
+        "V-2"
+       ],
+       "model": "smart-model",
+       "ran": true,
+       "reason": "",
+       "status": "completed",
+       "stop_reason": "",
+       "summary": "unsure\nbecause smart-model\nline",
+       "tries": 1
+      }
+     ],
+     "reached": null,
+     "url": "<url>",
+     "why_not": ""
+    }
+   ],
+   "rows": [],
+   "runs": [
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q0.result.json",
+      "--allow-piped-upload",
+      "x-a"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nevidence 1",
+     "task": "x-a"
+    },
+    {
+     "argv": [
+      "--non-interactive",
+      "--result-file",
+      "<work>/q1.result.json",
+      "--allow-piped-upload",
+      "x-b"
+     ],
+     "env": {
+      "ACT_ALLOW": null,
+      "ACT_AUTO": null,
+      "ACT_NO_BANNER": "1",
+      "ACT_PROVIDER": null,
+      "ACT_PSEUDONYMIZE": "1",
+      "ACT_PSEUDO_NAMES": "web01",
+      "ASKSAGE_MODEL": null,
+      "GENAI_BETA_MODEL": null,
+      "GENAI_KEY": null,
+      "GENAI_MODEL": "smart-model",
+      "GENAI_TIMEOUT": "77"
+     },
+     "envnames": [
+      "ACT_NO_BANNER",
+      "ACT_PSEUDONYMIZE",
+      "ACT_PSEUDO_NAMES",
+      "FAKE_LOG",
+      "FAKE_PLAN",
+      "GENAI_MODEL",
+      "GENAI_TIMEOUT",
+      "HOME",
+      "LANG",
+      "LANGUAGE",
+      "LOGNAME",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "USER",
+      "XDG_RUNTIME_DIR"
+     ],
+     "stdin": "Evidence to read (no command is to be run):\nevidence 2",
+     "task": "x-b"
+    }
+   ]
+  }
+ }
+}

@@ -87,6 +87,7 @@ The settings:
 | `site_act_models` | the model **for each provider**, so the model follows the provider you pick, e.g. `{genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}` | ACT's default for the provider |
 | `site_act_urls` | the API URL for each provider, e.g. `{asksage: https://<host>/server/openai/v1/chat/completions}` | ACT's default for the provider |
 | `site_act_model`, `site_act_url` | one model / URL for this run, whatever the provider (a survey answer) | empty: use the two above |
+| `site_act_worker_models`, `site_act_worker_model` | optional worker model tier for the per-item first pass (per provider, or one for this run); the smart model settles what it cannot and writes the verdict ([Model tiers](#model-tiers-a-worker-model-for-the-bulk-the-smart-model-for-judgement-11370)) | empty (smart model only) |
 | `site_act_ca` | a CA bundle file **on the hosts**, if the provider's certificate comes from a CA the hosts do not trust yet (for example a DoD CA not in `/etc/pki/ca-trust`) | the host's normal trust store |
 
 **Where to set them:**
@@ -147,6 +148,11 @@ and the `explain` level - ACT gets `ACT_TOOLS=0`, `ACT_JSON_MODE=0` and `ACT_PRE
 ACT's own steps (tools, the action schema, a `{` to go on from) and answers in plain text. With them it could only
 answer as a step - `{'action': 'plan', ...}` or `{'message': ...}` instead of the answer. `site_act_env` wins over
 them. ACT's loop (`diagnose`, `self-heal`) keeps its tools.
+
+**Model tiers and `ACT_DELEGATE`.** Set `site_act_worker_model` (or `site_act_worker_models`) so the worker model tier
+does the per-item first pass while the smart model settles what it cannot and writes the verdict
+([Model tiers](#model-tiers-a-worker-model-for-the-bulk-the-smart-model-for-judgement-11370)). Jobs start ACT with
+`ACT_DELEGATE=0` unless `site_act_env` says otherwise.
 
 **"ACT gave no analysis: the model answered as a chat".** Now and then a model loses the thread and
 answers like a chat window ("I am ready. What task or command would you like me to assist you
@@ -235,7 +241,7 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.27**. It sends the key
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.28**. It sends the key
 only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
 [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22 and 0.6.23, all automatic:
@@ -353,6 +359,24 @@ answers HTTP 429. `site_act_concurrency` (default **3**) caps how many hosts run
 time; the rest wait their turn. `0` = no cap. ACT itself also waits when the gateway sends a 429
 with `Retry-After`.
 
+### Hosts with the same findings: `site_act_group`
+
+Many hosts of one job often found the same things: the same service down, the same disk nearly full. At the
+`explain` level, ACT reads the first host of each such group only. The others take its answer.
+
+- Each host's report says so: *The same findings on 4 hosts: web01, web02, web03, web04 (ACT read web01; the
+  others take its answer).*
+- Findings count as the same without their numbers, times, addresses and the host's own names. *91% full* on
+  one host and *95% full* on another is the same finding. Ports, quoted names (a unit, a mount), the finding's id
+  and its read-only hint stay: port 443 and port 636, or unit *postgresql* and unit *nginx*, are not.
+- Hosts are grouped within one batch of the play (`serial`), and each pass of a play groups on its own findings.
+- When the first host's ACT fails, the others say why; they do not show it as a shared answer.
+- `diagnose` and `self-heal` always ask each host: a fix is for the host it was found on.
+- A job that brings its own evidence for each host (troubleshoot) asks each host.
+- fapolicyd's analysis groups the same way: the same blocks (what, by which program, how) and the same findings
+  (a trust file that cannot be read ...) on several hosts are read once, however often each was blocked.
+- `site_act_group: false` asks every host.
+
 ### Many items at once: `site_act_batch`
 
 The jobs where ACT reads evidence - the VMware alarms analysis, capacity planning and log analysis - ask
@@ -363,6 +387,111 @@ question fails, the others' analyses are still in the report and the job names t
 analyzed (`P6-P10 not analyzed: ...`). `site_act_batch: 3` for a slow model or a strict gateway; `0` asks
 everything in one question. Each job has its own setting too: `vm_alarm_act_batch`, `vm_capacity_act_batch`,
 `log_analysis_act_batch`.
+
+### How the jobs on the AAP side ask ACT
+
+The jobs where ACT reads evidence on the AAP side ask through one engine (`plugins/action/site_act_ask.py`).
+These are the log analysis, the VMware alarms, capacity and right-sizing analyses, the WAR, ticket insights,
+the incident documents, the triage of a finding, VM ask and deploy, the outage review and the STIG answer keys.
+One job asks like this:
+
+- One check of the way to the model, for all its questions. When the model cannot be reached, the report says
+  so once, and nothing is asked.
+- One copy of ACT for the whole job, in a private temporary folder that is removed after.
+- Its questions run `site_act_concurrency` (3) at a time, or up to 4 when it is `0`. They come back in the
+  order they were asked.
+- A question that failed is asked once more (`site_act_retries`, default **1**; `0` = never again). In the
+  jobs that ask in batches, an answer the job cannot read is asked again too. All tries of one question share
+  its time (`site_act_timeout`, or the job's own cap): a question that ran out of it is not asked again. An
+  answer that came is kept when the next try fails.
+- A question with no evidence is never sent. The report says *No evidence to read: ACT was not asked.* The
+  evidence is checked as it is sent, cut at `act_triage_evidence_total_chars` (1,500,000 characters).
+- What ACT reads always starts with one fixed line, so ACT only reads and answers. It never works on its own
+  or runs a command on the AAP node.
+- ACT masks the host names, as before (`act_triage_pseudonymize`, default `true`).
+- The check of the way uses ACT's own environment: the job's proxy and `NO_PROXY` settings. A proxy with a user
+  name and password (`user:pass@`) is not checked; ACT is asked and says itself when it fails.
+- ACT starts through the same launcher as every ACT run (`act_launch.py` of the `act_triage` role, 1.104.0). ACT
+  gets only an allowlist of the job's environment, never its other credentials (`VMWARE_PASSWORD`,
+  `SN_PASSWORD` ...). The keys and `site_act_env` go on the launcher's input, never on a command line. A name in
+  `site_act_env` that ACT may not get stops the job's questions before any is asked; the report names it, never
+  its value. `site_act_env` cannot turn the masking off.
+- With a model time of the job's own (the outage review's `vm_outage_act_model_timeout`), each ACT run is held
+  to twice it and a minute, `site_act_timeout` at most.
+- A question that could not be asked at all gets its own reason. The others keep their answers.
+- ACT's answer is never printed in the job's output. The report shows what it needs.
+- With the **Report database** credential on the template, the batched jobs keep their answers (1.136.0,
+  `site_act_cache`). A later run with the same question takes the kept answer, and ACT is not asked. Its report
+  says *N of M answer(s) from an earlier run*. See [REPORT_DATABASE.md](REPORT_DATABASE.md), *ACT's answer cache*.
+
+The STIG answer keys ask every rule in one call too (`evidence_many.yml`): the drafts, then the cross-check.
+
+### Model tiers: a worker model for the bulk, the smart model for judgement (1.137.0)
+
+Off until you set a worker model. Then the jobs that ask ACT about many items on the AAP side send each item to a
+cheaper, faster **worker** model first. The model you already set (`site_act_model`, `site_act_models`) becomes the
+**smart** model. It gets only what the worker could not settle, and it writes the report's verdict.
+
+| Job | Worker model (each item) | Smart model |
+|---|---|---|
+| Log analysis | each batch of patterns | critical patterns at once; the verdict |
+| VMware alarms ACT analysis | each batch of problems | critical problems at once; the verdict |
+| VMware capacity analysis | each batch of estimates | the verdict |
+| VM right-sizing | each batch of suggestions | the verdict |
+| STIG answer keys | each rule's draft and each cross-check answer | a draft with no code, an `unsure` verdict |
+| WAR, outage review, ticket insights, incident documents, VM ask and deploy, a finding's triage | - | all of it (one judgement each) |
+| Health check (`explain`), fapolicyd | - | all of it (ACT runs on each host, not through the engine) |
+
+How it works:
+
+- **The worker answers first.** Its model goes in ACT's own model setting (`GENAI_MODEL` ...). Nothing else changes:
+  the same launcher, the same evidence, the keys only on the launcher's input, the masking last. The worker only reads
+  the evidence the job collected. It runs no command.
+- **An item the job marks critical** (an alarm or a log pattern at level critical) goes to the smart model at once.
+- **The smart model checks the worker once.** A question goes to the smart model when the worker:
+  - gave no answer;
+  - gave an answer the job cannot read, or left an item out;
+  - is unsure: a confidence under 50 ("a guess" in the jobs' own prompts), an `unsure` cross-check verdict, or a draft
+    with no code;
+  - calls an item critical.
+
+  The worker is asked once (`site_act_retries` does not apply to it): the smart model is its second try. The smart
+  model gets the same task and evidence, once, in the time the worker left of `site_act_timeout`. Its answer is final,
+  even when it is unsure: nothing goes back to the worker or is asked a third time. When the smart model fails, or its
+  answer cannot be read, a worker answer that could be read stays, and the report says so.
+- **The smart model writes the verdict.** It reads only the short answers: for each item its id, cause, fix and
+  confidence, with secrets masked. It never reads the evidence, nor a line an answer quoted from it. Its verdict is the report's
+  overall. When it cannot be read, each batch keeps its own lines, and the report says so.
+- **One line in the report** says which model answered how many items: *ACT models (site_act_worker_model): 12 item(s)
+  answered by the worker model (...), 3 by the smart model (...); 2 re-asked after the worker (1 critical, 1 unsure). The
+  overall verdict: the smart model, from the answers.*
+- **The answer cache** (`site_act_cache`) keeps each tier's answers under its own model. A worker's answer never
+  stands for the smart model's, or the other way round. A run where every answer is kept reaches no model at all.
+
+Example: hydrogen as the worker, carbon or argon as the smart model. Use the model ids your provider gives; a list
+of them is in ACT's `:models`.
+
+```yaml
+# playbooks/group_vars/all.yml
+site_act_models: {genai: <carbon or argon model id>}       # the smart model (argon: gemini-4-argon-withtools)
+site_act_worker_models: {genai: <hydrogen model id>}       # the worker model
+# site_act_worker_model: <id>                              # or one worker for this run, whatever the provider
+```
+
+ACT 0.6.28 has sub-agents of its own (`delegate`, `--worker-model`) for a person at the keyboard. The jobs do not use
+them: every job's ACT starts with `ACT_DELEGATE=0` (`site_act_env: {ACT_DELEGATE: "1"}` turns them on). The tiers above
+are how a job splits its work between two models.
+
+Each job can turn tiers off and stay on the smart model: `log_analysis_act_tiers`, `vm_alarm_act_tiers`,
+`vm_capacity_act_tiers`, `vm_rightsize_act_tiers`, `answer_keys_act_tiers` (all `true`). Without a worker model, or with
+the job's switch `false`, every question goes to the smart model, exactly as before 1.137.0. A worker that is the smart
+model is one tier too.
+
+What it saves, and what it does not: most items are read by the worker model, which is quicker and lighter on the
+gateway's quota. The smart model reads far less: the items the worker could not settle, and one short summary. Both
+tiers use the same key, so they share its quota (GenAI.mil's default: 60 requests and 200,000 tokens a minute). A run
+makes a few more requests than before: one for the verdict, and one for each item checked again. Watch the report line
+for a week. When most items are re-asked, the worker model is too weak for that job: turn tiers off for it.
 
 ### Causes: one answer shape for every "why" report
 
@@ -438,8 +567,8 @@ The old one is kept as a new file that is checked against the original before th
 backup name that is taken gets a number, and a file there is never written over. When `/opt/act` or `/opt/act/old` is a link, the
 job changes nothing there and says so. With `site_act_old_bin: report` it only says `would update ... (report only)`.
 
-The line says `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at /opt/act/old/act.<...>.` In Check it says
-`would update /opt/act/act 0.6.25 -> 0.6.27` and changes nothing. The update does not need a link to be made, and a host with
+The line says `updated /opt/act/act 0.6.25 -> 0.6.28, the old one kept at /opt/act/old/act.<...>.` In Check it says
+`would update /opt/act/act 0.6.25 -> 0.6.28` and changes nothing. The update does not need a link to be made, and a host with
 `python3` older than 3.6 is updated too. The jobs that run ACT on a host install it the same way (the file replaced when it differs).
 
 - **link** keeps the old one in `/opt/act/old` (0700, root) as `act.<UTC time>.<sha256, first 8>`. Then it links

@@ -296,17 +296,21 @@ class Timeouts(unittest.TestCase):
     def test_the_whole_run_is_held_to_the_model_time(self):
         import jinja2
         import yaml
-        with open(os.path.join(REPO, "roles", "site_act", "tasks", "evidence_ask.yml")) as f:
+        # 1.136.0: the one engine (roles/site_act/tasks/act_ask.yml -> plugins/action/site_act_ask.py) holds each ACT run to it
+        with open(os.path.join(REPO, "roles", "site_act", "tasks", "act_ask.yml")) as f:
             tasks = yaml.safe_load(f)
-        ask = next(t for t in tasks if t.get("block") and t["block"][0].get("ansible.builtin.include_role", {}).get("name") == "act_triage")
-        expr = ask["block"][0]["vars"]["act_triage_timeout"]
+        ask = next(t for t in tasks if "site_act_ask" in t)
+        expr = ask["site_act_ask"]["timeout"]
         env = jinja2.Environment()
         for model, want in (("180", "420"), (600, "1200"), ("", "1200"), (0, "1200"), (None, "1200")):
             v = {"site_act_timeout": 1200}
             if model is not None:
                 v["_ea_model_timeout"] = model
             self.assertEqual(env.from_string(expr).render(v).strip(), want, model)      # before: always site_act_timeout (1200)
-        self.assertIn("ACT's folder", ask.get("name", "") + " " + ask["always"][0]["name"])
+        with open(os.path.join(REPO, "plugins", "action", "site_act_ask.py")) as f:
+            src = f.read()
+        # ACT's folder goes, whatever happens (1.137.0: made once for every wave of the tiers, removed after the last)
+        self.assertRegex(src, r"finally:\n\s+if ready\.get\(\"work\"\):\n\s+shutil\.rmtree\(ready\[\"work\"\], ignore_errors=True\)")
         with open(os.path.join(REPO, "roles", "vmware_vm", "defaults", "main.yml")) as f:
             self.assertEqual(yaml.safe_load(f)["vm_outage_act_model_timeout"], 180)    # before: site_act_model_timeout (600)
 
@@ -386,8 +390,12 @@ class Play(unittest.TestCase):
         e = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",
                  GENAI_KEY="")
         e.update(env or {})
+        # 1.136.0: the extra vars from a file - ACT now starts from the controller's own process (plugins/action/site_act_ask.py),
+        # whose parent is ansible-playbook: "-e JSON" would put the test's own proxy password on that command line
+        with open(os.path.join(work, "extra.json"), "w") as f:
+            json.dump(dict({"ansible_python_interpreter": sys.executable, "ansible_connection": "local"}, **extra), f)
         out = subprocess.run([ap, os.path.join(work, "act.yml"), "-i", host + ","] + (["-vvv"] if verbose else []) + [
-                              "-e", json.dumps(dict({"ansible_python_interpreter": sys.executable, "ansible_connection": "local"}, **extra))],
+                              "-e", "@" + os.path.join(work, "extra.json")],
                              cwd=REPO, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
         self.assertEqual(out.returncode, 0, out.stdout[-3000:])
         self.play_output = out.stdout
@@ -588,7 +596,7 @@ class Play(unittest.TestCase):
         self.assertEqual(wrong, [])
 
     def test_acts_folder_goes_when_act_fails(self):
-        # 1.104.0 (Neon P2): roles/site_act evidence_ask.yml removes ACT's folder in an always - also when act_triage fails
+        # 1.104.0 (Neon P2): ACT's folder is removed also when ACT fails (1.136.0: site_act_ask.py's finally)
         # (here: no ACT script) and outage_act.yml's rescue goes on
         tmp = tempfile.mkdtemp()
         act, _ = self.stand_in({"TMPDIR": tmp}, {"act_triage_script_src": os.path.join(tmp, "no-act-here")})

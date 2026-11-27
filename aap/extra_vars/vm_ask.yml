@@ -473,6 +473,21 @@
 ## a CA bundle file ON THE HOSTS for the provider's certificate; empty = the host's trust store
 # site_act_ca: ""
 
+## 1.137.0: model tiers (docs/ADDING_ACT.md, "Model tiers"). A cheaper, faster WORKER model does the
+## per-item first pass of the jobs that ask ACT about many items on the AAP side (the log analysis,
+## the VMware alarms, capacity and right-sizing analyses, the STIG answer keys); the model above
+## (the SMART one) gets what the worker could not settle - an answer it could not read, an unsure
+## one (confidence under 50, an "unsure" verdict, a draft without code), an item the job or the
+## worker calls critical - once, and writes the report's overall verdict from the worker's short
+## answers (never the raw evidence). Each job can turn it off: log_analysis_act_tiers,
+## vm_alarm_act_tiers, vm_capacity_act_tiers, vm_rightsize_act_tiers, answer_keys_act_tiers. Empty =
+## no tiers: every question on the model above, as before 1.137.0. site_act_worker_model one worker
+## model for this run, whatever the provider; empty = site_act_worker_models site_act_worker_models
+## the worker model for each provider, e.g. {genai: <the cheap model's id>}
+# site_act_worker_model: ""
+
+# site_act_worker_models: {}
+
 ## Any other ACT environment settings (advanced; these win over the ones above), e.g. {HTTPS_PROXY:
 ## "http://proxy.yoursite.mil:8080"}. See the top of vendor/act/act for the list. Every ACT job
 ## streams the model's answer (ACT_STREAM=1), so a firewall or proxy idle timeout does not cut a
@@ -486,6 +501,40 @@
 
 ## seconds for one whole ACT run (several answers): keep it above site_act_model_timeout
 # site_act_timeout: 1200
+
+## How many hosts may run ACT at the same time in one job (0 = no limit: as many as the job's
+## forks). The jobs that ask ACT about evidence on the AAP side (log analysis, the VMware alarms,
+## the WAR ...) ask this many questions at a time (0 = up to 4 at a time). Every host in a job uses
+## the same key, and GenAI.mil's default quota is 60 requests and 200,000 tokens a minute per key: a
+## fleet run with many hosts at once gets HTTP 429 (too many requests).
+# site_act_concurrency: 3
+
+## A question ACT failed, in a job that asks on the AAP side, is asked again this many times. In the
+## jobs that ask in batches, an answer the job cannot read is asked again too. 0 = never again. A
+## question that ran out of site_act_timeout is not asked again.
+# site_act_retries: 1
+
+## 1.136.0: ACT's answer cache in the report database (docs/REPORT_DATABASE.md, "ACT's answer
+## cache"). The jobs that ask ACT in batches on the AAP side (the log analysis, the VMware alarms,
+## capacity and right-sizing analyses) keep each answer. A question asked again with the same
+## evidence, prompt, provider and model takes the kept answer, and ACT is not asked. Only with the
+## "Report database" credential on the template. false = never used.
+# site_act_cache: true
+
+## how long an answer is kept, in days. 0 = no cache
+# site_act_cache_ttl_days: 7
+
+## per job kind, over site_act_cache_ttl_days: {log_analysis: 3, vm_capacity: 0}
+# site_act_cache_ttl_days_by: {}
+
+## true = ask everything again this run, and keep the new answers
+# site_act_cache_clear: false
+
+## make the table act_answer_cache on the first run
+# site_act_cache_create: true
+
+## seconds to connect to the report database
+# site_act_cache_timeout: 10
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## ---- Teams (1.86.0): the team view of the health reports on the report website ------------------

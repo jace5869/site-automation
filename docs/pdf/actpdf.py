@@ -18,8 +18,8 @@ from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame,
                                 Preformatted, Spacer, Table, TableStyle)
 from reportlab.platypus.tableofcontents import TableOfContents
 
-VERSION = "0.6.27"
-SA_VERSION = "1.136.3"
+VERSION = "0.6.28"
+SA_VERSION = "1.137.0"
 # the month the PDF is built (SA_PDF_DATE="November 2026" to set it); it was fixed to October 2026 until 1.50.0
 DATE = __import__("os").environ.get("SA_PDF_DATE") or __import__("datetime").date.today().strftime("%B %Y")
 

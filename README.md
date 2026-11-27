@@ -279,7 +279,7 @@ The guides, in the order a new site needs them: how it works and the setup first
 | [docs/TENABLE.md](docs/TENABLE.md) | the Tenable.sc (ACAS) scan job: the account and its API keys, the credential, the template, how each host's scan zone is chosen, the report |
 | [docs/INCIDENT_DOCS.md](docs/INCIDENT_DOCS.md) | the outage AAR and SOP Word documents: the two templates and the survey job, what the documents hold, ACT's tidy and suggestions, who gets them, settings and troubleshooting |
 | [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |
-| [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
+| [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), model tiers (a worker model for the bulk, 1.137.0), and writing your own check |
 | [docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md) | the service-watch demo |
 | [guides/](guides/) | **PDFs** of the guides (built by [docs/pdf/](docs/pdf/README.md)): the runbooks setup guide, the VM deploy guide, the service-watch demo, the ACT guides and leadership briefs |
 

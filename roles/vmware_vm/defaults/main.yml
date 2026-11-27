@@ -181,6 +181,7 @@ vm_rightsize_workers: 4                  # statistics queries at a time
 # GenAI (ACT) reviews the suggestions: needs an "ACT model key" credential (docs/VMWARE.md, "ACT analysis")
 vm_rightsize_act: false
 vm_rightsize_act_max_items: 40           # suggestions ACT reviews: too small first, then too big (the most freed first)
+vm_rightsize_act_tiers: true             # 1.137.0: with a worker model (site_act_worker_model) the worker reviews each batch, the smart model the unsure ones and writes the verdict; false = the smart model only
 vm_rightsize_act_batch: "{{ site_act_batch | default(5) }}"   # suggestions per question to ACT (0 = all in one)
 vm_rightsize_act_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 vm_rightsize_act_check_url: true         # first check that the AAP node can reach the model's URL
@@ -308,6 +309,7 @@ vm_alarm_fail: false
 # site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential.
 
 vm_alarm_act_max_items: 40               # analyze at most this many problems, the most severe first
+vm_alarm_act_tiers: true                 # 1.137.0: with a worker model (site_act_worker_model) the worker reads each batch, the smart model the critical and unsure problems and writes the verdict; false = the smart model only
 vm_alarm_act_batch: "{{ site_act_batch | default(5) }}"   # problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts off (0 = all in one question)
 vm_alarm_act_config_issues: true         # configuration issues too (false = alarms and events only)
 vm_alarm_act_email_if_none: false        # true = email even when there is nothing to analyze
@@ -646,6 +648,7 @@ vm_capacity_fail: false
 # analysis. ACT runs on the AAP side and runs no command.
 vm_capacity_act: false
 vm_capacity_act_max_items: 30            # items ACT estimates: everything overall, then clusters and datastores, problems first
+vm_capacity_act_tiers: true              # 1.137.0: with a worker model (site_act_worker_model) the worker estimates each batch, the smart model the unsure ones and writes the verdict; false = the smart model only
 vm_capacity_act_batch: "{{ site_act_batch | default(5) }}"   # items per question to ACT (each question has the whole evidence; 0 = all in one)
 vm_capacity_act_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 vm_capacity_act_check_url: true          # first check that the AAP node can reach the model's URL

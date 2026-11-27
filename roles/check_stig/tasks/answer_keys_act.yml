@@ -8,9 +8,42 @@
   ansible.builtin.set_fact:
     _ak_act: {}
 
-- name: Answer keys | ACT drafts each rule no pattern fits (evidence mode - ACT runs no command)
-  ansible.builtin.include_tasks: answer_keys_act_one.yml
-  loop: "{{ _ak_for_act | default([]) }}"
-  loop_control:
-    loop_var: _ak_rule
-    label: "{{ _ak_rule.label | default('') }} {{ _ak_rule.v }}"
+# 1.136.0: every rule in ONE ask (evidence_many.yml): one check of the way to the model, ACT copied once, the rules
+# site_act_concurrency at a time. A question per rule, its answer mapped back to it.
+- name: Answer keys | ACT drafts each rule no pattern fits, in one ask (evidence mode - ACT runs no command)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_many.yml
+  vars:
+    _em_questions: >-
+      {%- set out = [] -%}
+      {%- for r in _ak_for_act | default([]) -%}
+      {%-   set _ = out.append({'key': 'r' ~ loop.index0, 'items': [{'id': r.v}],
+                               'evidence': 'DISA check text of ' ~ r.v ~ ' (' ~ r.sv ~ '):' ~ _nl ~ (r.check_text | default('')),
+                               'task': r | stig_answer_act_task(answer_keys_values)}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _ea_names: ["{{ inventory_hostname }}"]
+    _em_tiers: "{{ answer_keys_act_tiers | default(true) }}"   # 1.137.0: model tiers (site_act_worker_model)
+    _em_tier_form: code                # a draft with no ```powershell block (and no NEEDS-VALUE) goes to the smart model
+    _nl: "\n"                          # a line break (in a >- block, '\n' would stay two characters)
+  when: _ak_for_act | default([]) | length > 0
+
+- name: Answer keys | ACT's drafts, rule by rule
+  ansible.builtin.set_fact:
+    _ak_tiers_note: "{{ _em_tiers_note | default('') }}"     # 1.137.0: which model drafted (site_act_worker_model)
+    _ak_act: >-
+      {%- set out = {} -%}
+      {%- for r in _ak_for_act | default([]) -%}
+      {%-   set a = (_em_answers | default({})).get('r' ~ loop.index0) or {'ran': false, 'raw': '', 'reason': ''} -%}
+      {%-   set raw = a.raw | default('') | string -%}
+      {%-   set needs = raw | stig_answer_act_needs -%}
+      {%-   set _ = out.update({r.ak | default(r.v): {'code': '' if needs else raw | stig_answer_act_code, 'needs': needs,
+                                                    'uses': raw | stig_answer_act_uses(answer_keys_values),
+                                                    'why': ('is off (site_act_enabled false)' if _ea_off | default(false) | bool
+                                                            else ('did not answer: ' ~ (a.reason | default('') | truncate(200)))
+                                                            if not a.ran | bool
+                                                            else 'gave no ```powershell block')}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _ak_for_act | default([]) | length > 0

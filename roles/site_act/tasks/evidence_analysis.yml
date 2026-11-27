@@ -1,12 +1,13 @@
 ---
-# ACT reads evidence the job collected and answers - it runs NO command (act_triage evidence mode).
-# ACT runs here, on the AAP side (the execution environment): only this AAP node must reach the
-# model's URL. Used by the VMware alarms ACT analysis and the vSphere capacity planning.
+# ACT reads evidence the job collected and answers one question - it runs NO command (ACT's evidence mode).
+# ACT runs here, on the AAP side (the execution environment): only this AAP node must reach the model's URL.
+# It asks through act_ask.yml (plugins/action/site_act_ask.py), as evidence_batches.yml does with several questions.
 # Input:  _ea_evidence (text), _ea_task (the prompt, asking for the BEGIN_ACT_ANALYSIS JSON),
 #         _ea_items (list with id), _ea_names (names ACT masks), _ea_model_timeout (seconds),
 #         _ea_check_url (bool), _ea_in_check (bool: ask ACT in a dry run (Check) too - it only reads)
-# Output: _ea_ran (bool), _ea_parsed (act_analysis_parse), _ea_reason (why not / what failed),
-#         _ea_raw (ACT's answer), _ea_model, _ea_url, _ea_off (site_act_enabled false: nothing asked, _ea_reason says so)
+# Output: _ea_ran (bool), _ea_parsed (act_analysis_parse), _ea_reason (why not / what failed), _ea_why_not (why ACT was
+#         not asked, else ''), _ea_raw (ACT's answer), _ea_model, _ea_url, _ea_off (site_act_enabled false: nothing
+#         asked, _ea_reason says so)
 - name: ACT | is off (site_act_enabled false) - not asked
   ansible.builtin.set_fact:
     _ea_off: "{{ not site_act_enabled | bool }}"
@@ -29,5 +30,20 @@
   when: _ea_off | bool
 
 - name: ACT | ask
-  ansible.builtin.include_tasks: evidence_ask.yml
+  ansible.builtin.include_tasks: act_ask.yml
+  vars:
+    _ask_questions: [{items: "{{ _ea_items }}", evidence: "{{ _ea_evidence }}", task: "{{ _ea_task }}"}]
+    _ask_check_url: "{{ _ea_check_url | default(true) | bool }}"
+  when: not _ea_off | bool
+
+- name: ACT | what ACT said
+  ansible.builtin.set_fact:
+    _ea_ran: "{{ _q.ran | bool }}"
+    _ea_parsed: "{{ _q.summary | act_analysis_parse(_ea_items) }}"
+    _ea_raw: "{{ _q.summary | act_answer_text }}"   # {'message': ...} from a model that wraps its answer: its text
+    _ea_model: "{{ _q.model }}"
+    _ea_why_not: "{{ '' if _q.asked | bool else _q.reason }}"
+    _ea_reason: "{{ _q.reason }}"
+  vars:
+    _q: "{{ _ea_ask.questions[0] }}"
   when: not _ea_off | bool

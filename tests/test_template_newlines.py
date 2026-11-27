@@ -236,9 +236,10 @@ class TheFixedTasks(unittest.TestCase):
          "Now: 91% used. The health check warns at 80% and is critical at 90%.\n"
          "Growth: not known (the capacity history has less than a day, or none for this mount).\n"
          "Nothing in the tmp folders can be cleaned to make room. Reported by the health check, AAP job 7."),
-        ("roles/check_stig/tasks/answer_keys_cross_act_one.yml", "Answer keys cross-check | ACT's answer",
+        # 1.136.0: all rules in one ask (answer_keys_cross_act.yml, evidence_many.yml); the reason on its own line still
+        ("roles/check_stig/tasks/answer_keys_cross_act.yml", "Answer keys cross-check | ACT's answers, rule by rule",
          ["ansible.builtin.set_fact", "_akx_answers"],
-         {"_akx_answers": {}, "_akx_ask": {"id": "k1", "v": "V-1"}, "_ea_ran": False, "_ea_reason": "no key"},
+         {"_akx_asks": {"asks": [{"id": "k1", "v": "V-1"}]}, "_em_answers": {"k1": {"ran": False, "raw": "", "reason": "no key"}}},
          {"k1": "unsure\nACT did not answer: no key"}),
         ("roles/site_findings/tasks/reach.yml", "Reached?", ["ansible.builtin.set_fact", "site_host_unreached"],
          {"_site_reach": {"unreachable": True, "msg": "Failed to connect\n  to the host via ssh:\r\n refused"}},

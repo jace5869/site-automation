@@ -200,6 +200,7 @@
               act_triage_timeout | string,
               _act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
               '--result-file', _act_tmp.path]
+             + (['--worker-model', act_worker_model] if act_worker_model | default('') else [])
              + (['--allow-piped-upload'] if act_triage_mode == 'evidence'
                 else (['--max-steps', act_triage_max_steps | string]
                       + (act_triage_allow | map('string') | map('regex_replace', '^', '--allow=') | list)))
