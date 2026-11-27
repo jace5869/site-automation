@@ -183,6 +183,32 @@ The report, results first, empty sections left off: **Hosts not read** (with why
 | `sw_inventory_read_timeout` | `120` | Seconds rpm may take on a host |
 | `sw_inventory_fail_on_output_error` | `true` | The job fails at its end when an export, the share, the website or the email failed |
 
+## When the share fails
+
+Every share error line ends with the login that was used - `(logged in with negotiate)` or `(logged in with kerberos)` -
+and the fix is a separate sentence. Check these, in this order:
+
+1. **Use `negotiate`.** `sw_inventory_share_auth: negotiate` is still Kerberos, sent the standard SMB way, and it is the
+   only way under FIPS (no NTLM). `kerberos` on its own can answer `Invalid token was supplied`; do not set it.
+2. **The server's full name (FQDN)**, not the short name or an IP address: `\\srv01.corp.example.mil\share\folder`.
+3. **The user as `user@REALM`**, the realm in capitals, in the **Windows file share** credential: `svc_aap_inv@CORP.EXAMPLE.MIL`.
+4. **The template's Variables box overrides `all.yml`.** A value set in the job template's Variables (extra vars) wins
+   over the same setting in `all.yml` and the role's defaults. If the job still says `kerberos` after you changed
+   `all.yml`, look in the template's Variables box first.
+5. **`sw_inventory_share` (no s) is one folder; `sw_inventory_shares` (with s) is the list.** A list in
+   `sw_inventory_share` is refused (SA-SWI-20): the list belongs in `sw_inventory_shares`.
+
+A working example (placeholders only):
+
+```yaml
+sw_inventory_share: '\\srv01.corp.example.mil\it\inventory'     # one folder
+sw_inventory_share_auth: negotiate                              # Kerberos, the standard SMB way
+sw_inventory_shares:                                            # more folders: a list, with s
+  - path: '\\srv02.corp.example.mil\security\inventory'
+```
+
+with the **Windows file share** credential's user `svc_aap_inv@CORP.EXAMPLE.MIL`.
+
 ## When something fails
 
 | Code | What | The fix |

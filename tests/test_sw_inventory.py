@@ -1152,6 +1152,62 @@ class MoreSharesReview3(ModuleBase):
                                      "negotiate", 445)[0], "SA-SWI-29")
 
 
+class ShareMessages(ModuleBase):
+    """1.136.x: the share's error lines say the auth mode USED; the fix is its own text; never kerberos suggested."""
+
+    TOKEN = "Invalid token was supplied"
+    U = "\\\\fs01.corp.example.mil\\it\\inventory"
+
+    def test_m1_every_error_line_says_the_mode_used(self):
+        for auth in ("kerberos", "negotiate"):
+            for msg in (self.TOKEN, "STATUS_LOGON_FAILURE", "STATUS_ACCESS_DENIED", "STATUS_BAD_NETWORK_NAME",
+                        "Connection timed out", "something odd"):
+                line = mod.why_smb("logging in to fs01", ValueError(msg), auth, 445)[1]
+                self.assertTrue(line.endswith("(logged in with %s)" % auth), line)
+                self.assertNotIn("negotiate" if auth == "kerberos" else "kerberos", line.lower())
+
+    def test_m1b_the_mode_in_the_job_output_and_after_the_login(self):
+        fake = FakeSmb(fail_login=self.TOKEN)
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            res = mod.run(self.params(share=self.U, share_auth="kerberos", outputs=["csv"]))
+        self.assertIn("logged in with kerberos", self.state(res, "share")["error"])
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb(folders=())}):
+            res = mod.run(self.params(share=self.U, outputs=["csv"]))
+        self.assertEqual(self.state(res, "share")["code"], "SA-SWI-28")
+        self.assertIn("logged in with negotiate", self.state(res, "share")["error"])
+
+    def test_m2_invalid_token_with_kerberos_says_negotiate_and_the_variables_box(self):
+        code, line, fix = mod.why_smb("logging in to fs01", ValueError(self.TOKEN), "kerberos", 445)
+        self.assertEqual(code, "SA-SWI-24")
+        self.assertEqual(fix, "use sw_inventory_share_auth: negotiate (still Kerberos, sent the standard SMB way) - check "
+                              "the template's Variables box too: it overrides all.yml")
+        self.assertNotIn("negotiate", line.lower().replace("logged in with", ""))   # the mode used is not in the fix's words
+
+    def test_m2b_invalid_token_with_negotiate_is_not_told_to_switch(self):
+        code, line, fix = mod.why_smb("logging in to fs01", ValueError(self.TOKEN), "negotiate", 445)
+        self.assertNotEqual(code, "SA-SWI-24")
+        self.assertNotIn("sw_inventory_share_auth: negotiate", fix)
+
+    def test_m3_kerberos_is_never_the_suggestion(self):
+        for msg in (self.TOKEN, "STATUS_LOGON_FAILURE", "STATUS_ACCESS_DENIED", "STATUS_BAD_NETWORK_NAME", "Default realm",
+                    "Server not found in Kerberos database", "unsupported hash type MD4", "Connection refused", "odd"):
+            for auth in ("kerberos", "negotiate", "ntlm"):
+                fix = mod.why_smb("w", ValueError(msg), auth, 445)[2]
+                self.assertNotRegex(fix.lower(), r"auth:\s*kerberos|kerberos or|or kerberos", fix)
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": FakeSmb()}):
+            res = mod.run(self.params(share=self.U, share_auth="nope", outputs=["csv"]))
+        self.assertEqual(self.state(res, "share")["code"], "SA-SWI-20")
+        self.assertNotIn("kerberos", self.state(res, "share")["fix"].lower())
+
+    def test_m3b_a_list_in_sw_inventory_share_goes_to_sw_inventory_shares(self):
+        for share in ([self.U], "['\\\\\\\\fs01.corp.example.mil\\\\it\\\\inventory']"):
+            res = mod.run(self.params(share=share, outputs=["csv"]))
+            s = self.state(res, "share")
+            self.assertEqual((s["state"], s["code"]), ("failed", "SA-SWI-20"))
+            self.assertIn("the list belongs in sw_inventory_shares (with s)", s["fix"])
+            self.assertNotIn("fs01", s["error"])
+
+
 class Catalog(unittest.TestCase):
     def test_the_template(self):
         import yaml
