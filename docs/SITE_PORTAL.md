@@ -61,6 +61,7 @@ and `portal_approver_groups`. The old names still work. Setting both names of on
 deploy. Each list must be a list of nonblank strings: a blank entry, `false` or `null` stops the deploy too.
 
 **Access** on the Approvals and Admin pages shows the lists and AD groups that grant your card access.
+Open **My access** (`/portal/access`, alias `/portal/my-access`, controlled by `portal_my_access`, default `true`, added in 1.139.0) for a strictly read-only personal access summary across every portal look, light and dark: your verified card CN and AD card-match rules, a live AD cache freshness meter, the 4-step role ladder (`Viewer`, `Runner`, `Approver`, `Admin`) with exact grant trace, visible per-template overrides (`access.json`), capability matrix, an interactive *"Why is something greyed out?"* inspector, and a copyable access request builder addressed to `portal_access_contact`. `POST` requests to `/portal/access` or `/portal/api/access` are refused with HTTP 405. The page never reveals other users' card CNs, LDAP bind credentials, domain controller hostnames, admin group names/counts to non-admins, or hidden templates a limited user may not access. When AD is unread or expired, AD-backed roles show **Not known** (grey), never granted.
 A person refused entry sees their card CN, the lists checked, whether AD was read, and the contact in
 `portal_access_contact` (default “your portal administrator”). The portal returns HTTP 403 and logs one refusal per person per hour.
 
@@ -1337,6 +1338,34 @@ The monitor's CA goes to its reader only. The shared trust bundle stays the same
 - A cleared group share can still show recovery when the board has already seen the outage reopen.
 - On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
 
+### Network & AD health and Site map (1.139.0)
+
+1.139.0 adds two live operational views built for all ten portal looks, light and dark, at 800 px, 1280 px, and 1920 px board mode, using only the portal's existing read-only feeds (SolarWinds SWIS `SELECT` queries and the report database's AD health runs — never static data):
+
+- **Network & AD health** (`/portal/wall?area=health`, API `/portal/api/wall/health`, enabled by `portal_wall_health: true`):
+  - Shows **only important wall conditions** grouped into three buckets: **Down / unreachable** (nodes confirmed down across `portal_wall_down_polls`, down WAN uplinks, DCs failing two consecutive AD checks, or critical AD service/FSMO faults), **Full / near capacity** (`Orion.Volumes` above `portal_wall_volume_warn` / `_crit` and sustained WAN utilization above `portal_wall_wan_util_warn` / `_crit`), and **Sustained errors** (AD replication failures/lag above `portal_wall_ad_repl_warn_hours` / `_crit_hours`, sustained interface errors above `portal_wall_if_err_warn` / `_crit`, and sustained WAN RTT/loss breaches holding for `portal_wall_sustained_minutes`). Short blips, unmanaged nodes, and leaf devices behind a down parent stay off the wall and are listed in the **Suppressed** drawer.
+  - Includes live feed freshness pills, 4 KPI tiles with rolling 4 h sparklines, Spotlight strip, 4 h limit-banded trends, DC-to-DC AD replication matrix, monitored estate node squares, 4 h timeline, a slide-over detail drawer with **Copy Teams summary**, and a **1920 Board** mode (`?area=health&board=1`).
+  - Missing, unconfigured, failed, or stale feeds always show grey **Not read** / **Not current** with the exact reason — never green.
+- **Site map** (`/portal/sitemap`, alias `/portal/wall/map`, API `/portal/api/sitemap`, enabled by `portal_site_map: true`):
+  - Places sites by SolarWinds `Orion.WorldMap.Point` latitude/longitude first, then custom properties (`netmap_lat_property` / `netmap_lon_property`), then `portal_wall_site_places` / `netmap_sites`. Invalid coordinates and `(0, 0)` (Null Island) are rejected with a reason, and **unplaced sites are never dropped** — they stay in the side list's unplaced queue and the sortable **List (fallback)** view.
+  - Works completely **offline** (zero internet requests): coastlines are drawn from the locally bundled Natural Earth 1:110m vector land polygons (`static/wall-land.js`).
+  - Supports pan/zoom, spatial clustering with multi-segment status rings and cluster popovers, curved inter-site WAN links, distinct accessible status pin shapes (critical octagon, warning diamond, stale dashed hollow circle, OK circle), region quick-zoom pills derived from placed sites, **Auto-tour**, **1920 Board** mode (`?board=1`), and a site/WAN detail drawer with RTT limit trend and Teams summary copy.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_wall_health` | `true` | Enable the Network & AD health area on `/portal/wall` (`?area=health`) |
+| `portal_wall_health_seconds` | `60` | SolarWinds SWIS poll interval for Network & AD health and Site map (30 to 3600 s) |
+| `portal_wall_ad_repl_warn_hours`, `portal_wall_ad_repl_crit_hours` | `6`, `24` | AD replication lag warning and critical thresholds in hours |
+| `portal_wall_volume_warn`, `portal_wall_volume_crit` | `85`, `95` | `Orion.Volumes` percent-used warning and critical limits |
+| `portal_wall_if_err_warn`, `portal_wall_if_err_crit` | `1.0`, `2.5` | Sustained interface error/discard rate warning and critical percentages |
+| `portal_wall_wan_util_warn`, `portal_wall_wan_util_crit` | `75`, `90` | Sustained WAN uplink utilization warning and critical percentages |
+| `portal_wall_wan_rtt_warn`, `portal_wall_wan_rtt_crit` | `80`, `150` | Sustained WAN round-trip latency warning and critical limits (ms) |
+| `portal_wall_wan_loss_warn`, `portal_wall_wan_loss_crit` | `1.0`, `3.0` | Sustained WAN packet loss warning and critical percentages |
+| `portal_wall_sustained_minutes` | `15` | Minutes a metric breach must hold before appearing on the wall (1 to 240) |
+| `portal_wall_down_polls` | `2` | Consecutive down polls required to confirm a node/WAN outage (1 to 10) |
+| `portal_site_map` | `true` | Enable the offline Site map page (`/portal/sitemap`, alias `/portal/wall/map`) |
+| `portal_my_access` | `true` | Enable the read-only My access page (`/portal/access`, alias `/portal/my-access`) |
+
 ### Make a screen the ops wall (1.135.0)
 
 1. **The screen:** a TV (1080p or 4K) and a small PC or thin client on the network; its power plan never sleeps and
@@ -2119,6 +2148,9 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_look` | `metro-atlas` | shared portal and wall look: `metro-atlas`, `metro-calm`, `metro-wall`, `atlas-clean`, `atlas-night`, `contour-lite`, `strata`, `metro`, `relay` or `atlas` |
 | `portal_actions_ops_center` | `line` | Actions page Ops center display: `line` for a clickable strip, `full` for area details, or `off` to hide it |
 | `portal_wall_style` | `cockpit` | the wall's style when the address names none: `lights`, `cockpit`, `map`, `strata`, `relay` or `metro` |
+| `portal_wall_health` | `true` | enable the Network & AD health area on `/portal/wall?area=health` (live SolarWinds + AD report DB) |
+| `portal_site_map` | `true` | enable the offline Site map page (`/portal/sitemap`, SolarWinds lat/lon, bundled `wall-land.js`) |
+| `portal_my_access` | `true` | enable the read-only My access page (`/portal/access`) |
 
 ## When something is wrong
 

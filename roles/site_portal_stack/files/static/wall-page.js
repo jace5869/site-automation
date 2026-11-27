@@ -68,6 +68,7 @@
     list: [P("M4 6h16M4 12h16M4 18h10")]
   };
   if (globalThis.SAWallFleet) AREA_IC.monitor = globalThis.SAWallFleet.icon;
+  if (globalThis.SAWallHealth) AREA_IC.health = [P(globalThis.SAWallHealth.icon)];
   function icon(list, vb, cls) {
     var e = s("svg", {viewBox: vb || "0 0 24 24", "aria-hidden": "true", "class": cls || null});
     list.forEach(function (x) { e.appendChild(s(x[0], x[1])); });
@@ -124,6 +125,7 @@
   function sget(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function sset(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* this page only */ } }
   function fleetRenderer() { return window.SAWallFleet && typeof window.SAWallFleet.render === "function"; }
+  function healthRenderer() { return window.SAWallHealth && typeof window.SAWallHealth.render === "function"; }
   function adapt(a) {
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
@@ -132,7 +134,7 @@
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
     a.areas = arr(a.areas).filter(function (x) {
-      return x && typeof x === "object" && (x.id !== "monitor" || fleetRenderer());
+      return x && typeof x === "object" && (x.id !== "monitor" || fleetRenderer()) && (x.id !== "health" || healthRenderer());
     });
     a.conds.forEach(function (c) { c.start = c.start * 1000; c.end = c.end == null ? null : c.end * 1000; c.seen = c.seen == null ? null : c.seen * 1000; });
     Object.keys(a.feeds).forEach(function (k) {
@@ -162,7 +164,7 @@
     var f = feed(k);
     if (!f) return "stale";                                         // a feed the answer does not have: not current
     if (f.state !== "ok") return "stale";        // only a feed whose latest read worked is current (never, error, refused, paused, missing: not)
-    return fstate(ageS(f.asof), k === "sw:fleet" ? f : null);
+    return fstate(ageS(f.asof), (k === "sw:fleet" || k === "sw:health" || k === "ad:db") ? f : null);
   }
   function areaOf(id) { return W.areaById[id]; }
   function areaOn(id) { var a = areaOf(id); return !!(a && a.on); }
@@ -426,6 +428,7 @@
   function render() {
     if (!W) return;
     if (S.area === "monitor" && !fleetRenderer()) S.area = "overview";
+    if (S.area === "health" && !healthRenderer()) S.area = "overview";
     var de = document.documentElement;
     STYLES.forEach(function (st) { de.classList.remove("style-" + st); });
     de.classList.add("style-" + S.style);
@@ -433,13 +436,15 @@
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
     de.classList.toggle("screen", screenOn());
     if (globalThis.SAWallFleet) de.classList.toggle("area-monitor", S.area === "monitor");
+    if (globalThis.SAWallHealth) de.classList.toggle("area-health", S.area === "health");
     if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    // 1.136.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
+    // 1.136.0: Ops monitor; 1.139.0: Network & AD health area (static/wall-health.js)
     if (monArea()) window.SAWallFleet.render(API, stage);
+    else if (healthArea()) window.SAWallHealth.render(API, stage);
     else RENDER[S.style](stage);
     if (screenOn()) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
@@ -457,8 +462,9 @@
     S.area = id; S.site = ""; closePops(); closeDetail(); render();
   }
   // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
-  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || monArea()); }
+  function screenOn() { return S.area !== "watch" && !healthArea() && (!!SCREEN[S.style] || monArea()); }
   function monArea() { return S.area === "monitor" && fleetRenderer(); }   // only with the monitor on (its script loaded)
+  function healthArea() { return S.area === "health" && healthRenderer(); } // 1.139.0: Network & AD health area
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }

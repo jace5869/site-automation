@@ -366,9 +366,17 @@
   ansible.builtin.set_fact:
     _portal_wall_monitor: "{{ portal_wall | bool and (portal_wall_monitor | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
 
-- name: Settings | SolarWinds login for the map or monitor
+- name: Settings | SolarWinds login for the map, health wall, site map or monitor
   ansible.builtin.set_fact:
-    _portal_swis: "{{ _portal_netmap | bool or _portal_wall_monitor | bool }}"
+    _portal_swis_health: >-
+      {{ ((portal_wall | bool and portal_wall_health | bool) or portal_site_map | bool)
+         and portal_solarwinds_url | trim | length > 0
+         and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0 }}
+    _portal_swis: >-
+      {{ _portal_netmap | bool or _portal_wall_monitor | bool
+         or (((portal_wall | bool and portal_wall_health | bool) or portal_site_map | bool)
+             and portal_solarwinds_url | trim | length > 0
+             and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
 
 # 1.130.0: the ops-center wall - its live collector reads with the site's existing vCenter / ONTAP accounts (auto: when this
 # deploy has their credentials); the thresholds are checked here, the service checks them again
@@ -438,6 +446,16 @@
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0)
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_host | length > 0 or portal_wall_vcenters | default([], true) | length > 0)
       - not (_portal_wall_ontap | bool) or (portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0 and portal_wall_ontap_clusters | length > 0)
+      # 1.139.0: Network & AD health wall + Site map threshold checks
+      - portal_wall_health_seconds | int >= 30 and portal_wall_health_seconds | int <= 3600
+      - 0 < portal_wall_ad_repl_warn_hours | float < portal_wall_ad_repl_crit_hours | float <= 720
+      - 0 < portal_wall_volume_warn | float < portal_wall_volume_crit | float <= 100
+      - 0 < portal_wall_if_err_warn | float < portal_wall_if_err_crit | float <= 100
+      - 0 < portal_wall_wan_util_warn | float < portal_wall_wan_util_crit | float <= 100
+      - 0 < portal_wall_wan_rtt_warn | float < portal_wall_wan_rtt_crit | float <= 10000
+      - 0 < portal_wall_wan_loss_warn | float < portal_wall_wan_loss_crit | float <= 100
+      - portal_wall_sustained_minutes | int >= 1 and portal_wall_sustained_minutes | int <= 240
+      - portal_wall_down_polls | int >= 1 and portal_wall_down_polls | int <= 10
     fail_msg: >-
       The wall's settings (docs/SITE_PORTAL.md, "The ops-center wall"): portal_wall_title 1 to 40 characters; portal_wall_seconds 30 to 3600;
       portal_wall_auth_retry_minutes 5 to 1440; each warning under its critical, both 1 to 100; portal_wall_high_minutes 1 to 240; the lists
@@ -687,6 +705,15 @@
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}
     - {src: static/portal-ops.js, dest: static/portal-ops.js}
+    # 1.139.0: Network & AD health wall area, offline Site map (reuses wall-land.js), and read-only My access
+    - {src: wall_health.py, dest: wall_health.py}
+    - {src: my_access.py, dest: my_access.py}
+    - {src: static/wall-health.js, dest: static/wall-health.js}
+    - {src: static/wall-health.css, dest: static/wall-health.css}
+    - {src: static/site-map.js, dest: static/site-map.js}
+    - {src: static/site-map.css, dest: static/site-map.css}
+    - {src: static/my-access.js, dest: static/my-access.js}
+    - {src: static/my-access.css, dest: static/my-access.css}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -747,19 +774,19 @@
     portal_trust_host_cas | bool and _portal_host_bundle.stat.exists | default(false)
     and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
 
-- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map
+- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map, health wall and site map
   ansible.builtin.copy:
     src: "{{ portal_solarwinds_ca_file }}"
     dest: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
     remote_src: true
     mode: "0644"
-  when: _portal_netmap | bool and portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
+  when: (_portal_netmap | bool or _portal_swis_health | bool) and portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
 
 - name: Trust | no SolarWinds CA any more
   ansible.builtin.file:
     path: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
     state: absent
-  when: not (_portal_netmap | bool and portal_solarwinds_ca_file | length > 0)
+  when: not ((_portal_netmap | bool or _portal_swis_health | bool) and portal_solarwinds_ca_file | length > 0)
 
 - name: Trust | which CAs
   ansible.builtin.find:
@@ -1230,13 +1257,37 @@
         site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"
         site_places: "{{ portal_wall_site_places | default({}, true) }}"
         netmap_sites: "{{ netmap_sites | default({}, true) }}"     # 1.131.0: the Map's places when portal_wall_site_places has none
+      # 1.139.0: Network & AD health wall area, offline Site map, and read-only My access
+      PORTAL_WALL_HEALTH: "{{ '1' if portal_wall_health | bool else '0' }}"
+      PORTAL_SITE_MAP: "{{ '1' if portal_site_map | bool else '0' }}"
+      PORTAL_MY_ACCESS: "{{ '1' if portal_my_access | bool else '0' }}"
+      PORTAL_WALL_HEALTH_OPTS:
+        seconds: "{{ portal_wall_health_seconds | int }}"
+        ad_old_minutes: "{{ portal_ad_old_minutes | int }}"
+        ad_repl_warn_hours: "{{ portal_wall_ad_repl_warn_hours | float }}"
+        ad_repl_crit_hours: "{{ portal_wall_ad_repl_crit_hours | float }}"
+        volume_warn: "{{ portal_wall_volume_warn | float }}"
+        volume_crit: "{{ portal_wall_volume_crit | float }}"
+        if_err_warn: "{{ portal_wall_if_err_warn | float }}"
+        if_err_crit: "{{ portal_wall_if_err_crit | float }}"
+        wan_util_warn: "{{ portal_wall_wan_util_warn | float }}"
+        wan_util_crit: "{{ portal_wall_wan_util_crit | float }}"
+        wan_rtt_warn: "{{ portal_wall_wan_rtt_warn | float }}"
+        wan_rtt_crit: "{{ portal_wall_wan_rtt_crit | float }}"
+        wan_loss_warn: "{{ portal_wall_wan_loss_warn | float }}"
+        wan_loss_crit: "{{ portal_wall_wan_loss_crit | float }}"
+        sustained_minutes: "{{ portal_wall_sustained_minutes | int }}"
+        down_polls: "{{ portal_wall_down_polls | int }}"
+        poll_stale_minutes: "{{ portal_wall_monitor_poll_stale_minutes | int }}"
+        max_nodes: "{{ netmap_max_nodes | default(5000) | int }}"
+        page: "{{ netmap_page_size | default(1000) | int }}"
       # the NetApp page (its runs from the report database; the tab only once there is one)
       PORTAL_NETAPP: "{{ '1' if portal_netapp | bool else '0' }}"
       PORTAL_NETAPP_OLD_MINUTES: "{{ portal_netapp_old_minutes | string }}"
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
-      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}"
+      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if (_portal_netmap | bool or _portal_swis_health | bool) else '' }}"
       PORTAL_SWIS_VERIFY: "{{ '1' if portal_solarwinds_validate_certs | bool else '0' }}"
       PORTAL_SWIS_TIMEOUT: "{{ netmap_timeout | default(60) | string }}"
       PORTAL_NETMAP_OPTS:

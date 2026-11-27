@@ -56,7 +56,15 @@ HW_ALARMS = ["Host hardware fan status", "Host hardware power status", "Host har
 DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97.0, "high_pct": 90.0, "high_minutes": 15,
             "exclude": {}, "ds_ignore": ["iso", "isos", "iso-*", "iso_*", "*-iso", "*_iso", "*-isos", "*content-library*"], "snapmirror_lag_warn_hours": 24.0, "snapmirror_lag_crit_hours": 72.0,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
-            "netmap_sites": {}, "hw_alarms": list(HW_ALARMS), "late": LATE_S, "stale": STALE_S}
+            "netmap_sites": {}, "hw_alarms": list(HW_ALARMS), "late": LATE_S, "stale": STALE_S,
+            # 1.139.0: AD & Network health wall thresholds (reusing old-wallad.diff + health-wall limits)
+            "ad_repl_warn_hours": 6.0, "ad_repl_crit_hours": 24.0, "ad_old_minutes": 90,
+            "volume_warn": 85.0, "volume_crit": 95.0,
+            "if_err_warn": 1.0, "if_err_crit": 2.5,
+            "wan_util_warn": 75.0, "wan_util_crit": 90.0,
+            "wan_rtt_warn": 80.0, "wan_rtt_crit": 150.0,
+            "wan_loss_warn": 1.0, "wan_loss_crit": 3.0,
+            "sustained_minutes": 15, "down_polls": 2}
 
 
 def opts_of(o):
@@ -91,6 +99,22 @@ def opts_of(o):
     out["high_pct"] = min(100.0, max(1.0, out["high_pct"]))
     out["high_minutes"] = max(1, min(240, out["high_minutes"]))
     out["seconds"] = max(30, min(3600, out["seconds"]))
+    # 1.139.0: clamp AD and Network health wall thresholds
+    if not 0 < out["ad_repl_warn_hours"] < out["ad_repl_crit_hours"] <= 720:
+        out["ad_repl_warn_hours"], out["ad_repl_crit_hours"] = DEFAULTS["ad_repl_warn_hours"], DEFAULTS["ad_repl_crit_hours"]
+    if not 0 < out["volume_warn"] < out["volume_crit"] <= 100:
+        out["volume_warn"], out["volume_crit"] = DEFAULTS["volume_warn"], DEFAULTS["volume_crit"]
+    if not 0 < out["if_err_warn"] < out["if_err_crit"] <= 100:
+        out["if_err_warn"], out["if_err_crit"] = DEFAULTS["if_err_warn"], DEFAULTS["if_err_crit"]
+    if not 0 < out["wan_util_warn"] < out["wan_util_crit"] <= 100:
+        out["wan_util_warn"], out["wan_util_crit"] = DEFAULTS["wan_util_warn"], DEFAULTS["wan_util_crit"]
+    if not 0 < out["wan_rtt_warn"] < out["wan_rtt_crit"] <= 10000:
+        out["wan_rtt_warn"], out["wan_rtt_crit"] = DEFAULTS["wan_rtt_warn"], DEFAULTS["wan_rtt_crit"]
+    if not 0 < out["wan_loss_warn"] < out["wan_loss_crit"] <= 100:
+        out["wan_loss_warn"], out["wan_loss_crit"] = DEFAULTS["wan_loss_warn"], DEFAULTS["wan_loss_crit"]
+    out["ad_old_minutes"] = max(10, min(10080, out["ad_old_minutes"]))
+    out["sustained_minutes"] = max(1, min(240, out["sustained_minutes"]))
+    out["down_polls"] = max(1, min(10, out["down_polls"]))
     return out
 
 
@@ -751,7 +775,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
-def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why=""):
+def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why="", health=None):
     """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
     ks = kinds(o)
@@ -820,6 +844,10 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
     if fleet is not None or fleet_why:
         import wall_fleet
         wall_fleet.extend(result, fleet, fleet_why, tracker, now)
+    if health is not None:
+        # 1.139.0: project live Network & AD health area when enabled
+        import wall_health
+        wall_health.extend_wall(result, health)
     return result
 
 
@@ -830,11 +858,13 @@ def _feed_fresh(m, k, now):
     f = (m.get("feeds") or {}).get(k)
     if not isinstance(f, dict) or f.get("state") != "ok" or f.get("asof") is None:
         return "stale"
-    return fstate(max(0.0, now - float(f["asof"])), {"late": m.get("late") or LATE_S, "stale": m.get("stale") or STALE_S})
+    late = f.get("late") if isinstance(f.get("late"), (int, float)) else (m.get("late") or LATE_S)
+    stale = f.get("stale") if isinstance(f.get("stale"), (int, float)) else (m.get("stale") or STALE_S)
+    return fstate(max(0.0, now - float(f["asof"])), {"late": late, "stale": stale})
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "ad" if k == "ad:db" else "network" if k == "sw:health" else ""
 
 
 def _home_ok(m, k, now, by):
@@ -959,6 +989,16 @@ def summary(m, now):
                 w_ = max(busy, key=lambda x: x["cpu"])
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
+        elif st != "off" and aid in ("health", "ad", "network"):
+            # 1.139.0: summarize live Network & AD health KPIs on Actions Ops center strip
+            hm = m.get("health") if isinstance(m.get("health"), dict) else {}
+            kby = {k.get("id"): k for k in (hm.get("kpis") or []) if isinstance(k, dict)}
+            if aid == "ad" and kby.get("ad"):
+                big, unit, note = str(kby["ad"].get("value") or ""), "AD repl pairs", str(kby["ad"].get("sub") or "")
+            elif aid == "network" and kby.get("nodes"):
+                big, unit, note = str(kby["nodes"].get("value") or ""), "nodes up", str(kby["nodes"].get("sub") or "")
+            elif aid == "health" and kby.get("conds"):
+                big, unit, note = str(kby["conds"].get("value") or ""), "wall conditions", str(kby["conds"].get("sub") or "")
         worst = sorted(cur, key=lambda c: (-rank.get(c.get("sev"), 0), c.get("start") or 0))[:3]
         # until when the page may show this as it is, on its own clock (the wall's rule, between two reads): OK until the oldest
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its

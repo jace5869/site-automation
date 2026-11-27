@@ -1,0 +1,167 @@
+/* 1.139.0: Read-only My access page (/portal/access, static/my-access.js)
+   Matches mock/my-access.html across all 10 portal looks (data-skin), light & dark, 800 & 1280 px.
+   No inline style; status is always colour + word + mark; missing/stale AD shows grey 'Not known', never green. */
+
+.ma-root{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+/* Page header + Read-only badge + Identity strip */
+.ma-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ma-head-l h1{margin:0;font:700 clamp(22px,1.8vw,28px)/1.15 var(--display);letter-spacing:-.02em}
+.ma-head-l p{margin:4px 0 0;color:var(--muted);font-size:13.5px}
+.ma-ro{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
+  border:1px solid var(--info-bd,var(--edge));background:var(--info-bg,var(--accent-soft));
+  color:var(--info,var(--accent));font:700 11px/1.1 var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+}
+
+.ma-id{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
+  background:var(--card);border:1px solid var(--edge);border-radius:var(--r,8px);
+  padding:12px 14px;box-shadow:var(--shadow);
+}
+.ma-id-cell{min-width:0;display:flex;flex-direction:column;gap:3px}
+.ma-id-cell .k{font:700 10.5px/1.1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.ma-id-cell .v{font:700 13.5px/1.3 var(--mono);color:var(--ink);overflow-wrap:anywhere}
+.ma-id-cell .s{font-size:12px;color:var(--muted)}
+
+/* AD cache freshness bar */
+.ma-fresh{
+  background:var(--card);border:1px solid var(--edge);border-radius:var(--r,8px);
+  padding:10px 14px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);
+}
+.ma-fresh-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12.5px}
+.ma-fresh-top b{font:700 12px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.07em}
+.ma-fresh-trk{position:relative;height:8px;border-radius:4px;background:var(--line);overflow:visible}
+.ma-fresh-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok);transition:width .3s linear}
+.ma-fresh.late .ma-fresh-fill{background:var(--warning)}
+.ma-fresh.stale .ma-fresh-fill,.ma-fresh.not_read .ma-fresh-fill{background:var(--unknown)}
+.ma-fresh-mk{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.5}
+.ma-fresh-leg{display:flex;justify-content:space-between;gap:8px;font:600 11px/1.1 var(--mono);color:var(--muted)}
+
+/* Degraded AD / error banner */
+.ma-ban{
+  display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border-radius:var(--r,8px);
+  border:1px solid var(--warning-bd);border-left:4px solid var(--warning);
+  background:var(--warning-bg);font-size:13px;
+}
+.ma-ban.bad{border-color:var(--critical-bd);border-left-color:var(--critical);background:var(--critical-bg)}
+.ma-ban .tag{font:700 10.5px/1 var(--mono);padding:3px 6px;border-radius:4px;border:1px solid currentColor;text-transform:uppercase;white-space:nowrap}
+
+/* Hero role card + interactive 4-step role ladder */
+.ma-hero{
+  background:var(--card);border:1px solid var(--edge);border-radius:var(--r,8px);
+  padding:16px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:14px;
+}
+.ma-hero-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ma-hero-role{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ma-hero-role .ey{font:700 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
+.ma-hero-role strong{font:800 clamp(22px,2vw,30px)/1.1 var(--display);color:var(--ink)}
+.ma-hero-via{font:600 12.5px/1.3 var(--mono);color:var(--muted)}
+
+.ma-ladder{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ma-step{
+  display:flex;flex-direction:column;gap:5px;padding:11px 12px;border-radius:var(--r,8px);
+  border:1px solid var(--edge);border-top:3px solid var(--unknown);background:var(--card-strong);
+  text-align:left;cursor:pointer;color:var(--ink);
+}
+.ma-step:hover{border-color:var(--accent)}
+.ma-step.sel{outline:2px solid var(--accent);outline-offset:1px}
+.ma-step.yes{border-top-color:var(--ok);background:color-mix(in srgb,var(--ok-bg) 45%,var(--card))}
+.ma-step.scoped{border-top-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 50%,var(--card))}
+.ma-step.unk{border-top-color:var(--unknown);border-style:dashed}
+.ma-step.no{border-top-color:var(--edge);opacity:.82}
+.ma-step-h{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ma-step-h b{font:700 14px/1.2 var(--display)}
+.ma-step .via{font:600 11.5px/1.25 var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.ma-step .det{font-size:12px;color:var(--label);line-height:1.35}
+
+/* Status pills */
+.ma-pill{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;
+  font:700 10.5px/1.2 var(--mono);text-transform:uppercase;border:1px solid var(--edge);white-space:nowrap;
+}
+.ma-pill.yes{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.ma-pill.scoped{color:var(--accent);background:var(--accent-soft);border-color:var(--accent)}
+.ma-pill.no{color:var(--muted);background:var(--card-strong);border-color:var(--edge)}
+.ma-pill.unk{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd);border-style:dashed}
+.ma-pill.warn{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.ma-pill.bad{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+
+/* Cards & tables */
+.ma-card{
+  background:var(--card);border:1px solid var(--edge);border-radius:var(--r,8px);
+  padding:14px 16px;box-shadow:var(--shadow);min-width:0;
+}
+.ma-ch{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.ma-ch h2{margin:0;font:700 13.5px/1.2 var(--display);letter-spacing:.04em;text-transform:uppercase;color:var(--label)}
+.ma-ch .cnt{font:600 11.5px/1 var(--mono);color:var(--muted)}
+.ma-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+
+.ma-tw{overflow-x:auto;border:1px solid var(--line);border-radius:calc(var(--r,8px) - 2px)}
+.ma-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.ma-tbl th{
+  background:var(--th,var(--card-strong));padding:8px 10px;text-align:left;
+  font:700 10.5px/1.1 var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--label);
+  border-bottom:1px solid var(--edge);white-space:nowrap;
+}
+.ma-tbl td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.ma-tbl tbody tr:last-child td{border-bottom:0}
+.ma-tbl tr.hi td{background:var(--hover)}
+.ma-tbl th.mycol,.ma-tbl td.mycol{background:color-mix(in srgb,var(--accent-soft) 55%,transparent)}
+.ma-mono{font-family:var(--mono);font-size:12px}
+.ma-empty{padding:14px 12px;border:1px dashed var(--edge);border-radius:6px;color:var(--muted);font-size:13px}
+
+/* Why is something greyed out? inspector */
+.ma-diag{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:12px;align-items:start}
+.ma-diag-list{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto}
+.ma-diag-btn{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:6px;background:var(--card-strong);color:var(--ink);
+  cursor:pointer;text-align:left;font-size:12.5px;width:100%;
+}
+.ma-diag-btn:hover,.ma-diag-btn.sel{border-color:var(--accent);background:var(--hover)}
+.ma-diag-pane{
+  border:1px solid var(--edge);border-radius:6px;background:var(--bg2);padding:12px 14px;
+  display:flex;flex-direction:column;gap:8px;font-size:13px;
+}
+.ma-diag-pane h3{margin:0;font:700 15px/1.2 var(--display)}
+
+/* Who to ask + request builder */
+.ma-req{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:14px;align-items:start}
+.ma-form{display:flex;flex-direction:column;gap:8px}
+.ma-form label{font:700 11px/1.1 var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--label);display:flex;flex-direction:column;gap:4px}
+.ma-form select,.ma-form input{
+  border:1px solid var(--edge);background:var(--card-strong);color:var(--ink);
+  border-radius:6px;padding:7px 9px;font-size:13px;
+}
+.ma-pre{
+  margin:0;background:var(--code);border:1px solid var(--edge);border-radius:6px;
+  padding:10px 12px;font:500 12px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;
+}
+.ma-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ma-btn{
+  display:inline-flex;align-items:center;gap:5px;border:1px solid var(--edge);background:var(--card);
+  color:var(--ink);border-radius:var(--r,6px);padding:6px 11px;font:600 12.5px/1.1 var(--sans);cursor:pointer;
+}
+.ma-btn.pri{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.ma-btn:hover{border-color:var(--accent)}
+.ma-msg{font:600 12px/1.2 var(--mono);color:var(--accent)}
+
+/* Look-specific signatures across all 10 portal looks */
+:root[data-skin="strata"] .ma-card,:root[data-skin="strata"] .ma-hero{border-top:2px solid var(--accent)}
+:root[data-skin="relay"] .ma-card,:root[data-skin="relay"] .ma-hero,:root[data-skin="relay"] .ma-step{border-radius:2px}
+:root[data-skin="relay"] .ma-step{border-top-width:1px;border-left:4px solid var(--unknown)}
+:root[data-skin="relay"] .ma-step.yes{border-left-color:var(--ok)}
+:root[data-skin="relay"] .ma-step.scoped{border-left-color:var(--accent)}
+:root[data-skin="metro"] .ma-card,:root[data-skin="metro"] .ma-hero,:root[data-skin="metro"] .ma-step{border-radius:2px}
+:root[data-skin="atlas"] .ma-card,:root[data-skin="atlas"] .ma-hero,:root[data-skin="atlas-night"] .ma-card,:root[data-skin="atlas-night"] .ma-hero{border-radius:14px}
+
+/* Responsive: 1280 px & 800 px */
+@media (max-width:960px){
+  .ma-id{grid-template-columns:minmax(0,1fr)}
+  .ma-ladder{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ma-two,.ma-diag,.ma-req{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:560px){
+  .ma-ladder{grid-template-columns:minmax(0,1fr)}
+}
