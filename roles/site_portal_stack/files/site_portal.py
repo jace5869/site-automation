@@ -142,7 +142,7 @@ WALL_SKINS = (("strata", "Strata Console"), ("metro", "Metro Live Tiles"), ("rel
 WALL_SHELL_ASSETS = {"portal-looks.css": "wall-looks.css", "portal-theme.js": "wall-theme.js"}
 ACTIONS_OPS_MODES = ("line", "off", "full")
 CONTOUR_SVG = (
-    '<div class="appbar-contour" aria-hidden="true"><svg viewBox="0 0 520 96" preserveAspectRatio="xMaxYMid slice">'
+    '<div class="appbar-contour" aria-hidden="true" hidden><svg viewBox="0 0 520 96" preserveAspectRatio="xMaxYMid slice">'
     '<g fill="none" class="contour-stroke" stroke-width="1.1">'
     '<path d="M110 105 C180 54, 290 22, 415 36 C465 42, 500 58, 535 48"/>'
     '<path d="M165 105 C230 62, 325 36, 425 48 C470 54, 502 66, 535 58"/>'
