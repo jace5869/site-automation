@@ -87,11 +87,11 @@ try:
 except ImportError:                     # an older deploy's files: no Ops monitor area
     wall_fleet = None
 try:
-    import wall_health  # noqa: E402  1.139.0: Network & AD health wall area + Site map (SolarWinds SWQL + AD report DB)
+    import wall_health  # noqa: E402  1.138.0: Network & AD health wall area + Site map (SolarWinds SWQL + AD report DB)
 except ImportError:
     wall_health = None
 try:
-    import my_access  # noqa: E402  1.139.0: read-only My access page model
+    import my_access  # noqa: E402  1.138.0: read-only My access page model
 except ImportError:
     my_access = None
 try:
@@ -785,7 +785,7 @@ class Config(object):
                 self.wall_fleet_notes.append("Ops monitor off: " + clean(str(err), 120))
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
-        # 1.139.0: Network & AD health wall area, Site map (SolarWinds lat/lon), and read-only My access page
+        # 1.138.0: Network & AD health wall area, Site map (SolarWinds lat/lon), and read-only My access page
         self.wall_health = self.wall and flag(g("PORTAL_WALL_HEALTH", "1")) and (wall_health is not None)
         self.site_map = flag(g("PORTAL_SITE_MAP", "1")) and (wall_health is not None)
         self.my_access = flag(g("PORTAL_MY_ACCESS", "1")) and (my_access is not None)
@@ -6689,7 +6689,7 @@ class AdDb(object):
         return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else ""
 
     def read_wall(self, template_id=None):
-        """1.139.0: Read newest AD health run (+ previous run's unread DCs for 2-check confirmation) in one read-only
+        """1.138.0: Read newest AD health run (+ previous run's unread DCs for 2-check confirmation) in one read-only
         transaction for the Network & AD health wall (reusing old-wallad.diff). Returns (run_dict or None, why)."""
         conn = None
         try:
@@ -7297,9 +7297,9 @@ def netapp_page(cfg, cn, statics, token=""):
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
 FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
-HEALTH_STATIC = ("wall-health.js", "wall-health.css")           # 1.139.0: Network & AD health wall area
-SITEMAP_STATIC = ("site-map.js", "site-map.css")                # 1.139.0: Site map (SolarWinds lat/lon, offline wall-land.js)
-ACCESS_STATIC = ("my-access.js", "my-access.css")               # 1.139.0: read-only My access page
+HEALTH_STATIC = ("wall-health.js", "wall-health.css")           # 1.138.0: Network & AD health wall area
+SITEMAP_STATIC = ("site-map.js", "site-map.css")                # 1.138.0: Site map (SolarWinds lat/lon, offline wall-land.js)
+ACCESS_STATIC = ("my-access.js", "my-access.css")               # 1.138.0: read-only My access page
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
 LOOKS_STATIC = ("portal-looks.js", "portal-ops.js")
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
@@ -7633,7 +7633,7 @@ def wall_page(cfg, cn, statics, token=""):
 
 
 def sitemap_page(cfg, cn, statics, token=""):
-    """1.139.0: /portal/sitemap (alias /portal/wall/map) - offline wall map of sites by SolarWinds lat/lon."""
+    """1.138.0: /portal/sitemap (alias /portal/wall/map) - offline wall map of sites by SolarWinds lat/lon."""
     v = lambda n: statics.get(n, "")
     body = ('<div id="site-map" class="sm-root" data-src="%sapi/sitemap" data-wall="%swall" data-enclave="%s">'
             '<p class="note" id="sm-wait">Reading live site locations from SolarWinds\u2026</p></div>'
@@ -7648,7 +7648,7 @@ def sitemap_page(cfg, cn, statics, token=""):
 
 
 def my_access_page(cfg, cn, statics):
-    """1.139.0: /portal/access (alias /portal/my-access) - strictly read-only personal access summary."""
+    """1.138.0: /portal/access (alias /portal/my-access) - strictly read-only personal access summary."""
     v = lambda n: statics.get(n, "")
     body = ('<div id="my-access" class="ma-root" data-src="%sapi/access">'
             '<p class="note" id="ma-wait">Reading your portal access\u2026</p></div>'
@@ -7670,7 +7670,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
     feedback = WallFeedback(os.path.join(cfg.data, "wall-feedback.jsonl"))       # 1.130.0: the wall's feedback (the portal's own volume)
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
-    # 1.139.0: share one HealthBoard across /api/wall/health and /api/sitemap (also works when wall is off and site_map is on)
+    # 1.138.0: share one HealthBoard across /api/wall/health and /api/sitemap (also works when wall is off and site_map is on)
     health_board = getattr(wall, "health", None)
     if health_board is None and wall_health is not None and (getattr(cfg, "wall_health", False) is True or getattr(cfg, "site_map", False) is True):
         health_board = wall_health.HealthBoard(cfg, lambda d: _safe_add(portal.log, d),
@@ -7760,7 +7760,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
             template's form and launch, its jobs and approvals) may open"""
             path = urllib.parse.urlsplit(self.path).path
             if path in ("/access", "/my-access", "/api/access") and getattr(cfg, "my_access", False):
-                return True                              # 1.139.0: any authenticated user may inspect their own access (read-only)
+                return True                              # 1.138.0: any authenticated user may inspect their own access (read-only)
             if path == "/admin":
                 return cfg.admin_allowed(cn)
             if not cfg.template_member(cn):
@@ -7951,7 +7951,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 with wall.lock:
                     code, body = wall.fleet.answer(wall.collector)
                 return self._send(code, body, "application/json")
-            # 1.139.0: Network & AD health wall API
+            # 1.138.0: Network & AD health wall API
             if path == "/api/wall/health":
                 if not getattr(cfg, "wall_health", False) or health_board is None:
                     return self._send(404, {"error": "Network & AD health wall is off here (portal_wall_health: false)."})
@@ -7960,7 +7960,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 health_board.viewed(force=force)
                 code, body, etag = health_board.answer_health((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
-            # 1.139.0: Site map (offline coastline, SolarWinds WorldMapPoint lat/lon)
+            # 1.138.0: Site map (offline coastline, SolarWinds WorldMapPoint lat/lon)
             if path in ("/sitemap", "/wall/map", "/api/sitemap"):
                 if not getattr(cfg, "site_map", False) or health_board is None:
                     msg = "Site map is off here (portal_site_map: false)."
@@ -7973,7 +7973,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     return self._send(200, sitemap_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
                 code, body, etag = health_board.answer_sitemap((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
-            # 1.139.0: Read-only My access page & JSON API (shows nothing the user may not see)
+            # 1.138.0: Read-only My access page & JSON API (shows nothing the user may not see)
             if path in ("/access", "/my-access", "/api/access"):
                 if not getattr(cfg, "my_access", False) or my_access is None:
                     msg = "My access is off here (portal_my_access: false)."
@@ -8269,7 +8269,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
             cn = self._who(api=path.startswith("/api/"))
             if not cn:
                 return
-            if path in ("/access", "/my-access", "/api/access"):          # 1.139.0: strictly read-only
+            if path in ("/access", "/my-access", "/api/access"):          # 1.138.0: strictly read-only
                 return self._send(405, {"error": "My access is read-only."}, headers=[("Allow", "GET, HEAD")])
             if path == "/admin":
                 return self._admin_post(cn)

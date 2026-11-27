@@ -437,14 +437,14 @@
     de.classList.toggle("screen", screenOn());
     if (globalThis.SAWallFleet) de.classList.toggle("area-monitor", S.area === "monitor");
     if (globalThis.SAWallHealth) de.classList.toggle("area-health", S.area === "health");
-    // 1.139.0: release the shared stage before another area renders.
+    // 1.138.0: release the shared stage before another area renders.
     if (!healthArea() && window.SAWallHealth) window.SAWallHealth.leave();
     if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    // 1.136.0: Ops monitor; 1.139.0: Network & AD health area (static/wall-health.js)
+    // 1.136.0: Ops monitor; 1.138.0: Network & AD health area (static/wall-health.js)
     if (monArea()) window.SAWallFleet.render(API, stage);
     else if (healthArea()) window.SAWallHealth.render(API, stage);
     else RENDER[S.style](stage);
@@ -466,7 +466,7 @@
   // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
   function screenOn() { return S.area !== "watch" && !healthArea() && (!!SCREEN[S.style] || monArea()); }
   function monArea() { return S.area === "monitor" && fleetRenderer(); }   // only with the monitor on (its script loaded)
-  function healthArea() { return S.area === "health" && healthRenderer(); } // 1.139.0: Network & AD health area
+  function healthArea() { return S.area === "health" && healthRenderer(); } // 1.138.0: Network & AD health area
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }

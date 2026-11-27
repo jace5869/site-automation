@@ -1,4 +1,4 @@
-/* 1.139.0: Offline Wall Map of Sites placed by SolarWinds Orion.WorldMap.Point lat/lon (/portal/sitemap).
+/* 1.138.0: Offline Wall Map of Sites placed by SolarWinds Orion.WorldMap.Point lat/lon (/portal/sitemap).
    Matches mock/site-map.html across all 10 portal looks, light & dark, 800 / 1280 / 1920 px board.
    Uses bundled Natural Earth 1:110m vector land polygons from static/wall-land.js (window.WALL_LAND) - zero internet.
    Strict CSP: pure DOM/SVG creation only (no HTML string injection or inline style attributes). */
@@ -138,7 +138,7 @@
       render();
     }).catch(function (err) {
       S.loading = false;
-      // 1.139.0: keep the last map visible while the poll timer retries.
+      // 1.138.0: keep the last map visible while the poll timer retries.
       S.etag = "";
       S.failMsg = "Site map feed unreachable: " + (err && err.message ? err.message : "network error");
       render();

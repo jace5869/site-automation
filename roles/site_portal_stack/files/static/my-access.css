@@ -1,4 +1,4 @@
-/* 1.139.0: Read-only My access page (/portal/access, static/my-access.js)
+/* 1.138.0: Read-only My access page (/portal/access, static/my-access.js)
    Matches mock/my-access.html across all 10 portal looks (data-skin), light & dark, 800 & 1280 px.
    No inline style; status is always colour + word + mark; missing/stale AD shows grey 'Not known', never green. */
 

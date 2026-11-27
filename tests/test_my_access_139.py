@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.139.0: Unit tests for read-only My access (/portal/access, /portal/api/access, my_access.py):
+"""1.138.0: Unit tests for read-only My access (/portal/access, /portal/api/access, my_access.py):
 role ladder evaluation, AD degraded/stale honesty, strict zero-leakage guarantees, limited-user scope,
 and HTTP 405 read-only enforcement. Placeholders only (SITEA, corp.example.mil, 192.0.2.x)."""
 import io
@@ -149,7 +149,7 @@ class MyAccessModelTests(unittest.TestCase):
         for forbidden in ("SMITH.BOB", "ADMIN.ALICE", "OTHER.SECRET.USER", "SUPER_SECRET_AAP_TOKEN_123",
                           "LDAP_BIND_SECRET_XYZ", "svc_ldap_bind", "SITEA-Secret-Admins"):
             self.assertNotIn(forbidden, dumped, forbidden)
-        # 1.139.0: only admins receive rows revealing group count and lookup outcomes.
+        # 1.138.0: only admins receive rows revealing group count and lookup outcomes.
         self.assertFalse(any(g["role"] == "admins" for g in doc["ad"]["groups"]))
         admin = self._build(cfg, portal, "ADMIN.ALICE.X.7777777777")
         adm_diag, = [g for g in admin["ad"]["groups"] if g["role"] == "admins"]

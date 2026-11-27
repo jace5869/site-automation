@@ -1,4 +1,4 @@
-/* 1.139.0: Network & AD health area of the ops wall (static/wall-health.js)
+/* 1.138.0: Network & AD health area of the ops wall (static/wall-health.js)
    Matches mock/health-wall.html across all 10 portal looks (data-skin), light & dark, 800 / 1280 / 1920 px board.
    No inline style; status is always a colour + icon + word; missing/stale data is grey, never green. */
 

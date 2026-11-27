@@ -57,7 +57,7 @@ DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97
             "exclude": {}, "ds_ignore": ["iso", "isos", "iso-*", "iso_*", "*-iso", "*_iso", "*-isos", "*content-library*"], "snapmirror_lag_warn_hours": 24.0, "snapmirror_lag_crit_hours": 72.0,
             "seconds": 60, "maintenance_expected": [], "vm_heartbeat": True, "site_pattern": "", "site_places": {},
             "netmap_sites": {}, "hw_alarms": list(HW_ALARMS), "late": LATE_S, "stale": STALE_S,
-            # 1.139.0: AD & Network health wall thresholds (reusing old-wallad.diff + health-wall limits)
+            # 1.138.0: AD & Network health wall thresholds (reusing old-wallad.diff + health-wall limits)
             "ad_repl_warn_hours": 6.0, "ad_repl_crit_hours": 24.0, "ad_old_minutes": 90,
             "volume_warn": 85.0, "volume_crit": 95.0,
             "if_err_warn": 1.0, "if_err_crit": 2.5,
@@ -99,7 +99,7 @@ def opts_of(o):
     out["high_pct"] = min(100.0, max(1.0, out["high_pct"]))
     out["high_minutes"] = max(1, min(240, out["high_minutes"]))
     out["seconds"] = max(30, min(3600, out["seconds"]))
-    # 1.139.0: clamp AD and Network health wall thresholds
+    # 1.138.0: clamp AD and Network health wall thresholds
     if not 0 < out["ad_repl_warn_hours"] < out["ad_repl_crit_hours"] <= 720:
         out["ad_repl_warn_hours"], out["ad_repl_crit_hours"] = DEFAULTS["ad_repl_warn_hours"], DEFAULTS["ad_repl_crit_hours"]
     if not 0 < out["volume_warn"] < out["volume_crit"] <= 100:
@@ -845,7 +845,7 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
         import wall_fleet
         wall_fleet.extend(result, fleet, fleet_why, tracker, now)
     if health is not None:
-        # 1.139.0: project live Network & AD health area when enabled
+        # 1.138.0: project live Network & AD health area when enabled
         import wall_health
         wall_health.extend_wall(result, health)
     return result
@@ -991,7 +991,7 @@ def summary(m, now):
                 metric = _metric("busiest cluster CPU", w_.get("n"), w_["cpu"], hw, None, "%", w_.get("feed"), m, now, by)
             note = "%d VMs on %d hosts" % (sum(int(h.get("nvms") or 0) for h in vm.get("hosts") or [] if isinstance(h, dict)), of) if of else ""
         elif st != "off" and aid in ("health", "ad", "network"):
-            # 1.139.0: summarize live Network & AD health KPIs on Actions Ops center strip
+            # 1.138.0: summarize live Network & AD health KPIs on Actions Ops center strip
             hm = m.get("health") if isinstance(m.get("health"), dict) else {}
             kby = {k.get("id"): k for k in (hm.get("kpis") or []) if isinstance(k, dict)}
             if aid == "ad" and kby.get("ad"):

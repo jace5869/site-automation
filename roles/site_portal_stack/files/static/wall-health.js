@@ -1,4 +1,4 @@
-/* 1.139.0: Network & AD health area of the ops wall (/portal/wall?area=health) + 1920 Board mode.
+/* 1.138.0: Network & AD health area of the ops wall (/portal/wall?area=health) + 1920 Board mode.
    Matches mock/health-wall.html in all 10 portal looks, light & dark, 800 / 1280 / 1920 px.
    Live data only from /portal/api/wall/health; missing/stale feeds always grey 'not read', never green.
    Strict CSP: pure DOM/SVG creation only (no HTML string injection or inline style attributes). */
@@ -69,7 +69,7 @@
 
   function fetchHealth(force) {
     if (ST.loading) return;
-    // 1.139.0: exit invalidates this request, including across a quick re-entry.
+    // 1.138.0: exit invalidates this request, including across a quick re-entry.
     var request = {};
     ST.loading = request;
     var etag = "";

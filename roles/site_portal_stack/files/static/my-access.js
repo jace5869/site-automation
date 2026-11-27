@@ -1,4 +1,4 @@
-/* 1.139.0: Read-only My access page (/portal/access)
+/* 1.138.0: Read-only My access page (/portal/access)
    Matches mock/my-access.html in all 10 portal looks, light & dark, 800 & 1280 px.
    Live data only from /portal/api/access (GET only); never shows anything the user may not see.
    Strict CSP: pure DOM creation only (no HTML string injection or inline style attributes). */

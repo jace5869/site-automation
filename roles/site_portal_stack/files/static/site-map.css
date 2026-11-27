@@ -1,4 +1,4 @@
-/* 1.139.0: Offline wall map of sites placed by SolarWinds lat/lon (/portal/sitemap, static/site-map.js)
+/* 1.138.0: Offline wall map of sites placed by SolarWinds lat/lon (/portal/sitemap, static/site-map.js)
    Matches mock/site-map.html across all 10 portal looks, light & dark, 800 / 1280 / 1920 px board.
    Bundled coastline from static/wall-land.js (no internet). No inline style. Missing/stale = grey, never green. */
 

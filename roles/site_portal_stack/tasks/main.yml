@@ -446,7 +446,7 @@
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_username | length > 0 and portal_wall_vcenter_password | length > 0)
       - not (_portal_wall_vc | bool) or (portal_wall_vcenter_host | length > 0 or portal_wall_vcenters | default([], true) | length > 0)
       - not (_portal_wall_ontap | bool) or (portal_wall_ontap_username | length > 0 and portal_wall_ontap_password | length > 0 and portal_wall_ontap_clusters | length > 0)
-      # 1.139.0: Network & AD health wall + Site map threshold checks
+      # 1.138.0: Network & AD health wall + Site map threshold checks
       - portal_wall_health_seconds | int >= 30 and portal_wall_health_seconds | int <= 3600
       - 0 < portal_wall_ad_repl_warn_hours | float < portal_wall_ad_repl_crit_hours | float <= 720
       - 0 < portal_wall_volume_warn | float < portal_wall_volume_crit | float <= 100
@@ -705,7 +705,7 @@
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}
     - {src: static/portal-ops.js, dest: static/portal-ops.js}
-    # 1.139.0: Network & AD health wall area, offline Site map (reuses wall-land.js), and read-only My access
+    # 1.138.0: Network & AD health wall area, offline Site map (reuses wall-land.js), and read-only My access
     - {src: wall_health.py, dest: wall_health.py}
     - {src: my_access.py, dest: my_access.py}
     - {src: static/wall-health.js, dest: static/wall-health.js}
@@ -788,7 +788,7 @@
     state: absent
   when: not (_portal_netmap | bool and portal_solarwinds_ca_file | length > 0)
 
-# 1.139.0: only the health and site map reader uses this CA.
+# 1.138.0: only the health and site map reader uses this CA.
 - name: Trust | CA for the health and site map reader
   ansible.builtin.copy:
     src: "{{ portal_solarwinds_ca_file }}"
@@ -1273,7 +1273,7 @@
         site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"
         site_places: "{{ portal_wall_site_places | default({}, true) }}"
         netmap_sites: "{{ netmap_sites | default({}, true) }}"     # 1.131.0: the Map's places when portal_wall_site_places has none
-      # 1.139.0: Network & AD health wall area, offline Site map, and read-only My access
+      # 1.138.0: Network & AD health wall area, offline Site map, and read-only My access
       PORTAL_WALL_HEALTH: "{{ '1' if portal_wall_health | bool else '0' }}"
       PORTAL_SITE_MAP: "{{ '1' if portal_site_map | bool else '0' }}"
       PORTAL_MY_ACCESS: "{{ '1' if portal_my_access | bool else '0' }}"

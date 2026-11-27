@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""1.139.0: Read-only "My access" model for the site portal (/portal/access, /portal/api/access).
+"""1.138.0: Read-only "My access" model for the site portal (/portal/access, /portal/api/access).
 
 Security invariants:
 - Strictly read-only: never writes files, never mutates access.json, never calls LDAP/AAP write APIs.
@@ -15,7 +15,7 @@ Security invariants:
 Standard library only."""
 import time
 
-VERSION = "1.139.0"
+VERSION = "1.138.0"
 
 ROLE_ORDER = ("viewer", "runner", "approver", "admin")
 ROLE_META = {
@@ -141,7 +141,7 @@ def _in_named(cfg, attr, cn):
 
 def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_refusal_fn,
                     approve_refusal_fn, ad_diag_fn, wall_fb_fn=None, wall_fb_read_fn=None, now=None):
-    """1.139.0: Compute read-only access summary strictly for signed-in user `cn`.
+    """1.138.0: Compute read-only access summary strictly for signed-in user `cn`.
     Must be called inside `with access_pinned(cfg):` (or on a consistent snapshot)."""
     now = time.time() if now is None else float(now)
     ad = _ad_cache_info(cfg, cn, ad_diag_fn, now)
@@ -396,7 +396,7 @@ def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_re
         if grole == "templates" and not is_admin and gname not in visible_tpl_groups:
             continue
         if grole == "admins" and not is_admin:
-            # 1.139.0: even anonymous rows disclose admin group counts and lookup results.
+            # 1.138.0: even anonymous rows disclose admin group counts and lookup results.
             continue
         safe_groups.append({
             "role": grole,

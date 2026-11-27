@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""1.139.0: Network & AD health wall area + Site map (SolarWinds lat/lon) model and live read-only collector.
+"""1.138.0: Network & AD health wall area + Site map (SolarWinds lat/lon) model and live read-only collector.
 
 Reuses the portal's existing read-only data sources (SolarWinds SWIS via plugins/module_utils/site_swis.py,
 Active Directory report DB runs via AdDb.read_wall, and optional Ops monitor fleet data):
@@ -27,9 +27,9 @@ except ImportError:
 
 import wall_model
 
-VERSION = "1.139.0"
+VERSION = "1.138.0"
 
-# ---- 1.139.0: defaults and option clamping -------------------------------------------------------------------
+# ---- 1.138.0: defaults and option clamping -------------------------------------------------------------------
 DEFAULTS = {
     "seconds": 60,
     "late": 180,
@@ -92,7 +92,7 @@ def _pair(raw, wk, ck, lo, hi, dw, dc):
 
 
 def health_opts(raw=None):
-    """1.139.0: validate and clamp Network & AD health wall settings -> plain dict."""
+    """1.138.0: validate and clamp Network & AD health wall settings -> plain dict."""
     r = raw if isinstance(raw, dict) else {}
     sec = _int(r.get("seconds"), 30, 3600, DEFAULTS["seconds"])
     late = max(DEFAULTS["late"], sec * 3)
@@ -152,7 +152,7 @@ def parse_ts(v):
 
 
 def valid_coord(lat, lon):
-    """1.139.0: validate SolarWinds / configured lat/lon.
+    """1.138.0: validate SolarWinds / configured lat/lon.
     Rejects non-numbers, out-of-range values, and Null Island (0, 0) -> (ok, (lat, lon) or None, why)."""
     la, lo = _num(lat), _num(lon)
     if la is None or lo is None:
@@ -221,9 +221,9 @@ def _node_status(code, unmanaged=False):
     return "unknown"
 
 
-# ---- 1.139.0: Read-only SolarWinds SWQL collector for Health Wall + Site Map ---------------------------------
+# ---- 1.138.0: Read-only SolarWinds SWQL collector for Health Wall + Site Map ---------------------------------
 class SwisHealthReader(object):
-    """1.139.0: Read-only SolarWinds SWIS collector (SWQL SELECTs only) for Network & AD health and Site map.
+    """1.138.0: Read-only SolarWinds SWIS collector (SWQL SELECTs only) for Network & AD health and Site map.
     Never modifies SolarWinds; optional entities (Orion.Volumes, Orion.NPM.Interfaces, Orion.Container,
     Orion.TopologyConnections) are checked in Metadata.Entity and reported as 'not read' with reason if absent."""
 
@@ -463,7 +463,7 @@ class SwisHealthReader(object):
         }
 
 
-# ---- 1.139.0: Sustained-condition & rolling 4h history tracker -----------------------------------------------
+# ---- 1.138.0: Sustained-condition & rolling 4h history tracker -----------------------------------------------
 class HealthTracker(object):
     """Tracks poll streaks (down_polls), sustained durations (sustained_minutes), open/cleared conditions,
     and rolling 4h KPI/metric trends (5-minute buckets)."""
@@ -559,7 +559,7 @@ class HealthTracker(object):
                     dq.append([bucket, rtt_val])
 
 
-# ---- 1.139.0: Pure model builders (deterministic, easily unit-tested) ---------------------------------------
+# ---- 1.138.0: Pure model builders (deterministic, easily unit-tested) ---------------------------------------
 def _assign_sites(nodes, connections, netmap_opts, site_places):
     """Map every node id -> site name, and gather site coordinates with provenance."""
     nm = dict(netmap_opts or {"site_by": "location"})
@@ -768,7 +768,7 @@ def _ad_matrix(ad_run, o, ad_fresh, now):
         })
 
     return {
-        # 1.139.0: a DC inventory can succeed while every replication read fails.
+        # 1.138.0: a DC inventory can succeed while every replication read fails.
         "read": any(d["repl_read"] for d in dc_rows),
         "dcs": dc_rows,
         "pairs": pairs,
@@ -781,7 +781,7 @@ def _ad_matrix(ad_run, o, ad_fresh, now):
 
 def _if_err_rate(ifc):
     """Compute interface error+discard percentage from hourly counters and pps, or None if unreadable."""
-    # 1.139.0: missing counter fields cannot establish a below-threshold rate.
+    # 1.138.0: missing counter fields cannot establish a below-threshold rate.
     counters = [_num(ifc.get(k)) for k in ("in_err", "out_err", "in_disc", "out_disc")]
     if any(c is None or c < 0 for c in counters):
         return None
@@ -800,7 +800,7 @@ def _if_err_rate(ifc):
 
 def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now,
                        netmap_opts=None, site_places=None, enclave="", title="", full_links=None):
-    """1.139.0: Build the Network & AD health wall model from live SolarWinds + AD report DB snapshots.
+    """1.138.0: Build the Network & AD health wall model from live SolarWinds + AD report DB snapshots.
     Strict rules:
     - Only important conditions on the wall (buckets: down, full, err).
     - Missing/stale/failed feeds show grey 'not read' / 'Not current' with exact why, NEVER green.
@@ -1366,7 +1366,7 @@ def _region_of(lat, lon):
 
 
 def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, site_places=None, enclave="", title=""):
-    """1.139.0: Build the live Site map model from SolarWinds nodes, Orion.WorldMap.Point lat/lon, and topology.
+    """1.138.0: Build the live Site map model from SolarWinds nodes, Orion.WorldMap.Point lat/lon, and topology.
     - Rejects (0, 0) / invalid coordinates.
     - Never drops unplaced sites (placed: false + unplaced_why).
     - Missing/failed/stale SolarWinds feed -> every site status is 'stale' (grey), never green."""
@@ -1584,9 +1584,9 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
     }
 
 
-# ---- 1.139.0: Shared background runner (one SWIS poller + one AD DB poller) ----------------------------------
+# ---- 1.138.0: Shared background runner (one SWIS poller + one AD DB poller) ----------------------------------
 class HealthBoard(object):
-    """1.139.0: Background reader serving both /api/wall/health and /api/sitemap without double-polling SolarWinds.
+    """1.138.0: Background reader serving both /api/wall/health and /api/sitemap without double-polling SolarWinds.
     Runs while viewed (stops after IDLE_STOP), backs off on auth failure, never blocks the HTTP thread."""
 
     def __init__(self, cfg, log, ad_db=None, reader=None, netlive=None):
@@ -1800,7 +1800,7 @@ def _etag_matches(header, tag):
 
 
 def extend_wall(result, health_m):
-    """1.139.0: Project live Network & AD health summary into /api/wall's ad, network, and health areas
+    """1.138.0: Project live Network & AD health summary into /api/wall's ad, network, and health areas
     without breaking existing VMware/Storage/Ops monitor fields."""
     if not isinstance(result, dict) or not isinstance(health_m, dict):
         return result

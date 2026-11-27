@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1.139.0: Unit tests for Network & AD health wall area, offline Site map (SolarWinds lat/lon),
+"""1.138.0: Unit tests for Network & AD health wall area, offline Site map (SolarWinds lat/lon),
 wall_model integration, settings clamping, deploy wiring, CSP, and offline assets.
 Placeholders only (SITEA, corp.example.mil, 192.0.2.x)."""
 import os
@@ -138,7 +138,7 @@ class HealthModelTests(unittest.TestCase):
         self.assertTrue(any(t["id"] == "net:vol:10" and t["end"] is not None for t in m2["timeline"]))
 
     def test_missing_metrics_hold_existing_alerts_until_a_valid_recovery(self):
-        # 1.139.0: follow each alert through confirmation, unread telemetry and recovery.
+        # 1.138.0: follow each alert through confirmation, unread telemetry and recovery.
         tr = wh.HealthTracker()
         ids = {"net:rtt:1", "net:loss:1", "net:util:100", "net:iferr:100"}
 
@@ -158,7 +158,7 @@ class HealthModelTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in recovered["timeline"] if c["end"]}, ids)
 
     def test_dc_inventory_without_replication_coverage(self):
-        # 1.139.0: DC inventory alone cannot establish replication health.
+        # 1.138.0: DC inventory alone cannot establish replication health.
         ad = sample_ad()
         ad["links"] = []
         for dc in ad["dcs"]:
@@ -241,7 +241,7 @@ class SiteMapModelTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "browser polling tests need Node")
 class PollingTests(unittest.TestCase):
     def run_page(self, asset, probe):
-        # 1.139.0: run the shipped script with a manual clock and deferred fetches.
+        # 1.138.0: run the shipped script with a manual clock and deferred fetches.
         browser = """
         const assert = require("node:assert/strict");
         class Element {
@@ -326,7 +326,7 @@ class SettingsAndAssetsTests(unittest.TestCase):
         return sp.Config(base)
 
     def test_health_ca_is_private_with_network_map_disabled(self):
-        # 1.139.0: evaluate the actual deployment gates and container reader setting.
+        # 1.138.0: evaluate the actual deployment gates and container reader setting.
         tasks = yaml.safe_load(read(ROLE, "tasks", "main.yml"))
         env = Environment()
         env.filters["bool"] = bool
@@ -361,7 +361,7 @@ class SettingsAndAssetsTests(unittest.TestCase):
         t = read(ROLE, "tasks", "main.yml")
         doc = read(ROOT, "docs", "SITE_PORTAL.md")
         ch = read(ROOT, "CHANGELOG.md")
-        self.assertTrue(ch.startswith("# Changelog\n\n## 1.139.0 — 2026-11-27\n"))
+        self.assertTrue(ch.startswith("# Changelog\n\n## 1.138.0 — "))
         for setting in ("portal_wall_health", "portal_wall_health_seconds", "portal_wall_ad_repl_warn_hours",
                         "portal_wall_ad_repl_crit_hours", "portal_wall_volume_warn", "portal_wall_volume_crit",
                         "portal_wall_if_err_warn", "portal_wall_if_err_crit", "portal_wall_wan_util_warn",
