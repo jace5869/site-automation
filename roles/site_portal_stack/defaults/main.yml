@@ -41,6 +41,7 @@ portal_motion: auto                              # auto | always | off
 # The initial portal look. Viewers can pick another in the bar or open a link with ?look=KEY.
 # metro-atlas | metro-calm | metro-wall | atlas-clean | atlas-night | contour-lite | strata | metro | relay | atlas
 portal_look: metro-atlas
+portal_actions_ops_center: line                   # 1.136.1: line|full|off
 # 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none | christmas | auto (Dec 1 to Jan 6, decided on each page). Default: the
 # report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow, _sleigh.
 portal_theme_season: "{{ report_theme_season | default('none') }}"

@@ -6,13 +6,16 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HOOKED = ("wall-page.js", "wall-styles.js")
+HOOKED = ("wall-page.js", "wall-styles.js", "portal-theme.js", "portal-looks.css")
 
 
 def normalize(html):
     for name in HOOKED:
         html = re.sub(rb'(/static/' + re.escape(name.encode()) + rb'\?v=)[0-9a-f]{10}(?=")', rb'\1HASH', html)
-    return html
+    # 1.136.1: the portal owns these parts of the shell. Keep comparing the wall itself to the release.
+    html = re.sub(rb' data-skin="[^"]+" data-skin-default="[^"]+"', b'', html, count=1)
+    html = re.sub(rb'(<select id="look"[^>]*>).*?(</select>)', rb'\g<1>\g<2>', html, count=1)
+    return re.sub(rb'<div class="appbar-contour"[^>]*>.*?</svg></div>', b'', html, count=1)
 
 
 class Isolation(unittest.TestCase):

@@ -59,6 +59,19 @@ class Settings(unittest.TestCase):
         self.assertNotRegex(page, r"<script>(?!</script>)")                                        # no inline script
         self.assertNotRegex(page, r"\son[a-z]+=")                                                  # no inline handler
 
+    def test_classic_wall_shares_the_portal_looks(self):
+        # 1.136.1: check the rendered picker and the assets that apply the saved browser choice.
+        for configured, expected in (("metro-wall", "metro-wall"), ("press", "metro-atlas"), ("unknown", "metro-atlas")):
+            with self.subTest(configured=configured):
+                cfg = self.cfg(PORTAL_LOOK=configured)
+                self.assertFalse(cfg.wall_fleet)
+                page = sp.wall_page(cfg, "Viewer", {})
+                self.assertIn('data-skin="%s" data-skin-default="%s"' % (expected, expected), page)
+                self.assertEqual(re.findall(r'<option value="([a-z-]+)"', page), list(sp.SKIN_KEYS))
+                self.assertRegex(page, r'<option value="%s"[^>]* selected>' % expected)
+                for name in ("portal-theme.js", "portal-looks.css"):
+                    self.assertIn("static/%s?v=%s" % (name, sp.static_version(name)), page)
+
     def test_the_wall_page_carries_its_default_style_and_files(self):
         cfg = self.cfg(PORTAL_WALL_STYLE="metro")
         page = sp.wall_page(cfg, "DOE.JANE", {"wall-styles.js": "a" * 10, "wall-share.js": "b" * 10, "wall-styles.css": "c" * 10})
@@ -86,6 +99,9 @@ class Settings(unittest.TestCase):
         self.assertIn('PORTAL_WALL_STYLE: "{{ portal_wall_style', y)
         self.assertIn("src: static/fonts/", y)
         d = read(ROLE, "defaults", "main.yml")
+        # 1.136.1: inventory overrides reach the service alongside the shared look.
+        self.assertRegex(d, r"(?m)^portal_actions_ops_center: line(?: +#.*)?$")
+        self.assertIn('PORTAL_ACTIONS_OPS_CENTER: "{{ portal_actions_ops_center | default(\'line\') | string | lower | trim }}"', y)
         self.assertIn("\nportal_look: metro-atlas\n", d)
         self.assertIn("\nportal_wall_style: cockpit\n", d)
         for n in ("wall-styles.js", "wall-styles.css", "wall-share.js", "portal-looks.css", "portal-looks.js"):

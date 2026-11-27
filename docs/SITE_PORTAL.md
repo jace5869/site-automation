@@ -1861,11 +1861,9 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 
 ## The look
 
-Since 1.135.0 the portal has **seven looks**, each in light and dark: **Strata Console** (the default), **Metro Live
-Tiles**, **Relay Panel**, **Chroma Perspex**, **Signal Press**, **Contour Atlas** and **Timing Tower**. `portal_look`
-(`strata`, `metro`, `relay`, `chroma`, `press`, `atlas`, `tower`) is the look every viewer starts with; each viewer may
-pick another in the bar's **Look** list (kept in their browser, beside the Auto / Light / Dark switch), and a link may
-carry `?look=metro` (that page only). The report palette (`report_web_theme`) stays underneath.
+In 1.136.1 the portal and classic wall share the same **Look** picker. Both start with `portal_look` (default
+`metro-atlas`). A viewer's choice is kept in their browser and applies on both pages. Removed or unknown saved
+looks fall back to the configured default. A link can carry `?look=metro` for that page only.
 
 Each look has its own shape, on the real data of the page:
 
@@ -1874,12 +1872,16 @@ Each look has its own shape, on the real data of the page:
 | Strata Console | square tiles with lamp modules, a **spotlight stage** that steps through the wall's areas, worst first |
 | Metro Live Tiles | flat colour tiles; the area tiles **turn over** to their worst items (*tiles turn over every 8 s*) |
 | Relay Panel | an annunciator: a **lamp plate** and lamps per area, a colour per area on the cards |
-| Chroma Perspex | extruded plates and chamfered tiles, a strong accent |
-| Signal Press | a newspaper: the **top rule**, the areas as a **ledger** |
-| Contour Atlas | an **"Asset status by area"** map: each area an island, its contour rings its state |
-| Timing Tower | a **ranking**: the areas worst first, each with its position and the gap to its limit |
+| Metro Atlas | Atlas typography and surfaces with a Metro tile grid |
+| Metro Calm | muted tiles with colour on status edges and badges |
+| Metro Wall | large numbers and high contrast for room screens |
+| Atlas Clean | plain status tiles with counts on a paper-like surface |
+| Atlas Night | low-glare dark surfaces for evening shifts |
+| Contour Lite | faint contour lines in the header band |
+| Contour Atlas | rounded surfaces and plain status tiles with counts |
 
-**The Ops center section (Actions page).** With the wall on (`portal_wall`), the Actions page opens with the wall's
+**The Ops center section (Actions page).** With the wall on (`portal_wall`), the default `line` mode shows a
+clickable status strip. Set `portal_actions_ops_center` to `off` to hide it or `full` to show the wall's
 areas in short, in the viewer's look: how many need a look, each area's state in a word and an icon, its main value
 against its limit (bands, labelled dashed limit lines and one sentence such as *91% · 6 pts over warn 85 · crit at 97*,
 from `portal_wall_aggr_warn` / `_crit`, `portal_wall_datastore_warn` / `_crit` and `portal_wall_high_pct`), and a link
@@ -2110,7 +2112,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_launches_per_hour` | 20 | one person's launches in an hour, at most |
 | `portal_aap_ui` | AAP's address | the address of AAP's pages, for the *Open in AAP* links |
 | `portal_own_nginx` | false | its own nginx (TLS, the cards) instead of STIG Manager's |
-| `portal_look` | `strata` | the look every viewer starts with: `strata`, `metro`, `relay`, `chroma`, `press`, `atlas` or `tower` (*The look*) |
+| `portal_look` | `metro-atlas` | shared portal and wall look: `metro-atlas`, `metro-calm`, `metro-wall`, `atlas-clean`, `atlas-night`, `contour-lite`, `strata`, `metro`, `relay` or `atlas` |
+| `portal_actions_ops_center` | `line` | Actions page Ops center display: `line` for a clickable strip, `full` for area details, or `off` to hide it |
 | `portal_wall_style` | `cockpit` | the wall's style when the address names none: `lights`, `cockpit`, `map`, `strata`, `relay` or `metro` |
 
 ## When something is wrong

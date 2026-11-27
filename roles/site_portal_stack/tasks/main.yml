@@ -687,8 +687,6 @@
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}
     - {src: static/portal-ops.js, dest: static/portal-ops.js}
-    - {src: static/wall-theme.js, dest: static/wall-theme.js}
-    - {src: static/wall-looks.css, dest: static/wall-looks.css}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -1144,6 +1142,7 @@
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
       PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
+      PORTAL_ACTIONS_OPS_CENTER: "{{ portal_actions_ops_center | default('line') | string | lower | trim }}"  # 1.136.1
       PORTAL_LOOK: "{{ portal_look | default('metro-atlas') | string | lower | trim }}"                 # 1.135.0
       PORTAL_SEASON: "{{ _portal_season }}"
       PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
