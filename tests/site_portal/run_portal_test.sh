@@ -181,6 +181,13 @@ if [ -n "${E2E_CAPTURE_DIR:-}" ]; then
     cp "$work/etc/settings.json" "$units"/*.container "$E2E_CAPTURE_DIR/"
     grep -o 'Wall: [^"]*' "$work/out.txt" | head -1 > "$E2E_CAPTURE_DIR/wall-summary.txt"
 fi
+# 1.136.0: the Ops monitor off (the default) - the deploy writes what 1.135.1 wrote (tests/fixtures/wall_v1351_deploy)
+fx="$repo/tests/fixtures/wall_v1351_deploy"
+if cmp -s "$fx/settings.json" "$work/etc/settings.json" \
+    && cmp -s <(sed "s#@WORK@#$work#g" "$fx/site-portal-app.container") "$units/site-portal-app.container" \
+    && [ "$(grep -o 'Wall: [^"]*' "$work/out.txt" | head -1)" = "$(cat "$fx/wall-summary.txt")" ]; then
+    pass "the Ops monitor off: settings.json, the app's unit and the Wall: summary line as 1.135.1 wrote them"
+else fail "the Ops monitor off: the deploy's files as 1.135.1" "$(diff "$fx/settings.json" "$work/etc/settings.json" | head -10; diff <(sed "s#@WORK@#$work#g" "$fx/site-portal-app.container") "$units/site-portal-app.container" | head -10)"; fi
 if grep -q "read the lines of $work/etc/nginx-portal.conf" "$work/out.txt" && grep -q 'proxy_pass $site_portal_app;' "$work/out.txt"; then
     pass "the deploy says what to add to the proxy's nginx, and shows the lines"
 else fail "the deploy says what to add" "$(grep -A30 'Verify | summary' "$work/out.txt")"; fi

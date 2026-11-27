@@ -320,7 +320,7 @@ class Review1Neon(unittest.TestCase):
 
     def test_unread_template_flag(self):
         fm = wf.model(snap([sw_row(1, "A1")], now=self.now), view([vm("T1", power="poweredOff", hb=None, template=None)], self.now), OPTS, self.now)
-        self.assertEqual(fm["cmp"]["vc_only"], 1)
+        self.assertEqual(fm["cmp"]["vc_only"], 0)
 
 
 NOGROUPS_Q = {"list": [], "members": []}

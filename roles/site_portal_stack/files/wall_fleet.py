@@ -480,6 +480,8 @@ def vcenter_vms(view, now, late=LATE_S):
             ips = v.get("ip")
             fields = {key: _txt(v[key], None) if isinstance(v.get(key), str) else None
                       for key in ("name", "host", "power", "heartbeat", "tools", "tools_version", "guest", "id")}
+            if v.get("template") is not False and fields["power"] != "poweredOn":
+                continue                        # its template flag not read and not running: maybe a template - left out
             if _generic(fields["guest"]):
                 fields["guest"] = None
             fields.update(vc=len(vcs) - 1, current=bool(cur),
