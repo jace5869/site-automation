@@ -53,6 +53,23 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 - The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
 - A cleared group share can still show recovery when the board has already seen the outage reopen.
 - On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
+## 1.135.3 — 2026-11-27
+
+- Portal: AD groups now count people whose card lookup met a normal AD referral (no access before)
+
+## 1.135.2 — 2026-11-26
+
+**To set up:** run **Site portal - deploy**.
+
+- **Admin page: green only when AAP's answer is current and complete.** The page is drawn from one read of AAP. When
+  that read failed or is older than the refresh interval (`portal_discover_seconds`, at most 15 minutes), every template
+  card says *Not current - last read …* with the reason, in amber, never *Ready*, and the header says *Disconnected*
+  or *Not current* on every tab.
+- **A workflow step AAP did not describe** (its type missing, blank or not exactly one of AAP's types) is shown: the
+  card says *Could not tell whether this workflow has an approval step - check node … in AAP* and is never Ready, the
+  workflow is listed under *Needs AAP*, the header says *Approval unknown*, and no other card says Ready until AAP
+  describes every step. Display only: saving, import, export
+  and who may run or approve work exactly as in 1.135.1.
 
 ## 1.135.1 — 2026-11-26
 
