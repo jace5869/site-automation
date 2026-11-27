@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.136.0 — 2026-11-26
+## 1.136.0 — 2026-11-27
 
 **Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.
 
