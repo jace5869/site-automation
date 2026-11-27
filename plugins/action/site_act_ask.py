@@ -588,13 +588,6 @@ def _effective_url(url, provider, env, environ=None):
     return str(url or "")
 
 
-def _effective_model(model, provider, env):
-    """The model ACT will use: a model setting of the provider in site_act_env (GENAI_MODEL ...) over site_act_model."""
-    name = {"genai": "GENAI_MODEL", "asksage": "ASKSAGE_MODEL", "genai-beta": "GENAI_BETA_MODEL"}.get(provider, "GENAI_MODEL")
-    v = env.get(name) if isinstance(env, dict) else None
-    return str(v) if v not in (None, "") else str(model or "")
-
-
 def payload(evidence, cap):
     """What ACT reads for a question's evidence: EVIDENCE_HEAD and the evidence cut at cap; '' when that evidence is
     blank (the question is not sent)."""
@@ -687,13 +680,14 @@ class ActionModule(ActionBase):
 
     def ask(self, a):
         questions = list(a.get("questions") or [])
-        provider = str(a.get("provider") or "genai")
+        # 1.137.0: ACT treats provider names case-insensitively for URL, model and worker selection.
+        provider = str(a.get("provider") or "genai").strip().lower()
         url = str(a.get("url") or URLS.get(provider, ""))
         model = str(a.get("model") or "")
         # the provider and URL ACT will use (Neon r2): an ACT_PROVIDER in site_act_env, then that provider's URL setting
         # (site_act_env, else the execution environment), else its default - for the check and the cache key alike
         aenv = a.get("env") if isinstance(a.get("env"), dict) else {}
-        eprov = str(aenv.get("ACT_PROVIDER") or provider)
+        eprov = str(aenv.get("ACT_PROVIDER") or provider).strip().lower()
         url = _effective_url(url if eprov == provider else URLS.get(eprov, url), eprov, aenv)
         out = {"url": _plain_url(url), "reached": None, "why_not": "", "questions": []}
         rows = []
@@ -723,17 +717,11 @@ class ActionModule(ActionBase):
         if not todo:
             return out
 
-        # 1.137.0: model tiers (site_act_worker_model; tiers_plan): {} when off - then everything below is 1.136.0's
-        smart = _effective_model(model, eprov, aenv)
-        # 1.137.0 (Codex r1): for the tiers, the model ACT would use also when only the execution environment sets it - a
-        # worker that is that model is one tier, and the smart questions are keyed with it
-        # (Neon r1): with an ACT_PROVIDER of its own in site_act_env, site_act_model is another provider's - not that one's
-        mname = MODEL_SETTING.get(eprov.strip().lower(), "GENAI_MODEL")     # ACT reads its provider in any case (Codex r2)
-        tsmart = (str(aenv.get(mname) or "") if mname in aenv else      # an explicit "" holds: ACT's default (Neon r2)
-                  str(os.environ.get(mname) or (model if eprov == provider else "") or ""))
-        T = tiers_plan(a.get("tiers"), eprov, tsmart)
-        if T.get("on"):
-            smart = T["smart"]
+        # 1.137.0: key answers by the model ACT uses even with tiers off. An explicit empty setting selects ACT's default.
+        mset = MODEL_SETTING.get(eprov, "GENAI_MODEL")
+        smart = (str(aenv.get(mset) or "") if mset in aenv else
+                 str(os.environ.get(mset) or (model if eprov == provider else "") or ""))
+        T = tiers_plan(a.get("tiers"), eprov, smart)
         if T.get("why"):
             out["tiers"] = {"on": False, "why": T["why"]}
         T = T if T.get("on") else {}
@@ -798,7 +786,6 @@ class ActionModule(ActionBase):
         launcher = str(a.get("launcher") or LAUNCHER)
         settings = dict((str(k), None if v is None else str(v)) for k, v in (a.get("env") or {}).items() if str(k) not in DROP_ENV)
         names = [str(n) for n in (a.get("names") or []) if n not in (None, "")]
-        mset = MODEL_SETTING.get(eprov.strip().lower(), "GENAI_MODEL")
 
         def job(i, n, row, tier):
             """One ACT run of question i: the worker's (its model in ACT's model setting) or the smart model's."""
@@ -907,7 +894,8 @@ class ActionModule(ActionBase):
                 r["asked"] = True
                 r["status"] = str(rec.get("status") or "")
                 r["summary"] = rec.get("summary") if rec.get("summary") is not None else ""
-                r["stop_reason"] = str(rec.get("stop_reason") or "")
+                # 1.137.0: redact ACT's diagnostic before either report field receives it.
+                r["stop_reason"] = safe(rec.get("stop_reason") or "")
                 r["model"] = str(rec.get("model") or j["fallback"])
                 r["ran"] = r["status"] != "error" and bool(r["summary"])
                 j["spent"] = time.time() - begun

@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -875,6 +876,45 @@ class ReviewRound2(unittest.TestCase):
         q0 = r["questions"][0]
         self.assertEqual((q0["tier"], q0["model"]), ("escalated", "smart-model"))
         self.assertTrue(q0["cached"])
+
+
+class ReviewP2(unittest.TestCase):
+    def setUp(self):
+        self.rig = Rig(A, FIXED_URL)
+        self.addCleanup(self.rig.close)
+        self.questions = [{"items": _items("P1"), "evidence": "e", "task": "t"}]
+
+    def ask(self, **kw):
+        return self.rig.ask(self.questions, check_url=False, retries=0, **kw)
+
+    def test_question_failure_redacts_both_report_fields(self):
+        error = {"status": "error", "stop_reason": "HTTP 401 https://corp.example.mil/?key=sample-key password=sample-password"}
+        with patch.object(A, "run_act", return_value=error):
+            row = self.ask()["questions"][0]
+        for field in ("stop_reason", "reason"):
+            self.assertTrue(row[field])
+            self.assertNotIn("sample-key", row[field])
+            self.assertNotIn("sample-password", row[field])
+
+    def test_tiers_off_cache_tracks_inherited_and_empty_models(self):
+        env = {"FAKE_PLAN": self.rig.plan, "FAKE_LOG": self.rig.log}
+        for inherited, overrides, expected, hits in (
+                ("model-a", {}, "model-a", 0), ("model-b", {}, "model-b", 0),
+                ("model-b", {"GENAI_MODEL": ""}, "fake-model", 0),
+                ("model-a", {"GENAI_MODEL": ""}, "fake-model", 1)):
+            with self.subTest(inherited=inherited, overrides=overrides), patch.dict(os.environ, GENAI_MODEL=inherited):
+                result = self.ask(env=env, env_extra=overrides, cache=self.rig.cache())
+                self.assertEqual(result["cache"]["hits"], hits)
+                self.assertEqual(result["questions"][0]["model"], expected)
+
+    def test_mixed_case_provider_selects_its_url_and_worker(self):
+        env = {"ACT_PROVIDER": "AskSage", "GENAI_MODEL": None}
+        with patch.dict(os.environ, ASKSAGE_URL=""):
+            self.assertEqual(self.ask(env_extra=env)["url"], A.URLS["asksage"])
+        env["ASKSAGE_URL"] = "https://corp.example.mil/model"
+        result = self.ask(env_extra=env, tiers=tiers(workers={"asksage": "sage-worker"}, synth=False))
+        self.assertEqual(result["url"], env["ASKSAGE_URL"])
+        self.assertEqual(result["questions"][0]["model"], "sage-worker")
 
 
 class Delegate(unittest.TestCase):
