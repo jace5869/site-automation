@@ -2,46 +2,12 @@
 
 ## 1.137.0 — 2026-11-27
 
-**To set up: optional `site_act_worker_model`** (or `site_act_worker_models: {genai: <the worker model's id>}`) in
-all.yml - a cheaper, faster model for the per-item first pass. Without it, nothing changes: every question goes to
-`site_act_model` / `site_act_models`, exactly as in 1.136.0. Each job can turn it off: `log_analysis_act_tiers`,
-`vm_alarm_act_tiers`, `vm_capacity_act_tiers`, `vm_rightsize_act_tiers`, `answer_keys_act_tiers` (all `true`).
-
-**ACT model tiers: a worker model for the bulk, the smart model for judgement** (docs/ADDING_ACT.md, "Model tiers").
-
-- **Where the worker answers:** the log analysis (each batch of patterns), the VMware alarms ACT analysis (each batch of
-  problems), the capacity and right-sizing analyses (each batch), and the STIG answer keys (each rule's draft, each
-  cross-check answer). The WAR, the outage review, ticket insights, the incident documents, VM ask and deploy and a
-  finding's triage are one judgement each: always the smart model.
-- **An item the job marks critical** (an alarm or a log pattern at level critical) goes to the smart model at once.
-- **The smart model checks the worker once.** A question goes to it, with the same task and evidence, when the worker
-  gave no answer, gave one the job cannot read or that leaves an item out, is unsure (a confidence under 50, an
-  `unsure` cross-check verdict, a draft with no code, a confidence with nothing else) or calls an item critical. The
-  worker is asked once: the smart model is its second try, once, in the time the worker left (`site_act_retries` is for
-  questions without tiers). Its answer is final: never back to the worker, never a third time. When it fails or cannot be read, a worker answer that could be read stays, and the
-  report says so.
-- **The smart model writes the verdict** of the log analysis, alarms, capacity and right-sizing reports from the
-  short answers (id, cause, fix, confidence, secrets masked), never the evidence nor a line quoted from it. When it
-  cannot be read, each batch keeps its own lines.
-- **One line in each report** (and the job output) says which model answered how many items (the items each answer
-  really answers), how many were re-asked and why. The answer keys say it at the end of their report.
-- **The answer cache keeps each tier under its own model**: a worker's answer never stands for the smart model's, nor
-  the other way round. A run whose answers are all kept reaches no model.
-- **The same rules for both tiers:** the worker only reads the evidence the job collected and runs no command; one
-  launcher (`act_launch.py`), the keys only on its input, a refused `site_act_env` name stops every tier, the masking
-  last. One check of the way to the model and one ACT folder for all the questions.
-- Tests: `tests/test_site_act_tiers.py` - a stand-in ACT that answers by its model: the routing, each reason to go to the
-  smart model, no loop, the verdict never reading the evidence, its fall-back, the keys per model, and a golden of
-  1.136.0's engine (`tests/fixtures/act_tiers_golden_1360.json`: every ACT run's task, input, model, masking, answer and
-  cache key) that tiers off matches byte for byte; the ACT e2e with a stand-in of two models.
-- Not in it: the health check's `explain` level and fapolicyd (ACT runs on each host there, not through the engine).
-
-**ACT 0.6.28 for the jobs.** `vendor/act` and `vendor/act-windows` are ACT 0.6.28 (was 0.6.27): `delegate`, worker
-sub-agents with their own model, step budget and fresh context, for a person at the keyboard (`--worker-model`,
-`ACT_WORKER_MODEL`, `:delegate`); `act_triage` passes `act_worker_model` as `--worker-model`; the result file has
-`delegations`. The jobs do not use it: their launcher (`act_launch.py`) starts every job's ACT with `ACT_DELEGATE=0`
-(the engine's questions and the runs on the hosts alike); `site_act_env: {ACT_DELEGATE: "1"}` turns it on. The jobs'
-own tiers (above) pick the models. The site's changes to `act_triage` (1.104.0's launcher) are kept.
+- **Setup (optional):** set `site_act_worker_model` (or `site_act_worker_models: {genai: <worker model id>}`) in `playbooks/group_vars/all.yml` for a faster, cheaper first-pass model. Without it, every question goes to `site_act_model` / `site_act_models` as in 1.136.0. Turn tiers off per job with `log_analysis_act_tiers`, `vm_alarm_act_tiers`, `vm_capacity_act_tiers`, `vm_rightsize_act_tiers` or `answer_keys_act_tiers` (all `true`).
+- **ACT model tiers (`docs/ADDING_ACT.md`, "Model tiers"):** batched AAP-side jobs (log analysis, VMware alarms, capacity, right-sizing, STIG answer keys) send each item or batch to the worker model first. Single-judgement jobs (WAR, outage review, ticket insights, incident documents, VM ask/deploy, finding triage) and on-host runs (health check `explain`, fapolicyd) stay on the smart model.
+- **Escalation and verdict:** items marked critical go straight to the smart model. The smart model also re-checks a batch once if the worker fails, returns unreadable or incomplete output, is unsure (confidence under 50, `unsure` cross-check, draft without code) or calls an item critical. Its answer is final (falling back to a readable worker answer on error), and it writes the overall verdict from short masked answers without reading raw evidence.
+- **Reporting, cache and guardrails:** each report and job output prints one summary line of items per model and escalations. `site_act_cache` keys answers by model so tiers never mix. Both tiers share one launcher (`act_launch.py`), one reachability check, read-only evidence mode, stdin-only keys and final masking.
+- **ACT 0.6.28:** updated `vendor/act` and `vendor/act-windows` from 0.6.27 to 0.6.28, adding interactive `delegate` sub-agents (`--worker-model`, `ACT_WORKER_MODEL`, `:delegate`, result `delegations`) and `act_worker_model` in `act_triage` (keeping the site's 1.104.0 launcher). Jobs start ACT with `ACT_DELEGATE=0` unless `site_act_env` overrides it.
+- **Docs and tests:** updated ACT version (`0.6.28`), site-automation version (`1.137.0`) and model-tier notes in `docs/ADDING_ACT.md` and `docs/pdf/` build scripts (PDFs not rebuilt here). Added `tests/test_site_act_tiers.py` and golden `tests/fixtures/act_tiers_golden_1360.json`.
 
 ## 1.136.3 — 2026-11-27
 

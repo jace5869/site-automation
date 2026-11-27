@@ -87,6 +87,7 @@ The settings:
 | `site_act_models` | the model **for each provider**, so the model follows the provider you pick, e.g. `{genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}` | ACT's default for the provider |
 | `site_act_urls` | the API URL for each provider, e.g. `{asksage: https://<host>/server/openai/v1/chat/completions}` | ACT's default for the provider |
 | `site_act_model`, `site_act_url` | one model / URL for this run, whatever the provider (a survey answer) | empty: use the two above |
+| `site_act_worker_models`, `site_act_worker_model` | optional worker model tier for the per-item first pass (per provider, or one for this run); the smart model settles what it cannot and writes the verdict ([Model tiers](#model-tiers-a-worker-model-for-the-bulk-the-smart-model-for-judgement-11370)) | empty (smart model only) |
 | `site_act_ca` | a CA bundle file **on the hosts**, if the provider's certificate comes from a CA the hosts do not trust yet (for example a DoD CA not in `/etc/pki/ca-trust`) | the host's normal trust store |
 
 **Where to set them:**
@@ -147,6 +148,11 @@ and the `explain` level - ACT gets `ACT_TOOLS=0`, `ACT_JSON_MODE=0` and `ACT_PRE
 ACT's own steps (tools, the action schema, a `{` to go on from) and answers in plain text. With them it could only
 answer as a step - `{'action': 'plan', ...}` or `{'message': ...}` instead of the answer. `site_act_env` wins over
 them. ACT's loop (`diagnose`, `self-heal`) keeps its tools.
+
+**Model tiers and `ACT_DELEGATE`.** Set `site_act_worker_model` (or `site_act_worker_models`) so the worker model tier
+does the per-item first pass while the smart model settles what it cannot and writes the verdict
+([Model tiers](#model-tiers-a-worker-model-for-the-bulk-the-smart-model-for-judgement-11370)). Jobs start ACT with
+`ACT_DELEGATE=0` unless `site_act_env` says otherwise.
 
 **"ACT gave no analysis: the model answered as a chat".** Now and then a model loses the thread and
 answers like a chat window ("I am ready. What task or command would you like me to assist you
@@ -235,7 +241,7 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.27**. It sends the key
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.28**. It sends the key
 only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
 [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22 and 0.6.23, all automatic:
@@ -561,8 +567,8 @@ The old one is kept as a new file that is checked against the original before th
 backup name that is taken gets a number, and a file there is never written over. When `/opt/act` or `/opt/act/old` is a link, the
 job changes nothing there and says so. With `site_act_old_bin: report` it only says `would update ... (report only)`.
 
-The line says `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at /opt/act/old/act.<...>.` In Check it says
-`would update /opt/act/act 0.6.25 -> 0.6.27` and changes nothing. The update does not need a link to be made, and a host with
+The line says `updated /opt/act/act 0.6.25 -> 0.6.28, the old one kept at /opt/act/old/act.<...>.` In Check it says
+`would update /opt/act/act 0.6.25 -> 0.6.28` and changes nothing. The update does not need a link to be made, and a host with
 `python3` older than 3.6 is updated too. The jobs that run ACT on a host install it the same way (the file replaced when it differs).
 
 - **link** keeps the old one in `/opt/act/old` (0700, root) as `act.<UTC time>.<sha256, first 8>`. Then it links

@@ -436,7 +436,11 @@ story.append(table(["How", "Jobs", "What ACT does"], [
 ], [0.22, 0.36, 0.42]))
 story.append(P(
     "Every site-automation ACT job streams the model's answer and gives it `site_act_model_timeout` (600 s) "
-    "per answer; `site_act_concurrency` limits how many hosts call the model at once.", "small"))
+    "per answer; `site_act_concurrency` limits how many hosts call the model at once. With a worker model "
+    "set (`site_act_worker_model` or `site_act_worker_models`), batched AAP-side jobs use the worker model "
+    "tier for the per-item first pass while the smart model (`site_act_model` / `site_act_models`) settles "
+    "what it cannot and writes the verdict. Jobs start ACT with `ACT_DELEGATE=0` unless `site_act_env` "
+    "says otherwise.", "small"))
 
 # ============================================================================ 5. What to expect
 story += section("5. What to expect", [P(
@@ -792,7 +796,7 @@ story += section("10. Current status and limits", [callout("note", "Where things
     "of this guide were run end to end against a simulated model endpoint; their first run against "
     "GenAI.mil is Phase 1 of the rollout.",
 ])])
-story.append(H2("What changed in 0.6.22 to 0.6.27"))
+story.append(H2("What changed in 0.6.22 to 0.6.28"))
 story += bullets([
     "**0.6.22:** the model's answer is streamed (`ACT_STREAM`; ESC cancels at once; a gateway that cannot "
     "stream falls back by itself); `ACT_TEMPERATURE=auto` (Gemini 3 and the reasoning models get their "
@@ -806,6 +810,9 @@ story += bullets([
     "**0.6.25:** a reply cut off on its way back is asked for again instead of ending the run.",
     "**0.6.26:** key pools added; key values removed from the result file, audit log and `--json` output.",
     "**0.6.27:** Python 3.6 supported (RHEL 8's default `python3` works in ACT and `act_triage`).",
+    "**0.6.28:** interactive `delegate` worker sub-agents (`--worker-model`, `ACT_WORKER_MODEL`, "
+    "`:delegate`, `delegations` in the result file); `act_triage` passes `act_worker_model`. "
+    "Site-automation jobs start ACT with `ACT_DELEGATE=0` unless `site_act_env` says otherwise.",
 ])
 story += bullets([
     "**Templates, not yet tested:** the Windows Ansible play, the Event-Driven Ansible rulebook, and the "
