@@ -101,10 +101,10 @@ def _ad_cache_info(cfg, cn, ad_diag_fn, now):
         why = ""
     elif isinstance(last, dict) and last.get("at") is not None:
         state = "stale"
-        why = str(diag.get("why") or ("The last AD read expired." if ok else "The last AD read failed."))
+        why = "The last AD read expired." if ok else "The last AD read failed."
     else:
         state = "not_read"
-        why = str(diag.get("why") or getattr(cfg, "ad_groups_why", "") or "AD has not been read yet.")
+        why = "AD has not been read yet."
 
     rules = []
     for r in getattr(cfg, "card_match", None) or []:
@@ -292,11 +292,11 @@ def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_re
         off_why = ""
         if not a.get("discovered"):
             if name in aap_ids and aap_ids[name][1]:
-                off_why = str(aap_ids[name][1])
+                off_why = "Execute permission could not be confirmed."
             elif name in cached_off and cached_off[name]:
-                off_why = str(cached_off[name])
+                off_why = "Execute permission could not be confirmed."
 
-        refusal = "" if can_run else str(run_refusal_fn(cfg, cn, a) or "Not permitted to run this action.")
+        refusal = "" if can_run else "Your card does not have run access to this action."
         has_override = bool(entry and (entry.get("run_groups") or entry.get("approve_groups") or entry.get("confirm_again")))
         has_who = bool(a.get("who"))
         if has_override or has_who or is_limited:
@@ -388,7 +388,7 @@ def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_re
 
     # Redacted AD group diagnostics: never reveal admin group names/counts to non-admins or hidden template groups
     safe_groups = []
-    matched_group_names = {m["group"].casefold() for m in matches if m.get("group")}
+    matched_group_names = {group.casefold() for _, _, group, _ in matches if group}
     for gx in ad["raw_groups"]:
         grole = str(gx.get("role") or "")
         gname = str(gx.get("name") or "")
@@ -472,7 +472,7 @@ def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_re
             "card_matched": ad["card_matched"],
             "groups": safe_groups,
         },
-        "access_file_error": str(access_err or ""),
+        "access_file_error": "Saved template access could not be read." if access_err else "",
         "self_approval": self_app,
         "templates": templates,
         "capabilities": capabilities,

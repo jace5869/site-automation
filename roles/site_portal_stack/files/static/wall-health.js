@@ -74,12 +74,12 @@
     var hd = {Accept: "application/json"};
     if (ST.etag && !force) hd["If-None-Match"] = ST.etag;
     fetch(url, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      ST.loading = false;
       if (res.status === 304) return null;
       if (!res.ok) throw new Error("HTTP " + res.status);
       ST.etag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (doc) {
+      ST.loading = false;
       ST.failMsg = "";
       if (doc) {
         ST.data = doc;
@@ -88,6 +88,8 @@
       draw();
     }).catch(function (err) {
       ST.loading = false;
+      ST.data = null;
+      ST.etag = "";
       ST.failMsg = "Health wall feed unreachable: " + (err && err.message ? err.message : "network error");
       draw();
     });

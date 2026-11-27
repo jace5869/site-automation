@@ -864,7 +864,7 @@ def _feed_fresh(m, k, now):
 
 
 def _home(k):
-    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "ad" if k == "ad:db" else "network" if k == "sw:health" else ""
+    return "vmware" if k.startswith("vc:") else "storage" if k.startswith("ontap:") else "ad" if k == "ad:db" else "health" if k == "sw:health" else ""
 
 
 def _home_ok(m, k, now, by):
@@ -916,7 +916,8 @@ def summary(m, now):
     for a in areas:
         aid = a.get("id")
         feeds = [k for k in (a.get("feeds") or []) if isinstance(k, str)]
-        opened = [c for c in conds or [] if isinstance(c, dict) and c.get("end") is None and c.get("area") == aid]
+        opened = [c for c in conds or [] if isinstance(c, dict) and c.get("end") is None and
+                  (c.get("area") == aid or (aid == "health" and c.get("feed") in ("sw:health", "ad:db")))]
         cur = [c for c in opened if not _cond_stale(m, c, now)]
         n = {"crit": sum(1 for c in cur if c.get("sev") == "crit"), "warn": sum(1 for c in cur if c.get("sev") == "warn")}
         if not a.get("on") or not a.get("built"):
@@ -1004,7 +1005,7 @@ def summary(m, now):
         # source of the area passes LATE; a current condition until its own source passes STALE (a condition with no feed of its
         # own - a vCenter or cluster not answering - stays until the next read says otherwise)
         late_s, stale_s = float(m.get("late") or LATE_S), float(m.get("stale") or STALE_S)
-        ok_until = (min(asofs) + late_s) if st == "ok" and asofs and len(asofs) == len(feeds) else None
+        ok_until = min(float(m["feeds"][k]["asof"]) + (m["feeds"][k].get("late") or late_s) for k in feeds) if st == "ok" and feeds and len(asofs) == len(feeds) else None
         live = []                                  # each current condition: its severity, until when (None: until the next read)
         for c in cur:
             f = (m.get("feeds") or {}).get(c.get("feed")) if c.get("feed") else None

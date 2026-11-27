@@ -2312,6 +2312,24 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_monitor_vm_match` | `["*VMware*"]` | a SolarWinds node whose Vendor or MachineType matches (globs, any case) is a VM: counted "not found in vCenter" when vCenter has none of its name |
 | `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK |
 | `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (LastSync) longer ago than this is not current: never green, never a recovery (5 to 1440) |
+| `portal_wall_health` | `true` | 1.139.0: Network & AD health wall area (?area=health + 1920 board), Site map (/portal/sitemap, SolarWinds WorldMapPoint lat/lon, offline bundled wall-land.js coastline), and read-only My access (/portal/access). Live from SolarWinds SWIS + AD report DB; missing or stale feeds always show grey 'not read' / 'Not current… (all of it: the role file) |
+| `portal_wall_health_seconds` | `60` | 1.139.0: how often SolarWinds SWIS is polled for Network & AD health and Site map (30 to 3600) |
+| `portal_wall_ad_repl_warn_hours` | `6` | 1.139.0: AD replication lag warning threshold in hours (0.1 to 720, below crit) |
+| `portal_wall_ad_repl_crit_hours` | `24` | 1.139.0: AD replication lag critical threshold in hours (above warn, max 720) |
+| `portal_wall_volume_warn` | `85` | 1.139.0: SolarWinds Orion.Volumes percent-used warning limit (1 to 99, below crit) |
+| `portal_wall_volume_crit` | `95` | 1.139.0: SolarWinds Orion.Volumes percent-used critical limit (above warn, max 100) |
+| `portal_wall_if_err_warn` | `1.0` | 1.139.0: sustained interface error/discard rate warning percent (0.01 to 99, below crit) |
+| `portal_wall_if_err_crit` | `2.5` | 1.139.0: sustained interface error/discard rate critical percent (above warn, max 100) |
+| `portal_wall_wan_util_warn` | `75` | 1.139.0: sustained WAN uplink utilization warning percent (1 to 99, below crit) |
+| `portal_wall_wan_util_crit` | `90` | 1.139.0: sustained WAN uplink utilization critical percent (above warn, max 100) |
+| `portal_wall_wan_rtt_warn` | `80` | 1.139.0: sustained WAN round-trip time warning limit in ms (1 to 9999, below crit) |
+| `portal_wall_wan_rtt_crit` | `150` | 1.139.0: sustained WAN round-trip time critical limit in ms (above warn, max 10000) |
+| `portal_wall_wan_loss_warn` | `1.0` | 1.139.0: sustained WAN packet loss warning percent (0.01 to 99, below crit) |
+| `portal_wall_wan_loss_crit` | `3.0` | 1.139.0: sustained WAN packet loss critical percent (above warn, max 100) |
+| `portal_wall_sustained_minutes` | `15` | 1.139.0: minutes a utilization, error, latency or loss breach must hold to appear on the wall (1 to 240) |
+| `portal_wall_down_polls` | `2` | 1.139.0: consecutive down polls required before raising a node/WAN down wall condition (1 to 10) |
+| `portal_site_map` | `true` | 1.139.0: enable the offline Site map page (/portal/sitemap, alias /portal/wall/map; true \| false) |
+| `portal_my_access` | `true` | 1.139.0: enable the read-only My access page (/portal/access, alias /portal/my-access; true \| false) |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approve_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |

@@ -123,12 +123,12 @@
     var hd = {Accept: "application/json"};
     if (S.etag && !force) hd["If-None-Match"] = S.etag;
     fetch(url, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      S.loading = false;
       if (res.status === 304) return null;
       if (!res.ok) throw new Error("HTTP " + res.status);
       S.etag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (doc) {
+      S.loading = false;
       S.failMsg = "";
       if (doc) {
         S.data = doc;
@@ -138,6 +138,8 @@
       render();
     }).catch(function (err) {
       S.loading = false;
+      S.data = null;
+      S.etag = "";
       S.failMsg = "Site map feed unreachable: " + (err && err.message ? err.message : "network error");
       render();
     });
@@ -472,7 +474,7 @@
           h("td", "", [h("span", "sm-badge " + s.status, [statusWord(s.status)])]),
           h("td", "mono", [s.placed ? (s.lat.toFixed(3) + ", " + s.lon.toFixed(3) + " · " + s.coord_source) : ("Unplaced — " + (s.unplaced_why || "no coords"))]),
           h("td", "mono", [s.up + "/" + s.nodes + (s.down ? " (" + s.down + " down)" : "")]),
-          h("td", "mono", [s.wan_util ? (s.wan_util + "%") : "—"]),
+          h("td", "mono", [s.wan_util == null ? "Not read" : s.wan_util + "%"]),
           h("td", "mono", [s.rtt !== null ? (s.rtt + " ms") : "—"]),
           h("td", "mono", [s.loss !== null ? (s.loss + "%") : "—"]),
           h("td", "", [(s.issues && s.issues.length) ? s.issues.slice(0, 2).map(function (i) { return i.obj + ": " + i.why; }).join("; ") : "—"])
@@ -513,7 +515,7 @@
       addKV("Placement", it.placed ? (it.lat.toFixed(4) + "°, " + it.lon.toFixed(4) + "° (" + it.coord_source + ")") : ("Unplaced — " + (it.unplaced_why || "no coordinates")));
       addKV("Region", it.region || "—");
       addKV("Nodes", it.up + " up / " + it.down + " down / " + it.warn + " warn / " + it.stale + " stale (of " + it.nodes + ")");
-      addKV("WAN", (it.wan_down ? (it.wan_down + " link down · ") : "") + "Max util " + (it.wan_util || 0) + "%");
+      addKV("WAN", (it.wan_down ? (it.wan_down + " link down · ") : "") + "Max util " + (it.wan_util == null ? "not read" : it.wan_util + "%"));
       addKV("RTT / Loss", (it.rtt !== null ? (it.rtt + " ms") : "—") + " / " + (it.loss !== null ? (it.loss + "%") : "—"));
       drw.appendChild(kv);
 
@@ -546,11 +548,11 @@
         (it.placed ? (" · " + it.lat.toFixed(3) + ", " + it.lon.toFixed(3)) : " · unplaced") + "\nSite map: " + location.href;
     } else {
       addKV("Endpoints", it.na + " (" + (it.ia || "if") + ") ↔ " + it.nb + " (" + (it.ib || "if") + ")");
-      addKV("Utilization", (it.util || 0) + "%");
+      addKV("Utilization", (it.util == null ? "not read" : it.util + "%"));
       addKV("RTT / Loss", (it.rtt !== null ? (it.rtt + " ms") : "—") + " / " + (it.loss !== null ? (it.loss + "%") : "—"));
       addKV("Reason", it.why || "Operational");
       drw.appendChild(kv);
-      teams = "[WAN " + statusWord(it.status) + "] " + it.a + " <-> " + it.b + " · Util " + (it.util || 0) + "% · " + (it.why || "OK");
+      teams = "[WAN " + statusWord(it.status) + "] " + it.a + " <-> " + it.b + " · Util " + (it.util == null ? "not read" : it.util + "%") + " · " + (it.why || "OK");
     }
 
     var acts = h("div", "sm-drw-acts");

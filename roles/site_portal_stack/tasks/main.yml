@@ -1261,6 +1261,7 @@
       PORTAL_WALL_HEALTH: "{{ '1' if portal_wall_health | bool else '0' }}"
       PORTAL_SITE_MAP: "{{ '1' if portal_site_map | bool else '0' }}"
       PORTAL_MY_ACCESS: "{{ '1' if portal_my_access | bool else '0' }}"
+      PORTAL_HEALTH_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_swis_health | bool else '' }}"
       PORTAL_WALL_HEALTH_OPTS:
         seconds: "{{ portal_wall_health_seconds | int }}"
         ad_old_minutes: "{{ portal_ad_old_minutes | int }}"
@@ -1287,7 +1288,7 @@
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
-      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if (_portal_netmap | bool or _portal_swis_health | bool) else '' }}"
+      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}"
       PORTAL_SWIS_VERIFY: "{{ '1' if portal_solarwinds_validate_certs | bool else '0' }}"
       PORTAL_SWIS_TIMEOUT: "{{ netmap_timeout | default(60) | string }}"
       PORTAL_NETMAP_OPTS:

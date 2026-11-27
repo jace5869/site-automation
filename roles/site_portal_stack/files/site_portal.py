@@ -789,6 +789,7 @@ class Config(object):
         self.wall_health = self.wall and flag(g("PORTAL_WALL_HEALTH", "1")) and (wall_health is not None)
         self.site_map = flag(g("PORTAL_SITE_MAP", "1")) and (wall_health is not None)
         self.my_access = flag(g("PORTAL_MY_ACCESS", "1")) and (my_access is not None)
+        self.health_swis_url = g("PORTAL_HEALTH_SWIS_URL", self.swis_url).strip()
         self.swis_ca = g("PORTAL_SWIS_CA", "") or None
         try:
             ho = g("PORTAL_WALL_HEALTH_OPTS", "{}")
@@ -3006,7 +3007,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
         # general run lists (portal_runners, portal_run_groups)
         if cn in action["who"] and cfg.viewer_133(cn):          # Codex 1340 r2 #10: as 1.133.0, only behind its portal entry
             return True
-        return bool(not error and row.get("run_groups") and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row["run_groups"]))
+        return bool(not error and row.get("run_groups") and cfg.ad_groups and any(cfg.ad_groups.group_matches("templates", cn, row["run_groups"])))
     else:
         default = cn in cfg.requesters
         field = "run_groups"
@@ -3016,7 +3017,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
         # empty (People), so an AD outage never opens it.
         if not error:
             default = default or (rules.may_run(action, cn, cfg.requesters) and cfg.viewer_133(cn))
-    return default or bool(row.get(field) and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row[field]))
+    return default or bool(row.get(field) and cfg.ad_groups and any(cfg.ad_groups.group_matches("templates", cn, row[field])))
 
 
 RUN_REFUSAL = "You are not on the list of people who may run actions here (portal_run_groups)."
@@ -3056,7 +3057,7 @@ class Portal(object):
             cfg.ldap_opts["suggest_groups"] = True
 
         def groups_changed(entries):
-            if cfg.ad_groups:
+            if hasattr(cfg.ad_groups, "want"):
                 groups = sorted({g for row in entries.values() for field in portal_access.GROUP_FIELDS for g in row[field]})
                 with cfg.ad_groups.lock:
                     cfg.ad_groups.want = dict(cfg.ad_groups.want, templates=groups)
@@ -7387,7 +7388,7 @@ class WallLive(object):
             _safe_add(log, {"event": "wall", "fleet": "setting", "why": note})
         if getattr(cfg, "wall_fleet", False) is True:
             self.fleet = wall_fleet.Board(cfg, lambda d: _safe_add(log, d), reader=fleet)
-        if self.health is None and wall_health is not None and (getattr(cfg, "wall_health", False) or getattr(cfg, "site_map", False)):
+        if self.health is None and wall_health is not None and (getattr(cfg, "wall_health", False) is True or getattr(cfg, "site_map", False) is True):
             self.health = wall_health.HealthBoard(cfg, lambda d: _safe_add(log, d), ad_db=AdDb(cfg) if getattr(cfg, "report_db", None) else None)
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
@@ -7671,7 +7672,7 @@ def make_handler(cfg, portal, static_dir, wall=None):
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
     # 1.139.0: share one HealthBoard across /api/wall/health and /api/sitemap (also works when wall is off and site_map is on)
     health_board = getattr(wall, "health", None)
-    if health_board is None and wall_health is not None and (getattr(cfg, "wall_health", False) or getattr(cfg, "site_map", False)):
+    if health_board is None and wall_health is not None and (getattr(cfg, "wall_health", False) is True or getattr(cfg, "site_map", False) is True):
         health_board = wall_health.HealthBoard(cfg, lambda d: _safe_add(portal.log, d),
                                                ad_db=AdDb(cfg) if getattr(cfg, "report_db", None) else None, netlive=live)
     elif health_board is not None and health_board.netlive is None and live is not None:
@@ -7741,7 +7742,11 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     self._send(403, message_page(cfg, "Portal access", reason, user, kind="bad"), "text/html; charset=utf-8")
                 return None
             if not may:
-                portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
+                path = urllib.parse.urlsplit(self.path).path
+                portal.log_reader_refusal(user, self._ip(), path)
+                if path in ("/access", "/my-access", "/api/access"):
+                    return self._deny("You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
+                                      api or path.startswith("/api/"))
                 if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
                     self._send(403, {"error": "You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
                                      "ad": ad_diag(cfg, user)})

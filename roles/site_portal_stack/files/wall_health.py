@@ -255,7 +255,7 @@ class SwisHealthReader(object):
     def _client(self):
         if site_swis is None:
             raise RuntimeError("the SolarWinds reader (site_swis.py) is not in the service files")
-        return site_swis.Client(self.url, self.user, self.password, verify=self.verify, timeout=self.timeout, ca=self.ca)
+        return site_swis.Client(self.url, self.user, self.password, verify=self.verify, timeout=self.timeout, ca_path=self.ca)
 
     def read(self, now=None):
         """Read nodes, WorldMap points, volumes, interfaces, topology, and service groups (SWQL SELECT only).
@@ -562,7 +562,7 @@ class HealthTracker(object):
 # ---- 1.139.0: Pure model builders (deterministic, easily unit-tested) ---------------------------------------
 def _assign_sites(nodes, connections, netmap_opts, site_places):
     """Map every node id -> site name, and gather site coordinates with provenance."""
-    nm = dict(netmap_opts or {})
+    nm = dict(netmap_opts or {"site_by": "location"})
     no_site = str(nm.get("no_site") or "Unassigned")
     node_site = {}
     if site_swis is not None and nodes:
@@ -641,8 +641,8 @@ def _assign_sites(nodes, connections, netmap_opts, site_places):
                 if ok:
                     conf_places[str(k).strip()] = coord
             elif isinstance(v, (list, tuple)) and len(v) >= 2:
-                # portal_wall_site_places may be [lon, lat] or {lat, lon}; only accept explicit dicts or valid pairs
-                ok, coord, _ = valid_coord(v[0], v[1])
+                # portal_wall_site_places pairs are [longitude, latitude].
+                ok, coord, _ = valid_coord(v[1], v[0])
                 if ok:
                     conf_places[str(k).strip()] = coord
 
@@ -1259,7 +1259,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
     # Record rolling 4h trend sample
     site_rtt_avg = {s: round(sum(vals) / len(vals), 1) for s, vals in site_rtts.items() if vals}
     tracker.record_trend(now, {
-        "conds": len(cur_conds),
+        "conds": len(cur_conds) if any_fresh else None,
         "down": down_cnt if sw_fresh in ("ok", "late") else None,
         "rtt": worst_rtt,
         "loss": worst_loss,
@@ -1407,17 +1407,21 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
         fa, fb = if_by.get(c[1]) or {}, if_by.get(c[3]) or {}
         na, nb = node_by[c[0]], node_by[c[2]]
         sta, stb = _node_status(na.get("status_code"), na.get("unmanaged")), _node_status(nb.get("status_code"), nb.get("unmanaged"))
-        util = max([u for u in (fa.get("in_util"), fa.get("out_util"), fb.get("in_util"), fb.get("out_util")) if u is not None] or [0.0])
+        util = max((u for u in (fa.get("in_util"), fa.get("out_util"), fb.get("in_util"), fb.get("out_util")) if u is not None and u >= 0), default=None)
         if stale_feed:
             lst, lwhy = "stale", "SolarWinds feed not current"
         elif fa.get("oper_status") == 2 or fa.get("status") == 2 or fb.get("oper_status") == 2 or fb.get("status") == 2:
             lst, lwhy = "crit", "WAN interface operationally down"
         elif sta == "down" or stb == "down":
             lst, lwhy = "crit", "%s unreachable" % (na["name"] if sta == "down" else nb["name"])
-        elif util >= o["wan_util_crit"]:
+        elif util is not None and util >= o["wan_util_crit"]:
             lst, lwhy = "crit", "WAN utilization %.0f%% (crit %.0f%%)" % (util, o["wan_util_crit"])
-        elif util >= o["wan_util_warn"] or fa.get("status") == 3 or fb.get("status") == 3:
-            lst, lwhy = "warn", "WAN utilization %.0f%% / interface warning" % util
+        elif util is not None and util >= o["wan_util_warn"]:
+            lst, lwhy = "warn", "WAN utilization %.0f%%" % util
+        elif fa.get("status") == 3 or fb.get("status") == 3:
+            lst, lwhy = "warn", "Interface warning"
+        elif util is None:
+            lst, lwhy = "stale", "WAN utilization not read"
         elif sta == "unknown" or stb == "unknown":
             lst, lwhy = "stale", "endpoint status unknown"
         else:
@@ -1428,8 +1432,9 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
         elif lst == "warn":
             site_wan_warn[sa] += 1
             site_wan_warn[sb] += 1
-        site_wan_util[sa] = max(site_wan_util[sa], util)
-        site_wan_util[sb] = max(site_wan_util[sb], util)
+        if util is not None:
+            site_wan_util[sa] = max(site_wan_util[sa], util)
+            site_wan_util[sb] = max(site_wan_util[sb], util)
         rtts = [r for r in (na.get("resp"), nb.get("resp")) if r is not None and r >= 0]
         losses = [l for l in (na.get("loss"), nb.get("loss")) if l is not None and l >= 0]
         spd = min([s for s in (fa.get("speed"), fb.get("speed")) if s and s > 0] or [0])
@@ -1439,7 +1444,7 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
             "na": na["name"], "nb": nb["name"],
             "ia": fa.get("name") or "", "ib": fb.get("name") or "",
             "status": lst, "why": lwhy,
-            "util": round(util, 1),
+            "util": round(util, 1) if util is not None else None,
             "speed_bps": spd or None,
             "rtt": round(max(rtts), 1) if rtts else None,
             "loss": round(max(losses), 1) if losses else None,
@@ -1507,7 +1512,7 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
             "status": sst,
             "nodes": len(snodes),
             "up": up, "down": down, "warn": warn, "stale": unk, "unmanaged": unman,
-            "wan_util": round(site_wan_util[sname], 1) if site_wan_util[sname] else 0.0,
+            "wan_util": round(site_wan_util[sname], 1) if sname in site_wan_util else None,
             "wan_down": site_wan_down[sname],
             "rtt": max_rtt,
             "loss": max_loss,
@@ -1602,11 +1607,12 @@ class HealthBoard(object):
         self.swis_at = 0.0
         self.force_until = 0.0
 
+        swis_url = getattr(cfg, "health_swis_url", getattr(cfg, "swis_url", ""))
         if reader is not None:
             self.reader = reader
-        elif getattr(cfg, "swis_url", "") and getattr(cfg, "swis_user", "") and getattr(cfg, "swis_password", "") and site_swis is not None:
+        elif swis_url and getattr(cfg, "swis_user", "") and getattr(cfg, "swis_password", "") and site_swis is not None:
             self.reader = SwisHealthReader(
-                cfg.swis_url, cfg.swis_user, cfg.swis_password,
+                swis_url, cfg.swis_user, cfg.swis_password,
                 verify=getattr(cfg, "swis_verify", True),
                 ca=getattr(cfg, "swis_ca", None),
                 timeout=getattr(cfg, "swis_timeout", 60),
@@ -1616,7 +1622,7 @@ class HealthBoard(object):
         else:
             self.reader = None
             why = ('no SolarWinds login: attach the "SolarWinds (read-only)" credential on Site portal - deploy'
-                   if not (getattr(cfg, "swis_url", "") and getattr(cfg, "swis_user", "") and getattr(cfg, "swis_password", ""))
+                   if not (swis_url and getattr(cfg, "swis_user", "") and getattr(cfg, "swis_password", ""))
                    else "the SolarWinds reader (site_swis.py) is missing")
             self.swis_meta = {"state": "never", "asof": None, "why": why}
 
@@ -1710,9 +1716,11 @@ class HealthBoard(object):
 
     def _swis_fallback(self):
         """If NetLive already has a fresh raw SolarWinds snapshot and HealthBoard hasn't completed its first poll, reuse it."""
-        if self.swis_snap is not None or self.netlive is None:
+        if self.swis_snap is not None or self.netlive is None or self.swis_meta["state"] != "never":
             return self.swis_snap, self.swis_meta
         with self.netlive.lock:
+            if self.netlive.stale:
+                return self.swis_snap, self.swis_meta
             raw = self.netlive.raw
             at = self.netlive.read_at
         if isinstance(raw, dict) and raw.get("nodes"):
@@ -1848,7 +1856,7 @@ def extend_wall(result, health_m):
             "built": True,
             "feeds": area_feeds,
             "not_on_wall": "",
-            "complete": bool(area_feeds) and all(feeds[k].get("fresh") == "ok" for k in area_feeds),
+            "complete": health_m.get("state") != "stale" and sw.get("fresh") == "ok" and ad.get("fresh") == "ok",
             "incomplete": [] if area_feeds else ["no live SolarWinds or AD report DB feed yet"],
             "why": "" if area_feeds else "Waiting for SolarWinds / AD report DB feed",
         })
