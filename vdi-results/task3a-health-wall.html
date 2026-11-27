@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SITEA - Network and AD health wall (mockup)</title>
+<style>
+:root{color-scheme:light dark;--sans:"Manrope","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;--r:16px;
+--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;
+--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);
+--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);
+--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+@media (prefers-color-scheme:dark){:root{--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;
+--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);
+--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);
+--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}}
+/* the Auto / Light / Dark switch: radios + :has(), no script */
+:root:has(#th-light:checked){color-scheme:light;--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+:root:has(#th-dark:checked){color-scheme:dark;--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--sans)}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+a:hover{background:var(--hover)}
+a:focus-visible,label:focus-within,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1{font-weight:800;letter-spacing:-.025em;font-size:clamp(1.5rem,1.1rem + 1vw,2rem);margin:0}
+h2{font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label);margin:0 0 8px}
+.appbar{background:var(--card);border-bottom:1px solid var(--edge);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 18px}
+.mark{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink);display:grid;place-items:center;font-weight:800}
+.nav{display:flex;flex-wrap:wrap;gap:4px;margin-left:8px}
+.nav a{padding:4px 12px;border-radius:999px;text-decoration:none;color:var(--ink);border:1px solid transparent}
+.nav a:hover{border-color:var(--edge)}
+.nav a[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:700;border-color:var(--accent)}
+.theme{margin-left:auto;display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden;background:var(--card)}
+.theme input{position:absolute;opacity:0;pointer-events:none}
+.theme label{padding:4px 12px;cursor:pointer;font-size:13px;color:var(--label)}
+.theme label:hover{background:var(--hover)}
+.theme input:checked+label{background:var(--accent);color:var(--accent-ink);font-weight:700}
+.theme input:focus-visible+label{outline:2px solid var(--accent);outline-offset:-2px}
+main{max-width:1760px;margin:0 auto;padding:16px 18px 40px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:var(--r);box-shadow:var(--shadow);padding:12px 16px}
+.sub{color:var(--muted);font-size:13px}
+.mono{font-family:var(--mono)}
+.chip{display:inline-flex;align-items:center;gap:5px;font:700 12px var(--sans);padding:1px 9px 1px 7px;border-radius:999px;border:1px solid var(--edge);white-space:nowrap}
+.chip svg{width:12px;height:12px;flex:none}
+.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--edge);border-style:dashed}
+.brk{overflow-wrap:anywhere;word-break:break-word}
+.mock{font-size:12px;color:var(--muted);border:1px dashed var(--edge);border-radius:10px;padding:6px 10px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:0 0 12px}
+.mock b{color:var(--label)}
+.pv input{position:absolute;opacity:0;pointer-events:none}
+.pv label{display:inline-block;padding:2px 10px;border:1px solid var(--edge);border-radius:999px;cursor:pointer;background:var(--card);color:var(--label)}
+.pv label:hover{background:var(--hover)}
+.pv input:checked+label{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.pv input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.fresh{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 12px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.bar60{flex:1 1 160px;max-width:320px;height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.bar60 i{display:block;height:100%;background:var(--accent);animation:fill 60s linear infinite}
+@keyframes fill{from{width:0}to{width:100%}}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0 0 16px}
+.tile{display:block;text-decoration:none;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-top:4px solid var(--edge);border-radius:var(--r);padding:10px 14px;box-shadow:var(--shadow)}
+a.tile:hover{background:var(--hover)}
+.tile .v{font:800 40px/1.1 var(--sans)}
+.tile .k{font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
+.tile .go,.item .go{font-size:12px;color:var(--accent);text-decoration:underline}
+.tile.c{border-top-color:var(--critical)}.tile.c .v{color:var(--critical)}
+.tile.w{border-top-color:var(--warning)}.tile.w .v{color:var(--warning)}
+.tile.f{border-top-color:var(--ok)}.tile.f .v{color:var(--ok)}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.col{display:grid;gap:10px}
+.item{display:block;text-decoration:none;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-left:6px solid var(--edge);border-radius:12px;padding:9px 12px;box-shadow:var(--shadow)}
+.item:hover{background:var(--hover)}
+.item.crit{border-left-color:var(--critical);background:linear-gradient(0deg,var(--critical-bg),var(--critical-bg)),var(--card)}
+.item.warn{border-left-color:var(--warning)}
+.item .top{display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+.item .nm{font-weight:800;font-size:16px;min-width:0}
+.item.crit .nm{font-size:17px}
+.item .meta{color:var(--muted);font-size:13px}
+.item .go{display:block;margin-top:4px}
+.chip.solid{background:var(--critical);color:var(--card);border-color:var(--critical)}
+.meter{position:relative;height:10px;border-radius:99px;background:var(--line);margin:6px 0 2px;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;background:var(--warning)}
+.crit .meter i{background:var(--critical)}
+.meter b{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);opacity:.55}
+.w97{width:97%}.w91{width:91%}.at90{left:90%}.at95{left:95%}
+.more{display:block;text-align:center;padding:6px;border:1px dashed var(--edge);border-radius:12px;font-size:13px}
+.quiet-card,.stale-banner{display:none}
+.quiet-card{border-left:6px solid var(--ok)}
+.stale-banner{border-left:6px solid var(--warning);background:var(--warning-bg);margin:0 0 12px}
+main:has(#pv-quiet:checked) .busy{display:none}
+main:has(#pv-quiet:checked) .quiet-card{display:block}
+main:has(#pv-stale:checked) .stale-banner{display:block}
+main:has(#pv-stale:checked) .item{border-style:dashed}
+main:has(#pv-stale:checked) .dot{background:var(--warning);animation:none}
+@media (max-width:1000px){.tiles{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}}
+@media (max-width:520px){.tiles{grid-template-columns:1fr}}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-crit" viewBox="0 0 12 12"><path d="M6 1l5.2 9.5H.8z" fill="currentColor"/><path d="M6 4.6v2.9M6 8.6v.1" stroke="var(--card)" stroke-width="1.3" stroke-linecap="round"/></symbol>
+<symbol id="i-warn" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 3.8v3M6 8.2v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-ok" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 6.2l1.8 1.8 3-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-unk" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 1.8"/><path d="M4.8 4.8c0-1.6 2.4-1.6 2.4 0 0 1-1.2 1-1.2 2M6 8.6v.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+</defs></svg>
+<header class="appbar"><span class="mark" aria-hidden="true">S</span><strong>SITEA Portal</strong>
+<nav class="nav" aria-label="Portal"><a href="#">Home</a><a href="#" aria-current="page">Wall</a><a href="#">Reports</a><a href="#">My access</a></nav>
+<span class="theme" role="radiogroup" aria-label="Theme"><input type="radio" name="th" id="th-auto" checked><label for="th-auto">Auto</label><input type="radio" name="th" id="th-light"><label for="th-light">Light</label><input type="radio" name="th" id="th-dark"><label for="th-dark">Dark</label></span></header>
+<main>
+<div class="mock pv"><b>Mockup preview - data state:</b>
+<span><input type="radio" name="pv" id="pv-busy" checked><label for="pv-busy">Busy</label></span>
+<span><input type="radio" name="pv" id="pv-quiet"><label for="pv-quiet">Quiet</label></span>
+<span><input type="radio" name="pv" id="pv-stale"><label for="pv-stale">Stale feed</label></span>
+<span>Static sample data, placeholders only.</span></div>
+<h1>Network and AD health</h1>
+<p class="sub">Only what needs a person: <b>down</b>, <b>full</b>, <b>sustained errors</b>. Everything else is counted, never listed.</p>
+<div class="fresh card" role="status"><span class="dot" aria-hidden="true"></span><b>Live</b>
+<span class="sub">Auto-refresh every 60 s &middot; last read <span class="mono">10:42:07 UTC</span> (12 s ago)</span><span class="bar60" aria-hidden="true"><i></i></span>
+<span class="sub">SolarWinds read <span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span> AD read <span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span></span></div>
+<div class="stale-banner card" role="alert"><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Stale</span> <b>The SolarWinds feed is 14 min old.</b> The list below is the last known state, not the current one. <a href="#">Open the feed log</a></div>
+
+<div class="tiles busy">
+<a class="tile c" href="#down"><div class="k">Down</div><div class="v">3</div><div class="sub">2 critical &middot; 1 warning</div><span class="go">Jump to list &rsaquo;</span></a>
+<a class="tile w" href="#full"><div class="k">Full</div><div class="v">2</div><div class="sub">1 critical &middot; 1 warning</div><span class="go">Jump to list &rsaquo;</span></a>
+<a class="tile w" href="#errors"><div class="k">Sustained errors</div><div class="v">2</div><div class="sub">1 critical &middot; 1 warning</div><span class="go">Jump to list &rsaquo;</span></a>
+<div class="tile f"><div class="k">Fine (counted, not listed)</div><div class="v">209</div><div class="sub">of 216 devices and 6 DCs checked</div></div>
+</div>
+
+<div class="grid3 busy">
+<section id="down" class="col" aria-labelledby="hd"><h2 id="hd">Down (3)</h2>
+<a class="item crit" href="#"><div class="top"><span class="nm brk">sitea-dc02.corp.example.mil</span><span class="chip solid"><svg><use href="#i-crit"/></svg>Critical &middot; Down</span></div>
+<div class="meta">Domain controller &middot; 192.0.2.12 &middot; no answer for <b>18 min</b> (since 10:24 UTC)</div><span class="go">Open details &rsaquo;</span></a>
+<a class="item crit" href="#"><div class="top"><span class="nm brk">sitea-sw03</span><span class="chip solid"><svg><use href="#i-crit"/></svg>Critical &middot; Down</span></div>
+<div class="meta">Core switch &middot; 192.0.2.13 &middot; no answer for <b>42 min</b>; 38 nodes behind it unreachable</div><span class="go">Open details &rsaquo;</span></a>
+<a class="item warn" href="#"><div class="top"><span class="nm brk">SITEA-SITEB WAN link</span><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning &middot; Down</span></div>
+<div class="meta">Link &middot; down <b>6 min</b>; backup path carrying traffic</div><span class="go">Open details &rsaquo;</span></a></section>
+
+<section id="full" class="col" aria-labelledby="hf"><h2 id="hf">Full (2)</h2>
+<a class="item crit" href="#"><div class="top"><span class="nm brk">sitea-fs01 &middot; D:</span><span class="chip solid"><svg><use href="#i-crit"/></svg>Critical &middot; 97% full</span></div>
+<div class="meter" role="img" aria-label="97 percent used, warning at 90, critical at 95"><i class="w97"></i><b class="at90"></b><b class="at95"></b></div>
+<div class="meta">3.1 GB free &middot; filling 1.2 GB/day &middot; full in about 3 days</div><span class="go">Open details &rsaquo;</span></a>
+<a class="item warn" href="#"><div class="top"><span class="nm brk">sitea-dc01.corp.example.mil &middot; C:</span><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning &middot; 91% full</span></div>
+<div class="meter" role="img" aria-label="91 percent used, warning at 90, critical at 95"><i class="w91"></i><b class="at90"></b><b class="at95"></b></div>
+<div class="meta">AD database volume &middot; 11 GB free</div><span class="go">Open details &rsaquo;</span></a></section>
+
+<section id="errors" class="col" aria-labelledby="he"><h2 id="he">Sustained errors (2)</h2>
+<a class="item crit" href="#"><div class="top"><span class="nm brk">sitea-dc03.corp.example.mil</span><span class="chip solid"><svg><use href="#i-crit"/></svg>Critical &middot; Replication</span></div>
+<div class="meta">AD replication failing with 3 of 4 partners; last good <b>2 h 10 min</b> ago</div><span class="go">Open details &rsaquo;</span></a>
+<a class="item warn" href="#"><div class="top"><span class="nm brk">sitea-sw02 &middot; Gi1/0/24</span><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning &middot; CRC errors</span></div>
+<div class="meta">1.8% of frames for <b>35 min</b> (limit: 1% for 15 min)</div><span class="go">Open details &rsaquo;</span></a>
+<a class="more" href="#">+ 4 more below the limit &middot; open the full health report &rsaquo;</a></section>
+</div>
+
+<div class="quiet-card card"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>All clear</span> <b>Nothing is down, full or erroring.</b>
+<div class="sub">222 devices and DCs checked at 10:42 UTC. An empty list is a result, not a missing feed: the feed was read 12 s ago.</div></div>
+</main></body></html>

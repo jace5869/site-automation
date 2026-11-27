@@ -1,0 +1,10 @@
+TASK 2 - second review of v1.136.0..v1.136.2 (roles plugins playbooks tests docs/*.md)
+
+PASS - no real bug found.
+
+Read and checked at v1.136.2: portal-ops.js (text nodes only, no innerHTML), site_portal.py (shell and ops section escaping, look validation, access checks),
+vm_watch_unmanaged.py (suppression and fail-open paths), vmware watch email filter, site_vmware_watch.py, site_stig_answer_host.py,
+site_sw_inventory.py, watch.yml and defaults. No private data in added lines (docs and tests use placeholders).
+
+Not done: this machine has no Python, so pytest (test_portal_looks, test_vm_watch_unmanaged, test_sw_inventory, test_stig_answer_keys)
+and scripts/gen_portal_looks.py --check were not run. Whether static/portal-looks.css matches portal-looks.css.in is unverified.

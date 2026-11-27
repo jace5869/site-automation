@@ -1,0 +1,88 @@
+TASK 1 - design check: report by server, build steps 9-14 (placeholders only)
+
+NOTE: the mockup PDF (Reports-by-server-all-looks.pdf) was not available, and build steps 1-8
+(server_view_filters.py, report_servers templates) are in no branch of the repo. So this checks the plan's
+target layout (plan section 1) against the real code and data shape, not the mockup pictures.
+Hosts below are placeholders (sitea-web01 and so on). Items marked "unverified" were not confirmed in code.
+Read by a review agent; file:line refs are to origin/main (1.135.2) code.
+
+Worst first (1-5 hide or mislead; 6-13 break rows or counts; 14-24 smaller).
+
+1. site_filters.py:2764,2790,2793 + site_findings/tasks/report.yml:208 - no host reporting (or none reached):
+   title says "no findings", Critical and Warning boxes read 0, list empty; only the status turns warning. Reads as a green run.
+   Fix: when nothing reported, server_view shows "N not checked" tiles and no zero counts.
+2. report.yml:208,219 pass hostvars site_findings (uncapped); the cap is only on the artifact (report.yml:94-107, finding_filters.py:179-180).
+   site_findings_capped has no reader (only set_stats, report.yml:104). The plan's "the rest are only a number" is wrong: the table holds
+   every finding and "n more not listed" never reaches a reader.
+   Fix: pass the capped counts into findings_report and print "+n of this kind not shown" per host.
+3. site_filters.py:2769-2770 (host is bad unless only low) and :2777 (warn += sev != "critical"): an info finding counts as a
+   warning and makes its host amber. finding_filters.py:34 allows info, entry() keeps it (:72). No info producer found in the seven
+   reports (unverified for vmware_alarm_filters.py:164).
+   Fix: one severity normalizer; info is neither a warning count nor amber.
+4. report.yml:79 sets site_health.status "findings" for any finding, low included; site_filters.py:2769 treats a low-only host as healthy.
+   The server list status word would disagree with the email counts for the same host.
+   Fix: compute the status word once in server_view and ignore site_health.status.
+5. playbooks/stigman_health.yml:66-72 runs the report on ONE play host (localhost, or the Limit's first host); report.yml:208 groups by play
+   host, so every STIG Manager node and Keycloak finding becomes one "server". stigman_health_filters.py:38-39 add() sets no host
+   field; api.yml:42-44 prefixes only id and summary. The plan's fix (stop the prefix at api.yml:44) is not enough.
+   Fix: group by each finding's own host field and set host = node name in add().
+6. ad_filters.py:216-218 problem() keeps only critical and warning; the plan says critical/warning/low for ad_report - low never arrives.
+   Fix: correct the plan, or keep low in problem() (one line), before any "low never turns amber" test on AD.
+7. ad_filters.py:312 (_name = short upper-case name), :1017 (dc = _name, host = x.get("host")), :362 (object = host), :438 (object = _name):
+   two spellings of one DC; they do not join site_health, keyed by inventory name (report.yml:78). A DC may show twice.
+   Whether host can be None: unverified.
+   Fix: key the row by the lower-case inventory host; show dc as a label only.
+8. cert_inventory: no set_stats, no site_findings, no site_health. Records carry the host string as is (cert_filters.py:118,133): no server
+   row, no checked time, and a host with no certificate is absent. status_of returns "expired" (cert_filters.py:80-83) and "unknown"
+   (:80); "expired" is not in the plan's normalizer set and would fall through.
+   Fix: build the rollup from the record list and map expired to critical in the normalizer.
+9. stig_filters.py: stig_compare sets out["row"] = stig_host_row(out) per checklist (:341-366). A host with several checklists becomes several
+   rows with the same name, each with its own status.
+   Fix: fold rows by host in server_view and take the worst status.
+10. stig_filters.py:220,231 give "stig:not-scanned" no checklist tag and stig_findings (:602-614) dedupes by id, so only the first
+    checklist's not-scanned reason survives.
+    Fix: add the checklist key to that id as stig:drift does (:299).
+11. finding_filters.py:158 hard-codes critical for rule severity high, while the report uses stig_compare's map from check_stig_severity
+    (stig_filters.py:198,299; check_stig/defaults/main.yml:88). Portal artifact and report disagree when the setting changes.
+    Fix: pass the configured map into _stig_entries.
+12. stig_filters.py:299,310 make ONE aggregate finding per checklist and group (count plus a short list); per-rule entries exist only in the
+    artifact (finding_filters.py:143-158). The planned row expander would show one summary line per checklist.
+    Fix: build the expander from stig_compare's per-rule drift and new lists, not from site_findings.
+13. finding_filters.py:110-115,283-299: one fapolicyd_deny per denied program and path, up to 50 per kind per host (site_findings/defaults:81);
+    permissive "would deny" entries are low. One host can add 50 rows under one server.
+    Fix: one fapolicyd line per host with a count, and "+n more" in its expander.
+14. sw_inventory/library/site_sw_inventory.py:528-529 drops site_host_skipped hosts silently; the reason is clipped to 400 chars (:531).
+    List totals will not match the hosts in play and nothing says so.
+    Fix: add a "n left out on purpose" line to the summary.
+15. site_findings/tasks/solarwinds.yml:17-18 gives an fqdn only when ansible_host has a dot and is not an IP; solarwinds_report_filters.py:183,197
+    mark those hosts "unsure" and the counts still include them (note at :282).
+    Fix: show the word "not certain", keep them out of the counts, never green.
+16. site_filters.py:2853 (sections[:0] = first): a SolarWinds first:true section sits above Start here and any server list, so "At a glance"
+    is not on top.
+    Fix: move first-section content into the glance tiles or below the server list.
+17. site_filters.py:2781: the row tag that carries data-sev exists only when teams are set. sevChips (report_pop.js:180) needs tbody tr[data-sev].
+    The plan's "only data-sev on the row, no new code" is false without report_teams.
+    Fix: always emit row_tags with {"sev": sev} in findings_report.
+18. report.yml:78 keys site_health by site_report_name (default inventory_hostname) but findings are keyed by play host (:208). Playbooks set
+    site_report_name: stigman_health.yml:87, servicenow_health.yml:186, poam_status.yml:27, api_availability/tasks/main.yml:66; for these the
+    health row does not join its findings.
+    Fix: join only on the inventory name; show unmatched site_health entries as "other".
+19. report.yml:74-87 runs per host, so a host that never reaches it has no site_health entry (no checked time); :210 passes names only, the
+    reason is in reach.yml:23.
+    Fix: pass {host: reason} (plan step 2) and show "not checked: <reason>" in that host's row.
+20. site_filters.py:2793 (status warning when any host is missing) and :2728: unknown health is shown as warning-level; the plan's "unknown"
+    word is not used.
+    Fix: give not-reached hosts status unknown, with its own icon and word, and keep them out of the warning count.
+21. finding_filters.py:71-74 clips the title only, not the host; site_filters.py:2740,2764 sort by_host with plain sorted() (case-sensitive).
+    A long FQDN breaks a row; "Host" and "host" sort apart.
+    Fix: clip the display name with the planned dw class and sort with key=str.lower.
+22. report.yml:208 defaults site_findings to []; site_filters.py:2848 counts every host not in bad as healthy. A play host that ran no
+    checks counts as healthy (unverified whether a reached host can have empty site_checks_run).
+    Fix: count a host healthy only when site_checks_run is non-empty.
+23. site_filters.py:2764,2782: a single-host run drops the Host column and the Healthy box. A one-server list must still show its name.
+    Fix: server_view takes the name from the by_host key, always.
+24. report.yml:83 (site_health.findings) and :101 (site_findings) each carry the full list; two copies can diverge, and the plan wants counts once.
+    Fix: server_view reads site_findings only, for rows and counts.
+
+Not covered: the mockup's looks (atlas/brief/ops/glass, light/dark, 1280/800 px) - no PDF. Check those once it is supplied:
+long FQDN in a row at 800 px, critical row tinted AND worded, "At a glance" above everything, low never amber.

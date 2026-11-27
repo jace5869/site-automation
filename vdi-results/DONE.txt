@@ -1,0 +1,3 @@
+task 1: done - 24 items; the mockup PDF and build steps 1-8 were not available, so the check is against the plan and the real code
+task 2: done - PASS; tests and the looks generator check could not be run (no Python on this machine)
+task 3: done - three HTML files (health wall, site map, my access); checked at 1280 and 800 px in the dark theme only

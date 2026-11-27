@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SITEA - My access (mockup)</title>
+<style>
+:root{color-scheme:light dark;--sans:"Manrope","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;--r:16px;
+--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;
+--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);
+--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);
+--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+@media (prefers-color-scheme:dark){:root{--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;
+--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);
+--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);
+--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}}
+/* the Auto / Light / Dark switch: radios + :has(), no script */
+:root:has(#th-light:checked){color-scheme:light;--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+:root:has(#th-dark:checked){color-scheme:dark;--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--sans)}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+a:hover{background:var(--hover)}
+a:focus-visible,label:focus-within,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1{font-weight:800;letter-spacing:-.025em;font-size:clamp(1.5rem,1.1rem + 1vw,2rem);margin:0}
+h2{font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label);margin:0 0 8px}
+.appbar{background:var(--card);border-bottom:1px solid var(--edge);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 18px}
+.mark{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink);display:grid;place-items:center;font-weight:800}
+.nav{display:flex;flex-wrap:wrap;gap:4px;margin-left:8px}
+.nav a{padding:4px 12px;border-radius:999px;text-decoration:none;color:var(--ink);border:1px solid transparent}
+.nav a:hover{border-color:var(--edge)}
+.nav a[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:700;border-color:var(--accent)}
+.theme{margin-left:auto;display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden;background:var(--card)}
+.theme input{position:absolute;opacity:0;pointer-events:none}
+.theme label{padding:4px 12px;cursor:pointer;font-size:13px;color:var(--label)}
+.theme label:hover{background:var(--hover)}
+.theme input:checked+label{background:var(--accent);color:var(--accent-ink);font-weight:700}
+.theme input:focus-visible+label{outline:2px solid var(--accent);outline-offset:-2px}
+main{max-width:1760px;margin:0 auto;padding:16px 18px 40px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:var(--r);box-shadow:var(--shadow);padding:12px 16px}
+.sub{color:var(--muted);font-size:13px}
+.mono{font-family:var(--mono)}
+.chip{display:inline-flex;align-items:center;gap:5px;font:700 12px var(--sans);padding:1px 9px 1px 7px;border-radius:999px;border:1px solid var(--edge);white-space:nowrap}
+.chip svg{width:12px;height:12px;flex:none}
+.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--edge);border-style:dashed}
+.brk{overflow-wrap:anywhere;word-break:break-word}
+.mock{font-size:12px;color:var(--muted);border:1px dashed var(--edge);border-radius:10px;padding:6px 10px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:0 0 12px}
+.mock b{color:var(--label)}
+.pv input{position:absolute;opacity:0;pointer-events:none}
+.pv label{display:inline-block;padding:2px 10px;border:1px solid var(--edge);border-radius:999px;cursor:pointer;background:var(--card);color:var(--label)}
+.pv label:hover{background:var(--hover)}
+.pv input:checked+label{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.pv input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.gap{margin:10px 0 0}
+.who{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;justify-content:space-between}
+.who .id{font-weight:800;font-size:18px}
+.ro{display:inline-flex;gap:6px;align-items:center;font:700 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--label);border:1px solid var(--edge);border-radius:999px;padding:2px 10px;background:var(--card-strong)}
+.ro svg{width:12px;height:12px}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px;margin:12px 0 16px;align-items:stretch}
+.big{border-top:6px solid var(--accent)}
+.big .k{font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
+.big .v{font:800 46px/1.1 var(--sans);color:var(--accent);margin:2px 0}
+.big .v.tw{font-size:32px}
+.ladder{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;counter-reset:s}
+.ladder li{counter-increment:s;border:1px solid var(--edge);border-radius:12px;padding:8px 10px;background:var(--card);color:var(--muted);position:relative}
+.ladder li::before{content:counter(s);font:700 12px var(--mono);color:var(--muted)}
+.ladder b{display:block;font-size:15px;color:var(--ink)}
+.ladder .st{font-size:12px}
+.ladder li.on{border-color:var(--ok-bd);background:var(--ok-bg)}
+.ladder li.on .st{color:var(--ok);font-weight:700}
+.ladder li.top{border:2px solid var(--accent);background:var(--accent-soft)}
+.ladder li.top .st{color:var(--accent)}
+.ladder li.unk{border-style:dashed}
+.ladder li.unk .st{color:var(--unknown)}
+table{width:100%;border-collapse:collapse}
+th{font:700 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--label);text-align:left;background:var(--card-strong);padding:7px 10px;border-bottom:1px solid var(--edge)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.r{font-weight:800}
+code,.mono{font-family:var(--mono);font-size:12.5px}
+.by{display:block;margin:0 0 3px}
+.by .kind{font-weight:700}
+.pill{display:inline-block;font:600 12px var(--mono);background:var(--code);border:1px solid var(--edge);border-radius:6px;padding:0 6px}
+.banner{display:none;border-left:6px solid var(--warning);background:var(--warning-bg);margin:0 0 12px}
+.state-a,.state-b,.state-c{display:none}
+main:has(#pv-a:checked) .state-a,main:has(#pv-b:checked) .state-b,main:has(#pv-c:checked) .state-c{display:revert}
+main:has(#pv-a:checked) .state-a.hero,main:has(#pv-b:checked) .state-b.hero,main:has(#pv-c:checked) .state-c.hero{display:grid}
+main:has(#pv-a:checked) tr.state-a,main:has(#pv-b:checked) tr.state-b,main:has(#pv-c:checked) tr.state-c{display:table-row}
+main:has(#pv-c:checked) .banner{display:block}
+.helpbox{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--muted)}
+.tablewrap{overflow-x:auto;padding:0}
+@media (max-width:1000px){.hero{grid-template-columns:1fr}.ladder{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:640px){
+ table,thead,tbody,tr,td{display:block}
+ thead{position:absolute;left:-9999px}
+ tr{border-bottom:1px solid var(--edge);padding:8px 10px}
+ td{border:0;padding:2px 0}
+ td[data-l]::before{content:attr(data-l) ": ";font-weight:700;color:var(--label)}
+}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-crit" viewBox="0 0 12 12"><path d="M6 1l5.2 9.5H.8z" fill="currentColor"/><path d="M6 4.6v2.9M6 8.6v.1" stroke="var(--card)" stroke-width="1.3" stroke-linecap="round"/></symbol>
+<symbol id="i-warn" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 3.8v3M6 8.2v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-ok" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 6.2l1.8 1.8 3-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-unk" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 1.8"/><path d="M4.8 4.8c0-1.6 2.4-1.6 2.4 0 0 1-1.2 1-1.2 2M6 8.6v.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+</defs></svg>
+<header class="appbar"><span class="mark" aria-hidden="true">S</span><strong>SITEA Portal</strong>
+<nav class="nav" aria-label="Portal"><a href="#">Home</a><a href="#">Wall</a><a href="#">Reports</a><a href="#" aria-current="page">My access</a></nav>
+<span class="theme" role="radiogroup" aria-label="Theme"><input type="radio" name="th" id="th-auto" checked><label for="th-auto">Auto</label><input type="radio" name="th" id="th-light"><label for="th-light">Light</label><input type="radio" name="th" id="th-dark"><label for="th-dark">Dark</label></span></header>
+<main>
+<div class="mock pv"><b>Mockup preview - example user:</b>
+<span><input type="radio" name="pv" id="pv-a" checked><label for="pv-a">Approver by AD group</label></span>
+<span><input type="radio" name="pv" id="pv-b"><label for="pv-b">Viewer by named list</label></span>
+<span><input type="radio" name="pv" id="pv-c"><label for="pv-c">Admin, AD not read</label></span>
+<span>Static sample data, placeholders only.</span></div>
+<h1>My access</h1>
+<div class="card who gap">
+<div><div class="sub">Signed in as</div><div class="id mono">sitea-user01@corp.example.mil</div></div>
+<span class="ro"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.2" width="8" height="5.6" rx="1.2" fill="currentColor"/><path d="M4 5.2V3.7a2 2 0 014 0v1.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>Read-only page - nothing here can be changed</span></div>
+
+<div class="banner card" role="alert"><span class="chip s-warning"><svg><use href="#i-warn"/></svg>AD not read</span> <b>Only the named lists count right now.</b> A role that comes from an AD group may be missing below; it shows as "not known", not "no". Last read failed at <span class="mono">10:41 UTC</span>.</div>
+
+<section class="hero state-a" aria-label="Your role"><div class="card big"><div class="k">Your portal role</div><div class="v">Approver</div><div class="sub">Highest of the roles below. Given by the AD group <span class="pill brk">SITEA-Portal-Approvers</span>.</div></div>
+<div class="card"><div class="k sub">Role ladder (low to high)</div><ol class="ladder">
+<li class="on"><b>Viewer</b><span class="st">Yes</span></li><li><b>Runner</b><span class="st">No</span></li><li class="top"><b>Approver</b><span class="st">Yes - your role</span></li><li><b>Admin</b><span class="st">No</span></li></ol></div></section>
+<section class="hero state-b" aria-label="Your role"><div class="card big"><div class="k">Your portal role</div><div class="v">Viewer</div><div class="sub">Given by the named list <span class="pill">portal_viewers</span>. You can look at pages; you cannot run or approve.</div></div>
+<div class="card"><div class="k sub">Role ladder (low to high)</div><ol class="ladder">
+<li class="top"><b>Viewer</b><span class="st">Yes - your role</span></li><li><b>Runner</b><span class="st">No</span></li><li><b>Approver</b><span class="st">No</span></li><li><b>Admin</b><span class="st">No</span></li></ol></div></section>
+<section class="hero state-c" aria-label="Your role"><div class="card big"><div class="k">Your portal role</div><div class="v tw">Admin (at least)</div><div class="sub">Given by the named list <span class="pill">portal_admins</span>. Roles from AD groups are not known right now, so you may hold more.</div></div>
+<div class="card"><div class="k sub">Role ladder (low to high)</div><ol class="ladder">
+<li class="unk"><b>Viewer</b><span class="st">Not known</span></li><li class="unk"><b>Runner</b><span class="st">Not known</span></li><li class="unk"><b>Approver</b><span class="st">Not known</span></li><li class="top"><b>Admin</b><span class="st">Yes - your role</span></li></ol></div></section>
+
+<h2>How you got each role</h2>
+<div class="card tablewrap"><table>
+<thead><tr><th>Role</th><th>Result</th><th>Given by</th><th>What it lets you do</th></tr></thead>
+<tbody>
+<tr class="state-a"><td class="r" data-l="Role">Viewer</td><td data-l="Result"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>Yes</span></td><td data-l="Given by"><span class="by"><span class="kind">AD group</span> <span class="pill brk">SITEA-Portal-Viewers</span></span><span class="sub">setting <code>portal_view_groups</code> &middot; matched by membership</span></td><td data-l="Allows">Open the pages and reports</td></tr>
+<tr class="state-a"><td class="r" data-l="Role">Runner</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_runners</code>; no group in <code>portal_run_groups</code> matched</span></td><td data-l="Allows">Request a run of a listed workflow</td></tr>
+<tr class="state-a"><td class="r" data-l="Role">Approver</td><td data-l="Result"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>Yes</span></td><td data-l="Given by"><span class="by"><span class="kind">AD group</span> <span class="pill brk">SITEA-Portal-Approvers</span></span><span class="sub">setting <code>portal_approve_groups</code> &middot; matched by membership</span></td><td data-l="Allows">Approve or deny pending approvals</td></tr>
+<tr class="state-a"><td class="r" data-l="Role">Admin</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_admins</code>; no group in <code>portal_admin_groups</code> matched</span></td><td data-l="Allows">Open the Admin page</td></tr>
+
+<tr class="state-b"><td class="r" data-l="Role">Viewer</td><td data-l="Result"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>Yes</span></td><td data-l="Given by"><span class="by"><span class="kind">Named list</span> <span class="pill">sitea-user01</span></span><span class="sub">setting <code>portal_viewers</code></span></td><td data-l="Allows">Open the pages and reports</td></tr>
+<tr class="state-b"><td class="r" data-l="Role">Runner</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_runners</code>; no group in <code>portal_run_groups</code> matched</span></td><td data-l="Allows">Request a run of a listed workflow</td></tr>
+<tr class="state-b"><td class="r" data-l="Role">Approver</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_approvers</code>; no group in <code>portal_approve_groups</code> matched</span></td><td data-l="Allows">Approve or deny pending approvals</td></tr>
+<tr class="state-b"><td class="r" data-l="Role">Admin</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_admins</code>; no group in <code>portal_admin_groups</code> matched</span></td><td data-l="Allows">Open the Admin page</td></tr>
+
+<tr class="state-c"><td class="r" data-l="Role">Viewer</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>Not known</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_viewers</code>; <code>portal_view_groups</code> needs AD</span></td><td data-l="Allows">Open the pages and reports</td></tr>
+<tr class="state-c"><td class="r" data-l="Role">Runner</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>Not known</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_runners</code>; <code>portal_run_groups</code> needs AD</span></td><td data-l="Allows">Request a run of a listed workflow</td></tr>
+<tr class="state-c"><td class="r" data-l="Role">Approver</td><td data-l="Result"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>Not known</span></td><td data-l="Given by"><span class="sub">Not in <code>portal_approvers</code>; <code>portal_approve_groups</code> needs AD</span></td><td data-l="Allows">Approve or deny pending approvals</td></tr>
+<tr class="state-c"><td class="r" data-l="Role">Admin</td><td data-l="Result"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>Yes</span></td><td data-l="Given by"><span class="by"><span class="kind">Named list</span> <span class="pill">sitea-user01</span></span><span class="sub">setting <code>portal_admins</code></span></td><td data-l="Allows">Open the Admin page</td></tr>
+</tbody></table></div>
+<p class="sub">Open defaults count too: when a list and its group setting are both empty, the portal's open default applies and this page names it as the source. The order viewer, runner, approver, admin is the mockup's assumption; show the portal's real rule here.</p>
+<div class="helpbox"><span>Need a different role? Ask a portal admin to change the listed setting - this page cannot.</span><a href="#">Portal settings reference</a><a href="#">Back to Home</a></div>
+</main></body></html>

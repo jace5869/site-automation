@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SITEA - Wall map (mockup)</title>
+<style>
+:root{color-scheme:light dark;--sans:"Manrope","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;--r:16px;
+--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;
+--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);
+--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);
+--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+@media (prefers-color-scheme:dark){:root{--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;
+--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);
+--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);
+--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}}
+/* the Auto / Light / Dark switch: radios + :has(), no script */
+:root:has(#th-light:checked){color-scheme:light;--accent:#6246a8;--accent-ink:#fff;--accent-soft:rgba(98,70,168,.11);--a2:#126877;--bg:#f0f0f8;--bg2:#f7f7fc;--card:#fefeff;--card-strong:#f3f3f5;--code:#f4f4fa;--critical:#b73559;--critical-bd:rgba(183,53,89,.38);--critical-bg:rgba(183,53,89,.10);--edge:#d6d6e5;--hover:rgba(98,70,168,.08);--info:#126877;--info-bg:rgba(18,104,119,.13);--ink:#222139;--label:#44465f;--line:#e8e8f1;--muted:#575a73;--ok:#08755d;--ok-bd:rgba(8,117,93,.38);--ok-bg:rgba(8,117,93,.10);--shadow:0 1px 2px rgba(16,24,40,.07);--unknown:#575a73;--unknown-bg:rgba(87,90,115,.12);--warning:#885500;--warning-bd:rgba(136,85,0,.38);--warning-bg:rgba(136,85,0,.10)}
+:root:has(#th-dark:checked){color-scheme:dark;--accent:#b8adff;--accent-ink:#0b0f14;--accent-soft:rgba(184,173,255,.16);--a2:#77dfed;--bg:#101422;--bg2:#161a2a;--card:#1b2033;--card-strong:#262a3d;--code:#131827;--critical:#ff90ad;--critical-bd:rgba(255,144,173,.42);--critical-bg:rgba(255,144,173,.14);--edge:#373c53;--hover:rgba(184,173,255,.08);--info:#77dfed;--info-bg:rgba(119,223,237,.13);--ink:#f3f1ff;--label:#cbcde1;--line:#2a2f45;--muted:#b6bad1;--ok:#72e2bf;--ok-bd:rgba(114,226,191,.42);--ok-bg:rgba(114,226,191,.14);--shadow:0 1px 2px rgba(0,0,0,.35);--unknown:#b6bad1;--unknown-bg:rgba(182,186,209,.12);--warning:#ffcc77;--warning-bd:rgba(255,204,119,.42);--warning-bg:rgba(255,204,119,.14)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--sans)}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+a:hover{background:var(--hover)}
+a:focus-visible,label:focus-within,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1{font-weight:800;letter-spacing:-.025em;font-size:clamp(1.5rem,1.1rem + 1vw,2rem);margin:0}
+h2{font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label);margin:0 0 8px}
+.appbar{background:var(--card);border-bottom:1px solid var(--edge);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 18px}
+.mark{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink);display:grid;place-items:center;font-weight:800}
+.nav{display:flex;flex-wrap:wrap;gap:4px;margin-left:8px}
+.nav a{padding:4px 12px;border-radius:999px;text-decoration:none;color:var(--ink);border:1px solid transparent}
+.nav a:hover{border-color:var(--edge)}
+.nav a[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:700;border-color:var(--accent)}
+.theme{margin-left:auto;display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden;background:var(--card)}
+.theme input{position:absolute;opacity:0;pointer-events:none}
+.theme label{padding:4px 12px;cursor:pointer;font-size:13px;color:var(--label)}
+.theme label:hover{background:var(--hover)}
+.theme input:checked+label{background:var(--accent);color:var(--accent-ink);font-weight:700}
+.theme input:focus-visible+label{outline:2px solid var(--accent);outline-offset:-2px}
+main{max-width:1760px;margin:0 auto;padding:16px 18px 40px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:var(--r);box-shadow:var(--shadow);padding:12px 16px}
+.sub{color:var(--muted);font-size:13px}
+.mono{font-family:var(--mono)}
+.chip{display:inline-flex;align-items:center;gap:5px;font:700 12px var(--sans);padding:1px 9px 1px 7px;border-radius:999px;border:1px solid var(--edge);white-space:nowrap}
+.chip svg{width:12px;height:12px;flex:none}
+.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--edge);border-style:dashed}
+.brk{overflow-wrap:anywhere;word-break:break-word}
+.mock{font-size:12px;color:var(--muted);border:1px dashed var(--edge);border-radius:10px;padding:6px 10px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:0 0 12px}
+.mock b{color:var(--label)}
+.pv input{position:absolute;opacity:0;pointer-events:none}
+.pv label{display:inline-block;padding:2px 10px;border:1px solid var(--edge);border-radius:999px;cursor:pointer;background:var(--card);color:var(--label)}
+.pv label:hover{background:var(--hover)}
+.pv input:checked+label{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.pv input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);gap:16px;align-items:start}
+.mapcard{padding:10px 14px 12px;overflow:hidden}
+.mapcard svg.map{display:block;width:100%;height:auto}
+.gl{stroke:var(--line);stroke-width:1}
+.gt{font:600 10.5px var(--mono);fill:var(--muted)}
+.frame{fill:var(--bg2);stroke:var(--edge);stroke-width:1}
+.pa{cursor:pointer;text-decoration:none}
+.hit{fill:transparent;stroke:transparent;stroke-width:2}
+.pa:hover .hit,.pa:focus-visible .hit{stroke:var(--accent);fill:var(--accent-soft)}
+.pa:focus-visible{outline:none}
+.pin{stroke-width:2}
+.pin.k-crit{fill:var(--critical);stroke:var(--critical)}
+.pin.k-warn{fill:var(--card);stroke:var(--warning);stroke-width:2.6}
+.pin.k-ok{fill:var(--card);stroke:var(--ok);stroke-width:2.2}
+.pin.k-unk{fill:var(--card);stroke:var(--unknown);stroke-dasharray:3 2.5;stroke-width:2.2}
+.mk{fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.mk.k-crit{stroke:var(--card)}.mk.k-warn{stroke:var(--warning)}.mk.k-ok{stroke:var(--ok)}.mk.k-unk{stroke:var(--unknown)}
+.pl{font:800 13px var(--sans);fill:var(--ink)}
+.pw{font:700 10.5px var(--sans)}
+text.k-critical{fill:var(--critical)}text.k-warn{fill:var(--warning)}text.k-ok{fill:var(--ok)}text.k-unk{fill:var(--unknown)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:8px 0 0;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.note{font-size:12px;color:var(--muted);margin:6px 0 0}
+ul.rows{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:6px}
+.row{display:grid;grid-template-columns:auto auto 1fr;grid-template-areas:"n c c2" "d d d";gap:2px 8px;align-items:center;padding:7px 10px;border:1px solid var(--edge);border-left:6px solid var(--edge);border-radius:12px;background:var(--card)}
+.row .rn{grid-area:n;font-weight:800}
+.row .chip{grid-area:c}
+.row .rc{grid-area:c2;justify-self:end;font-size:12px;color:var(--muted)}
+.row .rd{grid-area:d;color:var(--muted);font-size:13px}
+.r-critical{border-left-color:var(--critical);background:linear-gradient(0deg,var(--critical-bg),var(--critical-bg)),var(--card)}
+.r-warning{border-left-color:var(--warning)}.r-ok{border-left-color:var(--ok)}.r-unknown{border-left-style:dashed}
+.row:target{outline:3px solid var(--accent);outline-offset:1px}
+.tot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.tot a{display:inline-flex;gap:6px;align-items:center;text-decoration:none;color:var(--ink);padding:3px 12px 3px 8px;border:1px solid var(--edge);border-radius:999px;background:var(--card)}
+.tot a:hover{background:var(--hover)}
+.tot b{font-size:18px}
+.mapcard:has(#f-prob:checked) .pa.okp{opacity:.2}
+.filt{display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 6px}
+.filt label{cursor:pointer;padding:2px 8px;border:1px solid var(--edge);border-radius:999px;background:var(--card)}
+.filt label:hover{background:var(--hover)}
+@media (max-width:1000px){.layout{grid-template-columns:1fr}}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-crit" viewBox="0 0 12 12"><path d="M6 1l5.2 9.5H.8z" fill="currentColor"/><path d="M6 4.6v2.9M6 8.6v.1" stroke="var(--card)" stroke-width="1.3" stroke-linecap="round"/></symbol>
+<symbol id="i-warn" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 3.8v3M6 8.2v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-ok" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 6.2l1.8 1.8 3-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="i-unk" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 1.8"/><path d="M4.8 4.8c0-1.6 2.4-1.6 2.4 0 0 1-1.2 1-1.2 2M6 8.6v.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+</defs></svg>
+<header class="appbar"><span class="mark" aria-hidden="true">S</span><strong>SITEA Portal</strong>
+<nav class="nav" aria-label="Portal"><a href="#">Home</a><a href="#" aria-current="page">Wall</a><a href="#">Reports</a><a href="#">My access</a></nav>
+<span class="theme" role="radiogroup" aria-label="Theme"><input type="radio" name="th" id="th-auto" checked><label for="th-auto">Auto</label><input type="radio" name="th" id="th-light"><label for="th-light">Light</label><input type="radio" name="th" id="th-dark"><label for="th-dark">Dark</label></span></header>
+<main>
+<div class="mock"><b>Mockup:</b> static sample data, placeholders only. Pins are placed from the SolarWinds latitude and longitude of each site's nodes. The base map is a plain graticule (no coastlines, so no data is implied).</div>
+<h1>Site map</h1>
+<p class="sub">Each site shows its worst node: critical, warning, no data, then OK. Click a pin to find the site in the list, or a name to find its pin.</p>
+<div class="tot" role="group" aria-label="Totals">
+<a href="#r-SITEA"><span class="chip s-critical"><svg><use href="#i-crit"/></svg>Critical</span><b>2</b></a>
+<a href="#r-SITEB"><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning</span><b>2</b></a>
+<a href="#r-SITEG"><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No data</span><b>1</b></a>
+<a href="#r-SITEC"><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><b>5</b></a>
+<span class="sub" role="status">Auto-refresh every 60 s &middot; last read <span class="mono">10:42:07 UTC</span> &middot; 2 sites not placed</span></div>
+<div class="layout">
+<section class="card mapcard" aria-label="Map of sites">
+<div class="filt"><label for="f-prob"><input type="checkbox" id="f-prob"> Dim sites that are OK</label></div>
+<svg class="map" viewBox="0 0 800 460" role="group" aria-label="Sites placed by latitude and longitude">
+<defs>
+<g id="g-crit"><path d="M0 -9 L9 7 H-9 Z" class="pin k-crit"/><path d="M0 -3v5M0 4.4v.1" class="mk k-crit"/></g>
+<g id="g-warn"><rect x="-7.5" y="-7.5" width="15" height="15" rx="3" class="pin k-warn"/><path d="M0 -3.5v4M0 4v.1" class="mk k-warn"/></g>
+<g id="g-ok"><circle r="7.5" class="pin k-ok"/><path d="M-3.4 .4l2.4 2.4 4.2-5" class="mk k-ok"/></g>
+<g id="g-unk"><circle r="7.5" class="pin k-unk"/><path d="M-2.2 -2.4c0-2.6 4.4-2.6 4.4 0 0 1.8-2.2 1.8-2.2 3.6M0 5v.1" class="mk k-unk"/></g>
+</defs>
+<rect class="frame" x="40" y="10" width="750" height="426" rx="12"/>
+<line class="gl" x1="196.7" y1="18" x2="196.7" y2="436"/><text class="gt" x="196.7" y="452" text-anchor="middle">20E</text>
+<line class="gl" x1="330" y1="18" x2="330" y2="436"/><text class="gt" x="330" y="452" text-anchor="middle">30E</text>
+<line class="gl" x1="463.3" y1="18" x2="463.3" y2="436"/><text class="gt" x="463.3" y="452" text-anchor="middle">40E</text>
+<line class="gl" x1="596.7" y1="18" x2="596.7" y2="436"/><text class="gt" x="596.7" y="452" text-anchor="middle">50E</text>
+<line class="gl" x1="730" y1="18" x2="730" y2="436"/><text class="gt" x="730" y="452" text-anchor="middle">60E</text>
+<line class="gl" x1="40" y1="382.6" x2="790" y2="382.6"/><text class="gt" x="46" y="379">20N</text>
+<line class="gl" x1="40" y1="277.4" x2="790" y2="277.4"/><text class="gt" x="46" y="274">30N</text>
+<line class="gl" x1="40" y1="172.1" x2="790" y2="172.1"/><text class="gt" x="46" y="169">40N</text>
+<line class="gl" x1="40" y1="66.8" x2="790" y2="66.8"/><text class="gt" x="46" y="63">50N</text>
+
+<a id="p-SITEA" href="#r-SITEA" class="pa" aria-label="SITEA, Critical, latitude 41.2, longitude 14.5"><circle class="hit" cx="123.3" cy="159.5" r="16"/><use href="#g-crit" x="123.3" y="159.5"/><text x="141" y="153" class="pl">SITEA</text><text x="141" y="165" class="pw k-critical">Critical</text></a>
+<a id="p-SITEB" href="#r-SITEB" class="pa" aria-label="SITEB, Warning, latitude 38.4, longitude 22.0"><circle class="hit" cx="223.3" cy="188.9" r="16"/><use href="#g-warn" x="223.3" y="188.9"/><text x="241" y="186" class="pl">SITEB</text><text x="241" y="198" class="pw k-warn">Warning</text></a>
+<a id="p-SITEC" href="#r-SITEC" class="pa okp" aria-label="SITEC, OK, latitude 36.9, longitude 27.8"><circle class="hit" cx="300.7" cy="204.7" r="16"/><use href="#g-ok" x="300.7" y="204.7"/><text x="318" y="202" class="pl">SITEC</text><text x="318" y="214" class="pw k-ok">OK</text></a>
+<a id="p-SITED" href="#r-SITED" class="pa okp" aria-label="SITED, OK, latitude 44.7, longitude 31.3"><circle class="hit" cx="347.3" cy="122.6" r="16"/><use href="#g-ok" x="347.3" y="122.6"/><text x="365" y="120" class="pl">SITED</text><text x="365" y="132" class="pw k-ok">OK</text></a>
+<a id="p-SITEE" href="#r-SITEE" class="pa" aria-label="SITEE, Warning, latitude 30.2, longitude 36.9"><circle class="hit" cx="422" cy="275.3" r="16"/><use href="#g-warn" x="422" y="275.3"/><text x="440" y="272" class="pl">SITEE</text><text x="440" y="284" class="pw k-warn">Warning</text></a>
+<a id="p-SITEF" href="#r-SITEF" class="pa okp" aria-label="SITEF, OK, latitude 25.6, longitude 41.1"><circle class="hit" cx="478" cy="323.7" r="16"/><use href="#g-ok" x="478" y="323.7"/><text x="496" y="321" class="pl">SITEF</text><text x="496" y="333" class="pw k-ok">OK</text></a>
+<a id="p-SITEG" href="#r-SITEG" class="pa" aria-label="SITEG, No data, latitude 33.3, longitude 49.6"><circle class="hit" cx="591.3" cy="242.6" r="16"/><use href="#g-unk" x="591.3" y="242.6"/><text x="609" y="240" class="pl">SITEG</text><text x="609" y="252" class="pw k-unk">No data</text></a>
+<a id="p-SITEH" href="#r-SITEH" class="pa okp" aria-label="SITEH, OK, latitude 41.9, longitude 52.4"><circle class="hit" cx="628.7" cy="152.1" r="16"/><use href="#g-ok" x="628.7" y="152.1"/><text x="611" y="149" text-anchor="end" class="pl">SITEH</text><text x="611" y="161" text-anchor="end" class="pw k-ok">OK</text></a>
+<a id="p-SITEI" href="#r-SITEI" class="pa" aria-label="SITEI, Critical, latitude 21.4, longitude 56.0"><circle class="hit" cx="676.7" cy="367.9" r="16"/><use href="#g-crit" x="676.7" y="367.9"/><text x="659" y="364" text-anchor="end" class="pl">SITEI</text><text x="659" y="376" text-anchor="end" class="pw k-critical">Critical</text></a>
+<a id="p-SITEJ" href="#r-SITEJ" class="pa okp" aria-label="SITEJ, OK, latitude 47.6, longitude 44.0"><circle class="hit" cx="516.7" cy="92.1" r="16"/><use href="#g-ok" x="516.7" y="92.1"/><text x="534" y="89" class="pl">SITEJ</text><text x="534" y="101" class="pw k-ok">OK</text></a>
+</svg>
+<div class="legend" aria-label="Legend"><span><svg width="14" height="14" viewBox="-10 -10 20 20"><path d="M0 -9 L9 7 H-9 Z" class="pin k-crit"/></svg>Critical</span><span><svg width="14" height="14" viewBox="-10 -10 20 20"><rect x="-7.5" y="-7.5" width="15" height="15" rx="3" class="pin k-warn"/></svg>Warning</span><span><svg width="14" height="14" viewBox="-10 -10 20 20"><circle r="7.5" class="pin k-unk"/></svg>No data or stale</span><span><svg width="14" height="14" viewBox="-10 -10 20 20"><circle r="7.5" class="pin k-ok"/></svg>OK</span></div>
+<p class="note">Shape and word carry the status; colour only repeats them. Pins that would overlap keep a label offset and are always in the list.</p>
+</section>
+<section aria-labelledby="hs"><h2 id="hs">Sites, worst first</h2>
+<ul class="rows">
+<li id="r-SITEA" class="row r-critical"><a class="rn" href="#p-SITEA">SITEA</a><span class="chip s-critical"><svg><use href="#i-crit"/></svg>Critical</span><span class="rc mono">41.2, 14.5</span><span class="rd">sitea-dc02 down 18 min; sitea-sw03 down 42 min</span></li>
+<li id="r-SITEI" class="row r-critical"><a class="rn" href="#p-SITEI">SITEI</a><span class="chip s-critical"><svg><use href="#i-crit"/></svg>Critical</span><span class="rc mono">21.4, 56.0</span><span class="rd">sitei-sw01 down 42 min</span></li>
+<li id="r-SITEB" class="row r-warning"><a class="rn" href="#p-SITEB">SITEB</a><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning</span><span class="rc mono">38.4, 22.0</span><span class="rd">WAN link to SITEA down 6 min; backup path in use</span></li>
+<li id="r-SITEE" class="row r-warning"><a class="rn" href="#p-SITEE">SITEE</a><span class="chip s-warning"><svg><use href="#i-warn"/></svg>Warning</span><span class="rc mono">30.2, 36.9</span><span class="rd">sitee-fs01 D: 91% full</span></li>
+<li id="r-SITEG" class="row r-unknown"><a class="rn" href="#p-SITEG">SITEG</a><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>No data</span><span class="rc mono">33.3, 49.6</span><span class="rd">last read 14 min ago; status not known</span></li>
+<li id="r-SITEC" class="row r-ok"><a class="rn" href="#p-SITEC">SITEC</a><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><span class="rc mono">36.9, 27.8</span><span class="rd">all nodes up</span></li>
+<li id="r-SITED" class="row r-ok"><a class="rn" href="#p-SITED">SITED</a><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><span class="rc mono">44.7, 31.3</span><span class="rd">all nodes up</span></li>
+<li id="r-SITEF" class="row r-ok"><a class="rn" href="#p-SITEF">SITEF</a><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><span class="rc mono">25.6, 41.1</span><span class="rd">all nodes up</span></li>
+<li id="r-SITEH" class="row r-ok"><a class="rn" href="#p-SITEH">SITEH</a><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><span class="rc mono">41.9, 52.4</span><span class="rd">all nodes up</span></li>
+<li id="r-SITEJ" class="row r-ok"><a class="rn" href="#p-SITEJ">SITEJ</a><span class="chip s-ok"><svg><use href="#i-ok"/></svg>OK</span><span class="rc mono">47.6, 44.0</span><span class="rd">all nodes up</span></li>
+</ul>
+<h2>Not placed (2)</h2>
+<ul class="rows">
+<li class="row r-unknown"><span class="rn">SITEK</span><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>Not placed</span><span class="rd">latitude and longitude are empty in SolarWinds</span></li>
+<li class="row r-unknown"><span class="rn">SITEL</span><span class="chip s-unknown"><svg><use href="#i-unk"/></svg>Not placed</span><span class="rd">coordinates are 0, 0 (treated as not set)</span></li>
+</ul>
+<p class="note">A site with no coordinates is never dropped: it stays in this list with its status. Fix: fill in latitude and longitude on the SolarWinds node.</p>
+</section></div>
+</main></body></html>
