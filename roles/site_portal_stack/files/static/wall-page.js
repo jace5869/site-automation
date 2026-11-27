@@ -437,6 +437,8 @@
     de.classList.toggle("screen", screenOn());
     if (globalThis.SAWallFleet) de.classList.toggle("area-monitor", S.area === "monitor");
     if (globalThis.SAWallHealth) de.classList.toggle("area-health", S.area === "health");
+    // 1.139.0: release the shared stage before another area renders.
+    if (!healthArea() && window.SAWallHealth) window.SAWallHealth.leave();
     if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);

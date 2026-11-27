@@ -4,8 +4,13 @@ wall_model integration, settings clamping, deploy wiring, CSP, and offline asset
 Placeholders only (SITEA, corp.example.mil, 192.0.2.x)."""
 import os
 import re
+import shutil
+import subprocess
 import sys
 import unittest
+
+import yaml
+from jinja2 import Environment
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -132,6 +137,38 @@ class HealthModelTests(unittest.TestCase):
         self.assertNotIn("net:vol:10", [c["id"] for c in m2["conds"]])
         self.assertTrue(any(t["id"] == "net:vol:10" and t["end"] is not None for t in m2["timeline"]))
 
+    def test_missing_metrics_hold_existing_alerts_until_a_valid_recovery(self):
+        # 1.139.0: follow each alert through confirmation, unread telemetry and recovery.
+        tr = wh.HealthTracker()
+        ids = {"net:rtt:1", "net:loss:1", "net:util:100", "net:iferr:100"}
+
+        def poll(snap):
+            return wh.build_health_model(snap, {}, None, {}, {"sustained_minutes": 1}, tr, snap["read_at"])
+
+        for step in (0, 60):
+            high = poll(sample_swis(NOW + step, rtt=250, loss=10, if_util=99, if_err=5))
+        self.assertEqual({c["id"] for c in high["conds"]}, ids)
+        for step, missing in ((120, None), (180, -1)):
+            snap = sample_swis(NOW + step, rtt=missing, loss=missing)
+            snap["interfaces"][0].update(in_util=missing, in_err=missing)
+            held = poll(snap)
+            self.assertEqual({c["id"] for c in held["conds"] if c["last_known"]}, ids)
+        recovered = poll(sample_swis(NOW + 240))
+        self.assertFalse(recovered["conds"])
+        self.assertEqual({c["id"] for c in recovered["timeline"] if c["end"]}, ids)
+
+    def test_dc_inventory_without_replication_coverage(self):
+        # 1.139.0: DC inventory alone cannot establish replication health.
+        ad = sample_ad()
+        ad["links"] = []
+        for dc in ad["dcs"]:
+            dc["repl_read"] = False
+        model = wh.build_health_model(sample_swis(), {}, ad, {}, {}, wh.HealthTracker(), NOW)
+        tile, = [k for k in model["kpis"] if k["id"] == "ad"]
+        self.assertEqual((tile["state"], tile["value"]), ("stale", "Not read"))
+        self.assertFalse(model["ad"]["read"])
+        self.assertEqual(model["state"], "stale")
+
     def test_ad_two_check_confirmation_and_repl_lag(self):
         tr = wh.HealthTracker()
         # Single failed DC check -> suppressed
@@ -201,12 +238,110 @@ class SiteMapModelTests(unittest.TestCase):
         self.assertTrue(all(s["status"] == "stale" for s in sm["sites"]))
 
 
+@unittest.skipUnless(shutil.which("node"), "browser polling tests need Node")
+class PollingTests(unittest.TestCase):
+    def run_page(self, asset, probe):
+        # 1.139.0: run the shipped script with a manual clock and deferred fetches.
+        browser = """
+        const assert = require("node:assert/strict");
+        class Element {
+          constructor() { this.children = []; this.classList = {toggle() {}, remove() {}}; }
+          addEventListener() {}
+          querySelector() { return null; }
+          getAttribute() { return null; }
+          setAttribute() {}
+          get firstChild() { return this.children[0]; }
+          appendChild(c) { this.children.push(c); }
+          removeChild(c) { this.children.splice(this.children.indexOf(c), 1); }
+          get textContent() { return this.children.map(c => c.textContent ?? c).join(" "); }
+        }
+        const page = new Element(), stage = new Element();
+        const document = {documentElement: new Element(), body: {contains: () => true},
+          createElement: () => new Element(), createTextNode: String, addEventListener() {},
+          getElementById: id => id === "site-map" ? page : new Element()};
+        const location = {search: "?view=list"}, window = {addEventListener() {}};
+        const timers = new Set(), requests = [];
+        function setInterval(fn) { timers.add(fn); return fn; }
+        function clearInterval(fn) { timers.delete(fn); }
+        function tick(n) { while (n--) timers.forEach(fn => fn()); }
+        function fetch() { return new Promise((ok, fail) => requests.push({ok, fail})); }
+        const flush = () => new Promise(resolve => setImmediate(resolve));
+        """
+        subprocess.run(["node", "-"], text=True, timeout=10, check=True,
+                       input=browser + read(STATIC, asset) + "\n(async () => {" + probe + "})();")
+
+    def test_map_retries_initial_and_later_failures(self):
+        self.run_page("site-map.js", """
+          const doc = {poll: 15, state: "ok", sites: [{name: "SITEA"}], feed: {fresh: "ok"}};
+          const success = {ok: true, json: async () => doc};
+          requests.shift().fail(new Error("offline"));
+          await flush();
+          tick(60);
+          requests.shift().ok(success);
+          await flush();
+          assert.match(page.textContent, /SITEA/);
+          tick(15);
+          requests.shift().fail(new Error("offline"));
+          await flush();
+          assert.match(page.textContent, /SITEA/);
+          assert.match(page.textContent, /NOT CURRENT.*offline/);
+          tick(15);
+          requests.shift().ok(success);
+          await flush();
+          assert.doesNotMatch(page.textContent, /offline/);
+        """)
+
+    def test_health_leaves_stage_and_ignores_late_responses(self):
+        wall = read(STATIC, "wall-page.js")
+        self.assertRegex(wall, r"if \(!healthArea\(\).*?\) window.SAWallHealth.leave\(\)")
+        self.run_page("wall-health.js", """
+          const health = window.SAWallHealth;
+          health.render({}, stage);
+          const previous = requests.shift();
+          health.leave();
+          assert.equal(timers.size, 0);
+          stage.children = ["Overview"];
+          previous.ok({ok: true, json: async () => ({})});
+          await flush();
+          tick(120);
+          assert.equal(stage.textContent, "Overview");
+          assert.equal(requests.length, 0);
+          health.render({}, stage);
+          const abandoned = requests.shift();
+          health.leave();
+          health.render({}, stage);
+          requests.shift().fail(new Error("current visit"));
+          await flush();
+          abandoned.fail(new Error("old visit"));
+          await flush();
+          assert.match(stage.textContent, /current visit/);
+        """)
+
+
 class SettingsAndAssetsTests(unittest.TestCase):
     def cfg(self, **env):
         base = {"PORTAL_DATA": "/tmp/sa-139-test", "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent",
                 "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"}
         base.update(env)
         return sp.Config(base)
+
+    def test_health_ca_is_private_with_network_map_disabled(self):
+        # 1.139.0: evaluate the actual deployment gates and container reader setting.
+        tasks = yaml.safe_load(read(ROLE, "tasks", "main.yml"))
+        env = Environment()
+        env.filters["bool"] = bool
+        env.tests["changed"] = lambda result: result.get("changed", False)
+        values = dict(_portal_swis_health=True, _portal_netmap=False, portal_solarwinds_ca_file="ca.pem",
+                      ansible_check_mode=False)
+        for action, field, suffix, enabled in (
+                ("copy", "dest", "/trust.d/20-solarwinds.pem", False),
+                ("file", "path", "/trust.d/20-solarwinds.pem", True),
+                ("copy", "dest", "/app/solarwinds-health.pem", True)):
+            task, = [t for t in tasks if t.get("ansible.builtin." + action, {}).get(field, "").endswith(suffix)]
+            self.assertEqual(env.compile_expression(task["when"])(**values), enabled)
+        settings, = [t["vars"]["_settings"] for t in tasks if "_settings" in t.get("vars", {})]
+        ca = env.from_string(settings["PORTAL_SWIS_CA"]).render(values)
+        self.assertEqual(self.cfg(PORTAL_SWIS_CA=ca).swis_ca, "/app/solarwinds-health.pem")
 
     def test_config_and_threshold_clamping(self):
         c = self.cfg()

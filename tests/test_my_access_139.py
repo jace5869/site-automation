@@ -149,9 +149,12 @@ class MyAccessModelTests(unittest.TestCase):
         for forbidden in ("SMITH.BOB", "ADMIN.ALICE", "OTHER.SECRET.USER", "SUPER_SECRET_AAP_TOKEN_123",
                           "LDAP_BIND_SECRET_XYZ", "svc_ldap_bind", "SITEA-Secret-Admins"):
             self.assertNotIn(forbidden, dumped, forbidden)
-        adm_diag = [g for g in doc["ad"]["groups"] if g["role"] == "admins"][0]
-        self.assertEqual(adm_diag["name"], "(configured admin group)")
-        self.assertIsNone(adm_diag["members"])
+        # 1.139.0: only admins receive rows revealing group count and lookup outcomes.
+        self.assertFalse(any(g["role"] == "admins" for g in doc["ad"]["groups"]))
+        admin = self._build(cfg, portal, "ADMIN.ALICE.X.7777777777")
+        adm_diag, = [g for g in admin["ad"]["groups"] if g["role"] == "admins"]
+        self.assertEqual((adm_diag["name"], adm_diag["found"], adm_diag["members"]),
+                         ("SITEA-Secret-Admins", True, 7))
 
     def test_limited_user_sees_only_granted_templates(self):
         cfg = sp.Config(make_env(self.tmp, {

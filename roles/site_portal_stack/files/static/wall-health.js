@@ -69,24 +69,30 @@
 
   function fetchHealth(force) {
     if (ST.loading) return;
-    ST.loading = true;
+    // 1.139.0: exit invalidates this request, including across a quick re-entry.
+    var request = {};
+    ST.loading = request;
+    var etag = "";
     var url = ST.src + (force ? "?poll=now" : "");
     var hd = {Accept: "application/json"};
     if (ST.etag && !force) hd["If-None-Match"] = ST.etag;
     fetch(url, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
       if (res.status === 304) return null;
       if (!res.ok) throw new Error("HTTP " + res.status);
-      ST.etag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
+      etag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (doc) {
+      if (ST.loading !== request) return;
       ST.loading = false;
       ST.failMsg = "";
       if (doc) {
+        ST.etag = etag;
         ST.data = doc;
         ST.pollLeft = Math.max(15, Number(doc.poll) || 60);
       }
       draw();
     }).catch(function (err) {
+      if (ST.loading !== request) return;
       ST.loading = false;
       ST.data = null;
       ST.etag = "";
@@ -668,7 +674,7 @@
   }
 
   document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") {
+    if (ST.stage && ev.key === "Escape") {
       if (ST.drawer) closeDrawer();
       else if (ST.board) { ST.board = false; draw(); }
     }
@@ -677,7 +683,17 @@
 
   window.SAWallHealth = {
     icon: ICON,
+    leave: function () {
+      if (!ST.stage) return;
+      clearInterval(ST.timer);
+      ST.timer = null;
+      ST.stage = null;
+      ST.loading = false;
+      closeDrawer();
+      document.documentElement.classList.remove("wh-board");
+    },
     render: function (api, stage) {
+      var entering = !ST.stage;
       ST.api = api;
       ST.stage = stage;
       var root = document.getElementById("wall");
@@ -686,7 +702,7 @@
       if (qs.get("board") === "1") ST.board = true;
       ensureTimer();
       draw();
-      if (!ST.data) fetchHealth(false);
+      if (entering) fetchHealth(false);
     },
     tile: function (A, sevWordFn) {
       var W = A.W();

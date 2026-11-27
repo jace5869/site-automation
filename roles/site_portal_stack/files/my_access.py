@@ -396,13 +396,7 @@ def build_my_access(cfg, portal, cn, access_rows_fn, template_allowed_fn, run_re
         if grole == "templates" and not is_admin and gname not in visible_tpl_groups:
             continue
         if grole == "admins" and not is_admin:
-            safe_groups.append({
-                "role": "admins",
-                "name": "(configured admin group)",
-                "found": gx.get("found"),
-                "matched": False,
-                "members": None,
-            })
+            # 1.139.0: even anonymous rows disclose admin group counts and lookup results.
             continue
         safe_groups.append({
             "role": grole,

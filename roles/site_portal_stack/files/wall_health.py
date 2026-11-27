@@ -768,7 +768,8 @@ def _ad_matrix(ad_run, o, ad_fresh, now):
         })
 
     return {
-        "read": True,
+        # 1.139.0: a DC inventory can succeed while every replication read fails.
+        "read": any(d["repl_read"] for d in dc_rows),
         "dcs": dc_rows,
         "pairs": pairs,
         "max_lag_min": max_lag,
@@ -780,16 +781,17 @@ def _ad_matrix(ad_run, o, ad_fresh, now):
 
 def _if_err_rate(ifc):
     """Compute interface error+discard percentage from hourly counters and pps, or None if unreadable."""
-    ie = _num(ifc.get("in_err")) or 0.0
-    oe = _num(ifc.get("out_err")) or 0.0
-    idisc = _num(ifc.get("in_disc")) or 0.0
-    odisc = _num(ifc.get("out_disc")) or 0.0
-    bad = ie + oe + idisc + odisc
-    if bad <= 0:
+    # 1.139.0: missing counter fields cannot establish a below-threshold rate.
+    counters = [_num(ifc.get(k)) for k in ("in_err", "out_err", "in_disc", "out_disc")]
+    if any(c is None or c < 0 for c in counters):
+        return None
+    bad = sum(counters)
+    if bad == 0:
         return 0.0
-    ipps = _num(ifc.get("in_pps")) or 0.0
-    opps = _num(ifc.get("out_pps")) or 0.0
-    pkts_hr = (ipps + opps) * 3600.0
+    rates = [_num(ifc.get(k)) for k in ("in_pps", "out_pps")]
+    if any(r is None or r < 0 for r in rates):
+        return None
+    pkts_hr = sum(rates) * 3600.0
     if pkts_hr <= 0:
         # Without packet counter, treat non-zero hourly errors cautiously (rate unavailable unless high absolute count)
         return None
@@ -1017,9 +1019,10 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
                     ok_ids.add(cid_d)
 
             # High utilization (WAN or >= crit) -> Full bucket (sustained)
-            util = max([u for u in (ifc.get("in_util"), ifc.get("out_util")) if u is not None] or [-1.0])
+            util_samples = [_num(ifc.get(k)) for k in ("in_util", "out_util")]
+            util = max((u for u in util_samples if u is not None and u >= 0), default=None)
             cid_u = "net:util:%s" % iid
-            over_u = util >= o["wan_util_warn"] and (is_wan or util >= o["wan_util_crit"])
+            over_u = util is not None and util >= o["wan_util_warn"] and (is_wan or util >= o["wan_util_crit"])
             sus_u, held_u, first_u = tracker.mark_sustained(cid_u, over_u, util if over_u else None, sw_read_ts, sus_sec, gap_limit)
             if over_u:
                 if sus_u:
@@ -1037,7 +1040,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
                 else:
                     suppressed.append({"domain": "net", "obj": if_label,
                                        "why": "util %.0f%% for %d min (under %d min sustained limit)" % (util, int(held_u // 60), o["sustained_minutes"])})
-            elif sw_current:
+            elif sw_current and all(u is not None and u >= 0 for u in util_samples):
                 ok_ids.add(cid_u)
 
             # Interface errors/discards -> Sustained errors bucket
@@ -1061,7 +1064,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
                 else:
                     suppressed.append({"domain": "net", "obj": if_label,
                                        "why": "interface errors %.2f%% for %d min (short blip)" % (err_pct, int(held_e // 60))})
-            elif sw_current:
+            elif sw_current and err_pct is not None:
                 ok_ids.add(cid_e)
 
     # Evaluate node RTT / packet loss (sustained errors) + gather site RTTs
@@ -1103,7 +1106,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
                 else:
                     suppressed.append({"domain": "net", "obj": n["name"],
                                        "why": "packet loss %.1f%% for %d min (blip suppressed)" % (loss, int(held_l // 60))})
-            elif sw_current:
+            elif sw_current and loss is not None and loss >= 0:
                 ok_ids.add(cid_l)
 
             cid_r = "net:rtt:%s" % nid
@@ -1125,7 +1128,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
                 else:
                     suppressed.append({"domain": "net", "obj": n["name"],
                                        "why": "latency %.0f ms for %d min (blip suppressed)" % (rtt, int(held_r // 60))})
-            elif sw_current:
+            elif sw_current and rtt is not None and rtt >= 0:
                 ok_ids.add(cid_r)
 
     # Evaluate AD Health from report DB run (reusing old-wallad.diff rules)
@@ -1251,7 +1254,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
         overall = "crit"
     elif warn_cnt:
         overall = "warn"
-    elif not any_fresh or any_stale or (swis_snap and swis_snap.get("cut")):
+    elif not any_fresh or any_stale or not ad_mx["read"] or (swis_snap and swis_snap.get("cut")):
         overall = "stale"
     else:
         overall = "ok"
@@ -1286,7 +1289,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
         {
             "id": "ad", "label": "AD replication",
             "value": ("%d / %d" % (ad_mx["ok_pairs"], ad_mx["total_pairs"])) if (ad_mx["read"] and ad_fresh in ("ok", "late")) else "Not read",
-            "sub": (("max lag %.0f m · %d failing" % (ad_mx["max_lag_min"], ad_mx["failing"])) if ad_mx["max_lag_min"] is not None else ("%d DCs read" % len(ad_mx["dcs"]))) if (ad_mx["read"] and ad_fresh in ("ok", "late")) else (feeds[1]["why"] or "AD report DB not read"),
+            "sub": (("max lag %.0f m · %d failing" % (ad_mx["max_lag_min"], ad_mx["failing"])) if ad_mx["max_lag_min"] is not None else ("%d DCs read" % len(ad_mx["dcs"]))) if (ad_mx["read"] and ad_fresh in ("ok", "late")) else (feeds[1]["why"] or "AD replication not read"),
             "state": "stale" if (not ad_mx["read"] or ad_fresh in ("stale", "not_read")) else (
                 "crit" if any(p["status"] == "crit" for p in ad_mx["pairs"]) else
                 "warn" if ad_mx["failing"] else ("stale" if not ad_mx["dcs"] else "ok")),

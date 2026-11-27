@@ -138,7 +138,7 @@
       render();
     }).catch(function (err) {
       S.loading = false;
-      S.data = null;
+      // 1.139.0: keep the last map visible while the poll timer retries.
       S.etag = "";
       S.failMsg = "Site map feed unreachable: " + (err && err.message ? err.message : "network error");
       render();
@@ -581,7 +581,7 @@
       return;
     }
     var doc = S.data;
-    var feed = doc.feed || {};
+    var feed = S.failMsg ? {fresh: "stale", why: S.failMsg} : (doc.feed || {});
     var cnt = doc.counts || {};
     var sites = filteredSites();
 
@@ -614,7 +614,7 @@
 
     // 2. Status banner (never green when stale/unread)
     var bSt = S.failMsg ? "stale" : (doc.state || "stale");
-    var bTxt = S.failMsg ? S.failMsg
+    var bTxt = S.failMsg ? S.failMsg + " — showing last known map"
       : bSt === "crit" ? ((cnt.crit || 0) + " site" + (cnt.crit === 1 ? "" : "s") + " critical")
       : bSt === "warn" ? ((cnt.warn || 0) + " site" + (cnt.warn === 1 ? "" : "s") + " warning")
       : bSt === "ok" ? ((cnt.placed || 0) + " placed sites current and OK")
@@ -732,10 +732,9 @@
   if (qs.get("view") && ["split", "wall", "list"].indexOf(qs.get("view")) >= 0) S.view = qs.get("view");
 
   setInterval(function () {
-    if (!S.data) return;
     S.pollLeft--;
-    if (S.pollLeft <= 0) { S.pollLeft = Math.max(15, Number(S.data.poll) || 60); fetchMap(false); }
-    if (S.tour) {
+    if (S.pollLeft <= 0) { S.pollLeft = Math.max(15, Number(S.data && S.data.poll) || 60); fetchMap(false); }
+    if (S.tour && S.data) {
       var placed = (S.data.sites || []).filter(function (s) { return s.placed; });
       if (placed.length) {
         S.tourTick++;
