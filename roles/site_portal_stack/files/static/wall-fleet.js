@@ -729,6 +729,7 @@
       if (t === P.ov) closeOv();
     });
     B.addEventListener("keydown", function (e) {           // a source's chip ([data-d]) is the page's own: it opens the source's card
+      if (!F) return;
       if ((e.key === "Enter" || e.key === " ") && e.target.matches("[role=button]") && !e.target.closest("button,input,[data-d]")) { e.preventDefault(); e.target.click(); }
     });
     P.cv.addEventListener("mousemove", function (e) {
@@ -753,7 +754,7 @@
     });
     // Esc closes the card first (and never leaves kiosk while one is open); ← → step the Spotlight
     document.addEventListener("keydown", function (e) {
-      if (!A || A.S.area !== "monitor" || !B || !B.isConnected) return;
+      if (!F || !A || A.S.area !== "monitor" || !B || !B.isConnected) return;
       if (e.key === "Escape" && OV) { e.stopImmediatePropagation(); e.preventDefault(); closeOv(); return; }
       if (OV || (e.target.closest && e.target.closest("select,input,textarea"))) return;
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); step(e.key === "ArrowRight" ? 1 : -1, true); }

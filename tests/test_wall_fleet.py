@@ -183,10 +183,10 @@ class Review1(unittest.TestCase):
         groups = {"list": [[1, "AD", 1]], "members": {"1": [1], "2": [1]}, "cut": False}
         fm = wf.model(snap([sw_row(1, "DC1", status=2), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
         self.assertEqual([c["id"] for c in wf.conds(fm, self.now)[0]], ["fleet:down:AD"])
-        for st, um in ((0, False), (9, True), (1, True)):                 # unknown blocks recovery, unmanaged plus up permits it
+        for st, um in ((0, False), (9, True), (1, True)):
             fm = wf.model(snap([sw_row(1, "DC1", status=st, unmanaged=um), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
             cs, ok = wf.conds(fm, self.now)
-            self.assertEqual((cs, "fleet:down:AD" in ok), ([], um), (st, um))
+            self.assertEqual((cs, "fleet:down:AD" in ok), ([], False), (st, um))
         fm = wf.model(snap([sw_row(1, "DC1"), sw_row(2, "DC2")], groups, self.now), None, OPTS, self.now)
         self.assertIn("fleet:down:AD", wf.conds(fm, self.now)[1])         # both known up: it clears
 
@@ -708,6 +708,7 @@ env.fakePanel = (rows, ctx) => {
   return panel;
 };
 if (data.wall) {
+  env.window.SAWallFleet = data.missingRenderer ? undefined : {render() {}};
   env.URLSearchParams = URLSearchParams;
   env.window.fetch = () => {};
   env.document.getElementById = () => ({getAttribute() {}, setAttribute() {}, querySelector() {return null;}});
@@ -716,7 +717,7 @@ if (data.wall) {
   partial("wall-page.js", "  function overallState", `
     SKEW = data.now * 1000 - Date.now();
     W = adapt(JSON.parse(JSON.stringify(data.wall)));
-    api.areaState = areaState; api.areaCounts = areaCounts; window.freshSignature = freshSig;`);
+    api.areaOn = areaOn; api.areaList = areaList; api.areaState = areaState; api.areaCounts = areaCounts; window.freshSignature = freshSig;`);
   env.document.getElementById = () => null;
 }
 script("wall-styles.js", "A = api; window.tile = () => window.SAWallFleet.tile(api, sevWord); window.stage = st => stageOf({id:'monitor', st, name:'Ops monitor'});");
@@ -817,10 +818,10 @@ class Gate(unittest.TestCase):
         self.assertFalse(wf.conds(fm, self.now)[1])
         only_off = wf.model(snap(rows[1:], now=self.now), view([vm("DB", power="poweredOff")], self.now), OPTS, self.now)
         self.assertFalse(wf.conds(only_off, self.now)[1])
-        self.assertEqual(StaleNeverGreen().area(fm, self.now)[0]["state"], "off")
+        self.assertEqual(StaleNeverGreen().area(fm, self.now)[0]["state"], "stale")
         self.js(fm, """
-          services(); assert.equal(gState(F.groups[0]).st, "off");
-          assert(JSON.stringify(P.svc).includes("no monitored nodes"));
+          services(); assert.equal(gState(F.groups[0]).st, "stale");
+          assert(JSON.stringify(P.svc).includes("not current"));
           assert(JSON.stringify(window.stage("ok")).includes("No service group with a node down or warning."));
           assert(JSON.stringify(window.stage("stale")).includes("No current data."));
         """)
@@ -1067,8 +1068,8 @@ class Gate3(unittest.TestCase):
             self.assertEqual(cfg.swis_url, "")
 
     def test_gate3_p2_2_last_known_poll_in_share(self):
-        for status, word, poll in ((2, "DOWN", self.now - 86400), (3, "WARN", None)):
-            self.rows[0].update(Status=status, LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(poll)) if poll else None)
+        for poll in (self.now - 86400, None):
+            self.rows[0].update(Status=2, LastSync=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(poll)) if poll else None)
             self.js(self.model(), """
               const n = F.by["1"]; openCard([n]);
               assert.equal(panel.rows[0].sev, "stale");
@@ -1527,6 +1528,138 @@ const N = ctx.window.SAWallFleet.nodes;
 const L = JSON.parse(process.argv[3]), c = JSON.parse(process.argv[4]);
 process.stdout.write(JSON.stringify({text: N.text(L, c), html: N.html(L, c), line: L.map(N.line)}));
 """
+
+
+@unittest.skipUnless(shutil.which("node"), "no node")
+class Gate7(unittest.TestCase):
+    setUp = Gate.setUp
+    js = Gate.js
+    model = Gate3.model
+    delivered = Gate4.delivered
+
+    def test_map_ca_source_survives_monitor_cleanup(self):
+        import yaml
+        from jinja2 import Environment
+        env = Environment()
+        env.filters["bool"] = bool
+        tasks = yaml.safe_load((Path(FILES).parent / "tasks/main.yml").read_text())
+        cfg = dict(portal_config_dir="/etc/site-portal", _portal_netmap=True, _portal_wall_monitor=False)
+        source = cfg["portal_solarwinds_ca_file"] = cfg["portal_config_dir"] + "/app/solarwinds-monitor.pem"
+        for task in tasks:
+            file = task.get("ansible.builtin.file", {})
+            if file.get("state") == "absent" and env.from_string(file["path"]).render(cfg) == source:
+                self.assertFalse(env.compile_expression(task["when"])(**cfg), task["name"])
+
+    def test_container_status_blocks_recovery(self):
+        for status in (2, 0, None):
+            with self.subTest(status=status):
+                self.groups["list"][0][2] = status
+                fm = self.model()
+                self.assertNotEqual(fm["groups"][0][3]["state"], "ok")
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_contradictory_up_node_is_unknown(self):
+        for field, value in (("StatusDescription", "Node status is Down."), ("PercentLoss", 100), ("ResponseTime", -1)):
+            with self.subTest(field=field):
+                self.rows = [dict(sw_row(1, "APP"), **{field: value}), sw_row(2, "DB")]
+                fm = self.model()
+                self.assertEqual(by_name(fm)["APP"][18:], ["unk", None])
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_conflicting_container_names_taint_each_service(self):
+        self.rows[0] = sw_row(1, "APP", 2)
+        self.groups = {"list": [[1, "DB", 1], [1, "App", 1], [2, "DB", 1]], "members": {"1": [1], "2": [2]}}
+        fm = self.model()
+        self.assertFalse(fm["complete"])
+        self.assertEqual({g[0]: (g[2], g[3]["state"], g[3]["total"]) for g in fm["groups"] if g[1] == "g"},
+                         {"App": (wf.UNKNOWN, "stale", 1), "DB": (wf.UNKNOWN, "stale", 2)})
+        self.assertEqual(wf.conds(fm, self.now), ([], []))
+        self.assertEqual(wf.summary(fm)["worst"], [])
+
+    def test_duplicate_blank_group_claim(self):
+        rows = [sw_row(1, "WEB"), sw_row(2, "DB", 2, cp="App"), sw_row(2, "DB", 2, cp="")]
+        fm = wf.model(snap(rows, now=self.now), None, dict(OPTS, group_by="custom:Service"), self.now)
+        self.assertEqual([(g[0], g[3]["state"], g[3]["total"]) for g in fm["groups"]],
+                         [("App", "stale", 1), (wf.NO_GROUP, "stale", 2)])
+        self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_keyboard_before_fleet_response(self):
+        self.js(self.model(), """
+          F = null; api.S.area = "monitor"; B = el(); B.isConnected = true; P.cv = el();
+          document.addEventListener = (type, fn) => {document[type] = fn;};
+          wire();
+          for (const key of ["ArrowRight", "ArrowLeft", "Enter", " "]) {
+            const e = {key, target: {matches: () => true, closest: () => null},
+                       preventDefault: () => assert.fail("handled key before first response")};
+            document.keydown(e); B.listeners.keydown(e);
+          }
+        """)
+
+    def test_missing_fleet_renderer_disables_monitor(self):
+        fm = self.delivered()
+        fm["missingRenderer"] = True
+        self.js(fm, """
+          assert(!api.areaOn("monitor"));
+          assert(!api.areaList().some(a => a.id === "monitor" && a.on));
+        """)
+
+
+class MonitorAllowList(unittest.TestCase):
+    def setUp(self):
+        self.now = time.time()
+
+    def model(self, rows, containers=(), members=None, **opts):
+        groups = {"list": containers, "members": members or {}}
+        return wf.model(snap(rows, groups, self.now), None, dict(OPTS, **opts), self.now)
+
+    def test_row4_container_verdict_reaches_area_and_recovery(self):
+        for status, state, label in ((14, "warn", "warning"), (3, "warn", "warning"),
+                                     (2, "crit", "down"), (0, "stale", "unknown")):
+            with self.subTest(status=status):
+                fm = self.model([sw_row(1, "DB01")], [(10, "DB", status)], {"1": [10]})
+                for verdict in (fm["groups"][0][3], wf.summary(fm)):
+                    self.assertEqual((verdict["state"], verdict["label"]), (state, label))
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_row5_contradictory_node_is_grey(self):
+        cases = [(22, "Node status is Down.", 100, -1)]
+        cases.extend((1, desc, 0, -2) for desc in ("Node status is Unknown.", "Node status is Unreachable.",
+                     "Node status is Critical.", "A" * 80 + " Node status is Down."))
+        for status, desc, loss, rt in cases:
+            with self.subTest(status=status, desc=desc):
+                node = dict(sw_row(1, "DB01", status, loss=loss, rt=rt), StatusDescription=desc)
+                fm = self.model([node], [(10, "DB", 1)], {"1": [10]})
+                self.assertEqual(fm["nodes"][0][18:], ["unk", None])
+                self.assertEqual(fm["groups"][0][3]["state"], "stale")
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_each_up_requirement_is_independently_necessary(self):
+        for field, value in (("Status", 22), ("Status", 3), ("StatusDescription", "A" * 80 + " Warning"),
+                             ("PercentLoss", 101), ("PercentLoss", None), ("ResponseTime", -2), ("ResponseTime", None)):
+            with self.subTest(field=field, value=value):
+                node = dict(sw_row(1, "DB01"), **{field: value})
+                fm = self.model([node], [(10, "DB", 1)], {"1": [10]})
+                self.assertEqual(fm["nodes"][0][18:], ["unk", None])
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_row6_container_claims_include_blank_and_filtered_names(self):
+        cases = [([(1, "DB", 1), (1, "", 2)], [sw_row(1, "DB01")], {"1": [1]}, []),
+                 ([(1, "App", 1), (1, "", 1)], [sw_row(1, "WEB"), sw_row(2, "DB", 2)], {"2": [1]}, []),
+                 ([(1, "DB", 1), (1, "App", 1)], [sw_row(1, "WEB"), sw_row(2, "DB", 2)], {"2": [1]}, ["App"])]
+        for containers, nodes, members, groups in cases:
+            with self.subTest(containers=containers):
+                fm = self.model(nodes, containers, members, groups=groups)
+                self.assertEqual([(g[3]["state"], g[3]["total"]) for g in fm["groups"]],
+                                 [("stale", 1), ("stale", len(nodes))])
+                self.assertFalse(fm["complete"])
+                self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_row7_filtered_node_claim_reaches_ungrouped(self):
+        rows = [sw_row(1, "WEB", cp=""), sw_row(2, "DB", 2, cp="App"), sw_row(2, "DB", 2, cp="Other")]
+        fm = self.model(rows, group_by="custom:Service", groups=["App"])
+        self.assertEqual([(g[0], g[3]["state"], g[3]["total"]) for g in fm["groups"]],
+                         [("App", "stale", 1), (wf.NO_GROUP, "stale", 2)])
+        self.assertFalse(wf.conds(fm, self.now)[1])
 
 
 @unittest.skipUnless(shutil.which("node"), "no node")

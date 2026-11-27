@@ -610,7 +610,7 @@
   ansible.builtin.file:
     path: "{{ portal_config_dir }}/app/solarwinds-monitor.pem"
     state: absent
-  when: not (_portal_wall_monitor | bool) or not portal_solarwinds_ca_file
+  when: not (_portal_netmap | bool) and not portal_solarwinds_ca_file
 
 - name: Files | remove disabled monitor files
   ansible.builtin.file:

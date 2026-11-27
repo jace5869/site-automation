@@ -139,7 +139,7 @@ def _cap_rows(rows, cap):
         if i is not None:
             if kept[i] is rows[i]:
                 kept[i] = dict(kept[i], _duplicate=True, _claimed_groups=list(kept[i].get("_claimed_groups", ())))
-            kept[i]["_claimed_groups"].append(_txt(row.get("cp_group"), 120))
+            kept[i]["_claimed_groups"].append(_txt(row.get("cp_group"), None))
     return kept
 
 
@@ -184,7 +184,7 @@ def read_nodes(client, o, prop="", refused=None, clock=time.time):
                 # can change the verdict: every service claimed by this duplicate is grey.
                 claims = client.query("SELECT DISTINCT N.CustomProperties.%s AS cp_group FROM Orion.Nodes N "
                                       "WHERE N.NodeID = @last" % prop, {"last": last})
-                rows[-1]["_claimed_groups"] = [_txt(r.get("cp_group"), 120) for r in claims]
+                rows[-1]["_claimed_groups"] = [_txt(r.get("cp_group"), None) for r in claims]
             overlap = 0
             if int(cursor) != last:
                 for row in reversed(page):
@@ -258,7 +258,7 @@ def read_groups(client, o):
         by.setdefault(str(nid), [])
         if gid not in by[str(nid)]:
             by[str(nid)].append(gid)
-    return {"list": [[g.get("ContainerID"), _txt(g.get("Name"), 120), g.get("Status")] for g in valid_groups],
+    return {"list": [[g.get("ContainerID"), _txt(g.get("Name"), None), g.get("Status")] for g in valid_groups],
             "members": by, "cut": bool(gcut or mcut)}
 
 
@@ -431,13 +431,13 @@ class Since(object):
 
 
 # ---- the model --------------------------------------------------------------------------------------------------------------
-def sw_code(status, unmanaged):
+def sw_code(status):
     if type(status) is not int:
         return UNKNOWN
-    if unmanaged:
-        return UNMANAGED
+    if status == 1:
+        return UP
     w = site_swis.status_of(status) if site_swis is not None else None
-    return {"Up": UP, "Warning": WARN, "Down": DOWN}.get(w, UNKNOWN)
+    return {"Warning": WARN, "Down": DOWN}.get(w, UNKNOWN)
 
 
 # what vCenter says of a VM, as one letter in each row (the words go once, in the answer's "vmw")
@@ -593,17 +593,22 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             continue
         rt, loss = _num(r.get("ResponseTime")), _num(r.get("PercentLoss"))
         um = r.get("UnManaged")
-        c = sw_code(r.get("Status"), um is True or str(um).strip().lower() in ("true", "1"))
+        status = sw_code(r.get("Status"))
+        unmanaged = str(um).strip().lower() in ("true", "1")
+        desc = _txt(r.get("StatusDescription"), None)
+        up = (status == UP and not unmanaged and loss is not None and loss < 100 and rt is not None and rt >= 0
+              and not re.search(r"\b(down|unknown|unreachable|critical|warning)\b", desc, re.I))
+        c = UP if up else DOWN if status == DOWN and not unmanaged else UNKNOWN
         nid = str(r["NodeID"])
         if nid in by_id:
             by_id[nid].update(c=UNKNOWN, desc="")
-            by_id[nid]["cp"].add(_txt(r.get("cp_group"), 120))
+            by_id[nid]["cp"].add(_txt(r.get("cp_group"), None))
             by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
             continue
         by_id[nid] = {"id": nid, "name": _txt(r.get("Caption") or r.get("DNS"), None),
                       "at": _num(r.get("_read_at", at)), "dns": _txt(r.get("DNS"), None), "ip": _txt(r.get("IPAddress")), "c": UNKNOWN if r.get("_duplicate") else c, "rt": rt, "loss": loss,
-                      "desc": _txt(r.get("StatusDescription")), "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
-                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": {_txt(r.get("cp_group"), 120)} if prop else set()}
+                      "desc": desc[:MAX_TEXT], "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
+                      "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": {_txt(r.get("cp_group"), None)} if prop else set()}
         by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
     nodes = list(by_id.values())
     if odd:
@@ -615,37 +620,52 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     if unknown:
         out["incomplete"].append("%d node%s with a status SolarWinds does not know (grey)" % (unknown, "" if unknown == 1 else "s"))
     # ---- groups: SolarWinds groups (direct node members) or a node custom property's value; portal_wall_monitor_groups limits and orders
-    gnames, member = {}, {}
+    gnames, member, ambiguous_names = {}, {}, set()
     if prop:
         for n in nodes:
-            for group in sorted(n["cp"] - {""}):
-                gnames.setdefault(group.casefold(), group)
+            for group in sorted(n["cp"]):
+                if group:
+                    gnames.setdefault(group.casefold(), group)
                 member.setdefault(n["id"], []).append(group.casefold())
         swst = {}
     else:
         g = snap.get("groups") or {}
-        swst = {}
-        group_list = [(gid, _txt(name, 120), st) for gid, name, st in g.get("list") or []]
-        for gid, name, st in group_list:
+        swst, names_by_id = {}, {}
+        for gid, name, st in g.get("list") or []:
+            name = _txt(name, None)
+            key = name.casefold()
+            names_by_id.setdefault(str(gid), set()).add(name)
             if name:
-                gnames.setdefault(name.casefold(), name)
-                swst[name.casefold()] = sw_code(st, False)
-        idname = dict((str(gid), name.casefold()) for gid, name, st in group_list if name)
+                gnames.setdefault(key, name)
+            code = sw_code(st)
+            swst[key] = code if swst.get(key, code) == code else UNKNOWN
+        for names in names_by_id.values():
+            if len(names) > 1:
+                ambiguous_names.update(name.casefold() for name in names)
+        swst.update(dict.fromkeys(ambiguous_names, UNKNOWN))
         for nid, gids in (g.get("members") or {}).items():
-            member[str(nid)] = [idname[str(x)] for x in gids if str(x) in idname]
+            member[str(nid)] = [name.casefold() for gid in gids for name in names_by_id.get(str(gid), ())]
+    if ambiguous_names:
+        out["incomplete"].append("conflicting names for a SolarWinds container ID")
     missing = member.keys() - {n["id"] for n in nodes}
     if missing:
         out["incomplete"].append("%d group members not in the node read" % len(missing))
     want = [x.casefold() for x in o["groups"]]
+    used = {k for claims in member.values() for k in claims}
     if want:
         order = [k for k in want if k in gnames]
     else:
-        used = set(k for v in member.values() for k in v)
         order = sorted((k for k in gnames if k in used), key=lambda k: gnames[k].casefold())
     gi_of = dict((k, i) for i, k in enumerate(order))
     groups = [[gnames[k], "c" if prop else "g", swst.get(k, "")] for k in order]
     nog = len(groups)
-    groups.append([NO_GROUP, "n", ""])
+    # A filtered or blank claim belongs to the ungrouped tile.
+    def group_indices(nid):
+        return sorted({gi_of.get(k, nog) for k in member.get(nid, ())}) or [nog]
+
+    ambiguous_groups = {gi_of.get(k, nog) for k in ambiguous_names}
+    fallback_status = worst_status(swst[k] for k in (used | ambiguous_names) - gi_of.keys() if k in swst)
+    groups.append([NO_GROUP, "n", fallback_status])
     # ---- vCenter
     vms, vcs = vcenter_vms(view, now, late)
     out["vcs"] = [[v[0], v[2], v[3]] for v in vcs]
@@ -673,9 +693,8 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             out[t].append(v)
         return d[v]
     for ni, n in enumerate(nodes):
-        gl = [gi_of[k] for k in member.get(n["id"], []) if k in gi_of]
-        gl = sorted(set(gl))
-        gi = gl[0] if gl else nog
+        gl = group_indices(n["id"])
+        gi = gl[0]
         c, why, flags, vcode, host, vci = n["c"], "", "", "", "", -1
         why = _since_words(c, n["rt"], n["loss"])
         vi = pairs.get(ni)
@@ -690,6 +709,8 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             flags += "o"                        # Orion's own poll of it is old: its status is not current (never green)
             why = (why + " · " if why else "") + ("SolarWinds last polled it %d min ago" % (pa // 60) if expired else
                                                   "SolarWinds gives no reliable last poll time for it")
+        if c == UNKNOWN and page_current and "o" not in flags:
+            deadlines.append(n["polled"] + poll_stale)
         if vi is not None and identities_complete:
             v = vms[vi]
             out["cmp"]["matched"] += 1
@@ -718,7 +739,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     room = min(200, o["max_nodes"] - len(built))
     for nid in heapq.nsmallest(room, missing):
         missing.remove(nid)  # remaining IDs count in the totals without a placeholder row
-        gl = sorted({gi_of[k] for k in member[nid] if k in gi_of}) or [nog]
+        gl = group_indices(nid)
         built.append([gl[0], "Node " + nid, "", UNKNOWN, None, None, 0, 0, "group member not in the node read",
                       "", -1, -1, "", nid, gl[1:], None, "", -1, "unk", None])
     old = sum(1 for r in built if "o" in r[12])
@@ -764,7 +785,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             deadlines.append(r[19])
     omitted = [0] * len(groups)
     for nid in missing:
-        for gi in {gi_of[k] for k in member[nid] if k in gi_of} or {nog}:
+        for gi in group_indices(nid):
             omitted[gi] += 1
     if vco:
         omitted[-1] = vc_count - len(vco)
@@ -774,8 +795,16 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         if g[1] == "v":
             g.append(dict(state="info", label="information only", total=vc_count, up=0, down=0, warn=0, valid_until=None))
             continue
-        g.append(rollup(per[gi], omitted[gi], incomplete or membership_old, at + sw_late if at is not None else None))
-    out["verdict"] = rollup(solar, len(missing), structural_gap or membership_old or not solar, None)
+        if gi in ambiguous_groups:
+            # Member status is known fleet-wide, but its attribution to this service is uncertain.
+            g.append(rollup([], len(per[gi]) + omitted[gi], True, None))
+            continue
+        g.append(rollup(per[gi], omitted[gi], incomplete or membership_old, at + sw_late if at is not None else None, g[2]))
+    area_status = worst_status(g[2] for g in groups)
+    if area_status == UNKNOWN and not ambiguous_groups:
+        out["incomplete"].append("unknown SolarWinds container status")
+    out["verdict"] = rollup(solar, len(missing), structural_gap or membership_old or not solar, None,
+                            area_status)
     if membership_until is not None:
         for verdict in [out["verdict"]] + [g[3] for g in groups]:
             if verdict["valid_until"] is not None:
@@ -787,14 +816,26 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     return out
 
 
-def rollup(rows, missing, incomplete, empty_until):
+def worst_status(codes):
+    present = set(codes)
+    return next((code for code in (UNKNOWN, DOWN, WARN, UP) if code in present), "")
+
+
+def rollup(rows, missing, incomplete, empty_until, container_status=""):
     counts = Counter(r[18] for r in rows)
     until = min((r[19] for r in rows if r[19] is not None), default=empty_until)
     if incomplete or missing or counts["unk"]:
         state, until = "stale", None
+    elif container_status == UNKNOWN:
+        state = "stale"
+    elif container_status == DOWN or counts["down"]:
+        state = "crit"
+    elif container_status == WARN or counts["warn"]:
+        state = "warn"
     else:
-        state = "crit" if counts["down"] else "warn" if counts["warn"] else "ok" if counts["up"] else "off"
-    label = {"crit": "down", "warn": "warning", "ok": "up", "off": "no monitored nodes", "stale": "not current"}[state]
+        state = "ok" if rows and counts["up"] == len(rows) else "off"
+    label = {"crit": "down", "warn": "warning", "ok": "up", "off": "no monitored nodes",
+             "stale": "unknown" if container_status == UNKNOWN and until is not None else "not current"}[state]
     return dict(state=state, label=label, total=len(rows) + missing, up=counts["up"], down=counts["down"],
                 warn=counts["warn"], valid_until=until)
 
@@ -820,6 +861,8 @@ def conds(fm, now):
         verdict = g[3]
         can_clear = verdict["state"] == "ok" and now < (_num(verdict.get("valid_until")) or 0)
         for state, kind, word, sev in (("down", "fleetdown", "down", "crit"), ("warn", "fleetwarn", "warning", "warn")):
+            if not verdict[state] and not can_clear:
+                continue
             bad = sorted([r for r in rs if r[18] == state and now < (_num(r[19]) or 0)], key=lambda r: (r[6] or now, r[1]))
             cid = "fleet:%s:%s" % (kind[5:], g[0])
             if not bad:

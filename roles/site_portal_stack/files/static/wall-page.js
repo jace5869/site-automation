@@ -123,6 +123,7 @@
   var K_STYLE = "opsWall.style", K_THEME = "site-report-theme";
   function sget(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function sset(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* this page only */ } }
+  function fleetRenderer() { return window.SAWallFleet && typeof window.SAWallFleet.render === "function"; }
   function adapt(a) {
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
@@ -130,7 +131,9 @@
     a.noConds = !Array.isArray(a.conds);                  // Codex r5 #16: no condition list at all - nothing is known, nothing green
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
-    a.areas = arr(a.areas).filter(function (x) { return x && typeof x === "object"; });
+    a.areas = arr(a.areas).filter(function (x) {
+      return x && typeof x === "object" && (x.id !== "monitor" || fleetRenderer());
+    });
     a.conds.forEach(function (c) { c.start = c.start * 1000; c.end = c.end == null ? null : c.end * 1000; c.seen = c.seen == null ? null : c.seen * 1000; });
     Object.keys(a.feeds).forEach(function (k) {
       var f = a.feeds[k];
@@ -422,6 +425,7 @@
   var RENDER = {};
   function render() {
     if (!W) return;
+    if (S.area === "monitor" && !fleetRenderer()) S.area = "overview";
     var de = document.documentElement;
     STYLES.forEach(function (st) { de.classList.remove("style-" + st); });
     de.classList.add("style-" + S.style);
@@ -454,7 +458,7 @@
   }
   // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
   function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || monArea()); }
-  function monArea() { return S.area === "monitor" && !!window.SAWallFleet; }   // only with the monitor on (its script loaded)
+  function monArea() { return S.area === "monitor" && fleetRenderer(); }   // only with the monitor on (its script loaded)
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
