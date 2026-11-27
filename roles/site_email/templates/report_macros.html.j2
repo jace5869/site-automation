@@ -93,7 +93,7 @@
 
 {%- macro section_count(s, has_servers) -%}
 {%- set count = namespace(value=0) -%}
-{%- for key in (['rows', 'servers', 'cards', 'passed', 'groups', 'causes', 'issues', 'glance', 'tiles', 'lines'] if has_servers else ['rows']) -%}
+{%- for key in (['rows', 'servers', 'rollup_hosts', 'cards', 'passed', 'groups', 'causes', 'issues', 'glance', 'tiles', 'lines'] if has_servers else ['rows']) -%}
 {%- if not count.value and s[key] | default([]) -%}{%- set count.value = s[key] | length -%}{%- endif -%}
 {%- endfor -%}
 {{ count.value or (r.teams.hosts | default({}) | length if has_servers and s.team_view | default(false) and r.teams is defined else 0) }}

@@ -217,8 +217,9 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}
     if not out["scanned"] and win:
-        out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
-                                "summary": "the STIG scan did not run: " + (out["why"] or "unknown reason"),
+        # 1.138.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
+        out["findings"].append({"check": "stig", "id": "stig:not-scanned" + tag, "severity": "warning",
+                                "summary": say + "the STIG scan did not run: " + (out["why"] or "unknown reason"),
                                 "hint": (("Get-Content -Tail 40 '%s'" % scan["evaluate_log"]) if scan.get("evaluate_log") else
                                          ("Get-Item '%s'" % scan["evaluate"]) if scan.get("evaluate") else
                                          "Get-ChildItem -Path C:\\ -Filter Evaluate-STIG.ps1 -Recurse -Depth 5 -ErrorAction SilentlyContinue"),
@@ -228,8 +229,9 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         return out
     if not out["scanned"]:
         es = scanner == "evaluate_stig"
-        out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
-                                "summary": "the STIG scan did not run: " + (out["why"] or "unknown reason"),
+        # 1.138.0: include checklist tag so multi-checklist hosts keep distinct not-scanned findings
+        out["findings"].append({"check": "stig", "id": "stig:not-scanned" + tag, "severity": "warning",
+                                "summary": say + "the STIG scan did not run: " + (out["why"] or "unknown reason"),
                                 "hint": (("less " + scan["evaluate_log"]) if scan.get("evaluate_log") else ("ls -l " + (scan.get("evaluate") or "check_stig_evaluate")))
                                 if es else "rpm -q openscap-scanner scap-security-guide",
                                 "note": ("Check Evaluate-STIG on the host (check_stig_evaluate, check_stig_evaluate_read; pwsh installed), then run "

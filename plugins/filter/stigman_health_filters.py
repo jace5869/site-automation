@@ -35,37 +35,44 @@ def stigman_health_findings(keycloak, targets, opts=None):
     check, slow = o["check"], int(o["slow_ms"])
     out = []
 
-    def add(sev, key, summary, hint=""):
-        out.append({"check": check, "id": "%s:%s" % (check, key), "severity": sev, "summary": summary, "hint": hint})
+    def add(sev, key, summary, hint="", host=""):
+        # 1.138.0: attach host on each finding so server_view groups by real node/service rather than localhost
+        d = {"check": check, "id": "%s:%s" % (check, key), "severity": sev, "summary": summary, "hint": hint}
+        if host:
+            d["host"] = host
+        out.append(d)
 
     kc = keycloak or {}
+    kc_url = str(kc.get("url") or "")
+    kc_host = kc_url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0] or "Keycloak"
     oidc, tok = kc.get("oidc") or {}, kc.get("token") or {}
     if oidc.get("status", 0) not in (0, 200):
         add("critical", "keycloak", "Keycloak's realm does not answer (%s): nobody can log in to STIG Manager" % (oidc.get("why") or "?"),
-            "curl -sS %s/.well-known/openid-configuration" % kc.get("url", ""))
+            "curl -sS %s/.well-known/openid-configuration" % kc_url, host=kc_host)
     if tok.get("status", 0) not in (0, 200):
         add("critical", "token", "Keycloak gave no token to the health check's client (%s)" % (tok.get("why") or "?"),
-            "the client's secret and its service account (Keycloak: Clients - the client - Credentials)")
+            "the client's secret and its service account (Keycloak: Clients - the client - Credentials)", host=kc_host)
     versions, migrations, dbs = {}, {}, {}
     for t in targets or []:
         name, kind = t.get("name", ""), t.get("kind", "node")
         who = "STIG Manager's address" if kind == "service" else "node %s" % name
+        t_host = name or ("stigman-service" if kind == "service" else "stigman")
         down_sev = "critical" if kind == "service" else o["node_down"]
         st, cf = t.get("state") or {}, t.get("configuration") or {}
         if st.get("status") == 200 and st.get("currentState") not in (None, "available"):
             add(down_sev, "state:" + name, "%s: the API is %s since %s (database %s, Keycloak %s)" % (
                 who, st.get("currentState"), st.get("since") or "?", _smh_up(st.get("db")), _smh_up(st.get("oidc"))),
-                "the API's log: podman logs --since 1h <the STIG Manager container> (on the node)")
+                "the API's log: podman logs --since 1h <the STIG Manager container> (on the node)", host=t_host)
             continue
         if st.get("status") not in (200, 404) and cf.get("status") != 200:
             add(down_sev, "down:" + name, "%s does not answer: %s" % (who, st.get("why") or cf.get("why") or "no answer"),
-                "curl -sS %s/op/state" % t.get("url", ""))
+                "curl -sS %s/op/state" % t.get("url", ""), host=t_host)
             continue
         if cf.get("status") != 200:
-            add("warning", "configuration:" + name, "%s: /op/configuration does not answer (%s)" % (who, cf.get("why") or "?"))
+            add("warning", "configuration:" + name, "%s: /op/configuration does not answer (%s)" % (who, cf.get("why") or "?"), host=t_host)
         ms = max([x for x in (st.get("ms"), cf.get("ms")) if x is not None] or [0])
         if ms > slow:
-            add("warning", "slow:" + name, "%s is slow: %d ms (warning above %d ms)" % (who, ms, slow))
+            add("warning", "slow:" + name, "%s is slow: %d ms (warning above %d ms)" % (who, ms, slow), host=t_host)
         if cf.get("version"):
             versions[name] = str(cf["version"])
         if cf.get("lastMigration") is not None:
@@ -73,16 +80,16 @@ def stigman_health_findings(keycloak, targets, opts=None):
         us = t.get("user") or {}
         if us.get("status", 0) in (401, 403):
             add(down_sev, "auth:" + name, "%s refuses Keycloak's token (%s): its OIDC settings (STIGMAN_OIDC_PROVIDER, the "
-                                          "audience) may differ from the other nodes'" % (who, us.get("why")))
+                                          "audience) may differ from the other nodes'" % (who, us.get("why")), host=t_host)
         elif us.get("status", 0) not in (0, 200):
             add(down_sev, "user:" + name, "%s: an authenticated call that reads the database failed (%s)" % (who, us.get("why") or "?"),
-                "the API's log on the node, and the database host")
+                "the API's log on the node, and the database host", host=t_host)
         elif us.get("status") == 200 and (us.get("ms") or 0) > slow:
             add("warning", "slow-db:" + name, "%s: an authenticated call took %d ms (warning above %d ms) - the database or the "
-                                              "network to it" % (who, us["ms"], slow))
+                                              "network to it" % (who, us["ms"], slow), host=t_host)
         co = t.get("collections") or {}
         if us.get("status") == 200 and co.get("status", 0) not in (0, 200):
-            add("warning", "collections:" + name, "%s: the collections could not be listed (%s)" % (who, co.get("why") or "?"))
+            add("warning", "collections:" + name, "%s: the collections could not be listed (%s)" % (who, co.get("why") or "?"), host=t_host)
         ai = t.get("appinfo") or {}
         if ai.get("status") != 200:
             continue
@@ -91,26 +98,26 @@ def stigman_health_findings(keycloak, targets, opts=None):
             pct = 100.0 * my["threads_connected"] / my["max_connections"]
             if pct >= float(o["conn_warn_pct"]):
                 add("critical" if pct >= float(o["conn_crit_pct"]) else "warning", "db-connections:" + name,
-                    "the database has %d of its %d connections in use (%d%%)" % (my["threads_connected"], my["max_connections"], pct))
+                    "the database has %d of its %d connections in use (%d%%)" % (my["threads_connected"], my["max_connections"], pct), host=t_host)
         if my.get("uptime") is not None and my["uptime"] < int(o["restart_minutes"]) * 60:
-            add("warning", "db-restarted:" + name, "the database restarted %s ago (seen through %s)" % (_smh_ago(my["uptime"]), who))
+            add("warning", "db-restarted:" + name, "the database restarted %s ago (seen through %s)" % (_smh_ago(my["uptime"]), who), host=t_host)
         if nj.get("uptime") is not None and nj["uptime"] < int(o["restart_minutes"]) * 60 and kind == "node":
-            add("warning", "restarted:" + name, "%s restarted %s ago" % (who, _smh_ago(nj["uptime"])))
+            add("warning", "restarted:" + name, "%s restarted %s ago" % (who, _smh_ago(nj["uptime"])), host=t_host)
         if my.get("uptime") is not None:
             dbs[name] = (str(my.get("version") or ""), float(my["uptime"]))
     if len(set(versions.values())) > 1:
-        add("warning", "versions", "the nodes run different STIG Manager versions: %s" % ", ".join("%s %s" % kv for kv in sorted(versions.items())))
+        add("warning", "versions", "the nodes run different STIG Manager versions: %s" % ", ".join("%s %s" % kv for kv in sorted(versions.items())), host="STIG Manager cluster")
     if o["version"] and versions and any(v != str(o["version"]) for v in versions.values()):
         add("warning", "version", "STIG Manager is not at %s (stigman_health_version): %s" % (
-            o["version"], ", ".join("%s %s" % kv for kv in sorted(versions.items()))))
+            o["version"], ", ".join("%s %s" % kv for kv in sorted(versions.items()))), host="STIG Manager cluster")
     if len(set(migrations.values())) > 1:
         add("warning", "schema", "the nodes see different database schemas (lastMigration): %s - do they use the same database?"
-            % ", ".join("%s %s" % kv for kv in sorted(migrations.items())))
+            % ", ".join("%s %s" % kv for kv in sorted(migrations.items())), host="STIG Manager cluster")
     if len(dbs) > 1:
         vals = list(dbs.values())
         if len({v for v, _ in vals}) > 1 or max(u for _, u in vals) - min(u for _, u in vals) > 600:
             add("warning", "databases", "the nodes do not seem to use the same database (its version or uptime differ): %s"
-                % ", ".join("%s %s up %s" % (n, v or "?", _smh_ago(u)) for n, (v, u) in sorted(dbs.items())))
+                % ", ".join("%s %s up %s" % (n, v or "?", _smh_ago(u)) for n, (v, u) in sorted(dbs.items())), host="STIG Manager cluster")
     return out
 
 

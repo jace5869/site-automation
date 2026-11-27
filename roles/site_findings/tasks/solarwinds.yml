@@ -15,7 +15,7 @@
       {%- set out = [] -%}
       {%- for h in _swr_targets -%}
       {%-   set ah = hostvars[h].ansible_host | default('', true) | string | trim -%}
-      {%-   set _ = out.append({'host': h, 'ip': ah, 'fqdn': (ah if '.' in ah and not (ah | regex_search('^[0-9.]+$')) else '')}) -%}
+      {%-   set _ = out.append({'host': h, 'ip': ah, 'fqdn': (ah if '.' in ah and not (ah | regex_search('^[0-9.]+$')) else (h if '.' in h and not (h | regex_search('^[0-9.]+$')) else (hostvars[h].ansible_fqdn | default('', true) | string | trim)))}) -%}
       {%- endfor -%}
       {{ out }}
 
@@ -32,6 +32,20 @@
                                   'volume_pct': solarwinds_report_volume_pct | float,
                                   'volume_critical_pct': solarwinds_report_volume_critical_pct | float})) }}
   run_once: true
+
+- name: Report | SolarWinds - list-only server view (1.138.0)
+  ansible.builtin.set_fact:
+    _swr_view: >-
+      {{ _swr_view | combine({'web_sections': (_swr_view.web_sections | default([])) + [_swr_sv | combine({'under_findings': true})]}) }}
+  vars:
+    _swr_sv: >-
+      {{ _swr_read | swr_server_view(dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_findings', default=[]))),
+                                     {'missing': _swr_targets | difference(ansible_play_hosts),
+                                      'skip_hosts': solarwinds_report_skip_hosts | default([], true),
+                                      'volume_pct': solarwinds_report_volume_pct | float,
+                                      'zone': report_time_zone | default('')}) }}
+  run_once: true
+  when: report_servers_view | default(false) | bool and _swr_read.ok | default(false) | bool
 
 - name: Report | SolarWinds
   ansible.builtin.debug:

@@ -33,18 +33,21 @@
           'conn_warn_pct': stigman_health_conn_warn_pct | float, 'conn_crit_pct': stigman_health_conn_crit_pct | float,
           'restart_minutes': stigman_health_restart_minutes | int, 'version': stigman_health_version | string} }}
 
-# a host's own findings carry its name; a host that did not report (unreachable, sudo) is a finding too
+# 1.138.0 (step 14): carry each host in finding['host'] so server_view groups by node/service without duplicating host prefixes
 - name: STIG Manager | findings (the API's, and the hosts')
   ansible.builtin.set_fact:
+    _smh_server_hosts: >-
+      {{ (_smh_hosts + (_smh.targets | default([]) | map(attribute='name', default='') | select | list)) | unique | list }}
     site_findings: >-
       {%- set f = _smh.keycloak | stigman_health_findings(_smh.targets, _smh_opts) -%}
+      {%- set sv_on = report_servers_view | default(false) | bool -%}
       {%- for h in _smh_hosts -%}
       {%-   if hostvars[h].site_checks_run is defined -%}
       {%-     for x in hostvars[h].site_findings | default([]) -%}
-      {%-       set _ = f.append(x | combine({'id': h ~ ':' ~ x.id, 'summary': h ~ ': ' ~ x.summary})) -%}
+      {%-       set _ = f.append(x | combine({'host': h, 'subject': h} if sv_on else {'host': h, 'subject': h, 'id': h ~ ':' ~ x.id, 'summary': h ~ ': ' ~ x.summary})) -%}
       {%-     endfor -%}
       {%-   else -%}
-      {%-     set _ = f.append({'check': 'stigman', 'id': 'stigman:host:' ~ h, 'severity': 'warning',
+      {%-     set _ = f.append({'check': 'stigman', 'id': 'stigman:host:' ~ h, 'host': h, 'subject': h, 'severity': 'warning',
                                 'summary': h ~ ': its host was not read (not reached, sudo refused, or not in this run’s Limit) - its containers, disk and database are not checked',
                                 'hint': 'ansible ' ~ h ~ ' -m ping'}) -%}
       {%-   endif -%}

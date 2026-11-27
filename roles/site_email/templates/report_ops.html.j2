@@ -33,7 +33,8 @@
 {%- set opsword = {'ok': 'Healthy', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Not rated', 'unknown': 'Unavailable', 'low': 'Low'} -%}
 {#- The findings role supplies its default false. Standalone report documents describe their own sections. -#}
 {%- set server_features = report_servers_view | default(true) | string | lower in ['true', 'yes', 'on', '1'] -%}
-{%- set has_servers = server_features and r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0 -%}
+{%- set has_servers = server_features and ((r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0) or (r.sections | default([]) | selectattr('cert_rollup', 'defined') | selectattr('cert_rollup') | list | length > 0) or (r.sections | default([]) | selectattr('chrome_view', 'defined') | selectattr('chrome_view') | list | length > 0)) -%}
+{%- set _kind_web = true -%}
 {#- 1.138.0: shared macros extracted to report_macros.html.j2 (pure refactor) -#}
 {%- from 'report_macros.html.j2' import icon, copyicons, nbw, keep, dw, chip, breakable, xmini with context -%}
 {%- from 'report_macros.html.j2' import section_count with context -%}
@@ -951,7 +952,7 @@ footer{margin-top:32px}
 {%- set cols = s.columns | default([]) %}
 {%- set rws = s.rows | default([]) %}
 {%- set nk = namespace(ok=true, num=true, mx=0, cs=false, w=0) %}
-{%- for k in ['team_view', 'server_view', 'cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed', 'causes', 'cause_first'] %}
+{%- for k in ['team_view', 'server_view', 'cert_rollup', 'chrome_view', 'cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed', 'causes', 'cause_first'] %}
 {%- if s[k] is defined and s[k] %}{% set nk.ok = false %}{% endif %}
 {%- endfor %}
 {%- if cols | length > 4 or rws | length > 25 %}{% set nk.ok = false %}{% endif %}
@@ -1065,7 +1066,7 @@ footer{margin-top:32px}
 {%- set xp = (s.columns is defined and s.rows | default([]) and blist[loop.index0] is none) or s.text | default('') | string | length > 220 %}
 {%- if s.team_view | default(false) and r.teams is defined %}
 {%- include 'report_teams.html.j2' %}
-{%- elif has_servers and s.server_view | default(false) %}
+{%- elif has_servers and (s.server_view | default(false) or s.cert_rollup | default(false) or s.chrome_view | default(false)) %}
 {%- include 'report_servers.html.j2' %}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
@@ -1154,10 +1155,7 @@ footer{margin-top:32px}
 {% include 'report_heat.html.j2' %}
 {%- endif %}
 {#- 1.66.0: an outage time line (the VM outage watch's review) -#}
-{%- if s.kind | default('') == 'by_kind' %}{%- include 'report_by_kind.html.j2' %}{%- endif %}
-{%- if s.kind | default('') == 'story' %}{% include 'report_story.html.j2' %}
-{%- elif s.kind | default('') == 'review_chart' %}{% include 'report_outage.html.j2' %}
-{%- elif s.kind | default('') == 'noc' %}{% include 'report_outage_noc.html.j2' %}{% endif %}
+{%- include 'report_section_kind.html.j2' %}
 {%- if s.outage is defined %}
 {% include 'report_watch_timeline.html.j2' %}
 {%- endif %}

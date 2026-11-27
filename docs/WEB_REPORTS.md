@@ -432,24 +432,26 @@ page, and the one last chosen is offered as *Your team* on the other pages.
 
 ## Server-first view (1.138.0)
 
-**Opt-in preview, off by default.** Health-check report pages on the report website (`atlas`, `brief` and `ops`) can lead with a server-first layout instead of only a flat findings table. Emails and Excel workbooks do not change.
+**On by default on the report website (`atlas`, `brief`, `ops`, and `glass`).** Report pages lead with *At a glance* tiles on top and a server-first layout (or host rollup / chrome-only wrapper where the report is not server-keyed). Emails and Excel workbooks do not change.
 
-Turn it on in `playbooks/group_vars/all.yml` (or on one template's Variables to try it on one report first):
+To restore the byte-identical pre-1.138.0 layout in `playbooks/group_vars/all.yml` (or on one template's Variables):
 
 ```yaml
-report_servers_view: true                # false (default) = every page as before
+report_servers_view: false               # true (default since 1.138.0 step 16)
 ```
 
-The default lives in `roles/site_findings/defaults/main.yml`.
+The default lives in `roles/site_findings/defaults/main.yml` and `roles/site_email/defaults/main.yml`.
 
-**What the page shows when enabled:**
+**What each report family shows when enabled:**
 
-- **At a glance** tiles on top: *Servers checked* (reporting vs not reached), *Findings*, *Critical servers*, and *Clear servers*, each with a per-server coverage meter.
-- **Servers**, worst first: server name (with IP when known), status chip (icon and word - never colour alone), counts for *Crit*, *Warn*, *Low* and *Info* (`low` findings keep their own column and never turn a server amber), worst finding, and checked time (in `report_time_zone`, or UTC when unset).
-- **Click any server row** to open its findings in place: severity chip, summary, evidence, *What to do* prose (`fix`, never given a Copy button), read-only check command (`hint`, with the Copy button), and any Site portal action buttons. A host whose findings hit `site_findings_max_per_kind` explicitly shows *and N more of &lt;kind&gt;, not listed*. A host that did not report appears as *Not reached* with its reason from `site_host_unreached` or `site_host_skipped`.
-- **Controls**: search filter (matches server names, IPs and findings), severity filter chips (*All*, *Critical*, *Warning*, *Low*, *Info*, *Not reached*, *OK*), **Expand all / Collapse all**, and **CSV**. With scripts blocked, every server's findings stay readable and openable by hand (`<details>`).
-- **The flat *Findings* table stays below it** during the rollout, using the same counts computed once in `plugins/filter/server_view_filters.py`.
-- **Sidebar counts and narrow-screen selector** (all web reports since 1.138.0): every section in the rail shows its item count, and below 900 px a section jump `<select>` replaces the rail (with scripts blocked, the top bar's section links remain usable).
+- **Health checks, STIG drift, fapolicyd, Active Directory, and STIG Manager health**:
+  - **At a glance** tiles strictly on top (above SolarWinds `first: true` sections and *Start here*), with hot critical/warning highlights and per-server coverage meters. When zero hosts report, tiles show *N not checked* with no zero counts.
+  - **Servers**, worst first: server name (with IP, checklist pills on multi-checklist STIG hosts, or DC label), status chip (icon and word - never colour alone), counts for *Crit*, *Warn*, *Low* and *Info* (`low` keeps its own column and never turns a host amber; not-reached/unchecked hosts stay `unknown`), worst finding, and checked time (in `report_time_zone`, or UTC when unset).
+  - **Click any server row** to open its findings in place: severity chip, summary, evidence, *What to do* prose (`fix`, NEVER given a Copy button), read-only check command (`hint`, with the Copy button), and Site portal action buttons. Capped hosts show an *and N more not listed* pill and detail note. STIG hosts open to per-rule `drift`/`new`/`disagree`/`fixed_open` cards with DISA check commands and fix text. AD folds DC-scoped findings (including `low`) under their lower-case inventory host and puts non-DC objects into *Domain & forest objects*.
+- **Software inventory and SolarWinds (`sw_inventory`, `solarwinds_report`)**: list-only server view (no severity count columns; *Read* / *Not read* / *Not certain* / *Changed* chips). Skipped hosts note *N left out on purpose*; uncertain SolarWinds matches show *Not certain* (`unknown`, never green) and are kept out of matched counts.
+- **Certificates (`cert_report`, `win_cert_report`, `net_certs`, `vmware_cert_report`)**: host rollup on top (*N certificates, worst D days*); clicking a host filters the certificate table below.
+- **ONTAP, Cisco UCS, and Network map**: chrome only — native cluster/volume/SVM, domain/chassis/blade/fault, and site/node/WAN link tables and maps stay untouched, wrapped with *At a glance* tiles on top, unified search, severity chips, Expand/Collapse all, and sidebar counts/select.
+- **Controls & no-script fallback**: search filter, severity chips, **Expand all / Collapse all**, **CSV**, sidebar section counts, and a narrow-screen jump `<select>` (`<= 900 px`). With scripts blocked, every server's findings remain openable by hand (`<details>`).
 
 ## Motion (1.86.0)
 

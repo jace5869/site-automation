@@ -1,0 +1,257 @@
+{#- 1.138.0: Frosted Glass web report layout when report_servers_view is on (included from report_glass.html.j2
+    ONLY when _page_runs is defined AND a server_view / cert_rollup / chrome_view section is present).
+    Matches reports-by-server-all.html in light and dark, 1280 and 800 px wide, with sticky sidebar + 800px <select>,
+    At a glance on top, hot criticals, low never amber, and full no-script fallback. Email output never uses this file. -#}
+{%- set words = {'ok': 'All good', 'warning': 'Needs attention', 'critical': 'Action required', 'info': 'For information', 'unknown': 'Unknown', 'low': 'Worth knowing'} -%}
+{%- set chipword = {'ok': 'OK', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Info', 'unknown': 'Unknown', 'low': 'Low'} -%}
+{%- set hover_look = 'glass' -%}
+{%- set _kind_web = true -%}
+{%- from 'report_macros.html.j2' import icon, copyicons, nbw, keep, dw, chip, breakable, xmini, section_count with context -%}
+{%- set r = r | report_tidy -%}
+{%- set secs = r.sections | default([]) -%}
+<!DOCTYPE html>
+<html lang="en" data-look="glass">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ rhead.subject | e }}</title>
+<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+{%- set glight %}
+  --ink:#0f2236;--muted:#4a5d71;--label:#3d5166;
+  --accent:#0e6e74;--accent-ink:#ffffff;--accent-soft:rgba(14,110,116,.13);
+  --bg:#dde8f0;--bg2:#d3e9e4;
+  --card:rgba(255,255,255,.68);--card-solid:#f8fbfd;--card-strong:rgba(255,255,255,.92);--th:#f2f6fa;
+  --edge:rgba(255,255,255,.88);--line:#e3eaf1;--zebra:rgba(240,246,251,.55);--hover:rgba(14,110,116,.07);
+  --code:#eef4f8;--bar:rgba(244,250,253,.82);
+  --shadow:0 10px 30px rgba(15,34,54,.10);
+  --ok:#0d7149;--ok-bg:#e2f6ec;--ok-bd:#b7e4cd;
+  --warning:#9a5300;--warning-bg:#fff1dc;--warning-bd:#f4d29c;
+  --critical:#b42318;--critical-bg:#fde8e8;--critical-bd:#f5bfbf;
+  --info:#1d4ed8;--info-bg:#e5eefe;--info-bd:#bcd0fa;
+  --low:#88358e;--low-bg:#f6e9f6;--low-bd:#e6c6e8;--low-row:#fbf3fb;
+  --unknown:#4a5868;--unknown-bg:#eef2f6;--unknown-bd:#d4dce5;
+  --critical-row:#fdeeee;--warning-row:#fff6e8;
+  color-scheme:light;
+{%- endset %}
+{%- set gdark %}
+  --ink:#e8f1f6;--muted:#9db2c2;--label:#bfd0dd;
+  --accent:#4cd2d8;--accent-ink:#052226;--accent-soft:rgba(76,210,216,.15);
+  --bg:#0b1b26;--bg2:#0c2224;
+  --card:rgba(16,32,46,.68);--card-solid:#122536;--card-strong:rgba(13,26,38,.90);--th:#172d40;
+  --edge:rgba(180,220,235,.18);--line:rgba(180,220,235,.12);--zebra:rgba(255,255,255,.025);--hover:rgba(76,210,216,.10);
+  --code:#0b1824;--bar:rgba(11,26,38,.82);
+  --shadow:0 12px 34px rgba(0,0,0,.40);
+  --ok:#54d89e;--ok-bg:rgba(84,216,158,.14);--ok-bd:rgba(84,216,158,.36);
+  --warning:#f4ba58;--warning-bg:rgba(244,186,88,.14);--warning-bd:rgba(244,186,88,.38);
+  --critical:#ff8c86;--critical-bg:rgba(255,140,134,.16);--critical-bd:rgba(255,140,134,.44);
+  --info:#8ab8ff;--info-bg:rgba(138,184,255,.14);--info-bd:rgba(138,184,255,.36);
+  --low:#d084e0;--low-bg:rgba(208,132,224,.15);--low-bd:rgba(208,132,224,.38);--low-row:rgba(208,132,224,.07);
+  --unknown:#a7b6c4;--unknown-bg:rgba(167,182,196,.13);--unknown-bd:rgba(167,182,196,.30);
+  --critical-row:rgba(255,140,134,.10);--warning-row:rgba(244,186,88,.07);
+  color-scheme:dark;
+{%- endset %}
+:root{ {{ glight }} }
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){ {{ gdark }} }}
+:root[data-theme=dark]{ {{ gdark }} }
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--bg);scroll-padding-top:78px}
+body{margin:0;min-height:100vh;color:var(--ink);font:14.5px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;background:transparent}
+.g-bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:linear-gradient(140deg,#cfe2ee 0%,#e6eef6 45%,#d3e9e4 100%)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .g-bg{background:linear-gradient(140deg,#0b1b26 0%,#0e1d2b 45%,#0c2224 100%)}}
+:root[data-theme=dark] .g-bg{background:linear-gradient(140deg,#0b1b26 0%,#0e1d2b 45%,#0c2224 100%)}
+.g-bg i{position:absolute;border-radius:50%;filter:blur(72px);opacity:.72}
+.g-bg i:nth-child(1){width:44vw;height:44vw;left:-12vw;top:-14vw;background:#8fd0d6}
+.g-bg i:nth-child(2){width:38vw;height:38vw;right:-10vw;top:8vh;background:#9bb8f0}
+.g-bg i:nth-child(3){width:34vw;height:34vw;left:30vw;bottom:-16vw;background:#f3d9a8;opacity:.52}
+:root[data-theme=dark] .g-bg i:nth-child(1){background:rgba(32,168,176,.32)}
+:root[data-theme=dark] .g-bg i:nth-child(2){background:rgba(70,120,220,.28)}
+:root[data-theme=dark] .g-bg i:nth-child(3){background:rgba(218,165,86,.16)}
+.mono,code,pre{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ic{width:15px;height:15px;flex:none;display:inline-block;vertical-align:middle}
+a{color:var(--accent)}
+.appbar{position:sticky;top:0;z-index:30;background:var(--bar);border-bottom:1px solid var(--edge);-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%)}
+.appbar-in{max-width:1440px;margin:0 auto;padding:8px clamp(14px,2vw,26px);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:13.5px;color:var(--ink);margin-right:auto;white-space:nowrap}
+.tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer}
+.seg input:checked+label{background:var(--accent);color:var(--accent-ink)}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:10px;border:1px solid var(--edge);background:var(--card-solid);color:var(--ink);font:600 12px/1.3 inherit;cursor:pointer;text-decoration:none}
+.btn:hover{border-color:var(--accent);background:var(--hover)}
+.wrap{max-width:1440px;margin:0 auto;padding:18px clamp(14px,2vw,26px) 44px;display:grid;grid-template-columns:minmax(0,1fr);gap:22px;align-items:start}
+.wrap.has-rail{grid-template-columns:196px minmax(0,1fr)}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:22px;box-shadow:var(--shadow);-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%)}
+.rail{position:sticky;top:66px;padding:12px 9px}
+.rail .lbl{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:2px 9px 8px}
+.rail a{display:flex;align-items:center;gap:7px;padding:7px 9px;margin:2px 0;border-radius:10px;text-decoration:none;color:var(--label);font-size:13px;font-weight:600}
+.rail a:hover{background:var(--hover);color:var(--ink)}
+.rail a .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.rail a .n{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--card-strong);border:1px solid var(--line);color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-low{color:var(--low)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+.main{min-width:0}
+.hero{padding:18px 22px;margin-bottom:16px}
+.hero-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--label)}
+.hero h1{margin:6px 0 4px;font-size:clamp(22px,2.2vw,30px);line-height:1.2;color:var(--ink)}
+.hero .sub{margin:4px 0 0;font-size:14px;color:var(--muted)}
+.hero .meta{margin-top:8px;font-size:12px;color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px 2px 6px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid transparent}
+.chip.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.chip.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.chip.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.chip.s-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd)}
+.chip.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.chip.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
+.sec{margin-bottom:16px;overflow:hidden}
+.sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:15px 18px;font-weight:700}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary h2{margin:0;font-size:17px;flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.count{font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;background:var(--card-strong);border:1px solid var(--line);color:var(--muted)}
+.caret{width:16px;height:16px;color:var(--muted);transition:transform .15s}
+details[open]>summary .caret{transform:rotate(180deg)}
+.sec>.body{padding:0 18px 16px}
+.tools2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.tools2 .sp{flex:1}
+.filter{border:1px solid var(--edge);background:var(--card-solid);color:var(--ink);border-radius:10px;padding:6px 10px;font-size:13px;min-width:180px;flex:0 1 280px}
+.pt-sev{display:flex;flex-wrap:wrap;gap:6px}
+.pt-sb{padding:4px 10px;border-radius:999px;border:1px solid var(--edge);background:var(--card-solid);color:var(--label);font:600 12px/1.3 inherit;cursor:pointer}
+.pt-sb[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--card-strong)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+th{background:var(--th);text-align:left;padding:9px 10px;border-bottom:1px solid var(--edge);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--label);white-space:nowrap}
+th button{border:0;background:none;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;padding:0;cursor:pointer}
+th .sort{opacity:.45;margin-left:3px}
+td{padding:9px 10px;border-top:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+tbody tr:first-child td{border-top:0}
+td.k-num,th.k-num{text-align:right;white-space:nowrap}
+td.nw,td.k-nw{white-space:nowrap}
+.xb{display:inline-grid;place-items:center;width:24px;height:24px;border:0;background:none;border-radius:6px;color:var(--muted);cursor:pointer}
+.xb:hover{background:var(--hover);color:var(--ink)}
+.xb[aria-expanded=true] svg{transform:rotate(90deg)}
+.xb svg{width:14px;height:14px;transition:transform .15s}
+.code{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--code);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.code pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+.copy{padding:4px 9px;border-radius:8px;border:1px solid var(--edge);background:var(--card-solid);color:var(--ink);font:600 11.5px/1.3 inherit;cursor:pointer}
+.copy:hover{border-color:var(--accent);color:var(--accent)}
+.scopy{display:none}
+.lines{margin:6px 0 0;padding-left:20px}
+.lines li{margin:3px 0}
+.none{color:var(--muted);padding:8px 0}
+footer{margin-top:18px;padding:12px 18px;font-size:12px;color:var(--muted)}
+{%- include 'report_servers.css.j2' %}
+@media (max-width:900px){
+  .wrap.has-rail{grid-template-columns:minmax(0,1fr)}
+  .rail{display:none}
+  .sec>.body{padding:0 12px 12px}
+}
+@media print{
+  .g-bg,.appbar,.rail,.rail-mob{display:none!important}
+  .card{background:#fff!important;border:1px solid #d5dee8!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
+}
+</style>
+</head>
+<body>
+<div class="g-bg" aria-hidden="true"><i></i><i></i><i></i></div>
+<!--site-report-back w=full-->
+<header class="appbar"><div class="appbar-in">
+<span class="brand">{{ report_email_header_text | default('Site automation report') | e }}</span>
+<div class="tools">
+<div class="seg" role="radiogroup" aria-label="Light or dark">
+<input type="radio" name="site-report-theme" id="g-light" value="light"><label for="g-light">Light</label>
+<input type="radio" name="site-report-theme" id="g-auto" value="auto" checked><label for="g-auto">Auto</label>
+<input type="radio" name="site-report-theme" id="g-dark" value="dark"><label for="g-dark">Dark</label>
+</div>
+<button class="btn" type="button" id="print" hidden>Print</button>
+</div>
+</div></header>
+<div class="wrap{{ ' has-rail' if secs | length > 2 else '' }}">
+{%- if secs | length > 2 %}
+<nav class="card rail" aria-label="Sections of this report">
+<div class="lbl">Sections</div>
+<a href="#top"><span class="t">&uarr; Top</span></a>
+{%- for s in secs %}{% if s.rail | default(true) %}
+{%- set ss = s.status | default('') %}
+{%- set sc = section_count(s, true) | int %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" aria-hidden="true"></span>{% endif %}<span class="t">{{ s.title | e }}</span>{% if sc %}<span class="n">{{ sc }}</span>{% endif %}</a>
+{%- endif %}{% endfor %}
+</nav>
+{%- endif %}
+<main class="main" id="top">
+{%- if secs | length > 2 %}
+<div class="rail-mob" hidden><label for="rail-jump"><span class="lbl">Sections</span></label><select class="rail-sel" id="rail-jump" aria-label="Jump to section">
+<option value="top">Top</option>
+{%- for s in secs %}{% if s.rail | default(true) %}
+{%- set sc = section_count(s, true) | int %}
+<option value="s{{ loop.index }}">{{ s.title | e }}{% if sc %} ({{ sc }}){% endif %}</option>
+{%- endif %}{% endfor %}
+</select></div>
+{%- endif %}
+<header class="card hero">
+<div class="hero-row">
+<div>
+<div class="eyebrow">{{ report_email_header_text | default('Site automation report') | e }}</div>
+<h1>{{ rhead.name | e }}</h1>
+{%- if rhead.counts_text %}<p class="sub">{{ rhead.counts_text | e }}</p>{% endif %}
+{%- if rhead.scope_text %}<p class="sub">{{ rhead.scope_text | e }}</p>{% endif %}
+<div class="meta">{{ ('AAP job ' ~ job_id) if job_id else 'Run from the command line' }}{% if job_name %} &middot; {{ job_name | e }}{% endif %}</div>
+</div>
+<div>{{ chip(st if st in words else 'info', words[st] if st in words else 'Info') }}</div>
+</div>
+</header>
+<!--site-report-files-->
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+{%- set si = loop.index %}
+{%- if s.server_view | default(false) or s.cert_rollup | default(false) or s.chrome_view | default(false) %}
+{%- include 'report_servers.html.j2' %}
+{%- else %}
+<details class="card sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
+<summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
+{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="body">
+{%- if s.text | default('') %}<p>{{ s.text | e }}</p>{% endif %}
+{%- include 'report_section_kind.html.j2' %}
+{%- if s.columns is defined and s.rows | default([]) %}
+<div class="tw"><table>
+<thead><tr>{% for c in s.columns %}<th scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in s.rows %}
+{%- set ri = loop.index0 %}
+{%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
+{%- set tgd = tg.data | default({}) | safe_data %}
+{%- set rs = (s.row_status[ri] if s.row_status is defined and s.row_status | length > ri else '') | default('', true) %}
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% for k in tgd %} data-{{ k | e }}="{{ tgd[k] | e }}"{% endfor %}>
+{%- for cell in row %}<td>{{ ('' if cell is none else cell) | string | e }}</td>{% endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table></div>
+{%- elif s.columns is defined %}
+<div class="none">None.</div>
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul class="lines">{% for l in s.lines if l | trim %}<li>{{ l | e }}</li>{% endfor %}</ul>
+{%- endif %}
+</div>
+</details>
+{%- endif %}
+{%- endfor %}
+<footer class="card">
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | default('') | e }}
+</footer>
+</main>
+</div>
+<script id="site-report-js">
+{% include 'report_servers.js' %}
+</script>
+</body>
+</html>

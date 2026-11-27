@@ -159,7 +159,12 @@
     name: site_email
   vars:
     _report: "{{ _nm_doc | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'}) }}"
-    _report_web: "{{ _nm_doc_web | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'}) }}"
+    # 1.138.0: chrome-only web wrapper (native site/node/WAN link keys and map preserved)
+    _report_web: >-
+      {{ (_nm_doc_web | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'})
+          | chrome_report_view({'kind_label': 'Network · native site & WAN link view'}))
+         if report_servers_view | default(false) | bool
+         else (_nm_doc_web | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'})) }}
     _report_xlsx: "{{ _nm_xlsx }}"
     _report_page_extra: "{{ _nm_extra }}"
     # SolarWinds not read: the email says so, the website keeps the last good map (latest.html is not replaced)

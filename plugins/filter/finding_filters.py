@@ -140,12 +140,14 @@ def os_of(text):
     return "windows" if "windows" in str(text or "").lower() else "linux"
 
 
-def _stig_entries(res, host):
-    """One stig_compare result (check_stig_result) -> stig_rule_fail, stig_fixed_open, stig_no_asset entries."""
+def _stig_entries(res, host, severity_map=None):
+    """One stig_compare result (check_stig_result) -> stig_rule_fail, stig_fixed_open, stig_no_asset entries.
+    1.138.0: honours configured severity_map (check_stig_severity) or stig_compare's rec['level'] instead of hard-coding high->critical."""
     r = res or {}
     sm = r.get("stigman") or {}
     stig = r.get("benchmark") or ""
     os_ = os_of(r.get("os") or stig or r.get("platform"))
+    smap = severity_map if isinstance(severity_map, dict) else {}
     out = []
 
     def common(rec):
@@ -155,7 +157,9 @@ def _stig_entries(res, host):
     for group in ("drift", "new", "disagree", "unreviewed"):
         for rec in r.get(group) or []:
             d = dict(common(rec), group=group, stigman=rec.get("sm") or "")
-            sev = "critical" if rec.get("severity") == "high" else "warning"
+            raw_s = rec.get("severity")
+            mapped = str(smap.get(raw_s) or rec.get("level") or "").strip().lower()
+            sev = mapped if mapped in ("critical", "warning", "low", "info") else ("critical" if raw_s == "high" else "warning")
             out.append(entry("stig_rule_fail", host, rec.get("key", ""), "%s fails: %s" % (rec.get("key", ""), rec.get("title", "")), sev, d))
     for rec in r.get("fixed_open") or []:
         out.append(entry("stig_fixed_open", host, rec.get("key", ""),
@@ -167,7 +171,7 @@ def _stig_entries(res, host):
     return out
 
 
-def findings_artifact(findings, host, os_="linux", max_per_kind=50, stig=None):
+def findings_artifact(findings, host, os_="linux", max_per_kind=50, stig=None, stig_severity=None):
     """One host's site_findings (a health, fapolicyd or STIG drift job) -> {entries, capped}: what the job artifact
     site_findings keeps for it. stig: the host's check_stig_result (a dict, or a list: a host with several STIGs)."""
     es = []
@@ -175,7 +179,7 @@ def findings_artifact(findings, host, os_="linux", max_per_kind=50, stig=None):
         if isinstance(f, dict) and f.get("id"):
             es += health_entries(f, host, os_)
     for res in (stig if isinstance(stig, list) else [stig] if stig else []):
-        es += _stig_entries(res, host)
+        es += _stig_entries(res, host, stig_severity)
     kept, capped = _cap(es, max_per_kind)
     return {"entries": kept, "capped": capped}
 

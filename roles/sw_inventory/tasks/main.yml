@@ -120,6 +120,10 @@
             name: site_email
           vars:
             _report: "{{ _sw.report }}"
+            # 1.138.0 (step 11): list-only server view on the report website when report_servers_view is on
+            _report_web: >-
+              {{ (_sw.report | combine({'sections': [_sw | sw_inventory_server_view({'zone': report_time_zone | default('')})] + (_sw.report.sections | default([]))}))
+                 if report_servers_view | default(false) | bool else {} }}
             _report_xlsx_file: "{{ _sw.sheets_file }}"     # a file: the packages never in the job events
             _report_xlsx_optional: true
             _report_xlsx_desc: "Excel workbook - Packages (every host's) and Changed since last run"

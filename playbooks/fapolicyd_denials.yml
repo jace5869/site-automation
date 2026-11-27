@@ -70,8 +70,14 @@
           {{ ansible_play_hosts_all | map('extract', hostvars) | list
              | fapolicyd_denials_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default(''), false) }}
         _report_web: >-
+          {{ (_fad_web | combine({'sections': [_fad_sv] + (_fad_web.sections | default([]))}))
+             if report_servers_view | default(false) | bool else _fad_web }}
+        _fad_web: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | list
              | fapolicyd_denials_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default(''), true) }}
+        _fad_sv: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_server_view(ansible_play_hosts_all, {'since': fapolicyd_since, 'zone': report_time_zone | default('')}) }}
         _report_xlsx: >-
           {{ (ansible_play_hosts_all | map('extract', hostvars) | list | fapolicyd_denials_sheets(ansible_play_hosts_all))
              if report_email_xlsx | default(false) | bool else [] }}

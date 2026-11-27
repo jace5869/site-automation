@@ -123,7 +123,8 @@
          and not report_web_copy | default(false) | bool }}
     _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _web_report: >-
-      {{ (_report_web if _report_web | default({}, true) and _report is defined and report_web_theme | default('atlas') | string | trim | lower in ['atlas', 'brief', 'ops']
+      {{ (_report_web if _report_web | default({}, true) and _report is defined
+          and report_web_theme | default('atlas') | string | trim | lower in (['atlas', 'brief', 'ops', 'glass'] if report_servers_view | default(false) | bool else ['atlas', 'brief', 'ops'])
           else _report if _report is defined else
           {'title': _report_subject | default('Report'), 'status': 'info',
            'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool)

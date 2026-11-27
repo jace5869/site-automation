@@ -127,10 +127,7 @@
 <div style="padding:6px 0;color:#374151;">{{ s.text | e }}</div>
 {%- endif %}
 {%- if s.cards is defined %}{{ s.cards | report_cards_html('#111827', '#4b5563', '#0f6b4f') }}{% endif %}
-{%- if s.kind | default('') == 'story' %}{% include 'report_story_email.html.j2' %}
-{%- elif s.kind | default('') == 'noc' %}{% include 'report_outage_noc.html.j2' %}
-{%- elif s.kind | default('') == 'review_chart' %}{% include 'report_outage.html.j2' %}
-{%- elif s.kind | default('') == 'by_kind' %}{% include 'report_by_kind.html.j2' %}{% endif %}
+{%- include 'report_section_kind.html.j2' %}
 {%- if s.kind | default('') == 'raw_events' %}<details><summary>Show every event</summary>{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}

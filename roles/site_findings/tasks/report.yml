@@ -92,7 +92,8 @@
   ansible.builtin.set_fact:
     _sf_art: >-
       {{ site_findings | findings_artifact(site_report_name | default(inventory_hostname), site_os | default('linux'),
-                                           site_findings_max_per_kind | int, check_stig_result | default(check_stig_results | default(none))) }}
+                                           site_findings_max_per_kind | int, check_stig_result | default(check_stig_results | default(none)),
+                                           check_stig_severity | default(none)) }}
   when: site_findings_artifact | bool
 
 - name: Report | publish them (set_stats site_findings, site_findings_capped)
@@ -208,11 +209,14 @@
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
                            _swr_view.sections | default([]) + _cert_timeline.sections | default([]) + site_report_sections | default([])
                            + _patch_age.sections | default([]) + _console.sections | default([])) }}
-    # 1.138.0: server-first inputs (website only, off by default via report_servers_view)
+    # 1.138.0: server-first inputs (website only, gated by report_servers_view)
     _sf_servers: >-
       {%- if report_servers_view | default(false) | bool -%}
       {%-   set health = {} -%}
       {%-   set capped = {} -%}
+      {%-   set stig_res = [] -%}
+      {%-   set certs = [] -%}
+      {%-   set fap_e = {} -%}
       {%-   set ts = now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') -%}
       {%-   for h in ansible_play_hosts | sort -%}
       {%-     set hv = hostvars[h] | default({}) -%}
@@ -224,8 +228,35 @@
                                          'time': ts, 'ip': ip}}) -%}
       {%-     set cap = (hv._sf_art | default({})).capped | default({}) -%}
       {%-     if cap -%}{%- set _ = capped.update({h: cap}) -%}{%- endif -%}
+      {%-     if hv.check_stig_results is defined -%}
+      {%-       for c in hv.check_stig_results -%}{%- set _ = stig_res.append(c) -%}{%- endfor -%}
+      {%-     elif hv.check_stig_result is defined -%}
+      {%-       set _ = stig_res.append(hv.check_stig_result) -%}
+      {%-     endif -%}
+      {%-     if hv.check_certs_inventory is defined -%}
+      {%-       for c in hv.check_certs_inventory -%}{%- set _ = certs.append(c) -%}{%- endfor -%}
+      {%-     endif -%}
+      {%-     set fe = ((hv._sf_art | default({})).entries | default([])) | selectattr('kind', 'equalto', 'fapolicyd_deny') | list -%}
+      {%-     if fe -%}{%- set _ = fap_e.update({h: fe}) -%}{%- endif -%}
       {%-   endfor -%}
-      {{ {'enabled': true, 'health': health, 'capped': capped, 'zone': report_time_zone | default('')} }}
+      {%-   set out = {'enabled': true, 'health': health, 'capped': capped, 'zone': report_time_zone | default(''),
+                       'max_per_kind': site_findings_max_per_kind | default(50) | int} -%}
+      {%-   if stig_res -%}
+      {%-     set _ = out.update({'stig_results': stig_res, 'stig_texts': _stig_texts | default({}),
+                                  'severity_map': check_stig_severity | default({}),
+                                  'disagree_severity': check_stig_disagree_severity | default('low'),
+                                  'portal_url': report_portal_url | default('')}) -%}
+      {%-   endif -%}
+      {%-   if site_cert_timeline is defined or certs -%}
+      {%-     set ctl = site_cert_timeline | default({}) -%}
+      {%-     set _ = out.update({'certs': certs,
+                                  'warn_days': ctl.warn | default(check_certs_warn_days | default(win_check_certs_warn_days | default(30))) | int,
+                                  'crit_days': ctl.crit | default(check_certs_crit_days | default(win_check_certs_crit_days | default(7))) | int,
+                                  'notice_days': ctl.notice | default(check_certs_notice_days | default(win_check_certs_notice_days | default(60))) | int}) -%}
+      {%-   endif -%}
+      {%-   if fap_e -%}{%- set _ = out.update({'fapolicyd_entries': fap_e}) -%}{%- endif -%}
+      {%-   if _smh_server_hosts is defined -%}{%- set _ = out.update({'known_hosts': _smh_server_hosts, 'group_by_finding_host': true}) -%}{%- endif -%}
+      {{ out }}
       {%- else -%}
       {{ none }}
       {%- endif -%}
@@ -260,7 +291,8 @@
                                        | map(attribute='entries', default=[])))
          | findings_actions_section(_sf_actions | default({}), report_portal_url | default(''),
                                     awx_job_id | default(tower_job_id | default('')) | string, 'What you can do from here', 200,
-                                    ['stig_rule_fail', 'stig_fixed_open', 'stig_no_asset', 'fapolicyd_deny'])
+                                    ['stig_rule_fail', 'stig_fixed_open', 'stig_no_asset'] if report_servers_view | default(false) | bool
+                                    else ['stig_rule_fail', 'stig_fixed_open', 'stig_no_asset', 'fapolicyd_deny'])
          if report_portal_url | default('') | length > 0 else none }}
     # 1.77.1: a job's own sheets too (site_report_sheets: the STIG reports' Answer files - every row, where the email has a line)
     _report_xlsx: >-
