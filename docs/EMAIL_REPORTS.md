@@ -253,19 +253,12 @@ so keep it small: about 160 px tall, under 100 KB. It is shown `report_logo_heig
 Your logo belongs in your own repository only. If you update with `scripts/update-from-release`, add
 the line `playbooks/files/report_logo.png` to `.site-local`, or the update deletes it.
 
-**The last runs come from AAP** - a single email has no memory, AAP does. At the end of each run the
-report asks AAP for its template's earlier jobs (the last `report_history_runs` - 14 - with this one).
-For that, attach a credential of type **Red Hat Ansible Automation Platform** to the template: the
-one the pick lists use works ([VMWARE.md](VMWARE.md), "Pick lists"). Its user must be able to see
-the template's jobs: give it **Organization Auditor** on the template's organization (AAP 2.5 and
-later: **Access Management > Users >** the user **> Roles > Assign roles**, resource type
-**Organization**, your organization, **Organization Auditor**). That is read-only and covers every
-template in the organization, also new ones. A role on each template works too (JobTemplate Execute
-includes seeing its jobs, but also lets the user start it). Without it the email goes out as usual, without the strip, and the job says why: `No strip
-of past runs in the report: ...`. AAP gives no error for jobs its user may not see - it lists none - so before 0.31.1
-the strip then showed only this run, every time. Each run keeps its report's status and number in AAP as the job
-artifact `site_report_run`; runs from before 0.20.0 have none, so their bar shows only how the job
-ended (green or red), half height. `report_history: false` turns the strip off.
+**The last runs strip comes from AAP** (last `report_history_runs`, default `14`, using each run's `site_report_run` job artifact):
+
+1. Attach a credential of type **Red Hat Ansible Automation Platform** to the template (the same credential the pick lists use works; see [VMWARE.md](VMWARE.md), "Pick lists").
+2. Give its user **Organization Auditor** on the template's organization: **Access Management > Users >** the user **> Roles > Assign roles** > resource type **Organization** > your organization > **Organization Auditor**. This is read-only and covers every template in the organization, including new ones (per-template Execute also works, but lets the user launch it).
+3. Without it, the email still goes out without the strip, and the job prints `No strip of past runs in the report: ...`.
+4. To turn the strip off, set `report_history: false`.
 
 The plain-text copy of the email has the strip as one line: `Last 14 runs, oldest first: ok ok
 warning ... critical (this run)`.

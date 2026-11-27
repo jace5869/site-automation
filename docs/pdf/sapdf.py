@@ -239,8 +239,8 @@ class ActDoc(SiteDoc):
     """SiteDoc for the ACT guides: ACT's version in the chip, ACT's line at the foot of the cover."""
     eyebrow = "SITE AUTOMATION  \u00b7  ACT"
     version_text = "ACT %s" % VERSION
-    cover_note = ("ACT-Linux and ACT-Windows %s. Example outputs in this guide are illustrative; host names are "
-                  "placeholders." % VERSION)
+    cover_note = ("ACT-Linux and ACT-Windows %s (checked with site-automation %s). Example outputs in this guide are "
+                  "illustrative; host names are placeholders." % (VERSION, SA_VERSION))
 
 
 def rounded(t, radius=5, edge=None):

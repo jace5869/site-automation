@@ -374,20 +374,13 @@ The performance query reads `information_schema.INNODB_TRX` (needs `PROCESS`, wh
 monitoring account already has) and `INNODB_METRICS`; without the privilege those findings are
 simply not made, the rest still are.
 
-**Logging in** (the full steps are in [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)). Without a credential, the check logs in as root through the local socket. That
-is MariaDB's default for a host install on RHEL (no password needed with sudo); MySQL's root
-usually has a password. **A database in a container usually gives root a password** (the official images do), and the check then reports
-`Access denied ... attach the "MariaDB monitor" credential`. **Each container has its own root password**
-(set when it was created, in its environment: `podman inspect <container> | grep -i ROOT_PASSWORD`), so a
-credential with root's password logs in to one container and is refused by the others: `MariaDB refused
-the login of root (the MariaDB monitor credential) in 2 containers (db1, db2): Access denied ... - most
-likely its password is wrong for these containers` - one critical finding for the host, naming every
-container that refused it, with how to look one command per line. The fix is one monitoring account with
-the same password in every container (below), or `check_mariadb_containers` to read only the ones the
-credential may log in to. For containers, or whenever you prefer
-not to use root, ask the DBA to create a monitoring account with **no data access**, inside that
-database with host `localhost`, and attach the *MariaDB monitor* credential to the Health check
-template:
+**Logging in** (full steps: [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)):
+
+1. **No credential:** the check logs in as `root` over the local socket. That works for host-installed MariaDB on RHEL with sudo; MySQL `root` usually has a password.
+2. **Container databases:** official images set a `root` password, so a run without a credential reports `Access denied ... attach the "MariaDB monitor" credential`.
+3. **One password does not fit all containers:** each container has its own `root` password (`podman inspect <container> | grep -i ROOT_PASSWORD`). A `root` credential fails on the other containers with one critical finding naming every container that refused it.
+4. **Fix:** ask the DBA to create one monitoring account (`'aap_monitor'@'localhost'`) with **no data access** and the same password in every container (SQL below), or set `check_mariadb_containers` to the containers the credential may read.
+5. Attach the **MariaDB monitor** credential to the Health check template:
 
 ```sql
 CREATE USER 'aap_monitor'@'localhost' IDENTIFIED BY '<password>';
@@ -965,19 +958,19 @@ keystore. It attaches the CSR to the certificate's ServiceNow incident. The rene
 the CSR goes on the ticket (ServiceNow's own notifications tell its assignment group). Making a CSR
 changes nothing in use: the old certificate works until it expires.
 
-**No incidents, the PKI's catalog item instead:** with `cert_renew_servicenow: catalog` each CSR is
-ordered from your PKI's catalog item (one request per certificate, the CSR in its CSR question):
-[CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md). It applies to the Windows, VMware and network
-device renewals too.
-vCenter's and the ESXi hosts' certificates have a job of their own, which opens the incidents and makes the CSRs
-on vCenter and the hosts: `VMware - certificate renewal` - and a report of them alone, `VMware - certificate report`
-([VMWARE.md](VMWARE.md), "Certificates of vCenter and the ESXi hosts").
-The three use the same window: the report flags, the CSR is made and the incident is opened at 30 days.
-Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
-the issued certificate to the same ticket. This job changes nothing a service uses. With the catalog item, the
-issued certificate is then installed from its request after an approval - *Certificate install*, Linux and
-Windows ([CERT_INSTALL.md](CERT_INSTALL.md)), vCenter and ESXi ([VMWARE.md](VMWARE.md)); the PKI may send only the
-.cer when you keep the DoD PKI's CA bundle (`cert_install_ca_bundle`). With incidents, a person installs it.
+**How renewals connect to tickets, catalog requests and installs:**
+
+1. The report, the incident/request and the CSR all share one window (`check_certs_warn_days`, default `30` days). Changing it on the workflow updates all three.
+2. **Incident mode (default):** the PKI team submits the CSR and attaches the issued certificate to the incident; a person installs it.
+3. **Catalog mode:** set `cert_renew_servicenow: catalog` to order each CSR from your PKI's ServiceNow catalog item instead of incidents (Linux, Windows, VMware and network devices; see [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)).
+4. **Approved install (catalog mode):** run the *Certificate install* workflow for Linux and Windows ([CERT_INSTALL.md](CERT_INSTALL.md)) or vCenter and ESXi ([VMWARE.md](VMWARE.md), "Certificates of vCenter and the ESXi hosts").
+5. **vCenter and ESXi:** use `VMware - certificate report` and `VMware - certificate renewal` for vCenter and ESXi CSRs.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `check_certs_warn_days` | `30` | Days before expiry to flag, open a ticket/request and make a CSR |
+| `cert_renew_servicenow` | `incident` | `catalog` orders the PKI catalog item instead of opening incidents |
+| `cert_install_ca_bundle` | `""` | Local DoD PKI CA bundle to complete chains when PKI sends only `.cer` |
 
 **Per certificate:**
 

@@ -61,10 +61,10 @@ class EeBuildDoc(g.OpsDoc):
         c.setFont("Sans", 13)
         for i, line in enumerate(doc.cover_lines):
             c.drawString(MARGIN, PAGE_H - (2.2 + 0.27 * i) * inch, line)
-        c.setFont("Sans", 10)
+        c.setFont("Sans", 8.4)
         c.setFillColor(colors.HexColor("#BFD3E6"))
-        c.drawString(MARGIN, PAGE_H - 3.2 * inch, "%s   |   AAP 2.7, ansible-builder 3   |   %s"
-                     % (doc.cover_meta, DATE))
+        c.drawString(MARGIN, PAGE_H - 3.2 * inch, "%s  |  site-automation %s  |  AAP 2.7, ansible-builder 3  |  %s"
+                     % (doc.cover_meta, g.SA_VERSION, DATE))
         c.setFillColor(MUTED)
         c.setFont("Sans", 8)
         c.drawString(MARGIN, 0.55 * inch, "Host names and addresses in this guide are placeholders. "
@@ -138,7 +138,7 @@ def build():
             "you want (3, 4 or 5), and chapter 6 for each one you built. Chapter 8 lists what to do "
             "when something goes wrong. The build files are in the appendix, and in the repository's "
             "`ee/` folder. Rendered from `docs/EXECUTION_ENVIRONMENT.md` and `ee/` in the site-automation "
-            "repository (version %s)." % g.SA_VERSION]),
+            "repository (version %s). Copy settings from the repository, not from this PDF." % g.SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()
     toc.levelStyles = [ST["toc1"], ST["toc2"]]

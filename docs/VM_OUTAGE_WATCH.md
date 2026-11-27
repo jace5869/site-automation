@@ -135,7 +135,7 @@ Job artifacts, for the next step of a workflow:
 1. **The job template** "VM - outage watch": playbook `playbooks/vm_outage_watch.yml`, the VMware vCenter
    credential, the inventory that has your `aap` group (the AAP server is found by it), no Limit.
 2. **Try it** once by hand. A clean estate is one green line; a red run shows the report.
-3. **The workflow** "VM - outage watch (workflow)" - AAP - set up job templates makes it (1.107.0); by hand:
+3. **The workflow** "VM - outage watch (workflow)" - **AAP - set up job templates** makes it; by hand:
 
    ```workflow
    [VM - outage watch]
@@ -144,20 +144,12 @@ Job artifacts, for the next step of a workflow:
    [ServiceNow tickets]
    ```
 
-   *Always*, not *On failure*. The tickets job opens one incident per condition, adds a work note while it
-   lasts, and notes (or with `servicenow_resolve_cleared: true` resolves) the incident once a clean run no
-   longer finds it. That only works when the clean runs reach it too. The incidents carry the vCenter's
-   name and the object's, e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`.
-   `servicenow_min_severity: critical` keeps the one-signal warnings out of ServiceNow.
-   Since 1.112.4 the incidents fold to their root: a datastore that is not accessible, or a host that is down, is one
-   incident that lists every VM it affects (by name and object ID), in full, in its description and repeat work
-   notes - every VM with files on a lost datastore, even one with no finding of its own. A VM is matched to its
-   datastore and host by vCenter and object ID. A VM nothing explains is its own incident
-   (`vm-watch:lost:<vcenter>:<moid>` for an inaccessible one). A storage loss with 20 VMs is 1 incident, not 21.
-   A VM or a host's path that such an incident covers is still sent, as "covered by ..." at severity info: no incident
-   is opened for it, but one already open stays open - nothing still failing reads as cleared. Path loss on a datastore
-   that is still accessible keeps one incident per host's path. Open incidents keep their ids across the upgrade
-   (`vm-watch:datastore:<name>`, always by name; `vm-watch:host:<name>`; `vm-watch:storage:<host>:<device>`).
+   How the tickets step works:
+   - Set the link to **Always** (not *On failure*) so clean runs reach it too.
+   - It opens one incident per problem (e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`), adds a work note while it lasts, and notes (or resolves with `servicenow_resolve_cleared: true`) it once a clean run clears it.
+   - Incidents fold to their root cause: a lost datastore or a down host opens **one** incident listing every affected VM (by name and object ID). A storage loss affecting 20 VMs is 1 incident, not 21.
+   - Covered VMs and paths are still reported at severity `info` so already-open tickets do not clear falsely. Path loss on an accessible datastore keeps one incident per host path, and existing incident IDs (`vm-watch:datastore:<name>`, `vm-watch:host:<name>`, `vm-watch:storage:<host>:<device>`) stay stable.
+   - To keep one-signal warnings out of ServiceNow, set `servicenow_min_severity: critical`.
 4. **The schedule.** Put it on the workflow, every 5 to 15 minutes, with **Concurrent jobs off** on the
    workflow so that a slow run never overlaps the next. Set `vm_watch_window_minutes` to the interval.
    Leave the daily health and alarms reports as they are.

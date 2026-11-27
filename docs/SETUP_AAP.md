@@ -1,7 +1,7 @@
 # Setting up the runbooks in AAP, step by step
 
 Every step says **what** you are doing, **why**, the **clicks**, and what you should **see** when it
-worked. Menu names are from AAP 2.7. Older versions (2.5, 2.6) may word a label or a menu differently: follow the meaning, not the exact word. If you have not yet, read
+worked. Works on AAP 2.5 and later. Menu names are from AAP 2.7. Older versions (2.5, 2.6) may word a label or a menu differently: follow the meaning, not the exact word. If you have not yet, read
 [START_HERE.md](START_HERE.md) first. It explains the words used here.
 
 ## Before you start
@@ -466,19 +466,15 @@ Windows servers with `certreq`, with the Windows machine credential: [WINDOWS.md
 
 ### Certificate install - check / approved, and the restore
 
-With the CSRs ordered from the PKI's catalog item, the issued certificate is installed from that request after an
-approval: *Certificate install - check* (`playbooks/cert_install_check.yml`: `Linux ssh (sudo)`, `ServiceNow API`)
-in a workflow with an **Approval** (Run on fail) and *Certificate install - approved*
-(`playbooks/cert_install_approved.yml`: the same credentials, the same inventory, **no** Limit and **no** Prompt on
-launch for Variables). *Certificate restore* (`playbooks/cert_restore.yml`) puts an old certificate back. The
-Windows three: `win_cert_install_check.yml`, `win_cert_install_approved.yml`, `win_cert_restore.yml`, with the
-Windows machine credential. The templates, the workflow and the settings: [CERT_INSTALL.md](CERT_INSTALL.md).
-vCenter and the ESXi hosts: *VMware - certificate request* (`playbooks/vmware_cert_request.yml`, on demand) and *VMware - certificate install - check / approved* (`playbooks/vmware_cert_install_check.yml`, `vmware_cert_install_approved.yml`: `VMware vCenter`, `ServiceNow API`), workflow 39: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
+When CSRs are ordered from the PKI's catalog item, issued certificates are installed after an approval:
 
-**The PKI sends only the .cer?** Keep the DoD PKI's CA bundle in your repository (`playbooks/files/dod_pki_bundle.p7b`)
-and set `cert_install_ca_bundle: files/dod_pki_bundle.p7b` in `all.yml`: the three checks (Linux, Windows, VMware)
-complete the chain from it. *PKI - DoD bundle check* (`playbooks/pki_bundle_check.yml`, no credential, weekly) emails
-you a newer bundle when DISA publishes one: [CERT_INSTALL.md](CERT_INSTALL.md#when-the-pki-sends-only-the-cer-a-ca-bundle).
+1. Create **Certificate install - check** (`playbooks/cert_install_check.yml`) with credentials `Linux ssh (sudo)` and `ServiceNow API`.
+2. Put it in a workflow with an **Approval** step (**Run on fail**).
+3. Create **Certificate install - approved** (`playbooks/cert_install_approved.yml`) with the same credentials and inventory, **no** Limit, and **no** Prompt on launch for Variables.
+4. Create **Certificate restore** (`playbooks/cert_restore.yml`) to roll back an installed certificate.
+5. **Windows:** create the same three templates with `playbooks/win_cert_install_check.yml`, `playbooks/win_cert_install_approved.yml` and `playbooks/win_cert_restore.yml`, using the Windows machine credential.
+6. **vCenter and ESXi:** create **VMware - certificate request** (`playbooks/vmware_cert_request.yml`, on demand) and **VMware - certificate install - check / approved** (`playbooks/vmware_cert_install_check.yml`, `vmware_cert_install_approved.yml`; credentials: `VMware vCenter`, `ServiceNow API`), workflow 39 ([VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval)).
+7. **PKI sends only `.cer`:** keep the DoD PKI CA bundle at `playbooks/files/dod_pki_bundle.p7b` and set `cert_install_ca_bundle: files/dod_pki_bundle.p7b` in `all.yml`. Run **PKI - DoD bundle check** (`playbooks/pki_bundle_check.yml`, no credential, weekly) to email newer bundles. Details: [CERT_INSTALL.md](CERT_INSTALL.md).
 
 ### Network device certificate report / renewal
 
@@ -674,16 +670,17 @@ templates of `aap/job_templates.yml` - one for each row of [JOB_TEMPLATES.md](JO
 and checks the ones already there. It never deletes a template.
 
 1. Make this one template by hand. Copy `aap/extra_vars/aap_templates_setup.yml` into its Variables box.
-2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
-   (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`; 1.123.0:
-   `ontap_write`, the NetApp ONTAP credential that may grow volumes, for *NetApp - expand a volume*; `solarwinds_manage`,
-   a credential of the type SolarWinds (manage nodes) (`aap/credential_types/solarwinds_manage.yml`) whose account may manage nodes, for *Windows - schedule a restart*). A template
-   that needs a kind you did not name is skipped, and the job says which kind. Set `aap_templates_inventory_organization` if the default inventory belongs to another organization.
-   For a separate Windows inventory, set `aap_templates_inventory_windows` to its AAP name. Check lists the current and
-   proposed inventories for existing Windows templates. Run applies the change and uses that inventory for new Windows
-   templates. This covers `playbooks/win_*.yml` and catalog entries that require `machine_windows`. Set
-   `aap_templates_inventory_windows_organization` if the Windows inventory belongs to another organization. Both inventory
-   organization settings default to `aap_templates_organization`. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
+2. Fill in your inventory and credentials, and sync the project in AAP first (a missing playbook stops the job before it writes):
+   - **2a. Default inventory:** set `aap_templates_inventory` to the inventory new templates get. Set `aap_templates_inventory_organization` if that inventory belongs to another organization (defaults to `aap_templates_organization`).
+   - **2b. Credentials (`aap_templates_credentials`):** map each kind to your AAP credential name (examples below). Templates needing an unmapped kind are skipped with the kind name shown.
+   - **2c. Separate Windows inventory (optional):** set `aap_templates_inventory_windows` to its AAP name (and `aap_templates_inventory_windows_organization` if in another organization). Check lists current and proposed inventories for existing Windows templates (`playbooks/win_*.yml` or `machine_windows`); Run applies the change and uses it for new Windows templates.
+
+| Credential kind | Your credential |
+|---|---|
+| `machine` | Linux machine credential (SSH + sudo) |
+| `stigman_api` | STIG Manager API credential |
+| `ontap_write` | NetApp ONTAP credential that may grow volumes (*NetApp - expand a volume*) |
+| `solarwinds_manage` | `SolarWinds (manage nodes)` credential (`aap/credential_types/solarwinds_manage.yml`, for *Windows - schedule a restart*) |
 3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
    (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels). With it, a
    `portal-area:` label of an area the catalog used before one section per platform (Reports, Disk & services,
@@ -704,16 +701,15 @@ and checks the ones already there. It never deletes a template.
    - *left to another job* - the site portal's own templates. *NOT IN AAP* means it is missing: run
      **AAP - set up portal actions** ([SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap)), which makes it
      with the workflow that runs it. When the portal action runs that one template and a template of yours runs
-     its playbook, the job also prints a line to copy instead: `portal_aap_names: {disk_space_request: 'Your name'}`
-     (1.78.1 and later).
+     its playbook, the job also prints a line to copy instead: `portal_aap_names: {disk_space_request: 'Your name'}`.
    Two templates of one name in the organization stop the job before it writes anything: rename one.
 5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
    set `aap_templates_overwrite: true` to bring it right. If a write fails, the job stops there and lists what it did
    before it, down to each credential attached.
 
-**The workflows (1.107.0).** The same job makes 40 workflows from
+**The workflows.** The same job makes 40 workflows from
 [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070), after their templates,
-including the STIG jobs of 1.83.0 ([STIG_JOBS.md](STIG_JOBS.md)):
+including the STIG jobs ([STIG_JOBS.md](STIG_JOBS.md)):
 - every node and link, as the chapter draws it: each check, gate, approval (name, timeout, description) and step;
 - each node's answers (`health_checks = daily`, the gate's `workflow_gate_var` - in the STIG jobs `stigman_update_plan`,
   and `stigman_update_plan_windows` for the Windows check); Prompt on launch for **Limit**; the workflow's Variables
@@ -776,13 +772,13 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
 ** Contact: Owner=<your team>, Developer=<who changes it>
 ```
 
-1. In the template's Variables (`aap/extra_vars/aap_templates_setup.yml`):
+1. Set `aap_templates_description_owner` and `aap_templates_description_contact` in `playbooks/group_vars/all.yml` (one place, read by **AAP - set up job templates**, **AAP - set up portal actions** and **AAP - add workflow gates** so portal-managed templates and workflows get the Contact line too), or in the template's Variables (`aap/extra_vars/aap_templates_setup.yml`):
 
    ```yaml
    aap_templates_describe: true
    aap_templates_describe_only: true              # only the descriptions: no template made, checked or labelled
-   aap_templates_description_owner: "Ops team"    # the Contact line; leave both empty for no Contact line
-   aap_templates_description_contact: "Automation team"
+   aap_templates_description_owner: "SITEA operations team"    # Contact line; leave both empty for no Contact line
+   aap_templates_description_contact: "SITEA automation team, automation@corp.example.mil"
    ```
 
 2. Launch it with Job type **Check**. It lists every template and workflow of the project, with the old and the new

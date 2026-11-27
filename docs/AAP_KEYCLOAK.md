@@ -5,7 +5,7 @@ right organization and team. The local `admin` login stays, for the day Keycloak
 
 This is a checklist. Do the parts in order. Each step is one action, with the text to type and what you should see.
 
-- **For:** AAP 2.5 or later, the **containerized** install (the platform gateway runs in podman).
+- **For:** AAP 2.5 and later, the **containerized** install (the platform gateway runs in podman). Menu names are from AAP 2.7.
 - **nginx:** the one STIG Manager already has (the container `stigman-nginx`). It gets **more blocks, pasted by
   hand**: one for AAP, the card's way to Keycloak, and - when you want it - the report website. No new container,
   no new image. Nothing in this repository writes to STIG Manager's nginx, containers or database.
@@ -51,7 +51,7 @@ The names used here - put yours in their place everywhere:
 
 Nothing is changed in this part.
 
-1. **AAP is 2.5 or later.** In AAP: the **?** at the top right > **About**. You should see version 2.5 or 2.6.
+1. **AAP is 2.5 or later.** In AAP: the **?** at the top right > **About**. You should see version 2.5 or later.
 2. **AAP is containerized, and the gateway answers.** On the AAP host, as the user that installed AAP (not root):
 
    ```bash
@@ -382,7 +382,7 @@ AAP now answers at the new name. Two settings make it sure of that name. Do them
    https://aap.yoursite.mil
    ```
 
-   **Save**. (AAP 2.6 has this field. On 2.5 there is no such field: put this line in the inventory instead and
+   **Save**. (AAP 2.6 and later, including 2.7, have this field. On 2.5 there is no such field: put this line in the inventory instead and
    run the installer again - *not in Red Hat's documents for the containerized install*:
    `gateway_extra_settings=[{"setting": "CSRF_TRUSTED_ORIGINS", "value": ["https://aap.yoursite.mil"]}]`)
 4. **Whose address AAP logs** - optional. **Settings > Automation Execution > System > Edit**:
