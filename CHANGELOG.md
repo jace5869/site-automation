@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.135.3 — 2026-11-27
+
+- Portal: AD groups now count people whose card lookup met a normal AD referral (no access before)
+
 ## 1.135.2 — 2026-11-26
 
 **To set up:** run **Site portal - deploy**.

@@ -2995,6 +2995,7 @@ class Portal(object):
         self.admin_catalog = cfg.admin_catalog = portal_admin.Catalog(self.aap, cfg)
         cfg.access_rows = lambda: access_rows(cfg)
         if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
+            cfg.ad_groups.on_card_refused = lambda cn, why: self.log.add({"event": "ad", "card_lookup": "refused", "user": cn, "why": why})
             if start_ad:                                  # 1.122.2: never from --aap-check - one bind per deploy, not two
                 cfg.ad_groups.on_change = self._ad_groups_changed
                 cfg.ad_groups.start()

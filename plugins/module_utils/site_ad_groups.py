@@ -293,10 +293,10 @@ class Reader(object):
         out, cookie = [], None
         while True:
             kw = {} if scope == "base" else {"paged_size": 500, "paged_cookie": cookie}
+            if strict:
+                kw["controls"] = [("1.2.840.113556.1.4.1339", True, None)]  # LDAP_SERVER_DOMAIN_SCOPE_OID
             c.search(base, flt, sc, attributes=attrs, **kw)
             page = [e for e in (c.response or []) if e.get("type") == "searchResEntry"]
-            if strict and any(e.get("type") == "searchResRef" for e in (c.response or [])):
-                raise LookupError("the search returned a reference it does not follow - not complete")      # Codex r2 #6
             res = c.result or {}
             code = res.get("result")
             if code == 32 and missing_ok:
@@ -415,7 +415,7 @@ class Reader(object):
             dn = str(e.get("dn") or "") or "<no dn %d>" % n
             guid = _guid(a.get("objectGUID"))
             # Codex 1.133.0 #5: one entry per (DN, objectGUID) - the same DN seen with two GUIDs is two accounts (ambiguous)
-            key = (dn.casefold(), guid or "<no guid %d>" % n)
+            key = (dn.casefold(), guid)
             row = {"dn": dn, "attr": attr, "enabled": enabled, "full": full, "edipis": entry_edipis(ALL_FORMS, a), "guid": guid}
             old = out.get(key)
             if old is not None:                           # Codex r2: the same account twice - any doubt in either row stays
@@ -484,6 +484,7 @@ class Groups(object):
         self.want = dict((r, [str(g).strip() for g in (groups or {}).get(r) or [] if str(g).strip()]) for r in ROLES)
         self.reader = Reader(opts, opener, match)
         self.seconds = max(60, int(seconds or SECONDS))
+        self.on_card_refused = None
         self.on_change = on_change
         self.lock = threading.Lock()
         self.last = None                                  # the last read (good or not)
@@ -613,10 +614,11 @@ class Groups(object):
             for g in r["groups"].get(role) or []:
                 if names is not None and g.get("setting") not in names:
                     continue                        # 1.134.0: only the groups asked for (a template's saved groups)
-                # the member entry must be that account - its DN (any case) AND its objectGUID (Codex r3 #5) - its values must
+                # the member entry must be that account - its DN (any case) and its objectGUID when available - its values must
                 # name this card's EDIPI only under any of the five forms (Codex r4 #2), AND name it under one of the site's
                 # forms in this same read (Codex r2: never an old match joined to a new membership)
-                if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") and m.get("guid") == guid
+                if any(isinstance(m, dict) and str(m.get("dn") or "").casefold() == dn.casefold() and m.get("guid") == guid
+                       and (guid or (m.get("userPrincipalName") and m.get("sAMAccountName")))
                        and entry_edipis(ALL_FORMS, m) == {e_} and e_ in entry_edipis(rules, m) for m in g.get("keys") or []):
                     out.append((g.get("setting") or g["name"], attr))     # 1.134.0: the group as the settings name it
         for x in out:
@@ -633,24 +635,41 @@ class Groups(object):
         was made, and dropped at every group read. The bind goes through the reader's guard: a refused login holds every
         lookup until the next deploy, as it holds the group reads."""
         now = time.monotonic() if now is None else now           # Neon r2 #3: the cache's clock never steps back
-        if not card_cn(cn):
-            return (None, "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup"), time.time()     # Codex 1.133.0 #9
-        if not self.reader.matches:
-            return (None, "no card form is set - no AD lookup"), time.time()                                 # Neon 1330s #6
         with self.lock:
             cache = self.__dict__.setdefault("_accts", {})
             hit = cache.get(cn)
             at = (self.last or {}).get("at") or 0
             held = self.held() or (self.last and "invalidCredentials" in str(self.last.get("error") or ""))
-        if held:
-            return (None, "the LDAP login was refused - held until the next deploy"), time.time()
-        if hit and 0 <= now - hit[0] < hit[3] and hit[1] >= at:
+        skip = ""
+        if not card_cn(cn):
+            skip = "the card's name is not LAST.FIRST[.MIDDLE].EDIPI - no AD lookup"
+        elif not self.reader.matches:
+            skip = "no card form is set - no AD lookup"
+        elif held:
+            skip = "the LDAP login was refused - held until the next deploy"
+        if hit and 0 <= now - hit[0] < hit[3] and hit[1] >= at and (not skip or hit[2] == (None, skip)):
             return hit[2], hit[1]
-        res, ttl = (None, "not looked up"), RETRY
+        if skip:
+            res, ttl, detail = (None, skip), RETRY, ""
+        else:
+            res, ttl, detail = self._lookup(cn, cache)
+        made = time.time()
+        with self.lock:
+            cache[cn] = (now, made, res, ttl)
+            if len(cache) > 2000:
+                for k in sorted(cache, key=lambda k: cache[k][0])[:1000]:
+                    cache.pop(k, None)
+        if res[0] is None and self.on_card_refused:
+            self.on_card_refused(cn, res[1] + (" - " + detail if detail else ""))
+        return res, made
+
+    def _lookup(self, cn, cache):
+        ttl, detail = RETRY, ""
         try:
             c, _server, err = self.reader.open(card=True)
             if c is None:
                 res = (None, "AD did not answer")
+                detail = self.reader.scrub(err)
                 if self.reader.refused or "invalidCredentials" in str(err):
                     last = None
                     with self.lock:                       # the same hold as a group read's (the account would lock)
@@ -664,7 +683,7 @@ class Groups(object):
                         cache.clear()                     # Neon 1330s #3: no cached answer outlives the refusal
                     if last is not None and self.on_change:
                         self.on_change(last)              # said in the portal's log, as a group read's refusal is
-                    return (None, "the LDAP login was refused - held until the next deploy"), time.time()
+                    return (None, "the LDAP login was refused - held until the next deploy"), ttl, ""
             else:
                 try:
                     root = self.reader.root(c)
@@ -681,7 +700,7 @@ class Groups(object):
                     if len(found) == 1:
                         x = next(iter(found.values()))
                         dn = x["dn"]
-                        if x["enabled"] is not True or dn.startswith("<no dn") or not x["guid"] or not x["attr"] or not x["full"]:
+                        if x["enabled"] is not True or dn.startswith("<no dn") or not x["attr"] or not x["full"]:
                             res = (None, "the card's AD account state is not known")
                         elif x["edipis"] != {edipi(cn)}:
                             # Codex r3 #2: an account whose values name two EDIPIs is nobody's (refused for both cards)
@@ -692,15 +711,10 @@ class Groups(object):
                         res = (None, "no AD account matches this card")
                     else:
                         res = (None, "more than one AD account matches this card (%d) - none counts" % len(found))
-        except Exception:                                 # noqa: BLE001 - not known: no group counts
+        except Exception as exc:                          # noqa: BLE001 - not known: no group counts
             res = (None, "the card's AD account could not be looked up")
-        made = time.time()
-        with self.lock:
-            cache[cn] = (now, made, res, ttl)
-            if len(cache) > 2000:
-                for k in sorted(cache, key=lambda k: cache[k][0])[:1000]:
-                    cache.pop(k, None)
-        return res, made
+            detail = self.reader.scrub(getattr(exc, "message", "") or str(exc) or type(exc).__name__)
+        return res, ttl, sl.short_err(detail) if detail else ""
 
     def card_found(self, cn, now=None):
         """1.130.0: does the card's person have an AD account (any rule of portal_ad_card_matches)? -> True / False / None
