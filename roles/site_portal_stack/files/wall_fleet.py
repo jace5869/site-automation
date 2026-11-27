@@ -223,12 +223,12 @@ def read_groups(client, o):
     gcut = gcut or len(valid_groups) != len(groups)
     group_ids = {str(g["ContainerID"]) for g in valid_groups}
     members, mcut = [], False
-    params = {"types": ["Orion.Nodes"]}
+    params = {"node_type": "orion.nodes"}
     predicate = ""
     while True:
         size = min(o["page"], cap * 20 + 1 - len(members))
         page = client.query("SELECT TOP %d ContainerID, MemberPrimaryID, MemberEntityType FROM Orion.ContainerMembers "
-                            "WHERE MemberEntityType IN @types%s ORDER BY ContainerID, MemberPrimaryID" % (size, predicate), params)
+                            "WHERE ToLower(MemberEntityType) = @node_type%s ORDER BY ContainerID, MemberPrimaryID" % (size, predicate), params)
         members.extend(page)
         if len(members) > cap * 20:
             members.pop()
@@ -248,7 +248,8 @@ def read_groups(client, o):
         if not isinstance(m, dict):
             mcut = True
             continue
-        if m.get("MemberEntityType") not in (None, "Orion.Nodes"):
+        entity = m.get("MemberEntityType")
+        if entity is not None and str(entity).casefold() != "orion.nodes":
             continue                            # the WHERE says so; an Orion that answers more: never a node by another's id
         nid, gid = m.get("MemberPrimaryID"), m.get("ContainerID")
         if not valid_id(nid) or not valid_id(gid) or str(gid) not in group_ids:
@@ -597,7 +598,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         unmanaged = str(um).strip().lower() in ("true", "1")
         desc = _txt(r.get("StatusDescription"), None)
         up = (status == UP and not unmanaged and loss is not None and loss < 100 and rt is not None and rt >= 0
-              and not re.search(r"\b(down|unknown|unreachable|critical|warning)\b", desc, re.I))
+              and (not desc or re.search(r"\bup\b", desc, re.I)))
         c = UP if up else DOWN if status == DOWN and not unmanaged else UNKNOWN
         nid = str(r["NodeID"])
         if nid in by_id:

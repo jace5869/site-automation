@@ -33,6 +33,8 @@ groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`po
 
 ### Known limits (to 1.136.1)
 
+- Even on a converged host with the monitor and Network map off, AAP records successful monitor setup and file-cleanup tasks. The job recap differs from 1.135.1.
+- Browsers without `globalThis` cannot load the wall, even with the monitor off and both `fetch` and `URLSearchParams` available. Startup stops before the first `/api/wall` request.
 - Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
 - A slow node read gives an early observation extra time before it expires.
 - Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.

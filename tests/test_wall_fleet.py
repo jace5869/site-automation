@@ -602,7 +602,7 @@ class Reader(unittest.TestCase):
             self.assertTrue(re.match(r"^SELECT ", q), q)
             self.assertNotIn("*", q)
             self.assertNotRegex(q, r"Community|LicenseKey")
-        self.assertTrue(any("MemberEntityType IN @types" in q and p == {"types": ["Orion.Nodes"]} for q, p in c.q))
+        self.assertTrue(any("ToLower(MemberEntityType) = @node_type" in q and p == {"node_type": "orion.nodes"} for q, p in c.q))
 
     def test_a_column_orion_has_not(self):
         c = FakeClient([sw_row(1, "A1", cp="AD")], None, refuse=("LastSync",))
@@ -1663,6 +1663,67 @@ class MonitorAllowList(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "no node")
+class Gate8(unittest.TestCase):
+    setUp = Gate.setUp
+    js = Gate.js
+    model = Gate3.model
+
+    def test_up_description_requires_a_whole_up_word(self):
+        self.groups = {"list": [[10, "DB", 1]], "members": {"1": [10]}}
+        for desc, up in (("Knotenstatus: Unbekannt.", False), ("Node is not responding.", False),
+                         ("Backup", False), ("", True), ("Node status: UP.", True)):
+            with self.subTest(desc=desc):
+                self.rows = [dict(sw_row(1, "DB01"), StatusDescription=desc)]
+                fm = self.model()
+                self.assertEqual(fm["nodes"][0][18], "up" if up else "unk")
+                self.assertEqual(fm["groups"][0][3]["state"], "ok" if up else "stale")
+                self.assertEqual(bool(wf.conds(fm, self.now)[1]), up)
+
+    def test_mixed_case_membership_keeps_down_node_in_db(self):
+        self.rows = [sw_row(1, "DB01"), sw_row(2, "DB02", 2)]
+        client = FakeClient(self.rows, {"list": [dict(ContainerID=10, Name="DB", Status=1)],
+                            "members": [dict(ContainerID=10, MemberPrimaryID=i, MemberEntityType=t)
+                                        for i, t in [(1, "Orion.Nodes"), (2, "orion.nodes")]]})
+        self.groups = wf.read_groups(client, OPTS)
+        self.assertEqual(self.groups["members"], {"1": [10], "2": [10]})
+        fm = self.model()
+        self.assertEqual(fm["groups"][0][3]["state"], "crit")
+        self.assertFalse(wf.conds(fm, self.now)[1])
+
+    def test_load_without_abort_controller(self):
+        self.js(self.model(), """
+          (async () => {
+            delete globalThis.AbortController;
+            let calls = 0;
+            globalThis.fetch = (url, opts) => {
+              calls++;
+              assert(!("signal" in opts));
+              if (calls === 1) throw Error("offline");
+              return Promise.resolve({status:200, json:async () => data});
+            };
+            await load(false); assert(!BUSY); assert.equal(FAIL, "offline");
+            await load(false); assert(!BUSY); assert.equal(FAIL, ""); assert.equal(calls, 2);
+          })();
+        """)
+
+    def test_null_canvas_lists_node_and_opens_text_card(self):
+        self.rows = self.rows[:1]
+        self.groups["members"].pop("2")
+        self.js(self.model(), """
+          nodesPanel = realPanel;
+          document.createTextNode = t => t;
+          document.createElement = tag => Object.assign(el(tag), {setAttribute(){}, getContext:() => null});
+          P.cv = document.createElement("canvas"); P.cv.style = {};
+          P.gcue = el(); P.gw = Object.assign(el("div", "", [P.cv]), {isConnected:true, clientWidth:600, clientHeight:400});
+          drawGrid();
+          const nodeRow = P.gw.querySelectorAll("div").find(e => e.attrs && e.attrs["data-k"] === F.nodes[0].key);
+          assert(nodeRow && JSON.stringify(nodeRow.children).includes("APP"));
+          openCard([F.by[nodeRow.attrs["data-k"]]]);
+          assert(card().includes("APP") && card().includes("Copy text"));
+          assert(!P.ov.querySelectorAll("img").length && !card().includes("Save picture"));
+        """)
+
+
 class ShareText(unittest.TestCase):
     def run_js(self, L, c):
         d = tempfile.mkdtemp()

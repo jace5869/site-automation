@@ -62,6 +62,31 @@ class Deploy(unittest.TestCase):
             return subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)],
                                   cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
+    def check_disabled_monitor_ca(self, map_ca):
+        tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        names = [task["name"] for task in tasks]
+        steps = tasks[names.index("Settings | prepare the Ops monitor"):
+                      names.index("Files | the service, its pages, the actions' rules, AAP's client")]
+        from ansible.parsing.dataloader import DataLoader
+        from ansible.template import Templar, trust_as_template
+        ca = "/etc/site-portal/app/solarwinds-monitor.pem"
+        values = dict(portal_own_nginx=True, portal_netmap=False, _portal_netmap=False,
+                      _portal_wall_monitor=False, portal_config_dir="/etc/site-portal",
+                      portal_ca_file=ca, portal_solarwinds_ca_file=trust_as_template(map_ca))
+        for task in steps:
+            for item in task.get("loop", [None]):
+                templar = Templar(loader=DataLoader(), variables=dict(values, item=item))
+                if templar.evaluate_conditional(trust_as_template(task["when"])):
+                    file = task["ansible.builtin.file"]
+                    path = templar.template(trust_as_template(file["path"]))
+                    self.assertNotEqual(path, ca, task["name"])
+
+    def test_disabled_monitor_preserves_nginx_ca(self):
+        self.check_disabled_monitor_ca("")
+
+    def test_disabled_monitor_allows_undefined_map_ca(self):
+        self.check_disabled_monitor_ca("{{ sitea_swis_ca }}")
+
     def test_switch_settings_and_summary(self):
         result = self.run_cases()
         self.assertEqual(result.returncode, 0, result.stdout)
