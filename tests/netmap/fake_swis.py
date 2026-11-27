@@ -60,12 +60,16 @@ def state():
     return {}
 
 
-def node_rows(cols, alias):
+def node_rows(cols, alias, where, params):
+    cursor = re.fullmatch(r"%s\.NodeID (>=?) @(\w+)" % alias, where or "")
     st = state()
     down, up = set(st.get("down") or []), set(st.get("up") or [])
     pts = dict((p["NodeID"], p) for p in fx["points"])
     out = []
     for n in sorted(fx["nodes"], key=lambda x: x["NodeID"]):
+        if cursor and (n["NodeID"] < params[cursor.group(2)] or
+                       n["NodeID"] == params[cursor.group(2)] and cursor.group(1) == ">"):
+            continue
         r = {}
         for c in cols:
             m = re.match(r"^(?:%s\.)?(\w+)(?:\.(\w+))?(?: AS (\w+))?$" % alias, c.strip())
@@ -122,6 +126,11 @@ def columns(ent):
 
 def where_ok(where, params):
     """A test for one row of a generic table: the WHERE forms the snapshot sends; 1.96.2: (a OR b) of those."""
+    cursor = " AND (ContainerID > @container OR (ContainerID = @container AND MemberPrimaryID > @member))"
+    if where and where.endswith(cursor):
+        base = where_ok(where[:-len(cursor)], params)
+        last = (params["container"], params["member"])
+        return lambda row: base(row) and (row["ContainerID"], row["MemberPrimaryID"]) > last
     tests = []
     for part in re.split(r" AND ", where or ""):
         part = part.strip()
@@ -135,6 +144,10 @@ def where_ok(where, params):
         if m:
             vals = set(params.get(m.group(2)) or [])
             tests.append(lambda r, c=m.group(1), v=vals: r.get(c) in v)
+            continue
+        m = re.fullmatch(r"ToLower\((\w+)\) = @(\w+)", part)
+        if m:
+            tests.append(lambda r, c=m.group(1), v=params[m.group(2)]: isinstance(r.get(c), str) and r[c].lower() == v)
             continue
         m = re.match(r"^(\w+) <> (\d+)$", part)
         if m:
@@ -193,7 +206,7 @@ def run(q, params):
     elif ent == "Orion.Engines":
         rows = [dict((c, x.get(c)) for c in cols) for x in fx["engines"]]
     elif ent == "Orion.Nodes":
-        rows = node_rows(cols, alias or "Nodes")
+        rows = node_rows(cols, alias or "Nodes", where, params)
     elif ent in ("Orion.TopologyConnections", "Orion.TopologyData"):
         for c in cols:
             if c not in ("SrcNodeID", "SrcInterfaceID", "DestNodeID", "DestInterfaceID") + (("LayerType",) if ent.endswith("Connections") else ()):
@@ -217,7 +230,9 @@ def run(q, params):
         src = [r for r in MORE[ent] if ok(r)]
         first = (order or "").split(",")[0].strip().split(" ")
         key = first[0]
-        if key:                                 # 1.96.1: ORDER BY its first column (the snapshot's keyset paging); 1.97.0: DESC
+        if order == "ContainerID, MemberPrimaryID":
+            src.sort(key=lambda r: (r["ContainerID"], r["MemberPrimaryID"]))
+        elif key:                               # 1.96.1: ORDER BY its first column (the snapshot's keyset paging); 1.97.0: DESC
             src = sorted(src, key=lambda r: (r.get(key) is None, r.get(key)))
             if len(first) > 1 and first[1].upper() == "DESC":
                 src = [r for r in src if r.get(key) is not None][::-1] + [r for r in src if r.get(key) is None]

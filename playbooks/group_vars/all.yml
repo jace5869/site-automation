@@ -120,3 +120,9 @@
 # portal_setup_portal_auditor: false        # true: it gives the portal's account Auditor on the organization (reads the report jobs)
 # portal_finding_days: 7                    # how far back the pick list reads report jobs
 # portal_pick_max_launches: 10              # jobs one confirm page may start
+
+# ---- AAP template descriptions: Contact line (docs/SETUP_AAP.md, "Describe the templates") ------
+# Read by "AAP - set up job templates", "AAP - set up portal actions" and "AAP - add workflow gates".
+# Leave both empty (commented out) for no Contact line.
+# aap_templates_description_owner: "SITEA operations team"
+# aap_templates_description_contact: "SITEA automation team, automation@corp.example.mil"

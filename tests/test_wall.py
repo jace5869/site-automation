@@ -789,7 +789,7 @@ class DeployCopiesEverything(unittest.TestCase):
         import yaml
         t = yaml.safe_load(open(os.path.join(ROLE, "tasks", "main.yml")))
         task = [x for x in t if x.get("name") == "Files | the service, its pages, the actions' rules, AAP's client"][0]
-        return dict((i["dest"], i["src"]) for i in task["loop"])
+        return dict((i["dest"], i["src"]) for i in task["vars"]["_base_files"] + task["vars"]["_monitor_files"])
 
     def local_modules(self):
         """every .py the service could import from this repo: the role's files and plugins/{module_utils,filter}"""

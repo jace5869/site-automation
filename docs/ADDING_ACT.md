@@ -235,9 +235,7 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.25** (0.6.25: a model answer cut
-off on its way back is asked again instead of ending ACT; 0.6.24 changes only
-ACT's own example playbook `podman_app_health.yml`: see CHANGELOG.md). It sends the key
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.27**. It sends the key
 only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
 [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22 and 0.6.23, all automatic:
@@ -571,7 +569,7 @@ The line says `updated /opt/act/act 0.6.25 -> 0.6.27, the old one kept at /opt/a
   `/usr/local/bin/act` to `/opt/act/act`. When ACT is not installed on the host yet, it installs it first.
 - **delete** keeps the old one the same way, then removes it.
 - **report** only says it.
-- A host whose `python3` is older than 3.6 is not linked: typing `act` would fail there. The job says so, with the installed ACT version. (1.67.0: 3.6, was 3.8 - ACT 0.6.26 passes its tests on Python 3.6, the RHEL 8 default.)
+- A host whose `python3` is older than 3.6 is not linked: typing `act` would fail there. The job says so, with the installed ACT version. RHEL 8's default Python 3.6 works.
 - The job output and the report's *ACT old copies* section say what was found, with the old ACT version.
 - In Check the job changes nothing and says what it would do.
 

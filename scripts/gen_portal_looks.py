@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""1.135.0: the site portal's looks (portal_look: strata, metro, relay, chroma, press, atlas, tower) -
-roles/site_portal_stack/files/static/portal-looks.css, made from portal-looks.css.in and the palettes below.
+"""1.136.1: the site portal's looks (portal_look: metro-atlas, metro-calm, metro-wall, atlas-clean, atlas-night, contour-lite,
+strata, metro, relay, atlas) - roles/site_portal_stack/files/static/portal-looks.css, made from portal-looks.css.in and the palettes below.
 
 The report palette (html[data-look], scripts/gen_portal_css.py) stays the base layer; a look is html[data-skin=KEY] on top of it.
 Each look gets the five blocks the base palette has (light, dark by the system, data-theme=dark, and the Light / Dark switch
@@ -26,6 +26,24 @@ SYS_MONO = 'ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace'
 
 # key: (name, sans, display, mono, radius, {dark}, {light}) - bg, pane, edge, ink, mute, a1 (accent), a2, ok, warn, crit
 LOOKS = (
+    ("metro-atlas", "Metro Atlas", "Manrope", "Manrope", "IBM Plex Mono", "4px",
+     dict(bg="#171a24", pane="#202532", edge="#3b4358", ink="#e5e9f2", mute="#a5adc2", a1="#7dbce8", a2="#a8a0ec", ok="#72d4a2", warn="#e8bb65", crit="#f397a4", lip="#171a24"),
+     dict(bg="#eef0f5", pane="#f9fafc", edge="#c9d0de", ink="#1b2030", mute="#4a5268", a1="#225b8c", a2="#4f4994", ok="#146646", warn="#804c02", crit="#a4253a", lip="#c9d0de")),
+    ("metro-calm", "Metro Calm", "Figtree", "Figtree", "Fira Code", "2px",
+     dict(bg="#161921", pane="#1f242f", edge="#384052", ink="#e4e8f0", mute="#a4acc0", a1="#74bce6", a2="#9ea9e8", ok="#6fd49c", warn="#e8ba62", crit="#f497a2", lip="#161921"),
+     dict(bg="#edf0f4", pane="#f9fafc", edge="#cad1dc", ink="#19202e", mute="#495366", a1="#135b87", a2="#3d4d8f", ok="#136640", warn="#804c00", crit="#a62336", lip="#cad1dc")),
+    ("metro-wall", "Metro Wall", "Figtree", "Figtree", "Fira Code", "3px",
+     dict(bg="#13161e", pane="#1c202c", edge="#434c62", ink="#eceff5", mute="#aeb7ca", a1="#7dc5ef", a2="#a9b3ef", ok="#72db9f", warn="#f0c25d", crit="#f79aa3", lip="#13161e"),
+     dict(bg="#e5eaf2", pane="#f7f9fc", edge="#aeb8c8", ink="#121722", mute="#3e495c", a1="#0e5482", a2="#35478c", ok="#0f613b", warn="#7c4700", crit="#9e1c2e", lip="#aeb8c8")),
+    ("atlas-clean", "Atlas Clean", "Manrope", "Manrope", "IBM Plex Mono", "8px",
+     dict(bg="#181a21", pane="#21242e", edge="#3d4252", ink="#e8e7e1", mute="#a6a9b6", a1="#a0ace8", a2="#7dc4c8", ok="#72cfa0", warn="#e5b864", crit="#f295a1", lip="#181a21"),
+     dict(bg="#f2f1ec", pane="#faf9f6", edge="#cac7bc", ink="#1d2028", mute="#4d515e", a1="#3b4b8c", a2="#1c6670", ok="#156444", warn="#7f4c04", crit="#a32539", lip="#cac7bc")),
+    ("atlas-night", "Atlas Night", "Manrope", "Manrope", "IBM Plex Mono", "14px",
+     dict(bg="#1c202c", pane="#242938", edge="#414860", ink="#e3e6f0", mute="#a7aec2", a1="#a3b0eb", a2="#7ec4c8", ok="#78cfab", warn="#e4b96c", crit="#f096a4", lip="#1c202c"),
+     dict(bg="#e4e7f0", pane="#f1f2f8", edge="#bcc1d3", ink="#212536", mute="#4b5167", a1="#455294", a2="#206670", ok="#1b664a", warn="#804d08", crit="#a12c43", lip="#bcc1d3")),
+    ("contour-lite", "Contour Lite", "Manrope", "Manrope", "IBM Plex Mono", "8px",
+     dict(bg="#181a22", pane="#21242f", edge="#3a4052", ink="#e5e7ef", mute="#a3aabc", a1="#a69ee8", a2="#7bc4cc", ok="#70d2a0", warn="#e5b964", crit="#f295a2", lip="#181a22"),
+     dict(bg="#f2f3f6", pane="#fafbfc", edge="#ccd1dc", ink="#1c212d", mute="#4d5566", a1="#484087", a2="#1d6673", ok="#146642", warn="#804d03", crit="#a32539", lip="#ccd1dc")),
     ("strata", "Strata Console", "Inter", "Chakra Petch", "IBM Plex Mono", "6px",
      dict(bg="#0e1118", pane="#191e2a", edge="#333d54", ink="#f2f5fa", mute="#9aa6bf", a1="#3b9eff", a2="#00cfa8", ok="#29d67d", warn="#f5b324", crit="#ff4f66", lip="#07090f"),
      dict(bg="#e6e3da", pane="#fbfaf6", edge="#b5b1a4", ink="#141821", mute="#4e5566", a1="#1458d4", a2="#087a6a", ok="#0f7c48", warn="#b36600", crit="#c81e3a", lip="#c4bfb2")),
@@ -35,18 +53,9 @@ LOOKS = (
     ("relay", "Relay Panel", "Barlow Semi Condensed", "Barlow Semi Condensed", "IBM Plex Mono", "4px",
      dict(bg="#171a1b", pane="#252a2c", edge="#50595c", ink="#f1f3ee", mute="#afb9b7", a1="#ffc35a", a2="#79c8d3", ok="#74d99a", warn="#ffd064", crit="#ff9286", lip="#0e1011"),
      dict(bg="#dbdeda", pane="#f3f4ee", edge="#a1aaa5", ink="#202725", mute="#52605b", a1="#845000", a2="#146778", ok="#21653d", warn="#805400", crit="#a32f27", lip="#a1aaa5")),
-    ("chroma", "Chroma Perspex", "Chakra Petch", "Chakra Petch", "Chivo Mono", "4px",
-     dict(bg="#121319", pane="#1b1d27", edge="#3a4058", ink="#f4f5f8", mute="#a3aac0", a1="#d9507f", a2="#5677d6", ok="#3cc47c", warn="#e3b341", crit="#e5534b", lip="#06070b"),
-     dict(bg="#f3efe6", pane="#ffffff", edge="#23263a", ink="#14161f", mute="#4c536b", a1="#b23a68", a2="#2f51c8", ok="#007d40", warn="#9e6200", crit="#cc142c", lip="#23263a")),
-    ("press", "Signal Press", "Barlow Semi Condensed", "Barlow Semi Condensed", "Chivo Mono", "3px",
-     dict(bg="#1e201f", pane="#282b28", edge="#4a4f48", ink="#f8f4e6", mute="#b9bcaf", a1="#ff996f", a2="#9ebdf7", ok="#b2d593", warn="#fbd278", crit="#ff9185", lip="#1e201f"),
-     dict(bg="#eeeae0", pane="#fffdf3", edge="#cac8bc", ink="#23251f", mute="#53594f", a1="#aa3519", a2="#335a91", ok="#446630", warn="#855500", crit="#af342a", lip="#cac8bc")),
     ("atlas", "Contour Atlas", "Manrope", "Manrope", "IBM Plex Mono", "16px",
      dict(bg="#101422", pane="#1b2033", edge="#373c53", ink="#f3f1ff", mute="#b6bad1", a1="#b8adff", a2="#77dfed", ok="#72e2bf", warn="#ffcc77", crit="#ff90ad", lip="#0a0d17"),
      dict(bg="#f0f0f8", pane="#fefeff", edge="#d6d6e5", ink="#222139", mute="#575a73", a1="#6246a8", a2="#126877", ok="#08755d", warn="#885500", crit="#b73559", lip="#d6d6e5")),
-    ("tower", "Timing Tower", "Chakra Petch", "Chakra Petch", "Chivo Mono", "3px",
-     dict(bg="#0f1014", pane="#191b22", edge="#2c2f3a", ink="#ffffff", mute="#a4a9b8", a1="#b07cff", a2="#4fd1ff", ok="#3ccf7a", warn="#f2c037", crit="#ff5a5a", lip="#050507"),
-     dict(bg="#e9eaee", pane="#ffffff", edge="#cfd2db", ink="#101218", mute="#525868", a1="#6d3fd1", a2="#0a7fa6", ok="#13803f", warn="#8f6400", crit="#c42727", lip="#cfd2db")),
 )
 KEYS = tuple(x[0] for x in LOOKS)
 

@@ -102,6 +102,8 @@ Type a group name or choose an LDAP suggestion. Untick a group to remove it and 
 | No Execute | The portal account needs Execute to launch this template. |
 | No Approve | The portal account needs Approve to decide a pending approval in this workflow. |
 | Label pending | **Show on the portal** differs from the label in AAP. Discovery picks up the actual label on its next refresh. |
+| Approval unknown | AAP did not say what one of the workflow's steps is (the card names the node to check). The card is never Ready and the header says *Approval unknown* (1.135.2). |
+| Not current - last read … | The last read of AAP failed or is older than the refresh interval. Every card says so instead of Ready - what it shows is what AAP said then; the header says *Disconnected* or *Not current* (1.135.2). |
 
 Use **Export for AAP - set up portal actions** to download the publish and unpublish lists. Review the exact template names and organization, paste the variables into **AAP - set up portal actions**, run in **Check**, then run to apply. The setup job applies the labels and grants Execute and, on published workflows with approval nodes, Approve to `portal_setup_portal_user` (Approve only from this export; a plain `portal_publish_templates` run grants Execute, as before). Unpublishing removes the label. Existing setup exclusions and the discovery checks for runnable templates still apply. Name patterns containing literal wildcards or ambiguous visible names require resolving the name before export. The export
 names the templates' organization (`portal_publish_organization`), so the setup job never matches a template of the same name in
@@ -109,22 +111,14 @@ another organization; templates in more than one organization cannot be exported
 
 **Groups** shows the last AD read, enabled member counts and which grants use each group. **Ansible connection** shows the account, address, read time and inventory counts. **Activity** reads the portal audit log, including the person, time and settings changed.
 
-The named data volume holds `/data/access.json`. Each save replaces it atomically. A corrupt or unreadable file shows a banner and permits only the configured lists for their respective operations - the default run and approve lists in `all.yml` and an action's own `who` list (it comes from the actions file, not from `access.json`); no saved template group counts, and the open run default never applies. **Export as YAML (.txt)** downloads a versioned backup. **Import (.txt)** validates IDs, names, group lists and switches against the visible AAP inventory, then shows additions, edits and removals. **Apply import** replaces the saved settings after review. A concurrent save requires a fresh preview (every save counts, even one that puts a row back as it was).
-**One controller (1.134.0).** The file belongs to one AAP controller (the normalized `portal_aap_url`). Template
-numbers and names mean other templates on another controller, so when the portal is deployed for another controller the
-saved grants are **dropped** on the first read: the file is emptied for the new controller, every dropped row is listed in
-**Activity**, and the Admin page says how many were dropped and when. Save the templates again, or import a backup, to give
-access there. A reviewed import is bound to the controller it was previewed for. A saved grant applies only while AAP's
-template list - read every `portal_discover_seconds`, never older than 15 minutes from the START of that read - still has
-that template id under the saved name; a deleted or renamed template's grant is listed as **stale** and adds nobody (until
-the list has been read after a start, no saved grant applies). What a saved row restricts holds even then: **Ask once more
-before launch** still asks, and a placement helper with saved run groups or the switch is still checked. A damaged
-`access.json` keeps the rows last read whole for that (so does a file gone for a moment); damaged with none read whole since the
-portal started, nothing launches until an admin recovers it (import a backup). Every launch checks the template's live name. A run's job page and its approval count a
-saved grant only for the template key and name the run was started under; a run recorded with another controller is never
-shown or matched by its job number. A run recorded before 1.134.0 is shown as in 1.133.0 (its starter, the approvers, the
-action's run rule), with no saved grant. A file whose rows differ from its last
-recorded change is treated as damaged (banner, defaults only). The default groups stay in `all.yml`. Behind an existing reverse proxy, updating its generated nginx include enables imports larger than 64 KiB.
+**Access list (`/data/access.json`):**
+
+1. Saved grants live in `/data/access.json` on the named data volume. Each save replaces the file atomically.
+2. If the file is damaged or unreadable, a banner shows and only the default lists in `all.yml` (and an action's own `who` list) apply. The open run default never applies, and saved restrictions from the last good read still hold (if none was read since startup, nothing launches until recovered). A file whose rows differ from its last recorded change is treated as damaged.
+3. To back up: press **Export as YAML (.txt)**.
+4. To restore: press **Import (.txt)** to validate against AAP and preview changes, then press **Apply import**. A concurrent save requires a fresh preview. Behind an existing reverse proxy, update its generated nginx include to allow imports larger than 64 KiB.
+5. One controller per file (normalized `portal_aap_url`). If the portal moves to another controller, saved grants are dropped on the first read and listed in **Activity**; save them again or import a backup. A reviewed import is bound to the controller it was previewed for, and runs from another controller are never matched by job number.
+6. A saved grant counts only while AAP's template list (refreshed every `portal_discover_seconds`, max 15 minutes old) still matches both the template id and name; deleted or renamed templates are marked **stale** and add nobody. Every launch checks the live name, and saved restrictions (**Ask once more before launch**, placement helper switches) still apply. Pre-1.134.0 runs keep their starter, approver and action rules with no saved grant.
 
 A refused reader receives HTTP 403 with their card CN and the contact in `portal_access_contact` (default
 “your portal administrator”). The refusal page explains when AD groups are unavailable. The portal logs one
@@ -1031,25 +1025,33 @@ portal_area_rules:
   - {match: "Site - patch *", area: Patching}
 ```
 
-## The live Network map (1.85.0)
+## The live Network map
 
-With a "SolarWinds (read-only)" credential on the deploy job (`portal_netmap: auto`), the portal has a **Network map**
-page in its menu: the network map of [NETWORK_MAP.md](NETWORK_MAP.md), live, level by level. 1.95.0: the page shows the
-last map the server kept (on disk, also after a restart) at once - *as of HH:MM · refreshing* - and never waits for
-SolarWinds. Behind it, while someone has the page open, the server reads the status (2 or 3 queries) every
-`netmap_live_seconds` (60; 30 at least) and the whole map every `netmap_full_seconds` (1800; 300 at least) - one read
-every viewer shares, never one per viewer - and the page asks the server for it (`/portal/api/netmap`, with an ETag: an
-unchanged map costs nothing).
-A node that goes down pulses red, a link that drops stops and turns red, a toast says what changed, and *updated N s
-ago* says how fresh it is. A read that fails keeps the last map and says why; a whole read that fails is followed by
-a status read of the kept map. The kept map names SolarWinds' address and the netmap settings: after a deploy that
-changes the address it is not shown; one that changes a setting shows it, and the next read is whole. A netmap
-setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_roles`) stops the deploy, with the reason.
+The portal can show the [NETWORK_MAP.md](NETWORK_MAP.md) map live in its menu, level by level. Every viewer shares one server-side read.
+
+**Set it up:**
+
+1. Attach the **SolarWinds (read-only)** credential to **Site portal - deploy**.
+2. Keep `portal_netmap: auto` (default) and set your map settings in `all.yml`.
+3. Run **Site portal - deploy**. The page loads the last saved map at once (*as of HH:MM · refreshing*) and updates in the background.
+4. Watch live status: down nodes pulse red, dropped links turn red, toasts announce changes, and *updated N s ago* shows freshness.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_netmap` | `auto` | `auto` enables with the SolarWinds credential; `false` turns the page off |
+| `netmap_live_seconds` | `60` | Status poll interval in seconds while open (minimum `30`; 2-3 queries) |
+| `netmap_full_seconds` | `1800` | Full map refresh interval in seconds (minimum `300`) |
+
+**If a read or deploy fails:**
+
+- If a read fails, the portal keeps the last saved map and shows why. A failed full read falls back to a status read of the kept map.
+- If a deploy changes SolarWinds' address, the old saved map is not shown. Changing a map setting keeps it until the next full read.
+- An invalid `netmap_site_pattern`, `netmap_hierarchy`, or `netmap_roles` stops the deploy with the reason.
+- Clients poll `/portal/api/netmap` with an ETag, so an unchanged map transfers nothing.
 
 - The login is one podman secret on the server (`site-portal-swis`), as the AAP token: never in a file, the unit or
   the logs. The service's log says each read that fails (once) and when it reads again.
-- SolarWinds' certificate: the server's CAs (`portal_trust_host_cas`), plus `portal_solarwinds_ca_file` (a file on
-  the server).
+- Set `portal_solarwinds_ca_file` to use a dedicated CA file for SolarWinds readers. With that setting empty, the readers use the service's usual trust roots.
 - The map's settings are the report's (`netmap_site_by`, `netmap_site_pattern`, `netmap_hierarchy`, `netmap_sites` ... in all.yml);
   `portal_motion` applies.
 - No credential (or `portal_netmap: false`): no page and no menu entry; `/portal/netmap` says why.
@@ -1200,8 +1202,7 @@ thresholds, freshness rule and detail cards as the other styles; nothing new rea
   its worst items (*Tiles turn over every 8 s*; with reduced motion, hovering turns it). The **Now** list has
   **Share to Teams** on each condition; *Last 4 hours* counts what opened and cleared; a capacity strip at the bottom.
 
-In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network) is a grey tile "Not on the
-wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
+In all three: an area not on the wall yet (VDI, Active Directory, Outages & problems, Network) is a grey tile "Not on the wall yet" - never made-up data; LATE and NOT CURRENT are grey, never green. Every limit chart has its warning and
 critical bands, labelled dashed limit lines and one sentence, for example *91% · 6 pts over warn 85 · crit at 97*. With
 `?area=storage` or `?area=vmware` the board keeps every tile, and its banner, events, spotlight and capacity rows are that
 area's.
@@ -1224,6 +1225,117 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
+
+### Ops monitor (1.136.0)
+
+**The preview is off by default.** The default deploy keeps the same files and answers as 1.135.1, apart from two wall script version hashes. The Actions page stays the same.
+
+**To set up** this opt-in preview, set `portal_wall_monitor: true` and run **Site portal - deploy** with the **SolarWinds (read-only)** credential.
+
+A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
+up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw
+it in their own colours and type, Lights / Cockpit / Map in the page's - on a board that fills the screen like the room's
+styles (720p to 4K, kiosk too). The earlier link `?area=fleet` also opens Ops monitor.
+
+- **Services** - one tile per SolarWinds group (or per value of a node custom property, below): the server shows the group verdict
+  (*1 down*, *1 warn*, *all up*, *no monitored nodes*, or *not current*) and the true member count. Click a tile: that group in the Spotlight.
+- **Every node, by service group** - one square a node: green up, amber with a dark centre warning (packet loss or slow
+  answers), red with a ring and its name down, a hollow grey square unmanaged in SolarWinds, grey
+  no current data. Nodes in no group are under **Workloads (no group)**; VMs vCenter has and SolarWinds does not watch are
+  under **vCenter only**, always grey and labelled as information.
+  The squares shrink to fit (3,000 nodes fit at 1080p). Hover for the name, click for the node's card, **Ctrl** or
+  **Shift + click** to select several, click a group's name for the Spotlight.
+- **Not up · worst first** - down then warning, the longest first, each with its service, IP, why and since when; tick the
+  boxes, or **Select all down**, then **Share selected to Teams**. *+N more · open the full list* lists them all.
+- **SolarWinds vs vCenter** lists VMs seen only in vCenter and SolarWinds VMs without an inventory match
+  (identified by Vendor or MachineType using `portal_wall_monitor_vm_match`). Click a count to see its list.
+- **Spotlight** - one group at a time, problems first, every 20 s (a bar fills, *next in 14 s*; ◀ ▶ or the arrow keys step
+  and pause it for 60 s; it holds while a card is open).
+
+**The node card** (a square, a row or a Spotlight chip): service (and the other groups it is in), IP, status and why, since
+when and how long, response time and loss, a dated vCenter note when matched, what SolarWinds says and when it last polled, the
+source and its age, where to check - and **Copy text**, **Copy picture**, **Copy both**, **Save picture** (as Share to Teams
+below) and **Add to selection**. **Share selected** puts one line a node on the clipboard, for example
+
+```
+4 nodes not up - SITEA - 05:42
+DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)
+DOWN  SITEASQLV05 - Databases - 192.0.2.82 - down 6 min (since 05:36)
+Wall: https://<portal>/portal/wall?area=monitor
+```
+
+with the same as a table (HTML) and a picture of at most 40 lines (*+N more*). A node first seen down when the portal
+started reading says *down 21+ min (since 05:21 or earlier)*; after that the time is the read that first saw it down (kept
+on the portal's data volume through a restart).
+
+**The rules:**
+
+- The server computes one verdict per node. SolarWinds Status must be an integer. Unrecognized codes, strings,
+  fractions, booleans and missing values give an unknown verdict. Each page of nodes carries its own arrival time.
+- SolarWinds alone determines status. A down node stays down even when vCenter reports it powered off or suspended.
+  An unmanaged node counts as off. A verdict expires at page arrival plus LATE or LastSync plus
+  `portal_wall_monitor_poll_stale_minutes` (default 15 minutes), whichever comes first. A missing LastSync or one
+  more than 120 seconds after page arrival is unusable for that read. A failed SolarWinds feed greys the board.
+- A unique exact FQDN match between caption or DNS and VM name or guest host name, or a unique matching unicast IP,
+  adds **vCenter says: &lt;state&gt;, as of HH:MM** to the card and Teams output. Matching ignores case and trailing dots.
+  Unspecified, loopback, link-local and multicast addresses cannot identify a VM. Ambiguous identities have no note.
+  The note adds **(LATE)** or **(NOT CURRENT)** as its inventory ages. Templates and vCLS VMs are excluded.
+- Each service uses the earliest member deadline and counts every listed member, including missing members beyond
+  the display limit. Any unknown member makes the service stale. All up or off with at least one up is OK.
+  Group membership expires 15 minutes plus two monitor read intervals after it was read. Expired membership makes
+  the services stale and blocks recovery. All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The wall overview,
+  dialogs and node shares age the server verdict on their own clocks between refreshes.
+- A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
+  a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
+- **Grey is no current data, never green:** SolarWinds older than LATE (3 min) or not answering greys every SolarWinds
+  square (a node last seen down keeps a dashed red outline and is listed as *last known*); a read cut at
+  `portal_wall_monitor_max_nodes`, or groups not read (or cut), is not whole and the area is never shown OK. The vCenter-only
+  squares are always informational; *vCenter only* and *not found in vCenter* are counted only from a whole, current read of
+  the side searched (else "not counted", said).
+- **What lights the wall:** one condition per group with a node down (critical) and one with a node warning - never one
+  per node; a node in two groups counts in both. A group's condition clears only when the group verdict is current and OK. They show in the other areas' Now lists, banners and the Overview like any wall condition. The vCenter-only
+  group lights nothing here (the VMware area has those VMs).
+
+**Where it comes from:** SolarWinds, read by the portal itself with the network map's "SolarWinds (read-only)" login,
+SWQL SELECTs only (`Orion.Nodes`: NodeID, Caption, DNS, IPAddress, Status, StatusDescription, Vendor, MachineType,
+ResponseTime, PercentLoss, UnManaged, LastSync; `Orion.Container` and `Orion.ContainerMembers` for the groups, every
+15 min), every `portal_wall_monitor_seconds` while the wall is open, in a thread of its own (a refused
+SolarWinds login never stops a vCenter login, and waits `portal_wall_auth_retry_minutes` before the next try). vCenter: the
+wall's own collector (only with the monitor on does it read each VM's `guest.ipAddress` and `guest.hostName`). The page reads
+`/portal/api/wall/fleet` every 30 s.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_wall_monitor` | `false` | Enable the preview with `true`. |
+| `portal_wall_monitor_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
+| `portal_wall_monitor_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
+| `portal_wall_monitor_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
+| `portal_wall_monitor_vm_match` | `["*VMware*"]` | Vendor / MachineType globs that make a node a VM (for *not found in vCenter*) |
+| `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
+| `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
+
+The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. It stays the same with the monitor off.
+The monitor's CA goes to its reader only. The shared trust bundle stays the same.
+
+#### Known limits until 1.136.1
+
+- Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
+- A slow node read gives an early observation extra time before it expires.
+- Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.
+- A large Teams preview can redraw when unrelated polls expire.
+- Refreshing a list can move keyboard focus off its controls.
+- A node card can show the last page's time for a node read on an earlier page.
+- After a board request fails, Overview can stay grey until someone reopens the board.
+- The Actions page and its Atlas map have no monitor tile. The wall shows an all-unmanaged group as *no monitored nodes*.
+- A shared group condition can still say critical after a member's poll expires.
+- A VM match can look unique while another vCenter is offline.
+- A container count exactly at the limit can mark a complete read as cut.
+- An expired comparison can leave a vCenter-only square on the canvas that still opens its card.
+- The board and Overview poll separately. A newer critical Overview response no longer makes the board stale by its sequence alone.
+- *What the wall watches* can label a SolarWinds monitor condition as vCenter.
+- The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
+- A cleared group share can still show recovery when the board has already seen the outage reopen.
+- On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
 
 ### Make a screen the ops wall (1.135.0)
 
@@ -1315,18 +1427,16 @@ condition needs the full window again).
   answer), and when the portal itself does not answer a read it says **Portal not reachable** on top and
   shows every value grey - nothing green, nothing red from old data. A condition still open in a current source (a host
   down in vCenter 1) stays Critical even while another source (vCenter 2) is stale.
-- **One rule for every status on the page:** green only when the check ran, its source is there and current, and the
-  value is OK - every counter, gauge, light, list row, map dot and detail-card row follows it. It fails closed: a value
-  not read (a capacity, a CPU, an aggregate's size) is "?", never 0 % or OK; a source missing from the answer is not
-  current; while one vCenter has not returned its inventory, or one host or datastore lacks a value, nothing of VMware is
-  green (its criticals and warnings still show) - the same for Storage. A seeded fuzz test takes inputs away at random
-  and draws every style and card: nothing may be green.
-  A check that did not run (a cluster's SnapMirror or node collection not read whole) is grey "Not on the wall", never
-  "None broken". **Green only from an allow-list:** a host is OK only when vCenter says exactly "connected" and its
-  maintenance mode is known and overallStatus is green; a watched VM's heartbeat only when "green" (gray, yellow or missing: unknown); a datastore only when
-  "accessible" is true; a SnapMirror relationship only when healthy is true and its state is snapmirrored or in_sync with measured lag within the warning threshold; a
-  volume or LUN only when "online". Anything else is unknown: grey, the area not whole. On Lights the hosts are listed critical first, then warnings, then the rest;
-  none that is not OK is ever left out.
+- **One rule for every status on the page:** green only when the check ran, its source is present and current, and the value is OK.
+   - **Fail closed:** unread values show `?`, never `0 %` or OK. A missing source is not current. If one vCenter or ONTAP cluster lacks complete data, that whole area is never green (its criticals and warnings still show).
+   - **Not run stays grey:** an incomplete collection (such as SnapMirror or nodes) shows grey "Not on the wall", never "None broken". A seeded fuzz test drops random inputs across every style and card to verify nothing turns green.
+   - **Green allow-list:**
+      - Host: `connected`, maintenance mode known, and `overallStatus` is green.
+      - Watched VM heartbeat: `green` (gray, yellow or missing = unknown).
+      - Datastore: `accessible` is true.
+      - SnapMirror: `healthy` is true, state is `snapmirrored` or `in_sync`, and lag is within warning threshold.
+      - Volume or LUN: `online`.
+   - Anything else is unknown (grey). On Lights, hosts sort critical first, then warnings, then the rest; no non-OK item is hidden.
 - Nothing is green without a current read: a host whose state vCenter did not say counts as unknown (never up), Storage
   is not on the wall without live ONTAP, and a wall with nothing read yet shows "No current data".
 - A live ONTAP read is all or nothing: a collection with an error, without records or with a next page left over counts
@@ -1339,14 +1449,19 @@ condition needs the full window again).
   as **last known**: grey, "last seen 14:20", never current and never "cleared". (A deleted object stays so until the
   portal restarts.)
 
-**Set it up:** attach the site's existing **VMware vCenter** credential (the one the VMware jobs use) and, for live
-storage, the **NetApp ONTAP** credential to *Site portal - deploy* (both optional on that template), keep the
-read-only **Report database** credential on it (the storage path), and run the deploy. No new account is needed. The
-deploy copies each login to the portal server as a podman secret (`site-portal-vcenter`, `site-portal-ontap`) the same
-way as the LDAP bind account: never in a file, a unit, the page, the API or the logs; the service gets them as
-environment variables (`PORTAL_WALL_VCENTER_LOGIN`, `PORTAL_WALL_ONTAP_LOGIN`). The vCenters read are the credential's
-and `vmware_vcenters`; the clusters are `ontap_clusters`. `portal_wall_vcenter: false` / `portal_wall_ontap: false`
-keep a credential on the template but out of the portal; `portal_wall: false` turns the page and its tab off.
+**Set it up:**
+
+1. Attach your existing **VMware vCenter** credential to **Site portal - deploy** (optional, no new account needed).
+2. For live storage, also attach the **NetApp ONTAP** credential and set `ontap_clusters`.
+3. Keep the read-only **Report database** credential attached for the storage path details.
+4. Run **Site portal - deploy**. Logins are stored as podman secrets (`site-portal-vcenter`, `site-portal-ontap`) and passed as `PORTAL_WALL_VCENTER_LOGIN` / `PORTAL_WALL_ONTAP_LOGIN` — never written to files, units, pages, APIs or logs.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_wall` | `true` | `false` turns the wall page and tab off |
+| `portal_wall_vcenter` | `auto` | `false` keeps the vCenter credential out of the portal |
+| `portal_wall_ontap` | `auto` | `false` keeps the ONTAP credential out of the portal |
+| `vmware_vcenters` / `ontap_clusters` | `[]` | Extra vCenters and ONTAP clusters read live |
 
 ### What the wall watches and excludes
 
@@ -1750,11 +1865,9 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 
 ## The look
 
-Since 1.135.0 the portal has **seven looks**, each in light and dark: **Strata Console** (the default), **Metro Live
-Tiles**, **Relay Panel**, **Chroma Perspex**, **Signal Press**, **Contour Atlas** and **Timing Tower**. `portal_look`
-(`strata`, `metro`, `relay`, `chroma`, `press`, `atlas`, `tower`) is the look every viewer starts with; each viewer may
-pick another in the bar's **Look** list (kept in their browser, beside the Auto / Light / Dark switch), and a link may
-carry `?look=metro` (that page only). The report palette (`report_web_theme`) stays underneath.
+In 1.136.1 the portal and classic wall share the same **Look** picker. Both start with `portal_look` (default
+`metro-atlas`). A viewer's choice is kept in their browser and applies on both pages. Removed or unknown saved
+looks fall back to the configured default. A link can carry `?look=metro` for that page only.
 
 Each look has its own shape, on the real data of the page:
 
@@ -1763,12 +1876,16 @@ Each look has its own shape, on the real data of the page:
 | Strata Console | square tiles with lamp modules, a **spotlight stage** that steps through the wall's areas, worst first |
 | Metro Live Tiles | flat colour tiles; the area tiles **turn over** to their worst items (*tiles turn over every 8 s*) |
 | Relay Panel | an annunciator: a **lamp plate** and lamps per area, a colour per area on the cards |
-| Chroma Perspex | extruded plates and chamfered tiles, a strong accent |
-| Signal Press | a newspaper: the **top rule**, the areas as a **ledger** |
-| Contour Atlas | an **"Asset status by area"** map: each area an island, its contour rings its state |
-| Timing Tower | a **ranking**: the areas worst first, each with its position and the gap to its limit |
+| Metro Atlas | Atlas typography and surfaces with a Metro tile grid |
+| Metro Calm | muted tiles with colour on status edges and badges |
+| Metro Wall | large numbers and high contrast for room screens |
+| Atlas Clean | plain status tiles with counts on a paper-like surface |
+| Atlas Night | low-glare dark surfaces for evening shifts |
+| Contour Lite | faint contour lines in the header band |
+| Contour Atlas | rounded surfaces and plain status tiles with counts |
 
-**The Ops center section (Actions page).** With the wall on (`portal_wall`), the Actions page opens with the wall's
+**The Ops center section (Actions page).** With the wall on (`portal_wall`), the default `line` mode shows a
+clickable status strip. Set `portal_actions_ops_center` to `off` to hide it or `full` to show the wall's
 areas in short, in the viewer's look: how many need a look, each area's state in a word and an icon, its main value
 against its limit (bands, labelled dashed limit lines and one sentence such as *91% · 6 pts over warn 85 · crit at 97*,
 from `portal_wall_aggr_warn` / `_crit`, `portal_wall_datastore_warn` / `_crit` and `portal_wall_high_pct`), and a link
@@ -1999,7 +2116,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_launches_per_hour` | 20 | one person's launches in an hour, at most |
 | `portal_aap_ui` | AAP's address | the address of AAP's pages, for the *Open in AAP* links |
 | `portal_own_nginx` | false | its own nginx (TLS, the cards) instead of STIG Manager's |
-| `portal_look` | `strata` | the look every viewer starts with: `strata`, `metro`, `relay`, `chroma`, `press`, `atlas` or `tower` (*The look*) |
+| `portal_look` | `metro-atlas` | shared portal and wall look: `metro-atlas`, `metro-calm`, `metro-wall`, `atlas-clean`, `atlas-night`, `contour-lite`, `strata`, `metro`, `relay` or `atlas` |
+| `portal_actions_ops_center` | `line` | Actions page Ops center display: `line` for a clickable strip, `full` for area details, or `off` to hide it |
 | `portal_wall_style` | `cockpit` | the wall's style when the address names none: `lights`, `cockpit`, `map`, `strata`, `relay` or `metro` |
 
 ## When something is wrong

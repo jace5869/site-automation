@@ -18,7 +18,8 @@ from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame,
                                 Preformatted, Spacer, Table, TableStyle)
 from reportlab.platypus.tableofcontents import TableOfContents
 
-VERSION = "0.6.25"
+VERSION = "0.6.27"
+SA_VERSION = "1.136.3"
 # the month the PDF is built (SA_PDF_DATE="November 2026" to set it); it was fixed to October 2026 until 1.50.0
 DATE = __import__("os").environ.get("SA_PDF_DATE") or __import__("datetime").date.today().strftime("%B %Y")
 
@@ -172,7 +173,7 @@ def table(header, rows, widths, zebra=True, bold_first=False):
     w = [CONTENT_W * f for f in widths]
     data = [[Paragraph(md(h), ST["head"]) for h in header]]
     for r in rows:
-        data.append([Paragraph(md(c), ST["cellb" if (bold_first and i == 0) else "cell"])
+        data.append([Paragraph(md(c, 7.6), ST["cellb" if (bold_first and i == 0) else "cell"])
                      for i, c in enumerate(r)])
     t = Table(data, colWidths=w, repeatRows=1)
     cmds = [

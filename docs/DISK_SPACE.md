@@ -81,7 +81,7 @@ says how to find what grew ([RUNBOOKS.md](RUNBOOKS.md#disk)).
    (06:30), or only as workflow 42's first step.
 2. **Linux - tmp cleanup**: playbook `playbooks/tmp_cleanup.yml`, the same inventory and credential.
    Leave *Prompt on launch* for Variables unticked: the plan must come from the workflow's own report.
-3. **Workflow 42** - AAP - set up job templates makes it (1.107.0) ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#42-disk-space-and-the-tmp-cleanup-with-an-approval)):
+3. **Workflow 42** - **AAP - set up job templates** makes it ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#42-disk-space-and-the-tmp-cleanup-with-an-approval)):
 
 ```workflow
 [Linux - disk space report]

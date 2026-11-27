@@ -160,7 +160,7 @@ health report and the API test go on and say what is missing.
 
 ## Workflow: fix broken desktops, with an approval
 
-**AAP - set up job templates makes this workflow (1.107.0)**, with the gate between the check and the
+**AAP - set up job templates makes this workflow**, with the gate between the check and the
 approval (*Workflow gate - has a plan*, `workflow_gate_var: horizon_desktops_fix`: a refused login never reaches the
 approval). *Horizon - desktops check* there has `horizon_desktops_mode: approval` in its Variables. The steps below
 are the manual way.
@@ -276,7 +276,7 @@ on a FAIL. Run it before the image push workflow.
 
 ## Workflow: push a new golden image, with an approval
 
-**AAP - set up job templates makes this workflow (1.107.0)**, with its survey. The steps below are
+**AAP - set up job templates makes this workflow**, with its survey. The steps below are
 the manual way.
 
 ```workflow
@@ -494,7 +494,7 @@ get it.
 
 ## Workflow: ESXi host maintenance
 
-**AAP - set up job templates makes this workflow (1.107.0)**, with its survey; the first approval waits 8 hours, *Is the
+**AAP - set up job templates makes this workflow**, with its survey; the first approval waits 8 hours, *Is the
 host back?* has no timeout. The steps below are the manual way.
 
 ```workflow

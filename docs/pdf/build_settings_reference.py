@@ -37,7 +37,8 @@ def build():
             "Keep it open next to the *Operations Runbooks Setup Guide*: each job's chapter there says "
             "which settings matter for it; this one lists them all, role by role.",
             "Rendered from `docs/VARIABLES.md` and `docs/VARIABLES_REFERENCE.md` (generated from "
-            "`roles/*/defaults/main.yml`) in the site-automation repository (version %s)." % g.SA_VERSION]),
+            "`roles/*/defaults/main.yml`) in the site-automation repository (version %s). "
+            "Copy settings from the repository, not from this PDF." % g.SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()
     toc.levelStyles = [ST["toc1"], ST["toc2"]]

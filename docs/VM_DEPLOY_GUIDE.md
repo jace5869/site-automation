@@ -578,7 +578,7 @@ task's) number - the only answer of its survey; the request stays on the ticket,
 ServiceNow or vCenter access:
 
 ```http
-POST https://<aap>/api/controller/v2/workflow_job_templates/<id>/launch/        (AAP 2.4: /api/v2/...)
+POST https://<aap>/api/controller/v2/workflow_job_templates/<id>/launch/
 Authorization: Bearer <a token of an AAP user that may only Execute this workflow>
 Content-Type: application/json
 

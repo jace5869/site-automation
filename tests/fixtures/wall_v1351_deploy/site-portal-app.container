@@ -1,0 +1,37 @@
+# Managed by Ansible (site_portal_stack) - do not edit on the host
+[Unit]
+Description=Site portal - the service (the report website, the actions, the jobs, the approvals)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=site-portal-app
+Image=docker.io/library/python:3.12-slim
+# never pulled by the unit (1.70.3): an air-gapped host has the image loaded, the job checks it first
+PodmanArgs=--pull=never
+# the reverse proxy's network (its nginx reaches the service by name); no port on the server
+Network=portal-test-proxy
+Volume=@WORK@/etc/app:/app:ro,Z
+Volume=@WORK@/etc/settings.json:/etc/site-portal/settings.json:ro,Z
+Volume=@WORK@/etc/actions.json:/etc/site-portal/actions.json:ro,Z
+Volume=site-portal-data.volume:/data:U,Z
+# the report website, read-only
+Volume=@WORK@/reports:/reports:ro,z
+Environment=PORTAL_SETTINGS=/etc/site-portal/settings.json
+# the CAs AAP's certificate is checked against (this server's)
+Volume=@WORK@/etc/trust.pem:/etc/site-portal/trust.pem:ro,Z
+Environment=SSL_CERT_FILE=/etc/site-portal/trust.pem
+# the AAP token comes from a podman secret: not in this file, not in `podman inspect`
+Secret=site-portal-aap-token,type=env,target=PORTAL_AAP_TOKEN
+# 1.120.0: the AD groups' LDAP login ("LDAP Bind Account"), a podman secret too
+Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN
+# 1.101.2: the report database's read-only login for the live AD page, a podman secret too
+Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB
+Exec=/bin/sh /app/start.sh
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

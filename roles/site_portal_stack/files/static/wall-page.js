@@ -67,6 +67,7 @@
     tickets: [P("M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 000 4v2a2 2 0 00-2 2H5a2 2 0 00-2-2v-2a2 2 0 000-4z"), P("M9.5 6v12", {"stroke-dasharray": "2 2"})],
     list: [P("M4 6h16M4 12h16M4 18h10")]
   };
+  if (globalThis.SAWallFleet) AREA_IC.monitor = globalThis.SAWallFleet.icon;
   function icon(list, vb, cls) {
     var e = s("svg", {viewBox: vb || "0 0 24 24", "aria-hidden": "true", "class": cls || null});
     list.forEach(function (x) { e.appendChild(s(x[0], x[1])); });
@@ -122,6 +123,7 @@
   var K_STYLE = "opsWall.style", K_THEME = "site-report-theme";
   function sget(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function sset(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* this page only */ } }
+  function fleetRenderer() { return window.SAWallFleet && typeof window.SAWallFleet.render === "function"; }
   function adapt(a) {
     // Codex verify 4: an answer missing a part never throws and never passes - a missing list is empty, a missing feed is
     // not current, a missing state is not "ok"
@@ -129,7 +131,9 @@
     a.noConds = !Array.isArray(a.conds);                  // Codex r5 #16: no condition list at all - nothing is known, nothing green
     a.conds = arr(a.conds).filter(function (c) { return c && typeof c === "object"; });
     a.feeds = a.feeds && typeof a.feeds === "object" && !Array.isArray(a.feeds) ? a.feeds : {};
-    a.areas = arr(a.areas).filter(function (x) { return x && typeof x === "object"; });
+    a.areas = arr(a.areas).filter(function (x) {
+      return x && typeof x === "object" && (x.id !== "monitor" || fleetRenderer());
+    });
     a.conds.forEach(function (c) { c.start = c.start * 1000; c.end = c.end == null ? null : c.end * 1000; c.seen = c.seen == null ? null : c.seen * 1000; });
     Object.keys(a.feeds).forEach(function (k) {
       var f = a.feeds[k];
@@ -146,7 +150,11 @@
   function STALE() { return (W && W.stale) || 600; }
   var FRESH_TITLE = "Amber (LATE) after 3 min, STALE after 10 min. Stale data is never shown green.";
   function ageS(asof) { return asof == null ? null : Math.max(0, Math.round((NOW() - asof) / 1000)); }
-  function fstate(sec) { return sec == null ? "stale" : sec > STALE() ? "stale" : sec > LATE() ? "late" : "ok"; }
+  // 1.136.0: a feed may carry its own limits (the Ops monitor area's SolarWinds when read less often than every minute)
+  function fstate(sec, f) {
+    var late = f && typeof f.late === "number" ? f.late : LATE(), stale = f && typeof f.stale === "number" ? f.stale : STALE();
+    return sec == null ? "stale" : sec > stale ? "stale" : sec > late ? "late" : "ok";
+  }
   function feed(k) { return (W && W.feeds && W.feeds[k]) || null; }
   function feedFresh(k) {
     if (UNREACH) return "stale";
@@ -154,7 +162,7 @@
     var f = feed(k);
     if (!f) return "stale";                                         // a feed the answer does not have: not current
     if (f.state !== "ok") return "stale";        // only a feed whose latest read worked is current (never, error, refused, paused, missing: not)
-    return fstate(ageS(f.asof));
+    return fstate(ageS(f.asof), k === "sw:fleet" ? f : null);
   }
   function areaOf(id) { return W.areaById[id]; }
   function areaOn(id) { var a = areaOf(id); return !!(a && a.on); }
@@ -207,13 +215,19 @@
   // not current: its source old or failing - or a LAST KNOWN condition (no longer in the read, never seen OK: Codex verify 4)
   function condStale(c) { return UNREACH || !!c.last_known || !!(c.feed && feedFresh(c.feed) === "stale"); }
   // the freshness of every feed (and the portal's): a change redraws the page, so nothing stays green past STALE
-  function freshSig() { return (UNREACH ? "U" : "") + Object.keys((W && W.feeds) || {}).sort().map(function (k) { return k + "=" + feedFresh(k); }).join(","); }
+  function freshSig() { return (UNREACH ? "U" : "") + (W && W.fleet ? areaState("monitor") : "") + Object.keys((W && W.feeds) || {}).sort().map(function (k) { return k + "=" + feedFresh(k); }).join(","); }
   function openConds(area) { return W.conds.filter(function (c) { return c.end == null && (!area || c.area === area); }); }
   function areaCounts(id) { var n = {crit: 0, warn: 0}; openConds(id).forEach(function (c) { if (!condStale(c)) n[c.sev]++; }); return n; }
   function lastKnown(id) { var n = {crit: 0, warn: 0}; openConds(id).forEach(function (c) { n[c.sev]++; }); return n; }
   // a stale feed is never green: crit / warn from the current conditions; nothing current and a feed stale -> stale
   function areaState(id) {
     if (!areaOn(id)) return "off";
+    if (id === "monitor") {
+      var f = W.fleet;
+      return !UNREACH && !(window.SAWallFleet && window.SAWallFleet.failed()) && f &&
+        feedFresh("sw:fleet") === "ok" &&
+        Number.isFinite(f.valid_until) && NOW() < f.valid_until * 1000 ? f.state : "stale";
+    }
     if (W.noConds) return "stale";
     var n = areaCounts(id);
     if (n.crit) return "crit";
@@ -241,7 +255,7 @@
   }
   // a feed's own area (vCenter -> VMware, NetApp -> Storage): green there only while that area's read is complete and every one
   // of its feeds is current (one vCenter not read, one host without a state: nothing of VMware is green)
-  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : ""; }
+  function homeOf(fk) { return fk.indexOf("vc:") === 0 ? "vmware" : fk.indexOf("ontap:") === 0 ? "storage" : fk === "sw:fleet" ? "monitor" : ""; }
   function homeOk(fk) {
     var a = homeOf(fk);
     if (!a) return true;
@@ -282,13 +296,13 @@
   }
 
   // ---------------------------------------------------------------- freshness marks
-  function freshTxt(asof) {
+  function freshTxt(asof, f) {
     if (asof == null) return {st: "stale", t: "never read"};
-    var a = ageS(asof), st = UNREACH ? "stale" : fstate(a);
+    var a = ageS(asof), st = UNREACH ? "stale" : fstate(a, f);
     return {st: st, t: "as of " + hms(asof) + " (" + ago(a) + ")"};
   }
   function freshK(fk, cls) {          // the cockpit's mono line: [STALE] as of 14:20:35 (11 min ago)
-    var f = feed(fk), x = freshTxt(f ? f.asof : null);
+    var f = feed(fk), x = freshTxt(f ? f.asof : null, fk === "sw:fleet" ? f : null);
     var e = h("span", (cls || "fresh") + (x.st === "ok" ? "" : " " + x.st), [x.st === "ok" ? null : h("span", "tag", [x.st === "stale" ? "STALE" : "LATE"]), x.t],
               {title: (f ? f.name + (f.why ? " - " + f.why : "") + ". " : "") + FRESH_TITLE});
     e.__fk = fk;
@@ -304,7 +318,7 @@
   function repaintFresh() {
     if (!W) return;
     root.querySelectorAll("[data-fresh]").forEach(function (e) {
-      var f = feed(e.getAttribute("data-fresh")), x = freshTxt(f ? f.asof : null), last = e.lastChild;
+      var fk = e.getAttribute("data-fresh"), f = feed(fk), x = freshTxt(f ? f.asof : null, fk === "sw:fleet" ? f : null), last = e.lastChild;
       if (last && last.nodeType === 3) last.nodeValue = x.t;
     });
     root.querySelectorAll("[data-fresh-area]").forEach(function (e) {
@@ -411,19 +425,23 @@
   var RENDER = {};
   function render() {
     if (!W) return;
+    if (S.area === "monitor" && !fleetRenderer()) S.area = "overview";
     var de = document.documentElement;
     STYLES.forEach(function (st) { de.classList.remove("style-" + st); });
     de.classList.add("style-" + S.style);
     de.classList.toggle("freeze", FREEZE);
     de.classList.toggle("fit", S.style === "map" && S.area !== "watch" && innerWidth >= 1600 && innerHeight >= 960);
-    de.classList.toggle("screen", !!SCREEN[S.style] && S.area !== "watch");
-    if (!SCREEN[S.style] || S.area === "watch") stage.style.height = "";
+    de.classList.toggle("screen", screenOn());
+    if (globalThis.SAWallFleet) de.classList.toggle("area-monitor", S.area === "monitor");
+    if (!screenOn()) stage.style.height = "";
     stage.className = STYLE_CLASS[S.style];
     clear(stage);
     tip.classList.remove("on");
     renderHeader();
-    RENDER[S.style](stage);
-    if (SCREEN[S.style] && S.area !== "watch") fitScreen();
+    // 1.136.0: Ops monitor - one board for every style (static/wall-fleet.js), in the style's own colours and type
+    if (monArea()) window.SAWallFleet.render(API, stage);
+    else RENDER[S.style](stage);
+    if (screenOn()) fitScreen();
     if (UNREACH) stage.insertBefore(h("div", "unreach", [lamp("stale"), h("b", "", ["Portal not reachable"]),
       " since " + hms(UNREACH_SINCE) + " - every value below is the last known one and not current. The page keeps trying every " + ((W && W.poll) || 30) + " s."],
       {role: "alert"}), stage.firstChild);
@@ -432,13 +450,21 @@
     if (QS.get("check") === "1") setTimeout(function () {
       root.setAttribute("data-check", JSON.stringify({style: S.style, area: S.area, sw: document.documentElement.scrollWidth, iw: innerWidth})); }, 300);
   }
-  function setArea(id) { if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview"; S.area = id; S.site = ""; closePops(); closeDetail(); render(); }
+  function canonicalArea(id) { return id === "fleet" && globalThis.SAWallFleet ? "monitor" : id; }
+  function setArea(id) {
+    id = canonicalArea(id);
+    if (id !== "overview" && id !== "watch" && !areaOn(id)) id = "overview";
+    S.area = id; S.site = ""; closePops(); closeDetail(); render();
+  }
+  // the styles drawn on a 1920 x 1080 board that fills the screen - and the Ops monitor area in every style (1.136.0)
+  function screenOn() { return S.area !== "watch" && (!!SCREEN[S.style] || monArea()); }
+  function monArea() { return S.area === "monitor" && fleetRenderer(); }   // only with the monitor on (its script loaded)
   function setStyle(st, user) { if (STYLES.indexOf(st) < 0) return; S.style = st; if (user) sset(K_STYLE, st); closePops(); render(); }
   function closePops() { ["#ddArea", "#ddRot"].forEach(function (sel) { var d = $(sel); if (d) { d.classList.remove("open"); d.querySelector("button").setAttribute("aria-expanded", "false"); } }); }
   function togglePop(sel) { var d = $(sel), o = !d.classList.contains("open"); closePops(); if (o) { d.classList.add("open"); d.querySelector("button").setAttribute("aria-expanded", "true"); } }
   function setKiosk(on, user) {
     document.body.classList.toggle("kiosk", on);
-    if (SCREEN[S.style]) fitScreen();                    // 1.135.0: the board takes the room the page now leaves
+    if (SCREEN[S.style] || monArea()) fitScreen(); // 1.135.0: the board takes the room the page now leaves
     if (user) { try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* not allowed here */ } }
   }
   var ROT = {on: false, mode: "styles", every: 60, left: 60, resumeAt: 0}, IDLE_RESUME = 20;
@@ -535,8 +561,8 @@
       tip.classList.remove("on");
     });
     var rt;
-    document.addEventListener("fullscreenchange", function () { if (SCREEN[S.style]) fitScreen(); });
-    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map") render(); else if (SCREEN[S.style]) fitScreen(); }, 150); });
+    document.addEventListener("fullscreenchange", function () { if (SCREEN[S.style] || monArea()) fitScreen(); });
+    window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { if (S.style === "map" && !monArea()) render(); else if (SCREEN[S.style] || monArea()) fitScreen(); }, 150); });
   }
   function showTip(lines, x, y) {
     clear(tip);
@@ -665,6 +691,7 @@
     if (c.kind === "aggrfull" || c.kind === "aggrwarn") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Storage › Tiers › " + c.aggr;
     if (c.kind === "sm") return "ONTAP System Manager of " + (c.cluster || "the destination cluster") + " › Protection › Relationships";
     if (c.kind === "node") return "ONTAP System Manager of " + (c.cluster || "the cluster") + " › Cluster › Overview (nodes, takeover)";
+    if (c.kind === "fleetdown" || c.kind === "fleetwarn") return "SolarWinds › My Dashboards › Groups › " + (c.group || "the group") + " (each node's Node Details); the wall's Ops monitor area";
     return "-";
   }
   function hostBy(vc, n) { var r = null; W.vmware.hosts.forEach(function (x) { if (x.n === n && (!vc || x.vc === vc)) r = x; }); return r; }
@@ -770,7 +797,7 @@
     feed: function (k) {
       var f = feed(k);
       if (!f) return null;
-      var x = freshTxt(f.asof), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
+      var x = freshTxt(f.asof, k === "sw:fleet" ? f : null), st0 = x.st === "stale" ? "stale" : f.state === "ok" || f.state === "never" ? (x.st === "late" ? "warn" : "ok") : "crit", st = st0 === "ok" ? status("ok", k) : st0;
       if (!homeOf(k)) st = "off";                        // information only (the report database): never a status, never green
       return {title: f.name, st: st, chips: ["Data source"], fk: k, rows: [
         ["State", f.why || (f.state === "ok" ? "answering" : f.state === "never" ? "not read yet" : f.state || "unknown")],
@@ -1155,6 +1182,7 @@
     b.style.height = (hh / k) + "px";
     b.style.transform = "scale(" + k + ")";
     stage.style.height = hh + "px";
+    if (monArea()) window.SAWallFleet.fitted(k);
   }
   // Share to Teams over the detail card: a snapshot; closing it draws the card again from the latest read
   function openShare(id) {
@@ -1194,6 +1222,9 @@
     dsRef: dsRef, cond: function (id) { return BY[id] || null; }, condFeed: condFeed, lastKnown: lastKnown, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
     share: function (id) { if (!BY[id]) return; openDetail("c:" + id); openShare(id); }
   };
+  if (globalThis.SAWallFleet) Object.assign(API, {
+    src: SRC, test: TEST, frozen: function () { return FREEZE; }, qs: QS, idleResume: IDLE_RESUME, styleName: function () { return STYLE_NAME[S.style]; }
+  });
   ["strata", "relay", "metro"].forEach(function (st) {
     RENDER[st] = function (r) {
       if (S.area === "watch") { add(r, [h("div", "kmain", [khead("What the wall watches"), h("div", "panel", [watchEl()])])]); return; }   // the setup list, as in Cockpit
@@ -1600,7 +1631,7 @@
     // the address's style, else this viewer's last pick, else the site's portal_wall_style (data-style), else Cockpit
     var st = QS.get("style"), dflt = root.getAttribute("data-style");
     S.style = STYLES.indexOf(st) >= 0 ? st : (STYLES.indexOf(sget(K_STYLE)) >= 0 ? sget(K_STYLE) : (STYLES.indexOf(dflt) >= 0 ? dflt : "cockpit"));
-    S.area = QS.get("area") || "overview";
+    S.area = canonicalArea(QS.get("area") || "overview");
     var th = QS.get("theme"); if (th === "dark" || th === "light") document.documentElement.setAttribute("data-theme", th);
     var r = QS.get("rotate"); if (r === "styles" || r === "areas") { ROT.on = true; ROT.mode = r; }
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;

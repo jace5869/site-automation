@@ -82,6 +82,24 @@ between runs. What one signal alone means:
 
 A VM without VMware Tools is never judged on its heartbeat: vCenter has none to give.
 
+## VMs unmanaged in SolarWinds
+
+Before reporting a hung VM, a heartbeat warning, a VM waiting on a question, or an inaccessible VM,
+the watch queries Orion.Nodes with the outage review's **SolarWinds (read-only)** credential and
+`netmap_solarwinds_url`. It matches the VM name to the full Caption or the short DNS or SysName
+(case-insensitive), or the primary guest IP to IPAddress. DNS and SysName must be hostnames.
+Exactly one node must match, and that node must match just one VM in the inventory.
+
+The watch skips the VM while UnManaged is true and the current UTC time falls within its maintenance
+window, including the start and excluding the end. Times without an offset are UTC. The job log
+names the VM, node and end time. Maintenance skips probes for that VM. Requested reviews and
+previously held email changes follow their usual rules. The watch checks again
+on the next run. When maintenance ends, a continuing outage follows the usual alert and email rules.
+
+Missing credentials, an unreadable Orion, zero matches, or multiple matches leave the usual alerts
+in place. A read failure prints its reason in the job log. Set `vm_watch_solarwinds_unmanaged: false`
+to skip this check entirely.
+
 ## What you see
 
 **Nothing down** - the job is green, one line:
@@ -117,7 +135,7 @@ Job artifacts, for the next step of a workflow:
 1. **The job template** "VM - outage watch": playbook `playbooks/vm_outage_watch.yml`, the VMware vCenter
    credential, the inventory that has your `aap` group (the AAP server is found by it), no Limit.
 2. **Try it** once by hand. A clean estate is one green line; a red run shows the report.
-3. **The workflow** "VM - outage watch (workflow)" - AAP - set up job templates makes it (1.107.0); by hand:
+3. **The workflow** "VM - outage watch (workflow)" - **AAP - set up job templates** makes it; by hand:
 
    ```workflow
    [VM - outage watch]
@@ -126,20 +144,12 @@ Job artifacts, for the next step of a workflow:
    [ServiceNow tickets]
    ```
 
-   *Always*, not *On failure*. The tickets job opens one incident per condition, adds a work note while it
-   lasts, and notes (or with `servicenow_resolve_cleared: true` resolves) the incident once a clean run no
-   longer finds it. That only works when the clean runs reach it too. The incidents carry the vCenter's
-   name and the object's, e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`.
-   `servicenow_min_severity: critical` keeps the one-signal warnings out of ServiceNow.
-   Since 1.112.4 the incidents fold to their root: a datastore that is not accessible, or a host that is down, is one
-   incident that lists every VM it affects (by name and object ID), in full, in its description and repeat work
-   notes - every VM with files on a lost datastore, even one with no finding of its own. A VM is matched to its
-   datastore and host by vCenter and object ID. A VM nothing explains is its own incident
-   (`vm-watch:lost:<vcenter>:<moid>` for an inaccessible one). A storage loss with 20 VMs is 1 incident, not 21.
-   A VM or a host's path that such an incident covers is still sent, as "covered by ..." at severity info: no incident
-   is opened for it, but one already open stays open - nothing still failing reads as cleared. Path loss on a datastore
-   that is still accessible keeps one incident per host's path. Open incidents keep their ids across the upgrade
-   (`vm-watch:datastore:<name>`, always by name; `vm-watch:host:<name>`; `vm-watch:storage:<host>:<device>`).
+   How the tickets step works:
+   - Set the link to **Always** (not *On failure*) so clean runs reach it too.
+   - It opens one incident per problem (e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`), adds a work note while it lasts, and notes (or resolves with `servicenow_resolve_cleared: true`) it once a clean run clears it.
+   - Incidents fold to their root cause: a lost datastore or a down host opens **one** incident listing every affected VM (by name and object ID). A storage loss affecting 20 VMs is 1 incident, not 21.
+   - Covered VMs and paths are still reported at severity `info` so already-open tickets do not clear falsely. Path loss on an accessible datastore keeps one incident per host path, and existing incident IDs (`vm-watch:datastore:<name>`, `vm-watch:host:<name>`, `vm-watch:storage:<host>:<device>`) stay stable.
+   - To keep one-signal warnings out of ServiceNow, set `servicenow_min_severity: critical`.
 4. **The schedule.** Put it on the workflow, every 5 to 15 minutes, with **Concurrent jobs off** on the
    workflow so that a slow run never overlaps the next. Set `vm_watch_window_minutes` to the interval.
    Leave the daily health and alarms reports as they are.
@@ -516,6 +526,7 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 
 | Setting | Default | What |
 |---|---|---|
+| `vm_watch_solarwinds_unmanaged` | true | check for VM maintenance using the review's `netmap_solarwinds_url`, `netmap_validate_certs`, `netmap_ca_path` and `netmap_timeout` settings |
 | `vm_watch_window_minutes` | 15 | how far back HA and storage events are read; the schedule's interval |
 | `vm_watch_min_up_minutes` | 15 | a VM up for less than this is not judged |
 | `vm_watch_confirm_checks` | 3 | checks of a suspect in one run (1 = once, no waiting) |

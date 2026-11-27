@@ -18,6 +18,10 @@
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
+    solarwinds: >-
+      {{ {'enabled': vm_watch_solarwinds_unmanaged | bool, 'url': netmap_solarwinds_url | default(''),
+          'validate_certs': (netmap_validate_certs | bool if netmap_validate_certs | default(none) not in [none, ''] else true), 'ca_path': netmap_ca_path | default(''),
+          'timeout': netmap_timeout | default(30, true) | int} }}
     window_minutes: "{{ vm_watch_window_minutes | float }}"
     usage_alarms: "{{ vm_watch_usage_alarms | name_list }}"
     min_up_minutes: "{{ vm_watch_min_up_minutes | float }}"
@@ -35,6 +39,11 @@
   register: _vm_w
   no_log: "{{ vm_watch_review | bool }}"
   check_mode: false                      # read-only: a dry run (Check) reads and reports the same
+
+- name: VMware | SolarWinds maintenance check
+  ansible.builtin.debug:
+    msg: "{{ _vm_w.solarwinds_lines | outage_redact if vm_watch_review | bool else _vm_w.solarwinds_lines }}"
+  when: _vm_w.solarwinds_lines is defined
 
 - name: VMware | the protected VMs (the same list as a restart's)
   ansible.builtin.include_tasks: protected.yml
@@ -291,7 +300,7 @@
         tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
         ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
         url: "{{ netmap_solarwinds_url | default('') }}"
-        validate_certs: "{{ netmap_validate_certs | default(true) | bool }}"
+        validate_certs: "{{ (netmap_validate_certs | bool if netmap_validate_certs | default(none) not in [none, ''] else true) }}"
         ca_path: "{{ netmap_ca_path | default('') }}"
       register: _vm_w_context
       when: vm_watch_review_context | bool and _vm_w_db_host | length > 0 and _vm_w_tl.context_scope | length > 0

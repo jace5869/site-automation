@@ -152,22 +152,15 @@ The whole list, with every description: [VARIABLES_REFERENCE.md](VARIABLES_REFER
 
 ## ACT's narrative
 
-With `servicenow_war_act: true` and an *ACT model key* credential on the template, the job hands the week's lists
-(completed, opened, open at the end - the ones the report lists - and cancelled, marked as not accomplishments: number,
-type, what it was, dates, state, priority, who, the close notes) to ACT in evidence mode: ACT runs no command, it reads
-and writes. It gives **accomplishments** (3 to 8 bullets, related tickets grouped, the numbers in brackets), **in
-progress** and **what deserves attention**, plus two or three sentences for a manager. ACT is told to write each bullet
-as one plain sentence of at most 30 words with the ticket numbers in brackets at its end; what it gives anyway is
-cleaned before it reaches the report (markdown, bullet characters, numbering, several bullets in one string, the same
-bullet twice). An answer the model mangled is read all the same: a line break inside a string, curly quotes, a comment,
-a trailing comma, the JSON cut short at the model's output limit (the last bullet is lost and the report says so), or
-headings and bullets instead of JSON (sorted into the sections by the headings, said so). Only an answer with none of
-that is shown as it came, cut at 40 lines, under *ACT's answer has no readable JSON block*. They go right after the
-one-line-per-task version, which stays (and before the SLAs): two
-versions of the same week to choose from, ACT's marked as written by GenAI. People's and groups' names
-and the configuration items are masked before anything reaches the model and put back in the answer. ACT runs on
-the AAP node (`site_act_provider`, `site_act_models`, a proxy in `site_act_env`; [VMWARE.md](VMWARE.md#act-analysis) says
-how the node reaches the model). ACT not answering is said in the report; the tables are there either way.
+With `servicenow_war_act: true` and an *ACT model key* credential on the template:
+
+1. The job sends the week's listed tasks (completed, opened, open at the end and cancelled, with close notes) to ACT in evidence mode. ACT runs no command.
+2. ACT writes **accomplishments** (3 to 8 bullets with ticket numbers in brackets), **in progress**, **what deserves attention**, and two or three sentences for a manager. Each bullet is cleaned of extra formatting before it reaches the report.
+3. People's names, group names and configuration items are masked before anything reaches the model and put back after.
+4. ACT's narrative appears right after the one-line-per-task list (marked as written by GenAI) and before the SLAs.
+5. ACT runs on the AAP node (`site_act_provider`, `site_act_models`, `site_act_env`; see [VMWARE.md](VMWARE.md#the-act-analysis)).
+6. If ACT does not answer, the report says so and still includes the tables.
+7. Mangled JSON or heading-style replies are recovered where possible (cut replies note any lost bullets). Any answer that still cannot be read is shown as it came, cut at 40 lines, under *ACT's answer has no readable JSON block*.
 
 **The tone.** ACT writes in a **positive** voice by default (`servicenow_war_act_tone: positive`): it leads with what the
 team achieved and why it mattered, describes open work as progress under way and what comes next, and puts what

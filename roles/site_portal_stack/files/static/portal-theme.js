@@ -7,9 +7,9 @@
     var t = localStorage.getItem("site-report-theme");
     if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
   } catch (e) { /* no storage: Auto */ }
-  // 1.135.0: the look (portal_look; html[data-skin], static/portal-looks.css). ?look=KEY shows that look on this page only (as the wall's
-  // ?style=); a pick in the bar's Look list is kept in this browser (site-portal-look). Anything not one of the seven: the site's default.
-  var LOOKS = ["strata", "metro", "relay", "chroma", "press", "atlas", "tower"];
+  // 1.136.1: the look (portal_look; html[data-skin], static/portal-looks.css). ?look=KEY shows that look on this page only (as the wall's
+  // ?style=); a pick in the bar's Look list is kept in this browser (site-portal-look). Removed or unknown names fall back to portal_look silently.
+  var LOOKS = ["metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite", "strata", "metro", "relay", "atlas"];
   var lk = null, picked = null;
   try { lk = new URLSearchParams(location.search).get("look"); } catch (e) { lk = null; }
   try { picked = localStorage.getItem("site-portal-look"); } catch (e) { picked = null; }

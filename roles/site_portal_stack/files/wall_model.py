@@ -751,7 +751,7 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
-def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None):
+def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why=""):
     """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
     ks = kinds(o)
@@ -812,11 +812,15 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
-    return {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
+    result = {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
             "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
             "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
                            "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
+    if fleet is not None or fleet_why:
+        import wall_fleet
+        wall_fleet.extend(result, fleet, fleet_why, tracker, now)
+    return result
 
 
 # ---- 1.135.0: the areas in short, for the portal's looks (the Actions page's "Ops center" section) ---------------------------

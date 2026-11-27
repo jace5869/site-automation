@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - outage watch"
 #   playbook:    playbooks/vm_outage_watch.yml
-#   credentials: VMware vCenter (and ACT model key for vm_outage_act, Report database for a review's VMs and other sources)
+#   credentials: VMware vCenter (SolarWinds (read-only) for VM maintenance, ACT model key for vm_outage_act, Report database for a review's VMs and other sources)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -116,6 +116,9 @@
 ## the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output
 ## only.
 # vm_watch_one_signal_severity: warning
+
+## Skip VM outage alerts during a uniquely matched SolarWinds node's maintenance window.
+# vm_watch_solarwinds_unmanaged: true
 
 ## VMs never judged: names, * and ? allowed (e.g. [LAB-*])
 # vm_watch_skip_vms: []
@@ -327,6 +330,9 @@
 ## the CA file (PEM) SolarWinds' certificate is checked with; "" = the execution environment's own
 ## trust
 # netmap_ca_path: ""
+
+## seconds for one request (no answer: asked once more)
+# netmap_timeout: 60
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

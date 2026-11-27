@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.137.0"
+SA_VERSION = actpdf.SA_VERSION
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -418,7 +418,7 @@ def md_table(lines):
     least = []
     for c in range(n):
         words = [t[:24] for r in [header] + body for t in re.split(r"\s+", re.sub(r"\*\*|`", "", r[c])) if t]
-        least.append(max(max(stringWidth(w, "Sans-Bold", 8.8), stringWidth(w, "Mono", 8.2)) + 14
+        least.append(max(max(stringWidth(w, "Sans-Bold", 8.8), stringWidth(w, "Mono", 7.6)) + 14
                          for w in words) / CONTENT_W if words else 0)
     short = [c for c in range(n) if widths[c] < least[c]]
     spare = [c for c in range(n) if c not in short]
@@ -576,7 +576,7 @@ def build():
             "Every setting, with its default and what it does - and where to put it - is in its own PDF, "
             "the *Settings Reference*: keep it open next to this one.",
             "Rendered from `docs/` in the site-automation repository (version %s). The "
-            "repository is the source of truth." % SA_VERSION]),
+            "repository is the source of truth. Copy settings from the repository, not from this PDF." % SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()
     toc.levelStyles = [ST["toc1"], ST["toc2"]]

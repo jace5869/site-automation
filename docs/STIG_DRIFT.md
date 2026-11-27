@@ -515,20 +515,15 @@ web01 on ... checked it against V2R8 - not against V2R9*. A fail is never carrie
 review that does not count or says something else. Be clear what it means for an audit: the new revision's check was
 not run - the comment says so on every review it writes. Turn it off again once Evaluate-STIG is updated.
 
-It is **report only**: what it finds is no finding, and the job does not fail for it - a host it could not recheck
-(the asset not in STIG Manager, Evaluate-STIG not found) is a warning. Its report never says *no findings* over
-open rules. Its title says what is open and what to update - *STIG recheck: 2 rules open (CAT I: 1), 5 status updates
-in STIG Manager, 1 for manual review*. Its tiles (since 0.67.0): **Open findings** (they fail on the host now: fix
-them, or put them on the POA&M), **Status updates** (only STIG Manager's reviews change - the hosts pass, no longer
-apply, or were answered; nothing to fix for them, except a fail answered, which is an open finding too), **Manual
-review** (no automatic check), **Held back: scan's STIG older** (since 0.69.0, when there are any: update Evaluate-STIG) and
-**Not rechecked**. Its status is red when a CAT I rule is open, amber when another rule is open, and
-blue when there is only something to update. The job's output says *REPORT ONLY*, never *HEALTHY*. It **leaves the drift report's history
-alone**: nothing is compared with the earlier scans or kept with them. The checklist it wrote (Evaluate-STIG) or
-oscap's results are kept on the host as `check_stig_dir/recheck/latest-checklist.cklb` (`latest-results.xml`), on
-Windows `win_check_stig_dir\recheck\<checklist>.cklb`: STIG Manager can import it - every rule not rechecked is
-Not Reviewed in it, so look at your collection's import options before you do. This job never writes to STIG Manager;
-[workflow 37](#updating-stig-manager-with-an-approval) does, after an approval.
+The STIG recheck is **report only**:
+
+- It never fails the job for open rules. A host it could not recheck (asset missing in STIG Manager or Evaluate-STIG missing) is a warning.
+- Its report never says *no findings* over open rules, and job output says *REPORT ONLY*, never *HEALTHY*.
+- **Tiles:** **Open findings** (fail now: fix or add to POA&M), **Status updates** (ready to update in STIG Manager), **Manual review**, **Held back: scan's STIG older** (update Evaluate-STIG), and **Not rechecked**.
+- **Colour:** red when a CAT I rule is open, amber when another rule is open, and blue when only status updates remain.
+- It leaves the drift report's history alone.
+- The checklist stays on each host (`check_stig_dir/recheck/latest-checklist.cklb` or `latest-results.xml` on Linux; `win_check_stig_dir\recheck\<checklist>.cklb` on Windows). Unchecked rules are Not Reviewed in it, so check your collection's import options before importing it.
+- This job never writes to STIG Manager; [workflow 37](#updating-stig-manager-with-an-approval) does, after an approval.
 
 Then the **STIG drift report** checks every rule, as before, on its schedule: the recheck is for the rules you are
 working on, the drift report for everything.

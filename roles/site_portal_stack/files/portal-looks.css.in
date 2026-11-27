@@ -1,9 +1,8 @@
-/* 1.135.0: the portal's looks (portal_look) - html[data-skin=KEY] over the report palette (html[data-look]).
-   Seven looks: strata (default), metro, relay, chroma, press, atlas, tower. Each sets the whole token set (light and dark,
-   the Auto / Light / Dark switch) and its shape: Strata's spotlight stage and lamp modules, Metro's colour tiles that turn
-   over, Relay's lamps and colour per area, Chroma's extruded plates, Press's top rule and ledger, Atlas's status map, Tower's
-   ranking. Offline: the fonts are the bundled woff2 files (static/fonts/, SIL Open Font License). No inline style. A status is
-   a word and a mark; its colour repeats them. */
+/* 1.136.1: the portal's looks (portal_look) - html[data-skin=KEY] over the report palette (html[data-look]).
+   Ten looks: metro-atlas (default), metro-calm, metro-wall, atlas-clean, atlas-night, contour-lite, strata, metro, relay,
+   atlas. Each sets the whole token set (light and dark, the Auto / Light / Dark switch) and its shape. Offline: the fonts
+   are the bundled woff2 files (static/fonts/, SIL Open Font License). No inline style. A status is a word and a mark; its
+   colour repeats them. */
 @@FONTS@@
 @@TOKENS@@
 
@@ -17,11 +16,44 @@
 .lookpick{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--muted)}
 .lookpick select{font:inherit;font-size:12.5px;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:8px;padding:4px 6px;max-width:11.5em}
 @media (max-width:900px){.lookpick span{display:none}}
-:root[data-skin] .ft .v,:root[data-skin] .ops .ot-big b,:root[data-skin] td.num{font-variant-numeric:tabular-nums}
+:root[data-skin] .ft .v,:root[data-skin] .ops .ot-big b,:root[data-skin] td.num,:root[data-skin] .ops-area .oa-cnt{font-variant-numeric:tabular-nums}
+.appbar-contour{display:none;position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:0}
+.appbar-contour svg{position:absolute;right:0;top:0;height:100%;width:54%;min-width:340px}
+.appbar-in{position:relative;z-index:1}
 
 /* ---------------------------------------------------------------- the Actions page's Ops center section (portal-looks.js) */
 .ops{margin:0 0 16px}
 .ops[hidden]{display:none}
+/* one-line mode (portal_actions_ops_center: line, the default): clickable status strip */
+.ops-strip{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;min-height:46px;padding:9px 14px;background:var(--card);border:1px solid var(--edge);border-left:4px solid var(--ops-edge,var(--unknown));border-radius:var(--r);box-shadow:var(--shadow)}
+.ops-strip.s-crit{--ops-edge:var(--critical)}
+.ops-strip.s-warn{--ops-edge:var(--warning)}
+.ops-strip.s-ok{--ops-edge:var(--ok)}
+.ops-strip.s-stale,.ops-strip.s-off{--ops-edge:var(--unknown)}
+.ops-id{display:inline-flex;align-items:center;gap:7px;flex:none}
+.ops-site{font:750 13.5px/1 var(--mono);color:var(--ink);letter-spacing:.03em;margin:0}
+.ops-div{color:var(--edge);user-select:none;flex:none}
+.ops-areas{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.ops-area{display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 7px;border-radius:calc(var(--r) * .75 + 2px);border:1px solid var(--edge);background:var(--card-strong);color:var(--ink);font-size:12.5px;font-weight:650;line-height:1.25;white-space:nowrap;text-decoration:none}
+.ops-area:hover{border-color:var(--accent);background:var(--card);text-decoration:none}
+.ops-area:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ops-area svg{width:13px;height:13px;flex:none}
+.ops-area .oa-cnt{font-family:var(--mono);font-weight:750}
+.ops-area .oa-st{font:700 10px/1 var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ops-area.s-crit{border-color:var(--critical-bd)}.ops-area.s-crit svg,.ops-area.s-crit .oa-cnt,.ops-area.s-crit .oa-st{color:var(--critical)}
+.ops-area.s-warn{border-color:var(--warning-bd)}.ops-area.s-warn svg,.ops-area.s-warn .oa-cnt,.ops-area.s-warn .oa-st{color:var(--warning)}
+.ops-area.s-ok{border-color:var(--ok-bd)}.ops-area.s-ok svg,.ops-area.s-ok .oa-st{color:var(--ok)}
+.ops-area.s-stale,.ops-area.s-off{border-color:var(--unknown-bd)}.ops-area.s-stale svg,.ops-area.s-off svg{color:var(--unknown)}
+.ops-area.ok-tile{display:none}
+.ops-ok-sum{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--muted);font-weight:600;white-space:nowrap}
+.ops-ok-sum svg{width:13px;height:13px;flex:none;color:var(--ok)}
+.ops-ok-sum.is-stale svg{color:var(--unknown)}
+.ops-open{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:calc(var(--r) * .75 + 2px);border:1px solid var(--edge);background:var(--card);color:var(--ink);font-size:12.5px;font-weight:650;text-decoration:none;white-space:nowrap}
+.ops-open:hover{border-color:var(--accent);background:var(--card-strong);text-decoration:none}
+.ops-open:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ma-live{display:none;align-items:center;gap:5px;font:650 11px/1 var(--mono);color:var(--accent);padding:2px 8px;border-radius:999px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
+.ma-live i{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+/* full mode (portal_actions_ops_center: full) */
 .ops-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:2px 0 8px;font-family:var(--display);font-size:clamp(17px,1.3vw,20px);font-weight:650}
 .ops-h .count{font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:600}
 .ops-h .hint{margin-left:auto;font-family:var(--sans);font-size:12.5px;font-weight:500;color:var(--muted);text-transform:none;font-style:normal;letter-spacing:0}
@@ -35,9 +67,15 @@
   background:var(--card);border:1px solid var(--edge);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;cursor:pointer}
 .ot>a:hover{border-color:var(--accent)}
 .ot>a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ot.s-crit>a{--sev:var(--critical)}
+.ot.s-warn>a{--sev:var(--warning)}
+.ot.s-ok>a{--sev:var(--ok)}
+.ot.s-stale>a,.ot.s-off>a{--sev:var(--unknown)}
 .ot-face{display:contents}
 html.moves .ot>a{transition:transform .18s cubic-bezier(.3,.7,.2,1),border-color .18s}
 html.moves .ot>a:hover{transform:translateY(-2px)}
+html.moves .ops-area{transition:border-color .14s,background .14s,transform .12s}
+html.moves .ops-area:hover{transform:translateY(-1px)}
 .ot-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-weight:700;font-size:14.5px}
 .ops-spot svg,.ops-say svg{width:15px;height:15px;flex:none}
 .sp-main h3 svg{width:22px;height:22px}
@@ -53,6 +91,7 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 .ot-big{display:flex;align-items:baseline;gap:8px;min-height:2.2em;flex-wrap:wrap}
 .ot-big b{font-family:var(--display);font-size:30px;font-weight:700;line-height:1.05}
 .ot-big span{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.ot-counts{font:600 11.5px var(--mono);color:var(--muted);margin:0}
 .ot-note{font-size:12.5px;color:var(--muted);margin:0;overflow-wrap:anywhere}
 .ot.s-stale .ot-big b,.ot.s-off .ot-big b{color:var(--muted)}
 .ot-lamps{display:flex;gap:6px;margin-top:auto}
@@ -65,7 +104,6 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 .ot-cue{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--accent);margin-top:2px}
 .ot-why{font-size:12px;color:var(--muted);margin:0;overflow-wrap:anywhere}
 .ot-back{display:none}
-.ot-rank{display:none}
 .ops-foot{margin:8px 0 0;font-size:12px;color:var(--muted)}
 /* the limit chart: bands, labelled dashed limits, the value - grey while OK, amber / red where it crosses; one sentence */
 .olc{margin:2px 0 0;min-width:0}
@@ -90,8 +128,105 @@ html.moves .ot>a:hover{transform:translateY(-2px)}
 .olc p{margin:3px 0 0;font-size:12px;color:var(--muted)}
 .olc p b{color:var(--ink)}
 .olc p b.z-warn{color:var(--warning)}.olc p b.z-crit{color:var(--critical)}.olc p b.z-stale{color:var(--unknown)}
-.ops-spot,.ops-map{display:none}
-@media (max-width:640px){.ops-h .hint{margin-left:0}}
+.ops-spot{display:none}
+@media (max-width:640px){.ops-h .hint{margin-left:0}.ops-strip{padding:8px 11px;gap:6px 8px}.ops-area{padding:3px 7px;font-size:12px}}
+
+/* ================================================================ metro-atlas: Metro Atlas (default) */
+:root[data-skin="metro-atlas"] h1{letter-spacing:-.025em}
+:root[data-skin="metro-atlas"] .home .mark{border-radius:4px;background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="metro-atlas"] .nav a[aria-current="page"]{background:var(--accent-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent)}
+:root[data-skin="metro-atlas"] .card,:root[data-skin="metro-atlas"] .ft{border-radius:4px}
+:root[data-skin="metro-atlas"] .ft{border-left:4px solid var(--edge)}
+:root[data-skin="metro-atlas"] .ft[aria-current="true"]{border-left-color:var(--accent)}
+:root[data-skin="metro-atlas"] .ft.bad{border-left-color:var(--critical)}
+:root[data-skin="metro-atlas"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;border-left:4px solid var(--area,var(--accent));box-shadow:var(--shadow)}
+:root[data-skin="metro-atlas"] .tcard .ico{border-radius:4px;background:color-mix(in srgb,var(--area,var(--accent)) 14%,var(--card));color:var(--area,var(--accent));border:1px solid color-mix(in srgb,var(--area,var(--accent)) 32%,transparent)}
+:root[data-skin="metro-atlas"] .btn,:root[data-skin="metro-atlas"] button{border-radius:4px}
+:root[data-skin="metro-atlas"] .ot>a{border-radius:4px;border-left:4px solid var(--sev,var(--edge))}
+:root[data-skin="metro-atlas"] .ot-big b{font-size:34px;letter-spacing:-.03em}
+:root[data-skin="metro-atlas"] .ma-live{display:inline-flex}
+@keyframes maPulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes maSwap{0%{opacity:.15;transform:translateY(4px)}100%{opacity:1;transform:none}}
+html.moves[data-skin="metro-atlas"] .ma-live i{animation:maPulse 2.8s ease-in-out infinite}
+html.moves[data-skin="metro-atlas"] .ot-note.ma-swap{animation:maSwap .42s cubic-bezier(.22,1,.36,1)}
+
+/* ================================================================ metro-calm: Metro Calm */
+:root[data-skin="metro-calm"] h1{font-weight:500;letter-spacing:-.02em}
+:root[data-skin="metro-calm"] .appbar{background:var(--bar);border-bottom:1px solid var(--edge)}
+:root[data-skin="metro-calm"] .home .mark{border-radius:2px;background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="metro-calm"] .nav a{border-radius:2px}
+:root[data-skin="metro-calm"] .nav a[aria-current="page"]{background:var(--card-strong);box-shadow:inset 0 -2px 0 var(--accent)}
+:root[data-skin="metro-calm"] .card,:root[data-skin="metro-calm"] .ft{border-radius:2px}
+:root[data-skin="metro-calm"] .ft{border-left:4px solid var(--edge)}
+:root[data-skin="metro-calm"] .ft[aria-current="true"]{border-left-color:var(--accent)}
+:root[data-skin="metro-calm"] .ft.bad{border-left-color:var(--critical)}
+:root[data-skin="metro-calm"] .ft .v{font-weight:400;font-size:32px}
+:root[data-skin="metro-calm"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;border-left:4px solid var(--area,var(--accent));box-shadow:var(--shadow)}
+:root[data-skin="metro-calm"] .tcard .ico{border-radius:2px;background:color-mix(in srgb,var(--area,var(--accent)) 12%,var(--card));color:var(--area,var(--accent));border:1px solid color-mix(in srgb,var(--area,var(--accent)) 30%,transparent)}
+:root[data-skin="metro-calm"] .btn,:root[data-skin="metro-calm"] button,:root[data-skin="metro-calm"] .chip,:root[data-skin="metro-calm"] .ow,:root[data-skin="metro-calm"] .ops-area,:root[data-skin="metro-calm"] .ops-open{border-radius:2px}
+:root[data-skin="metro-calm"] .ot>a{border-radius:2px;border-left:4px solid var(--sev,var(--edge))}
+:root[data-skin="metro-calm"] .ot-big b{font-weight:400;font-size:34px}
+
+/* ================================================================ metro-wall: Metro Wall */
+:root[data-skin="metro-wall"] h1{font-weight:750;letter-spacing:-.02em}
+:root[data-skin="metro-wall"] .appbar{border-bottom:2px solid var(--edge)}
+:root[data-skin="metro-wall"] .home .mark{border-radius:3px;background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="metro-wall"] .card,:root[data-skin="metro-wall"] .ft{border-width:2px;border-radius:3px}
+:root[data-skin="metro-wall"] .ft{border-left:6px solid var(--edge)}
+:root[data-skin="metro-wall"] .ft[aria-current="true"]{border-left-color:var(--accent)}
+:root[data-skin="metro-wall"] .ft.bad{border-left-color:var(--critical)}
+:root[data-skin="metro-wall"] .ft .v{font-weight:750;font-size:38px;line-height:1}
+:root[data-skin="metro-wall"] .tcard:not(.off){border:2px solid var(--edge);border-left:5px solid var(--area,var(--accent));border-radius:3px;box-shadow:var(--shadow)}
+:root[data-skin="metro-wall"] .tcard .ico{border-radius:3px}
+:root[data-skin="metro-wall"] .tcard h3{font-size:17px}
+:root[data-skin="metro-wall"] .tcard p:not(.offline),:root[data-skin="metro-wall"] .ops-h .hint,:root[data-skin="metro-wall"] .ot-note,:root[data-skin="metro-wall"] .hero .lede{display:none}
+:root[data-skin="metro-wall"] .btn,:root[data-skin="metro-wall"] button,:root[data-skin="metro-wall"] .chip,:root[data-skin="metro-wall"] .ow,:root[data-skin="metro-wall"] .ops-area,:root[data-skin="metro-wall"] .ops-open{border-radius:3px}
+:root[data-skin="metro-wall"] .ops-strip{padding:11px 16px;border-width:2px;border-left-width:6px}
+:root[data-skin="metro-wall"] .ops-site{font-size:15px}
+:root[data-skin="metro-wall"] .ops-area{font-size:13.5px;padding:4px 10px}
+:root[data-skin="metro-wall"] .ot>a{border-width:2px;border-left:6px solid var(--sev,var(--edge));border-radius:3px}
+:root[data-skin="metro-wall"] .ot-big b{font-weight:750;font-size:44px;line-height:.98;letter-spacing:-.035em}
+:root[data-skin="metro-wall"] table th{border-bottom-width:2px}
+
+/* ================================================================ atlas-clean: Atlas Clean */
+:root[data-skin="atlas-clean"] h1{font-weight:750;letter-spacing:-.035em}
+:root[data-skin="atlas-clean"] .home .mark{border-radius:8px;background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="atlas-clean"] .card,:root[data-skin="atlas-clean"] .ft{border-radius:8px;box-shadow:none}
+:root[data-skin="atlas-clean"] .grp>h2{font-family:var(--mono);font-size:13px;letter-spacing:.09em;text-transform:uppercase;border-top:2px solid var(--ink);padding-top:8px}
+:root[data-skin="atlas-clean"] .tcard:not(.off){border-color:var(--edge);border-top:2px solid var(--area,var(--accent));box-shadow:none}
+:root[data-skin="atlas-clean"] .ops-strip{border-left:1px solid var(--edge);border-top:2px solid var(--ink);box-shadow:none;padding:10px 14px}
+:root[data-skin="atlas-clean"] .ops-area{background:var(--card);border:1px solid var(--edge);border-radius:5px;padding:4px 9px}
+:root[data-skin="atlas-clean"] .ops-area.s-crit{border-left:3px solid var(--critical)}
+:root[data-skin="atlas-clean"] .ops-area.s-warn{border-left:3px solid var(--warning)}
+:root[data-skin="atlas-clean"] .ops-area.s-ok{border-left:3px solid var(--ok)}
+:root[data-skin="atlas-clean"] .ops-area.ok-tile{display:inline-flex}
+:root[data-skin="atlas-clean"] .ops-ok-sum{display:none}
+:root[data-skin="atlas-clean"] .ot>a{border-radius:8px;border-top:2px solid var(--sev,var(--edge));box-shadow:none}
+:root[data-skin="atlas-clean"] .ot-big b{letter-spacing:-.04em}
+:root[data-skin="atlas-clean"] table th{border-bottom:1.5px solid var(--ink)}
+
+/* ================================================================ atlas-night: Atlas Night */
+:root[data-skin="atlas-night"] h1{font-weight:750;letter-spacing:-.025em}
+:root[data-skin="atlas-night"] .home .mark{border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink)}
+:root[data-skin="atlas-night"] .nav a[aria-current="page"]{border-radius:999px}
+:root[data-skin="atlas-night"] .card,:root[data-skin="atlas-night"] .ft{border-radius:14px}
+:root[data-skin="atlas-night"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;box-shadow:inset 0 3px 0 var(--area,var(--accent)),var(--shadow)}
+:root[data-skin="atlas-night"] .tcard .ico{border-radius:50%}
+:root[data-skin="atlas-night"] .btn,:root[data-skin="atlas-night"] .ops-open{border-radius:999px}
+:root[data-skin="atlas-night"] .ops-strip{border-radius:14px;border-left:4px solid var(--ops-edge,var(--unknown))}
+:root[data-skin="atlas-night"] .ot>a{border-radius:14px;border-top:3px solid var(--sev,var(--edge));background:linear-gradient(155deg,color-mix(in srgb,var(--sev,var(--edge)) 6%,var(--card)),var(--card) 68%)}
+
+/* ================================================================ contour-lite: Contour Lite */
+:root[data-skin="contour-lite"] .appbar-contour{display:block}
+:root[data-skin="contour-lite"] .contour-stroke{stroke:var(--accent);stroke-opacity:.16}
+:root[data-skin="contour-lite"][data-theme="dark"] .contour-stroke{stroke:var(--accent);stroke-opacity:.19}
+@media (prefers-color-scheme:dark){:root[data-skin="contour-lite"]:not([data-theme="light"]) .contour-stroke{stroke:var(--accent);stroke-opacity:.19}}
+:root[data-skin="contour-lite"]:has(#theme-dark:checked) .contour-stroke{stroke:var(--accent);stroke-opacity:.19}
+:root[data-skin="contour-lite"] .home .mark{border-radius:8px;background:var(--accent);color:var(--accent-ink)}
+:root[data-skin="contour-lite"] .card,:root[data-skin="contour-lite"] .ft{border-radius:8px;box-shadow:none}
+:root[data-skin="contour-lite"] .tcard:not(.off){border:1px solid var(--edge);box-shadow:none}
+:root[data-skin="contour-lite"] .ops-strip{border-left:1px solid var(--edge);box-shadow:none}
+:root[data-skin="contour-lite"] .ot>a{border-radius:8px;box-shadow:none}
 
 /* ================================================================ strata: Strata Console */
 :root[data-skin="strata"] h1,:root[data-skin="strata"] .grp>h2,:root[data-skin="strata"] .ops-h{font-family:var(--display);text-transform:uppercase;letter-spacing:.02em}
@@ -226,61 +361,7 @@ html.moves[data-skin="metro"] .ot.flip .ot-face{transform:rotateX(90deg);transfo
 :root[data-skin="relay"] .ot .olm.on.warn i{box-shadow:0 0 10px var(--warning)}
 :root[data-skin="relay"] .ot .olm.on.ok i{box-shadow:0 0 8px var(--ok)}
 
-/* ================================================================ chroma: Chroma Perspex */
-:root[data-skin="chroma"] h1,:root[data-skin="chroma"] .grp>h2,:root[data-skin="chroma"] .ops-h{font-weight:700;letter-spacing:.01em}
-:root[data-skin="chroma"] .appbar{border-bottom:2px solid var(--edge)}
-:root[data-skin="chroma"] .home .mark{border-radius:0;clip-path:polygon(0 0,80% 0,100% 20%,100% 100%,20% 100%,0 80%);background:linear-gradient(135deg,var(--accent),var(--a2));color:#fff}
-:root[data-skin="chroma"] .card{border-width:2px;border-radius:3px;box-shadow:5px 5px 0 var(--lip)}
-:root[data-skin="chroma"] .ft{border-width:2px;border-radius:2px;box-shadow:5px 5px 0 var(--lip)}
-:root[data-skin="chroma"] .ft[aria-current="true"]{background:color-mix(in srgb,var(--accent) 14%,var(--card));border-color:var(--accent)}
-:root[data-skin="chroma"] .tcard:not(.off){border:2px solid var(--edge);border-radius:2px;box-shadow:6px 6px 0 color-mix(in srgb,var(--area,var(--accent)) 55%,var(--lip))}
-:root[data-skin="chroma"] .tcard .ico{border-radius:0;clip-path:polygon(0 0,75% 0,100% 25%,100% 100%,0 100%);background:color-mix(in srgb,var(--area,var(--accent)) 26%,var(--card));color:var(--area,var(--accent));border:0}
-:root[data-skin="chroma"] .tcard:not(.off) .btn.pri{border-radius:0;background:var(--accent);border-color:var(--accent);box-shadow:3px 3px 0 var(--lip)}
-:root[data-skin="chroma"] .btn,:root[data-skin="chroma"] button{border-radius:0;border-width:2px}
-:root[data-skin="chroma"] .chip,:root[data-skin="chroma"] .ow{border-radius:0}
-html.moves[data-skin="chroma"] .tcard:not(.off),html.moves[data-skin="chroma"] .ot>a{transition:transform .16s,box-shadow .16s}
-html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chroma"] .ot>a:hover{transform:translate(-2px,-2px)}
-:root[data-skin="chroma"] .ot>a{border-width:2px;border-radius:2px;box-shadow:6px 6px 0 var(--sh-c,var(--lip))}
-:root[data-skin="chroma"] .ot.s-crit>a{--sh-c:var(--critical);border-color:var(--critical)}
-:root[data-skin="chroma"] .ot.s-warn>a{--sh-c:var(--warning);border-color:var(--warning)}
-
-/* ================================================================ press: Signal Press */
-:root[data-skin="press"] .appbar{background:var(--bg);border-bottom:0;box-shadow:inset 0 -4px 0 var(--ink),inset 0 -6px 0 var(--bg),inset 0 -7px 0 var(--ink)}
-:root[data-skin="press"] .appbar-in{min-height:66px}
-:root[data-skin="press"] .home{font-size:18px;text-transform:uppercase;letter-spacing:.06em}
-:root[data-skin="press"] .home .mark{border-radius:0;background:var(--accent);color:var(--accent-ink)}
-:root[data-skin="press"] .nav a{border-radius:0;text-transform:uppercase;letter-spacing:.06em;font-size:12.5px}
-:root[data-skin="press"] .nav a[aria-current="page"]{background:var(--ink);color:var(--bg)}
-:root[data-skin="press"] h1{font-size:clamp(1.8rem,1.3rem + 1.4vw,2.6rem);font-weight:700;line-height:1.05;text-transform:uppercase;letter-spacing:-.005em}
-:root[data-skin="press"] .eyebrow{color:var(--accent)}
-:root[data-skin="press"] .card{border-radius:0;box-shadow:none;border-width:1px}
-:root[data-skin="press"] .ftiles{gap:0;border-top:3px solid var(--ink);border-bottom:1px solid var(--ink)}
-:root[data-skin="press"] .ft{border:0;border-right:1px solid var(--edge);border-radius:0;background:transparent}
-:root[data-skin="press"] .ft:last-child{border-right:0}
-:root[data-skin="press"] .ft .v{font-family:var(--mono);font-size:30px}
-:root[data-skin="press"] .ft[aria-current="true"]{background:var(--accent-soft)}
-:root[data-skin="press"] .grp>h2{text-transform:uppercase;letter-spacing:.04em;border-top:3px solid var(--ink);padding-top:8px}
-:root[data-skin="press"] .tcard:not(.off){border:0;border-top:1px solid var(--ink);border-radius:0;box-shadow:none;background:transparent}
-:root[data-skin="press"] .tcard .ico{border-radius:0;background:transparent;border:1.5px solid var(--ink);color:var(--ink)}
-:root[data-skin="press"] .tcard h3{text-transform:uppercase;font-size:17px}
-:root[data-skin="press"] .tcard:not(.off) .btn.pri{border-radius:0;background:var(--ink);border-color:var(--ink);color:var(--bg)}
-:root[data-skin="press"] .btn,:root[data-skin="press"] button,:root[data-skin="press"] .chip,:root[data-skin="press"] .ow{border-radius:0}
-/* the ledger: the areas as rows - area and state, the value, the value against its limit, the way to the wall */
-:root[data-skin="press"] .ops-tiles{display:block;border-top:3px solid var(--ink);border-bottom:1px solid var(--ink)}
-:root[data-skin="press"] .ot>a,:root[data-skin="press"] .ot-face{display:grid;grid-template-columns:minmax(11em,1.2fr) minmax(8em,.9fr) minmax(0,2.2fr) auto;align-items:center;gap:6px 18px}
-:root[data-skin="press"] .ot>a{display:block;border:0;border-bottom:1px solid var(--edge);border-radius:0;box-shadow:none;background:transparent;padding:10px 4px}
-:root[data-skin="press"] .ot:last-child>a{border-bottom:0}
-:root[data-skin="press"] .ot>a:hover{background:var(--accent-soft)}
-:root[data-skin="press"] .ot-h{font-size:16px;text-transform:uppercase}
-:root[data-skin="press"] .ot-h .ow{margin-left:8px}
-:root[data-skin="press"] .ot-big b{font-family:var(--mono);font-size:24px}
-:root[data-skin="press"] .ot-note,:root[data-skin="press"] .ot-lamps{display:none}
-:root[data-skin="press"] .ot-why{grid-column:3}
-:root[data-skin="press"] .ot-cue{justify-self:end}
-@media (max-width:1000px){:root[data-skin="press"] .ot-face{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-  :root[data-skin="press"] .ot-face>.olc,:root[data-skin="press"] .ot-why{grid-column:1/-1}:root[data-skin="press"] .ot-cue{justify-self:start}}
-
-/* ================================================================ atlas: Contour Atlas */
+/* ================================================================ atlas: Contour Atlas (plain status tiles, no island map) */
 :root[data-skin="atlas"] body:not([data-page="wall"]) main{max-width:1760px}
 :root[data-skin="atlas"] h1{font-weight:800;letter-spacing:-.025em}
 :root[data-skin="atlas"] .home .mark{border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--a2));color:var(--accent-ink)}
@@ -289,53 +370,9 @@ html.moves[data-skin="chroma"] .tcard:not(.off):hover,html.moves[data-skin="chro
 :root[data-skin="atlas"] .ft{border-radius:16px}
 :root[data-skin="atlas"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;box-shadow:inset 0 3px 0 var(--area,var(--accent)),var(--shadow)}
 :root[data-skin="atlas"] .tcard .ico{border-radius:50%;background:color-mix(in srgb,var(--area,var(--accent)) 18%,var(--card));color:var(--area,var(--accent));border:0}
-:root[data-skin="atlas"] .tcard:not(.off) .btn.pri,:root[data-skin="atlas"] .btn{border-radius:999px}
-/* the status map: each area an island, its contour rings its state; the label says what it is */
-:root[data-skin="atlas"] .ops-map{display:block;position:relative;margin:0 0 12px;padding:10px 14px 12px;background:var(--card);border:1px solid var(--edge);border-radius:16px;overflow:hidden}
-.ops-map .mt{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label);margin:0 0 4px}
-.ops-map .mt span{font:500 12px var(--sans);letter-spacing:0;text-transform:none;color:var(--muted)}
-.ops-map svg{display:block;width:100%;height:auto;max-height:280px}
-.ops-map .grid{fill:none;stroke:var(--line);stroke-width:1}
-.ops-map .is{fill:none;stroke-width:1.3}
-.ops-map .is.c0{stroke-width:2.4}
-.ops-map .k-crit .is{stroke:var(--critical)}.ops-map .k-crit .c0{fill:var(--critical-bg)}
-.ops-map .k-warn .is{stroke:var(--warning)}.ops-map .k-warn .c0{fill:var(--warning-bg)}
-.ops-map .k-ok .is{stroke:var(--ok)}.ops-map .k-ok .c0{fill:var(--ok-bg)}
-.ops-map .k-stale .is,.ops-map .k-off .is{stroke:var(--unknown);stroke-dasharray:4 4}.ops-map .k-stale .c0,.ops-map .k-off .c0{fill:var(--unknown-bg)}
-.ops-map a{cursor:pointer}
-.ops-map a:focus-visible .c0,.ops-map a:hover .c0{stroke:var(--accent)}
-.ops-map text{font:700 14px var(--sans);fill:var(--ink)}
-.ops-map text.mts{font:600 10.5px var(--mono);fill:var(--muted)}
-:root[data-skin="atlas"] .ot>a{border-radius:16px}
+:root[data-skin="atlas"] .tcard:not(.off) .btn.pri,:root[data-skin="atlas"] .btn,:root[data-skin="atlas"] .ops-open{border-radius:999px}
+:root[data-skin="atlas"] .ops-strip{border-radius:16px}
+:root[data-skin="atlas"] .ot>a{border-radius:16px;border-top:3px solid var(--sev,var(--edge))}
 
-/* ================================================================ tower: Timing Tower */
-:root[data-skin="tower"] h1,:root[data-skin="tower"] .grp>h2,:root[data-skin="tower"] .ops-h{text-transform:uppercase;font-style:italic;letter-spacing:.01em}
-:root[data-skin="tower"] .appbar{border-bottom:3px solid var(--accent)}
-:root[data-skin="tower"] .home .mark{border-radius:2px;transform:skewX(-10deg);background:var(--accent);color:var(--accent-ink)}
-:root[data-skin="tower"] .nav a[aria-current="page"]{background:var(--accent);color:var(--accent-ink);border-radius:2px}
-:root[data-skin="tower"] .card{border-radius:3px}
-:root[data-skin="tower"] .ft{border-radius:2px;border-left:5px solid var(--accent)}
-:root[data-skin="tower"] .ft .v{font-family:var(--mono)}
-:root[data-skin="tower"] .tcard:not(.off){border-color:var(--edge);border-top-width:1px;border-left:4px solid var(--area,var(--accent));box-shadow:var(--shadow)}
-:root[data-skin="tower"] .tcard .ico{border-radius:2px;background:var(--area,var(--accent));color:var(--bg);border:0}
-:root[data-skin="tower"] .tcard:not(.off) .btn.pri{border-radius:2px;background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-style:italic;text-transform:uppercase}
-:root[data-skin="tower"] .btn,:root[data-skin="tower"] button,:root[data-skin="tower"] .chip,:root[data-skin="tower"] .ow{border-radius:2px}
-/* the ranking: worst first, its position, the gap to its limit */
-:root[data-skin="tower"] .ops-tiles{display:flex;flex-direction:column;gap:4px}
-:root[data-skin="tower"] .ot>a,:root[data-skin="tower"] .ot-face{display:grid;grid-template-columns:3.2em minmax(11em,1fr) minmax(7em,.8fr) minmax(0,2fr) auto;align-items:center;gap:6px 16px}
-:root[data-skin="tower"] .ot>a{display:block;padding:8px 14px 8px 0;border-radius:3px;border-left:6px solid var(--tw,var(--edge))}
-:root[data-skin="tower"] .ot.s-crit>a{--tw:var(--critical)}
-:root[data-skin="tower"] .ot.s-warn>a{--tw:var(--warning)}
-:root[data-skin="tower"] .ot.s-ok>a{--tw:var(--ok)}
-:root[data-skin="tower"] .ot-rank{display:block;font:700 26px var(--mono);font-style:italic;text-align:center;color:var(--muted)}
-:root[data-skin="tower"] .ot:first-child .ot-rank{color:var(--accent)}
-:root[data-skin="tower"] .ot-big b{font-family:var(--mono);font-size:22px}
-:root[data-skin="tower"] .ot-note,:root[data-skin="tower"] .ot-lamps{display:none}
-:root[data-skin="tower"] .ot-why{grid-column:4}
-:root[data-skin="tower"] .ot-h{text-transform:uppercase;font-style:italic}
-@media (max-width:1000px){:root[data-skin="tower"] .ot-face{grid-template-columns:2.6em minmax(0,1fr) minmax(0,1fr)}
-  :root[data-skin="tower"] .ot-face>.olc,:root[data-skin="tower"] .ot-why,:root[data-skin="tower"] .ot-cue{grid-column:2/-1}
-  :root[data-skin="tower"] .ot-rank{grid-row:span 3;align-self:start}}
-
-@media (prefers-reduced-motion:reduce){html:not(.motion-always) .ot>a,html:not(.motion-always) .ot-face,html:not(.motion-always) .ot-back{transition:none!important}}
+@media (prefers-reduced-motion:reduce){html:not(.motion-always) .ot>a,html:not(.motion-always) .ot-face,html:not(.motion-always) .ot-back,html:not(.motion-always) .ops-area,html:not(.motion-always) .ma-live i,html:not(.motion-always) .ot-note.ma-swap{transition:none!important;animation:none!important}}
 @media print{.ops,.lookpick{display:none}}

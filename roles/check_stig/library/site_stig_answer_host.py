@@ -603,7 +603,8 @@ $w = @(foreach ($p in @($in.ro)) {
 # host device, /dev/pts an empty one; a devpts there is the host's, refused), /tmp and /var/tmp (its own), its own
 # cgroup's files (systemd puts them there), an automount point (autofs: not mounted - a code that reads below one is
 # not tried), and a FOLDER it cannot even enter (a root-only one). A file is never exempt. Not read: refused.
-$top = [ordered]@{}; $fst = @{}
+$top = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+$fst = [Collections.Hashtable]::new([StringComparer]::Ordinal)
 $rwm = @()
 try {
     $mi = $(if ($in.mountinfo) { [string]$in.mountinfo } else { '/proc/self/mountinfo' })
@@ -613,7 +614,7 @@ try {
         $f = $l.Split(' ')
         $k = [array]::IndexOf($f, '-')
         # 1.76.1h: a line not understood refuses the table (as the host side does), never skipped
-        if ($f.Count -le 5 -or $k -le 5 -or $f.Count -le $k + 1) { $bad += @('(a mount table line not understood)'); continue }
+        if ($k -le 5 -or $f.Count -le $k + 3 -or -not $f[$k + 1]) { $bad += @('(a mount table line not understood)'); continue }
         $top[$f[4]] = $f[5]; $fst[$f[4]] = $f[$k + 1]
     }
     $mycg = ''
@@ -621,13 +622,14 @@ try {
     $rwm = @(foreach ($k in $top.Keys) {
         $p = [regex]::Replace([string]$k, '\\([0-7]{3})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 8) })
         if (($top[$k].Split(',')) -notcontains 'rw') { continue }
+        # An nsfs mount is a namespace handle, including Podman's /run/netns entries.
+        if ($fst[$k] -ceq 'nsfs') { continue }
         if ($fst[$k] -eq 'autofs') { continue }
         # 1.76.1h: a name that is not UTF-8 (read as U+FFFD) cannot be looked at by name: writable is refused
         if ($p.Contains([string][char]0xFFFD)) { $p; continue }
         if ($fst[$k] -eq 'devpts') { $p; continue }
         # the kernel's interfaces that take a write only from root or a capability (it has neither: CapEff is looked at)
-        # 1.123.1: nsfs - a namespace's handle (podman's /run/netns/netns-*): no data to write, joining one needs CAP_SYS_ADMIN
-        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc', 'nsfs') -contains $fst[$k]) { continue }
+        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc') -contains $fst[$k]) { continue }
         if ($p -eq '/proc' -or $p -match '^/(dev|tmp|var/tmp)(/|$)') { continue }
         if ($mycg -and $p.StartsWith('/sys/fs/cgroup' + $mycg + '/')) { continue }
         # a place it cannot reach at all (not even look at), or a folder it cannot enter: nothing below can be written
@@ -1137,13 +1139,16 @@ def mounts():
             sep = a.index(b"-", 6)
         except ValueError:
             raise MountsError("the host's mounts could not be read (a mountinfo line not understood)")
+        if len(a) <= sep + 3 or not a[sep + 1]:
+            raise MountsError("the host's mounts could not be read (a mountinfo line not understood)")
         raw = re.sub(rb"\\([0-7]{3})", lambda m: bytes([int(m.group(1), 8)]), a[4])
         try:
             mp = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue                    # 1.76.1g: left to the probe (it reads the mount table inside)
-        out.append((mp, a[sep + 1].decode("ascii", "replace") if len(a) > sep + 1 else "",
-                    a[sep + 3].decode("ascii", "replace") if len(a) > sep + 3 else ""))
+        out.append((mp, a[sep + 1].decode("ascii", "replace"), a[sep + 3].decode("ascii", "replace")))
+    if not data.strip():
+        raise MountsError("the host's mounts could not be read (empty mount table)")
     return out
 
 
@@ -1160,7 +1165,7 @@ def probe_mounts():
     systemd cannot be given, or more than MOUNTS_MAX -> MountsError: no sandbox rather than one with a mount left out."""
     out = []
     for mp, fs, _ in mounts():
-        if fs == "autofs" or any(mp == x or mp.startswith(x + "/") for x in OWN_MOUNTS) or mp in out:
+        if fs in ("autofs", "nsfs") or any(mp == x or mp.startswith(x + "/") for x in OWN_MOUNTS) or mp in out:
             continue
         # 1.76.1g: a name systemd cannot be given is left out of the list - the probe still looks at it (its own
         # mount table): never a refusal for a name or a count, only for a mount that is writable inside

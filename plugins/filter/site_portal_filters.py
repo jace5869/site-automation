@@ -899,7 +899,10 @@ def site_portal_wall_summary(w):
         st = "Storage off (no NetApp password (ONTAP_PASSWORD empty))"
     else:
         st = "Storage off"
-    return "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
+    out = "Wall: %s, %s, Map places from netmap_sites: %d" % (vc, st, places)
+    if w.get("monitor_on") is True:
+        out += ", Ops monitor on (by %s)" % (w.get("monitor_group_by") or "groups")
+    return out
 
 
 class FilterModule(object):

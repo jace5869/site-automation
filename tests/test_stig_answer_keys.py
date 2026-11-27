@@ -1131,6 +1131,16 @@ class EveryMount(unittest.TestCase):
         for not_ in ("ReadOnlyPaths=-/tmp", "ReadOnlyPaths=-/proc", "ReadOnlyPaths=-/run/user/1000", "ReadOnlyPaths=-/net"):
             self.assertNotIn(not_, props)
 
+    def test_netns_mounts_by_type(self):
+        handle = b"39 30 0:4 net:[42] /run/netns/netns-1234 rw shared:19 - nsfs nsfs rw\n"
+        self.assertEqual(self.with_info(handle, host.probe_mounts), [])
+        for fs in (b"ext4", b"xfs", b"tmpfs"):
+            with self.subTest(fs=fs):
+                storage = b"40 30 8:1 / /run/netns/x rw - %s nsfs rw\n" % fs
+                self.assertEqual(self.with_info(handle + storage, host.probe_mounts), ["/run/netns/x"])
+        with self.assertRaises(host.MountsError):
+            self.with_info(handle + b"40 30 8:1 / /run/netns/x rw -  device rw\n", host.probe_mounts)
+
     def test_names_left_to_the_probe(self):
         # 1.76.1g (review): a name systemd cannot be given, one not UTF-8, or more than MOUNTS_MAX: left out of the list by
         # name - never a refusal for that; the probe reads the mount table inside and refuses only a writable mount
@@ -1159,7 +1169,13 @@ class EveryMount(unittest.TestCase):
             huge, mq = os.path.join(d, "huge"), os.path.join(d, "mq")
             os.makedirs(huge)
             os.makedirs(mq)
-            ns = os.path.join(d, "netns-0a1b")
+            netns = os.path.join(d, "run", "netns")
+            os.makedirs(netns)
+            ns = os.path.join(netns, "netns-0a1b")
+            storage = [os.path.join(netns, name) for name in ("x", "netns-0A1B", "y")]
+            for path in storage:
+                with open(path, "w"):
+                    pass
             with open(ns, "w") as f:
                 f.write("")
             fil = os.path.join(d, "hosts")
@@ -1175,29 +1191,30 @@ class EveryMount(unittest.TestCase):
                      "14 1 0:11 / %s rw - hugetlbfs hugetlbfs rw" % huge, "15 1 0:12 / %s rw - mqueue mqueue rw" % mq,
                      # 1.123.1: podman's network namespace handle (/run/netns/netns-*): nsfs, never refused
                      "18 1 0:4 net:[4026532999] %s rw - nsfs nsfs rw" % ns]
+            lines += ["%d 1 8:7 / %s rw - %s nsfs rw" % (i, path, fs)
+                      for i, (path, fs) in enumerate(zip(storage, ("ext4", "xfs", "tmpfs")), 19)]
             mi = os.path.join(d, "mountinfo")
             with open(mi, "wb") as f:
                 f.write(("\n".join(lines) + "\n").encode() + b"16 1 8:5 / /srv/\xff rw - ext4 /dev/sde rw\n")
             script = host.PROBE_PS1.replace("@IPC@", "@()")
             enc = base64.b64encode(script.encode("utf-16-le")).decode()
-            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
-                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": mi}).encode(), stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, timeout=120)
-            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
-            got = [got] if isinstance(got, str) else got
-            self.assertEqual(sorted(got), sorted(["/", fil, "/dev/pts", "/sys", "/proc/sys", sp, huge, mq, "/srv/\ufffd"]))
-            with open(mi, "ab") as f:
-                f.write(b"17 1 8:6 / /x rw ext4 no-separator\n")                # a line not understood: refused
-            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
-                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": mi}).encode(), stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, timeout=120)
-            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
-            self.assertEqual(([got] if isinstance(got, str) else got)[0], "(a mount table line not understood)")
-            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
-                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": os.path.join(d, "none")}).encode(),
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
-            self.assertEqual([got] if isinstance(got, str) else got, ["(the mount table could not be read)"])
+            def rwmounts(table):
+                r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                                   input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": table}).encode(),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=True)
+                got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
+                return [got] if isinstance(got, str) else got
+
+            self.assertEqual(sorted(rwmounts(mi)), sorted(["/", fil, "/dev/pts", "/sys", "/proc/sys", sp, huge, mq, "/srv/\ufffd"] + storage))
+            handle = "18 1 0:4 net:[42] /run/netns/netns-1234 rw shared:19 - nsfs nsfs rw\n"
+            with open(mi, "w") as f:
+                f.write(handle)
+            self.assertEqual(rwmounts(mi), [])
+            for line in ("17 1 8:6 / /x rw ext4 no-separator", "17 1 8:6 / /run/netns/x rw -  device rw"):
+                with open(mi, "w") as f:
+                    f.write(handle + line + "\n")
+                self.assertEqual(rwmounts(mi), ["(a mount table line not understood)"])
+            self.assertEqual(rwmounts(os.path.join(d, "none")), ["(the mount table could not be read)"])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

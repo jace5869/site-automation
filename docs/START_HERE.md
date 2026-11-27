@@ -5,10 +5,10 @@
 > survey each do, how a setting travels from a YAML file to a host, and how to update the
 > repository safely.
 
-This repository holds **runbooks**: jobs that check Linux servers and help troubleshoot them. You
-run them from **Ansible Automation Platform (AAP)**, by hand or on a schedule. This page explains
-the few ideas you need. [SETUP_AAP.md](SETUP_AAP.md) then walks you through the setup, one
-click at a time.
+This repository holds **runbooks** for servers and infrastructure: Linux, Windows, VMware, AD,
+storage and network. You run them from **Ansible Automation Platform (AAP)**, by hand or on a
+schedule. This page explains the few ideas you need. [SETUP_AAP.md](SETUP_AAP.md) then walks you
+through the setup, one click at a time.
 
 ## What the runbooks do
 
@@ -72,7 +72,7 @@ next:
 | **Inventory** | The hosts and groups, and their settings | `Linux servers`, filled from `inventories/site/` in this repository, or the inventory you already have in AAP ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)), or filled from IdM ([IDM_INVENTORY.md](IDM_INVENTORY.md)) |
 | **Credential type** | A form for a kind of secret, and how to hand it to the job | `ServiceNow API`, `MariaDB monitor`, `ACT model key`... (`aap/credential_types/`) |
 | **Credential** | One filled-in form: the actual secret. Nobody can read it back | `Linux ssh (sudo)`, `ServiceNow API`... |
-| **Execution environment** | The container a job runs in (Ansible, Python, tools) | The **Minimal** execution environment is enough. This repository needs no extra collections |
+| **Execution environment** | The container a job runs in (Ansible, Python, tools) | **Minimal** runs the Linux jobs. Windows, VMware, AD and network jobs need the EEs in `ee/` ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md)) |
 | **Job template** | "Run this playbook, on this inventory, with these credentials" plus the questions to ask (**survey**). This is what you launch | `Health check`, `Troubleshoot`, `Patch hosts`... |
 | **Workflow** | Job templates chained together. The next step can depend on the last one's result (success, failure, always). It can stop for an **approval** | `Daily health` = Health check, then ServiceNow tickets |
 | **Schedule** | "Launch this template or workflow at these times" | Daily health every day at 06:00 |
@@ -135,18 +135,15 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | `inventories/example/` | a sample inventory and settings. Copy it to `inventories/site/` |
 | `aap/credential_types/` | the credential types to create in AAP |
 | `poam/poam.csv` | your POA&M list (for the POA&M runbook) |
-| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [VARIABLES.md](VARIABLES.md), [RUNBOOKS.md](RUNBOOKS.md), [MARIADB.md](MARIADB.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [JOB_TEMPLATES.md](JOB_TEMPLATES.md), [ADDING_ACT.md](ADDING_ACT.md), [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md); PDFs in `docs/pdf/` |
+| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [VARIABLES.md](VARIABLES.md), [RUNBOOKS.md](RUNBOOKS.md), [MARIADB.md](MARIADB.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [JOB_TEMPLATES.md](JOB_TEMPLATES.md), [ADDING_ACT.md](ADDING_ACT.md), [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md); PDFs: `guides/` |
 
 ## The order to do things in
 
 1. **Set up and run one health check by hand** ([SETUP_AAP.md](SETUP_AAP.md), steps 1 to 8).
    Your inventory is already in AAP? Use [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)
-   for the inventory part.
-   Read its output. Adjust thresholds in your settings files ([VARIABLES.md](VARIABLES.md)) until
-   the findings are the ones you care about.
-2. **Add the other job templates** (step 9) and try each once. Every template, with the link to its
-   how-to: [JOB_TEMPLATES.md](JOB_TEMPLATES.md).
-3. **Add ServiceNow** (step 10), and build the *Daily health* workflow
-   ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
-4. **Schedule** the workflows.
-5. **Later: add ACT** to the runbooks you trust ([ADDING_ACT.md](ADDING_ACT.md)).
+   for the inventory part. Read its output and tune thresholds in your settings files ([VARIABLES.md](VARIABLES.md)).
+2. **Add the other job templates** (step 9) and try each once. Every template and its link: [JOB_TEMPLATES.md](JOB_TEMPLATES.md).
+3. **Add ServiceNow** (step 10) and run the test ticket.
+4. **Add workflows and schedules** (step 11; [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
+5. **Set who can do what** (step 12): Execute, Approve and Read roles per template or workflow.
+6. **Later: add ACT** to the runbooks you trust ([ADDING_ACT.md](ADDING_ACT.md)).

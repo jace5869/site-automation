@@ -25,22 +25,21 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
 }
 # 1.131.1 changes only the usage-alarm read, conditions and timeline rows.
 FROZEN_11312 = {
-    "roles/vmware_vm/library/site_vmware_watch.py": "9b04da3944d3cc1a090f242bed8b557f6709cc96973129715ea901bcd1f24871",
     "plugins/filter/vmware_watch_filters.py": "8fa8a1bbc403a91e16d6cd533a007ab8127c953fed918551240500878e590aa2",
     "plugins/module_utils/outage_timeline_1184.py": "4a5a8571cce598c526c6c40b11bb4d6272b70e1a6bc23a3cb1df582bb0a9f569",
     "plugins/module_utils/vm_watch_usage.py": "d206f445b6ef2b7857cd875db7cc2ea086c76a9944c9a1b2121190d52f357f1f",
 }
-# 1.118.8 (user-requested email limit): the email decision's own files, pinned at 1.118.8. Changing them is a release of
-# its own, with tests/test_vm_watch_email.py.
-FROZEN_1188 = {
-    "plugins/filter/vmware_watch_email_filters.py": "873a9efb3e04dab8b5753c6a01fe4933e426aea14842d1fd9c2fdde8c9892e36",
-    "roles/vmware_vm/tasks/watch_email.yml": "f5c498cacb702dc39c11f4cdad036c7b7d592006bde7b0f4635741ea8bef1c5b",
+# 1.135.3 changes the live reader and mail decision for unmanaged VMs (test_vm_watch_unmanaged.py).
+FROZEN_11353 = {
+    "roles/vmware_vm/library/site_vmware_watch.py": "3e2046bf3f567464f7b702f53e9277736e52fbd31b25c01350e19ba1e7eb095a",
+    "plugins/filter/vmware_watch_email_filters.py": "e0277db4b279256ccdb4f3fc9e359c5fb7206f2ae765b46b9a1e338ceeaa0a6f",
+    "roles/vmware_vm/tasks/watch_email.yml": "8f9bee1c79cdc0c03ba05bf20ad97a2488f7da1b62e859b50f9092c803d993f5",
 }
 # The tasks of 1.118.4's watch.yml that differ at 1.116.0, each with why a scheduled run (vm_watch_review false) does exactly
 # what it did. Any other difference fails.
 ALLOWED = {
     "VMware | what is down or hung (the suspects checked {{ vm_watch_confirm_checks }} time(s), {{ vm_watch_confirm_seconds }} s apart)":
-        "1.131.1 also reads the configured usage alarms",
+        "1.131.1 reads usage alarms; 1.135.3 checks SolarWinds maintenance",
     "VMware | vCenter's events of the window": "scheduled read keeps the original arguments and outer rescue; the review reads separately",
     "VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)":
         "review: omit unless a review; no_log: false unless a review",
@@ -71,7 +70,8 @@ ALLOWED = {
 }
 # 1.118.8: tasks added to watch.yml that run on a scheduled run - the email state kept in the report database after the
 # email went (a failed send stops the job before it). tests/test_vm_watch_email.py covers it.
-ADDED_1188_WATCH = {
+ADDED_WATCH = {
+    "VMware | SolarWinds maintenance check": "1.135.3 logs suppressed VMs or a failed read",
     "VMware | the watch's email state in the report database (vm_watch_email_db)": "after the email, never before it",
 }
 
@@ -128,10 +128,10 @@ class Frozen(unittest.TestCase):
             with open(os.path.join(ROOT, path), "rb") as fh:
                 self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, path)
 
-    def test_1_email_files_are_1_118_8(self):
-        for path, want in FROZEN_1188.items():
+    def test_unmanaged_watch_files_are_1_135_3(self):
+        for path, want in FROZEN_11353.items():
             with open(os.path.join(ROOT, path), "rb") as fh:
-                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, "%s changed: the watch's email is pinned at 1.118.8" % path)
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, path)
 
     def test_2_watch_yml_differs_only_where_allowed(self):
         with open(os.path.join(ROOT, "tests", "fixtures", "watch_1184.yml")) as fh:
@@ -161,7 +161,7 @@ class Frozen(unittest.TestCase):
                 expressions = when if isinstance(when, list) else [when]
                 guarded_here = guarded or any(requires_review(env.parse("{{ " + str(expr) + " }}").body[0].nodes[0])
                                               for expr in expressions)
-                if task.get("name") not in old_names and task.get("name") not in ADDED_1188_WATCH:
+                if task.get("name") not in old_names and task.get("name") not in ADDED_WATCH:
                     self.assertTrue(guarded_here, "missing review guard: %s" % task.get("name", task))
                 for branch in ("block", "rescue", "always"):
                     check_added(task.get(branch, []), guarded_here)
@@ -395,7 +395,7 @@ INCLUDED = {
 # vm_watch_email_min_minutes, and keeps its state in the report database when AAP cannot be read. These tasks of
 # watch_email.yml are new or change on a scheduled run on purpose; tests/test_vm_watch_email.py covers them. What the watch
 # finds (site_vmware_watch.py, vmware_watch_filters.py) stays 1.118.4's; watch.yml's two 1.118.8 changes are in ALLOWED
-# and ADDED_1188_WATCH.
+# and ADDED_WATCH.
 CHANGED_1188 = {
     "roles/vmware_vm/tasks/watch_email.yml": {
         "added": {

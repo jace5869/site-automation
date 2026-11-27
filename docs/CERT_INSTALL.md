@@ -274,7 +274,7 @@ cert_install_never_reload: ['slapd*']     # services the job never reloads: thei
    | Windows certificate restore | `playbooks/win_cert_restore.yml` | Machine (Windows) | Limit and Variables prompted on launch |
 
    The settings each one reads: `aap/extra_vars/<playbook>.yml`.
-4. **AAP - set up job templates makes this workflow (1.107.0)** - both, with the gate between the check and the approval
+4. **AAP - set up job templates makes this workflow** - both, with the gate between the check and the approval
    (`workflow_gate_var: cert_install_plan`: an error of the check never reaches the approval) and the survey of step 5.
    By hand: **The workflow** (Templates → Add → Add workflow template), one for Linux, one for Windows:
 

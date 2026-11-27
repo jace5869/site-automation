@@ -2189,7 +2189,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_stigman_open_versions` | `["1.6.16", "1.6.17", "1.6.18"]` | the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test |
 | `portal_public_url` | `"https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx \| bool and po…` | the portal's address, as people open it (said at the end) |
 | `portal_motion` | `auto` | 1.78.3: the running icons and the progress stripe turn; 1.87.0: also the pages' motion - cards and tiles come in, counts go up, a card lifts, the job's ring moves, toasts slide in, panels open smoothly. auto: unless the system asks for reduced motion (as now); always: even then (their image may turn animations off by… (all of it: the role file) |
-| `portal_look` | `strata` | 1.135.0: the portal's look - the one every viewer starts with; each viewer may pick another in the bar's Look list (kept in their browser), and a link may carry ?look=KEY. strata (Strata Console, the default) \| metro (Metro Live Tiles) \| relay (Relay Panel) \| chroma (Chroma Perspex) \| press (Signal Press) \| atlas (Con… (all of it: the role file) |
+| `portal_look` | `metro-atlas` | The initial portal look. Viewers can pick another in the bar or open a link with ?look=KEY. metro-atlas \| metro-calm \| metro-wall \| atlas-clean \| atlas-night \| contour-lite \| strata \| metro \| relay \| atlas |
+| `portal_actions_ops_center` | `line` | 1.136.1: line\|full\|off |
 | `portal_theme_season` | `"{{ report_theme_season \| default('none') }}"` | 1.115.0: the Christmas theme on the portal's pages (docs/SITE_PORTAL.md) - none \| christmas \| auto (Dec 1 to Jan 6, decided on each page). Default: the report website's report_theme_season, so both follow one setting; its look and parts are report_theme_season_style, _lights, _twinkle, _snow, _sleigh. |
 | `portal_title` | `Site portal` | the pages' title |
 | `portal_logo` | `"{{ (portal_config_dir ~ '/logo' ~ (portal_logo_src \| splitext)[1]) if portal_logo_src \|…` | 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text = portal_title). portal_logo is a PNG, JPEG, GIF or WebP file (1 MB at most) ON THE PORTAL SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller (in your own .site-local or group_vars… (all of it: the role file) |
@@ -2304,6 +2305,13 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_vm_heartbeat` | `true` | previously running Tools stop or heartbeat turns red on a powered-on workload VM |
 | `portal_wall_site_pattern` | `"{{ netmap_site_pattern \| default('', true) }}"` | the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01) |
 | `portal_wall_site_places` | `{}` | the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list |
+| `portal_wall_monitor` | `false` | 1.136.0: Ops monitor (opt-in preview, off by default; docs/SITE_PORTAL.md, "Ops monitor") - a wall area (?area=monitor, in every style, in the rotation) with every node SolarWinds watches as one square, up or down, grouped by service, and a dated vCenter note for a matching VM. SolarWinds supplies the status. Click a… (all of it: the role file) |
+| `portal_wall_monitor_seconds` | `60` | SolarWinds is read every this many seconds while the wall is open (60 to 3600); LATE / STALE stretch with it |
+| `portal_wall_monitor_group_by` | `groups` | groups (SolarWinds' groups, a node in each group it is a direct member of) \| custom:<a node custom property, e.g. custom:ServiceGroup> |
+| `portal_wall_monitor_groups` | `[]` | only these groups, in this order (names, any case; [] = every group with a node in it, A to Z); the rest under "Workloads (no group)" |
+| `portal_wall_monitor_vm_match` | `["*VMware*"]` | a SolarWinds node whose Vendor or MachineType matches (globs, any case) is a VM: counted "not found in vCenter" when vCenter has none of its name |
+| `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000); more: the area says it was cut and is never shown OK |
+| `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (LastSync) longer ago than this is not current: never green, never a recovery (5 to 1440) |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |
 | `portal_wall_feedback_readers` | `"{{ portal_approve_groups \| default([], true) }}"` | AD groups that may open the list (the approvers' groups by default) |
@@ -2528,6 +2536,7 @@ File: `roles/sw_inventory/defaults/main.yml`
 | `sw_inventory_share_subdir` | (empty) | A folder under the share's folder for them ('' = the share's folder itself) |
 | `sw_inventory_share_auth` | `"{{ report_web_smb_auth \| default('negotiate') }}"` | How the share is logged in to: negotiate (Kerberos first - FIPS), kerberos or ntlm; the report website's setting |
 | `sw_inventory_share_encrypt` | `"{{ report_web_smb_encrypt \| default(false) }}"` | Encrypt every byte (SMB 3), also on a share that does not require it |
+| `sw_inventory_shares` | `[]` | More file shares the same files are copied to (1.135.1), each on its own: one that fails (login, folder, space) never stops the next; the report lists each with ok or failed and the fix. A list of {path, subdir, user, password, auth, encrypt}: path as sw_inventory_share (single quotes; the folder must be there), the r… (all of it: the role file) |
 | `sw_inventory_keep_days` | `90` | Days the dated files (sw-inventory-YYYYMMDD-HHMMSS-job<ID>.csv / .json) are kept, here and on the share. 0 = all |
 | `sw_inventory_email` | `true` | The email (report_email_to): the report with the CSV, the JSON and a zip of the shield files attached. false = no email from this job (the report website page stays) |
 | `sw_inventory_email_max_mb` | `10` | The CSV, the JSON and the shield zip each at most (MB): one bigger is left off and the email says where it is. The workbook always goes (its Packages sheet stops at sw_inventory_xlsx_max_rows) |
@@ -2855,6 +2864,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_traffic` | `true` | The third signal, from vCenter itself (no network path needed): a silent suspect that sent network packets since the first check - vCenter's real-time statistics, 20-second samples - is alive, not hung (Tools died, or a firewall stops the probe). A hung guest sends none. false = the heartbeat and the probe only |
 | `vm_watch_traffic_packets` | `1` | packets sent from which a VM counts as alive |
 | `vm_watch_one_signal_severity` | `warning` | A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only. |
+| `vm_watch_solarwinds_unmanaged` | `true` | Skip VM outage alerts during a uniquely matched SolarWinds node's maintenance window. |
 | `vm_watch_skip_vms` | `[]` | VMs never judged: names, * and ? allowed (e.g. [LAB-*]) |
 | `vm_watch_skip_folders` | `[]` | VM folders never judged, as vCenter shows them (e.g. ["/DC1/vm/Lab*"]) |
 | `vm_watch_protect` | `[]` | Phase 2 (not built yet) would restart the hung VMs - never these (names, * and ?), never the AAP server or the VMs of vmware_protected_vms / vmware_protected_groups: their hung state is a ticket only. e.g. [DC*, SQL*, VCSA*] |

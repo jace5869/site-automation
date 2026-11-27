@@ -45,6 +45,7 @@ class Controller:
         self.writes = []
         self.unavailable = False
         self.orgs = {}                      # template id -> its organization's name (default: "Default")
+        self.nodes = None                   # 1.135.2 (display only): replace the default workflow nodes
         self.odd_nodes = []                 # extra workflow nodes as AAP might send them
         self.gone = set()                   # template ids deleted in AAP
         self.names = {}                     # template id -> another name (renamed, or null)
@@ -69,8 +70,10 @@ class Controller:
             ids = [] if "approval_role" in url else [2]
             ids = [i for i in ids if i not in self.gone]
         elif path == "workflow_job_template_nodes/":
-            return 200, {"count": 1 + len(self.odd_nodes), "results": [{"workflow_job_template": 2, "summary_fields": {
-                "unified_job_template": {"unified_job_type": "workflow_approval"}}}] + self.odd_nodes}
+            nodes = self.nodes if self.nodes is not None else [{"workflow_job_template": 2, "summary_fields": {
+                "unified_job_template": {"unified_job_type": "workflow_approval"}}}]
+            results = nodes + self.odd_nodes
+            return 200, {"count": len(results), "results": results}
         elif path == "workflow_approvals/":
             return 200, {"count": 1, "results": [{"id": 7, "can_approve_or_deny": True, "summary_fields": {"source_workflow_job": {"id": 77}}}]}
         else:
@@ -144,6 +147,26 @@ class Admin(unittest.TestCase):
         code, body, _ = self.http("/admin", form={"op": "save", "id": key, "revision": rev, **fields})
         self.assertEqual(code, 303, body)
         self.cfg.ad_groups.refresh()
+
+    def test_partial_card_lookup_refused_once_in_activity(self):
+        class Limited(Directory):
+            def search(self, base, flt, scope, attributes=None, **kw):
+                ok = super().search(base, flt, scope, attributes, **kw)
+                if "(userPrincipalName=2345678901@mil)" in flt:
+                    self.result.update(result=4, description="sizeLimitExceeded")
+                return ok
+
+        ad = self.cfg.ad_groups
+        ad.reader.opener = opener(Limited())
+        for _ in range(2):
+            self.assertFalse(ad.has("admins", RUN))
+        events = self.portal.log.read("ad")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["user"], RUN)
+        self.assertIn("sizeLimitExceeded", events[0]["why"])
+        page = self.http("/admin?tab=activity&event=Refused")[1]
+        self.assertIn(RUN, page)
+        self.assertIn("sizeLimitExceeded", page)
 
     def test_admin_gate_explicit_fallback_and_outage(self):
         self.cfg.readers = ["READ"]
@@ -1241,6 +1264,212 @@ for _n in [n for n in vars(Codex1340) if n.startswith("test_")]:
     setattr(Codex1340R2, _n, None)
 for _n in [n for n in vars(Codex1340R2) if n.startswith("test_")]:
     setattr(Neon1340R2, _n, None)
+
+
+# 1.135.2 (display only): readiness warnings and unchanged form behavior
+class Fix1352(Admin):
+    def card(self, page, key):
+        match = re.search(r'<li id="%s">.*?</li>' % re.escape(key), page, re.S)
+        self.assertIsNotNone(match, key)
+        return match.group()
+
+    def check_not_current(self, chip, reason):
+        for suffix in ("", "?tab=conn", "?tab=activity", "?tab=groups", "?tab=import"):
+            with self.subTest(tab=suffix):
+                code, page, _ = self.http("/admin" + suffix)
+                self.assertEqual(code, 200)
+                self.assertNotIn('chip s-ok">Connected', page)
+                self.assertEqual(page.count(chip), 2 if suffix == "?tab=conn" else 1)
+                if not suffix:
+                    for key in ("jt_1", "wf_2", "jt_3", "jt_4"):
+                        item = self.card(page, key)
+                        self.assertNotIn("<b>Ready.</b>", item)
+                        self.assertNotIn("arow ok", item)
+                        self.assertNotIn("chip s-ok", item)
+                        self.assertIn("<b>Not current - last read", item)
+                        self.assertIn(reason, item)
+                        self.assertIn("What AAP said then: ", item)
+
+    def check_unknown(self, page):
+        item = self.card(page, "wf_2")
+        self.assertNotIn("<b>Ready.</b>", item)
+        self.assertNotIn("arow ok", item)
+        self.assertIn("Could not tell whether this workflow has an approval step - see the node warnings above.", item)
+        self.assertIn("node 42", page)
+        return item
+
+    def test_failed_read(self):
+        self.save("jt_1", on_portal="on", add_run_groups=GROUP)
+        self.api.unavailable = True
+        self.portal.admin_catalog.read(force=True)
+        self.check_not_current('chip s-critical">Disconnected', "AAP could not be asked")
+
+    def test_old_read(self):
+        self.save("jt_1", on_portal="on", add_run_groups=GROUP)
+        cat = self.portal.admin_catalog
+        cat.mono -= 1000
+        cat.attempt = cat.mono + 1000
+        self.check_not_current('chip s-warning">Not current', "read 16 min ago")
+        with patch.object(cat, "read", wraps=cat.read) as read, patch.object(cat, "state", wraps=cat.state) as state:
+            page = self.http("/admin")[1]
+        self.assertTrue(read.called)
+        state.assert_called_once_with()                                 # the page is drawn from ONE snapshot
+        self.assertIn('<p class="note warn">Not current - last read', page)
+
+    def test_unknown_types(self):
+        for summary in ({}, *({"summary_fields": {"unified_job_template": {"unified_job_type": kind}}}
+                              for kind in (None, "", " workflow_approval ", "unknown", [], {}))):
+            with self.subTest(summary=summary):
+                self.api.nodes = [{"workflow_job_template": 2, "unified_job_template": 42, **summary}]
+                rows, error, _ = self.portal.admin_catalog.read(force=True)
+                self.assertFalse(error)
+                self.assertIs(rows["wf_2"]["unknown_steps"], True)
+                item = self.check_unknown(self.http("/admin?show=needs")[1])
+                self.assertIn('<span class="badge">Approval?</span>', item)
+                self.assertNotIn("Apply with AAP - set up portal actions.", item)
+                page = self.http("/admin?tab=conn")[1]
+                self.assertNotIn('chip s-ok">Connected', page)
+                self.assertEqual(page.count('chip s-warning">Approval unknown'), 2)
+                self.assertIn('<div class="k">Approval unknown</div><div class="v">1</div>', page)
+        self.api.nodes[0]["summary_fields"] = {"unified_job_template": {"unified_job_type": "job"}}
+        rows, _, _ = self.portal.admin_catalog.read(force=True)
+        self.assertIs(rows["wf_2"]["unknown_steps"], False)
+
+    def test_string_parent(self):
+        self.api.nodes = [{"workflow_job_template": "2", "unified_job_template": 42, "summary_fields": {}}]
+        self.api.names[2] = "Example <workflow>"
+        self.portal.admin_catalog.read(force=True)
+        page = self.http("/admin")[1]
+        self.check_unknown(page)
+        self.assertIn("<li>Example &lt;workflow&gt;: node 42</li>", page)
+
+    def test_untyped_node_beside_an_approval(self):
+        self.api.odd_nodes = [{"workflow_job_template": 2, "unified_job_template": 42}]
+        rows, error, _ = self.portal.admin_catalog.read(force=True)
+        self.assertFalse(error)
+        self.assertIs(rows["wf_2"]["approval"], True)
+        item = self.check_unknown(self.http("/admin")[1])
+        self.assertIn('<span class="badge">Approval</span>', item)
+        self.assertNotIn('<span class="badge">Approval?</span>', item)
+
+    def test_display_only(self):
+        self.save("wf_2", on_portal="on", add_approve_groups=APP_GROUP)
+        export = {"op": "aap-export"}
+        baseline = self.http("/admin", form=export)[:2]
+        self.assertEqual(baseline[0], 200)
+        token = self.portal.token(ADMIN)
+        with patch.object(self.portal, "token", return_value=token):
+            before = self.card(self.http("/admin")[1], "wf_2")
+            self.api.odd_nodes = [{"workflow_job_template": 2, "unified_job_template": 42}]
+            self.portal.admin_catalog.read(force=True)
+            after = self.card(self.http("/admin")[1], "wf_2")
+        fields = re.findall(r'<input[^>]*>', after)
+        self.assertEqual(fields, re.findall(r'<input[^>]*>', before))
+        form = dict(inputs(after), op="save")
+        for field in fields:
+            if 'type="checkbox"' in field and " checked" in field:
+                attrs = dict(re.findall(r'(name|value)="([^"]*)"', field))
+                form[attrs["name"]] = html.unescape(attrs.get("value", "on"))
+        code, body, _ = self.http("/admin", form=form)
+        self.assertEqual(code, 303, body)
+        self.assertEqual(self.cfg.access.read()[0]["portal_template_access"]["wf_2"]["approve_groups"], [APP_GROUP])
+        self.assertEqual(self.http("/admin", form=export)[:2], baseline)
+        self.assertIn("Could not tell whether this workflow has an approval step", after)
+
+    def test_gate_c_one_undescribed_step_holds_every_card(self):
+        for parent in ("2", "\uff12", None, "x"):          # ASCII and fullwidth digits; no or another parent: every workflow
+            with self.subTest(parent=parent):
+                node = {"unified_job_template": 42, "summary_fields": {}}
+                if parent is not None:
+                    node["workflow_job_template"] = parent
+                self.api.nodes = [node]
+                rows = self.portal.admin_catalog.read(force=True)[0]
+                self.assertTrue(rows["wf_2"]["unknown_steps"])
+                page = self.http("/admin")[1]
+                self.assertNotIn('chip s-ok">Connected', page)
+                for key in ("jt_1", "wf_2", "jt_3", "jt_4"):
+                    self.assertNotIn("<b>Ready.</b>", self.card(page, key))
+                    self.assertNotIn("arow ok", self.card(page, key))
+        self.api.nodes = ["odd"]
+        self.assertTrue(self.portal.admin_catalog.read(force=True)[0]["wf_2"]["unknown_steps"])
+        for node in ({"id": 42, "workflow_job_template": 99}, {"id": 42, "summary_fields": {"unified_job_template": {"unified_job_type": "workflow_approval"}}},
+                     {"id": 42, "workflow_job_template": "0" * 4300 + "2"}):          # gate c2 #2-#4
+            with self.subTest(node=str(node)[:60]):
+                self.api.nodes = [node]
+                rows, error, _ = self.portal.admin_catalog.read(force=True)
+                self.assertFalse(error)
+                self.assertTrue(rows["wf_2"]["unknown_steps"])
+                page = self.http("/admin")[1]
+                self.assertNotIn("ready.", self.card(page, "jt_1").lower().replace("<b>ready.</b>", "READY"))
+                self.assertNotIn("<b>Ready.</b>", self.card(page, "jt_1"))
+
+
+for _n in [n for n in vars(Admin) if n.startswith("test_")]:
+    setattr(Fix1352, _n, None)
+
+
+class Gate1352(unittest.TestCase):
+    setUp = Admin.setUp
+    http = Admin.http
+    card = Fix1352.card
+
+    def test_catalog_warning_size(self):
+        cat = self.portal.admin_catalog
+        workflows = [{"id": i, "name": "Workflow %d" % i} for i in range(4096)]
+        nodes = [{"id": i} for i in range(4096)]
+        with patch.object(cat, "list", side_effect=[[], workflows, [], [], nodes]), patch.object(self.aap, "labels_of", return_value=[]):
+            rows, error, _ = cat.read(force=True)
+        self.assertFalse(error)
+        self.assertEqual(len(rows), 4096)
+        flags = [r["unknown_steps"] for r in rows.values()]
+        self.assertTrue(all(flags))
+        row_bytes = sum(len(str(flag).encode()) for flag in flags)
+        self.assertLess(row_bytes, 64 * 1024)
+        warnings = cat.warnings
+        self.assertLess(row_bytes + sum(len(w.encode()) for w in warnings), 64 * 1024)
+        self.assertEqual(len(warnings), 21)
+        self.assertEqual(warnings[-1], "+4076 more")
+        page = self.http("/admin?tab=conn")[1]
+        for warning in warnings:
+            self.assertEqual(page.count("<li>%s</li>" % html.escape(warning)), 1)
+
+    def test_surrogate_in_warning(self):
+        self.api.names[2] = "Release\ud800<&>"
+        self.api.nodes = [{"id": 42, "workflow_job_template": 2}]
+        for path in ("/admin?tab=groups", "/admin"):
+            code, page, _ = self.http(path)
+            self.assertEqual(code, 200)
+            self.assertIn("<li>Release?&lt;&amp;&gt;: node 42</li>", page)
+
+    def check_unmatched_approval(self, parent, nameless=False):
+        self.api.nodes = [{"id": 42, "workflow_job_template": parent, "summary_fields": {
+            "unified_job_template": {"unified_job_type": "workflow_approval"}}}]
+        cat = self.portal.admin_catalog
+        read_list = cat.list
+
+        def listing(path):
+            result = read_list(path)
+            if nameless and path == "workflow_job_templates/?order_by=name":
+                return result + [{"id": parent, "name": " "}]
+            return result
+
+        with patch.object(cat, "list", side_effect=listing):
+            rows, error, _ = cat.read(force=True)
+        self.assertFalse(error)
+        self.assertFalse(rows["wf_2"]["approval"])
+        page = self.http("/admin")[1]
+        self.assertIn("arow warn", self.card(page, "wf_2"))
+        self.assertNotIn("<b>Ready.</b>", page)
+        self.assertIn("node 42", page)
+
+    def test_approval_with_string_parent(self):
+        self.check_unmatched_approval("2")
+
+    def test_approval_with_absent_parent(self):
+        self.check_unmatched_approval(99)
+
+    def test_approval_with_nameless_parent(self):
+        self.check_unmatched_approval(99, nameless=True)
 
 
 if __name__ == "__main__":

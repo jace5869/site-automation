@@ -45,9 +45,9 @@ TITLES = {
 
 def on_page(c, doc):
     title, sub = TITLES.get(doc.page, TITLES[2])
-    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s (Linux and Windows)  \u00b7  %s" % (VERSION, DATE),
-               "Source: ACT-Linux and ACT-Windows %s documentation. Using ACT from "
-               "Ansible Automation Platform is covered in a separate brief." % VERSION,
+    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s  \u00b7  site-automation %s  \u00b7  %s" % (VERSION, SA_VERSION, DATE),
+               "Source: ACT-Linux and ACT-Windows %s documentation (checked with site-automation %s). Using ACT from "
+               "Ansible Automation Platform is covered in a separate brief." % (VERSION, SA_VERSION),
                "Page %d of 2" % doc.page)
 
 
@@ -101,7 +101,7 @@ when = block("WHEN", "on demand, while an administrator works", AMBER, B([
 where = block("WHERE", "what runs where", colors.HexColor("#4B5D8A"), B([
     "**On the server the administrator is working on**, over their usual SSH (for example "
     "SecureCRT) or Windows session.",
-    "**Linux:** one Python script (RHEL 8/9, Python 3.8+). **Windows Server:** one PowerShell "
+    "**Linux:** one Python script (RHEL 8/9, Python 3.6+; RHEL 8's default `python3` works). **Windows Server:** one PowerShell "
     "script (5.1 or 7). No agent, no service, no open ports.",
     "**Model:** GenAI.mil over HTTPS from that server.",
     "**Key:** in the administrator's own settings file, readable only by them.",
@@ -188,9 +188,10 @@ modes = t2(["Mode", "What runs without asking", "Use"], [
      "Scripts and automation (see the AAP brief)."],
 ], [0.25, 0.43, 0.32])
 status = t2(["Topic", "Status / risk and mitigation"], [
-    ["Testing to date", "Released for Linux and Windows. Automated test suites pass on Python 3.8, 3.11 and "
+    ["Testing to date", "Released for Linux and Windows. Automated test suites pass on Python 3.6, 3.8, 3.11 and "
                         "3.13 and on PowerShell 5.1 and 7. It already runs against GenAI.mil from AAP; a reply "
-                        "cut off on the way is asked for again (0.6.25)."],
+                        "cut off on the way is asked for again (0.6.25), key values are omitted from result "
+                        "files and logs (0.6.26), and Python 3.6 is supported (0.6.27)."],
     ["Model can be wrong", "The administrator confirms every change, and ACT refuses to report done until a "
                            "check proves the fix. Diagnoses come with evidence."],
     ["Runs with the user's rights", "Not a sandbox: ACT can do what the person running it can do. Use normal "

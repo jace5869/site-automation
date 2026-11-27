@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.137.0 — 2026-11-26
+## 1.137.0 — 2026-11-27
 
 **To set up: optional `site_act_worker_model`** (or `site_act_worker_models: {genai: <the worker model's id>}`) in
 all.yml - a cheaper, faster model for the per-item first pass. Without it, nothing changes: every question goes to
@@ -43,83 +43,118 @@ sub-agents with their own model, step budget and fresh context, for a person at 
 (the engine's questions and the runs on the hosts alike); `site_act_env: {ACT_DELEGATE: "1"}` turns it on. The jobs'
 own tiers (above) pick the models. The site's changes to `act_triage` (1.104.0's launcher) are kept.
 
-## 1.136.0 — 2026-11-26
+## 1.136.3 — 2026-11-27
 
-**To set up: nothing.** The answer cache needs the **Report database** credential (the writer, `report_writer`) on the
-template; without it, nothing changes. New settings, all with defaults: `site_act_retries` (1), `site_act_group` (true),
-`site_act_cache` (true), `site_act_cache_ttl_days` (7), `site_act_cache_ttl_days_by` ({}), `site_act_cache_clear`,
-`site_act_cache_create`, `site_act_cache_timeout`.
+- Fixed documentation links, versions and facts: `docs/pdf/README.md` PDF paths and AAP-Keycloak guide row, `guides/` path and EE requirements in `docs/START_HERE.md`, ACT `0.6.27` and Python `3.6+` across docs and guide scripts, broken `#the-act-analysis` anchor in `docs/SERVICENOW_WAR.md`, AAP 2.5+ / 2.7 wording, and removed AAP 2.4 notes.
+- Rewrote dense paragraphs into short numbered steps and tables across `docs/SITE_PORTAL.md`, `docs/SERVICENOW_WAR.md`, `docs/STIG_DRIFT.md`, `docs/NETWORK_CONFIG.md`, `docs/RUNBOOKS.md`, `docs/VM_OUTAGE_WATCH.md`, `docs/EMAIL_REPORTS.md`, `docs/SETUP_AAP.md`, `docs/SERVICE_WATCH_DEMO.md`, and `README.md`; removed inline release tags from steps.
+- Updated PDF guide build scripts (`docs/pdf/*.py`) to ACT `0.6.27`, site-automation `1.136.3`, Python `3.6+`, smaller monospace table text, and copy-from-repository reminders (PDFs not rebuilt here).
+- Template descriptions pass: verified all 235 entries in `aap/job_descriptions.yml` and `aap/job_templates.yml`; added commented `aap_templates_description_owner` and `aap_templates_description_contact` placeholders to `playbooks/group_vars/all.yml` and documented setting them there in `docs/SETUP_AAP.md` so all three AAP setup jobs write the Contact line.
 
-**ACT: one engine for every job that asks it about evidence on the AAP side** (step A of the ACT rework;
-docs/ADDING_ACT.md, "How the jobs on the AAP side ask ACT"). The log analysis, the VMware alarms, capacity and
-right-sizing analyses, the WAR, ticket insights, the incident documents, a finding's triage, VM ask and deploy, the
-outage review and the STIG answer keys all use it.
+## 1.136.2 — 2026-11-27
 
-- One check of the way to the model per job, for all its questions. When it fails, the report says so once and
-  nothing is asked. Before, a job in batches checked before the first batch only, then asked the others anyway.
-- ACT copied once per job into a private folder, which is removed after, also when ACT fails.
-- The questions run `site_act_concurrency` (3) at a time, not one after another (`0`: up to 4). Their answers keep
-  the order they were asked in.
-- The STIG answer keys ask all their rules in one call: the drafts, then the cross-check.
-- A question that failed is asked once more (`site_act_retries`). In the jobs that ask in batches, an answer the
-  job cannot read is asked again too (not the WAR: it has its own reader). All tries of a question share its time;
-  one that ran out of it is not asked again. An answer that came is kept when the next try fails.
-- A question with no evidence is never sent: *No evidence to read: ACT was not asked.* The evidence is checked as
-  it is sent, cut at `act_triage_evidence_total_chars`.
-- What ACT reads always starts with a fixed line. So ACT only reads and answers, and never runs a command on the
-  AAP node.
-- 1.104.0's rules stay: ACT starts through the `act_triage` launcher (`act_launch.py`). Its environment is an
-  allowlist, never the job's other credentials. Only the provider keys in `act_triage_key_env_names` are passed, on
-  the launcher's input, never a command line. A `site_act_env` name ACT may not get stops the questions before any is
-  asked; the report names it, never its value. `site_act_env` cannot turn the masking off. A proxy, or a model URL,
-  with a user name and password is not checked. With the job's own model time (the outage review), each run is held to twice it and
-  a minute.
-- The check of the way to the model uses ACT's own environment: the job's proxy and `NO_PROXY`.
-- A question that could not be asked gets its own reason. The others keep their answers. An error in the engine is
-  a reason in the report, never a failed job.
-- ACT's answer is no longer printed in the job's output.
+- The STIG answer-file draft trial skips Podman/CNI namespace handles identified as `nsfs` in mountinfo and still refuses writable host storage under `/run/netns`.
+- The VM outage watch skips alerts for VMs uniquely matched to nodes currently unmanaged in SolarWinds.
+  It logs the maintenance end and checks again each run. An unavailable SolarWinds reader leaves alerts enabled.
+- Attach the **SolarWinds (read-only)** credential to **VM - outage watch** to enable maintenance checks.
 
-**ACT's answer cache in the report database** (docs/REPORT_DATABASE.md, "ACT's answer cache").
+## 1.136.1 — 2026-11-27
 
-- The log analysis, the VMware alarms ACT analysis, and the capacity and right-sizing analyses keep each answer in
-  a new table, `act_answer_cache` (`schema_version` component `act_cache`, version 1). The first run makes it.
-- A later run that asks the same question takes the kept answer. ACT is not asked. The same question means the same
-  evidence, prompt, provider, model and job.
-- The log analysis compares its patterns, not its evidence: their level, source, signature, hosts, count band
-  (1, 2-9, 10-99 ...) and example lines, not the times. The same log set a day later finds its answer; `HTTP 401` and
-  `HTTP 503` stay two questions. Another provider, model or model URL (also one set in `site_act_env` or the
-  execution environment) or another evidence cap is a new question.
-- When every answer is kept, the model is not reached at all.
-- Only ACT's analysis is kept, between its markers, with any password or key it quotes removed (the repository's
-  redaction, and every URL's query). An answer the job cannot read, or one that leaves an item out or says nothing about it, is not kept.
-- Each answer expires after `site_act_cache_ttl_days`, or the job kind's days in `site_act_cache_ttl_days_by`. Each run
-  deletes the expired ones. A shorter setting holds for answers kept under a longer one.
-- The report says *N of M answer(s) from an earlier run (the date UTC; site_act_cache).*
-- A database that cannot be used, or stops answering, is one line in the job output. ACT is asked as without the cache.
-- A dry run (Check) reads the cache and writes nothing.
+- The portal has ten looks. Metro Atlas is the new default, joined by Metro Calm, Metro Wall, Atlas Clean, Atlas Night and Contour Lite.
+- Pick a look from the portal bar to save it in your browser, or use `?look=metro-atlas` to preview it on one page. Replace any `portal_look` set to `chroma`, `press` or `tower` before redeploying.
+- With the wall enabled, Actions shows a clickable Ops center status strip by default. The portal's `PORTAL_ACTIONS_OPS_CENTER` setting supports `full` for status tiles and `off` to hide it. In full mode the Atlas looks show status tiles with counts in place of the map.
+- The Ops monitor treats conflicting SolarWinds status as unknown and keeps the node list available when the browser cannot draw the grid.
 
-**Hosts with the same findings, asked once** (docs/ADDING_ACT.md, "Hosts with the same findings").
+## 1.136.0 — 2026-11-27
 
-- At the `explain` level, ACT reads the first host of each group of hosts with the same findings. The others take
-  its answer, and their reports say so.
-- Findings count as the same without their numbers, times, addresses and the host's own names - but with their
-  ports, quoted names, ids and read-only hints. fapolicyd compares the findings ACT is given too. Grouped within one
-  `serial` batch and one pass of the play; a failed first host is said as a failure, not as a shared answer.
-- `diagnose`, `self-heal` and troubleshoot (its own evidence) still ask each host.
-- fapolicyd's analysis groups hosts with the same blocks too, and runs on `site_act_concurrency` hosts at a time,
-  as the other ACT jobs.
+**Opt-in preview, off by default.** With the monitor off, the portal deploys the same file set and serves the same answers as 1.135.1. Only the version hashes for the two wall scripts with monitor hooks change. The Actions page stays the same.
 
-**One signature library**: `plugins/module_utils/site_signature.py`. The log analysis' line signatures moved there
-unchanged, and the grouping uses the same rules.
+**To set up:** run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the one the live
+Network map uses - nothing new to create). Set `portal_wall_monitor: true` to enable the preview. Optional: group by a
+node custom property instead of SolarWinds' groups (`portal_wall_monitor_group_by: custom:ServiceGroup`), show only some
+groups in your order (`portal_wall_monitor_groups`), what makes a node a VM (`portal_wall_monitor_vm_match`), how often
+(`portal_wall_monitor_seconds`, 60).
 
-- Files: `plugins/action/site_act_ask.py` (`ansible.cfg`: `action_plugins`), `roles/site_act/tasks/act_ask.yml`,
-  `evidence_many.yml`, `plugins/module_utils/site_act_cache.py`, `plugins/filter/act_group_filters.py`.
-  `evidence_analysis.yml` and `evidence_batches.yml` ask through the engine. `evidence_ask.yml`,
-  `evidence_one_batch.yml`, `answer_keys_act_one.yml` and `answer_keys_cross_act_one.yml` are gone.
-- Tests: `tests/test_site_act_ask.py` (a stand-in ACT and model: the engine, the launcher's rules, the cache with a
-  stand-in database, the statements in the doc), `tests/test_site_signature.py`, `tests/act/run_act_cache_test.sh` (a
-  real MySQL 8.4), `tests/act/run_act_group_test.sh`; `tests/test_outage_act.py` holds the 1.104.0 rules on the engine.
-- Not in it: service watch reusing a diagnosis (step B).
+- **Ops monitor on the ops wall** (`?area=monitor`, in every wall style and in *rotate areas*): every node SolarWinds
+  watches as one square, up or down, grouped by service group; the services strip (one verdict per group), *Not up · worst
+  first*, *SolarWinds vs vCenter* and a Spotlight that steps through the groups, problems first. 3,000 nodes fit at 1080p.
+- **vCenter inventory is information only.** SolarWinds determines node, service and area status. A unique FQDN
+  or guest IP match adds a dated vCenter note to the node card and its Teams share. VMs seen only in vCenter
+  appear in grey and are excluded from the monitored totals.
+- **A card for each node** (click a square, a row or a chip): service, IP, status and why, since when, response and
+  loss, a dated vCenter note, the source and its age, where to check - with **Copy text / Copy picture / Copy both /
+  Save picture** for Teams. **Several at once:** tick them (or Ctrl+click squares, or *Select all down*) and **Share
+  selected to Teams** - one line a node (*DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since
+  05:21)*), a table and a picture of up to 40 lines.
+- **What lights the wall:** one condition per service group with a node down (critical) or warning - in every style's
+  Now list and the Overview; Strata, Relay and Metro show an *Ops monitor* tile alongside the existing areas.
+- SolarWinds is read by the portal itself (SWQL SELECTs only: Orion.Nodes, Orion.Container, Orion.ContainerMembers) every
+  60 s while the wall is open, in its own thread: a refused SolarWinds login never stops a vCenter login. The wall's
+  vCenter read takes each VM's guest IP and host name only with the monitor on. The map and monitor share the login.
+  The monitor's CA goes to its reader only. The shared trust bundle stays the same.
+- The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. The line stays the same with the preview off.
+- Docs: docs/SITE_PORTAL.md (*Ops monitor*). Tests: `tests/test_wall_fleet.py` (grouping, the vCenter rules,
+  stale never green, 3,000 nodes, the SWQL reader against the fake SolarWinds, the share text escaped, the page in each style).
+
+### Known limits (to 1.136.1)
+- Monitor needs a browser with async/await (any current Edge/Chrome/Firefox); a 2016-era script engine does not load it.
+
+- Even on a converged host with the monitor and Network map off, AAP records successful monitor setup and file-cleanup tasks. The job recap differs from 1.135.1.
+- Browsers without `globalThis` cannot load the wall, even with the monitor off and both `fetch` and `URLSearchParams` available. Startup stops before the first `/api/wall` request.
+- Membership may lag a group change by 15 minutes plus two read intervals. A service can stay green after a down node joins it.
+- A slow node read gives an early observation extra time before it expires.
+- Slow reads label nodes and VM heartbeats with the read's end time. The observation may be older.
+- A large Teams preview can redraw when unrelated polls expire.
+- Refreshing a list can move keyboard focus off its controls.
+- A node card can show the last page's time for a node read on an earlier page.
+- After a board request fails, Overview can stay grey until someone reopens the board.
+- The Actions page and its Atlas map have no monitor tile. The wall shows an all-unmanaged group as *no monitored nodes*.
+- A shared group condition can still say critical after a member's poll expires.
+- A VM match can look unique while another vCenter is offline.
+- A container count exactly at the limit can mark a complete read as cut.
+- An expired comparison can leave a vCenter-only square on the canvas that still opens its card.
+- The board and Overview poll separately. A newer critical Overview response no longer makes the board stale by its sequence alone.
+- *What the wall watches* can label a SolarWinds monitor condition as vCenter.
+- The board accepts a new boot number after a restart. If its counter file is unavailable it uses the clock, so a clock reset can delay updates to an open board.
+- A cleared group share can still show recovery when the board has already seen the outage reopen.
+- On some systems the board's clock pauses during sleep. Its rows can look current until the next read.
+## 1.135.3 — 2026-11-27
+
+- Portal: AD groups now count people whose card lookup met a normal AD referral (no access before)
+
+## 1.135.2 — 2026-11-26
+
+**To set up:** run **Site portal - deploy**.
+
+- **Admin page: green only when AAP's answer is current and complete.** The page is drawn from one read of AAP. When
+  that read failed or is older than the refresh interval (`portal_discover_seconds`, at most 15 minutes), every template
+  card says *Not current - last read …* with the reason, in amber, never *Ready*, and the header says *Disconnected*
+  or *Not current* on every tab.
+- **A workflow step AAP did not describe** (its type missing, blank or not exactly one of AAP's types) is shown: the
+  card says *Could not tell whether this workflow has an approval step - check node … in AAP* and is never Ready, the
+  workflow is listed under *Needs AAP*, the header says *Approval unknown*, and no other card says Ready until AAP
+  describes every step. Display only: saving, import, export
+  and who may run or approve work exactly as in 1.135.1.
+
+## 1.135.1 — 2026-11-26
+
+**To set up:** optional `sw_inventory_shares` for more destinations; nothing to change for one share.
+
+- **Linux - software inventory: more than one Windows file share.** `sw_inventory_shares` is a list of folders the same
+  files are copied to: `path` (needed, single quotes, the folder must be there), and optional `subdir`, `user`,
+  `password` (vault it), `auth`, `encrypt`. An empty `user` / `password` is the **Windows file share** credential's.
+  `sw_inventory_share` keeps working unchanged and is the first destination when set; the same folder twice is copied once.
+- Each destination on its own: one that fails (the login, a folder not there, no space) never stops the next. The job
+  output and the report's new **File shares** table (only with more than one) list each as `share 1`, `share 2`, ... with
+  ok or failed, the `SA-SWI` code and the fix. `sw_inventory_fail_on_output_error` still fails the job at its end.
+- Check logs in to each destination and looks at its folder; nothing is written. A path with a user in it is refused per
+  entry and never shown; a password is never in the job output nor the execution node's log (the step runs `no_log`).
+  Two destinations on one server keep their own logins. A list that cannot be read (an undefined variable) is said as
+  **shares** not written; the rest still goes. A full disk or quota is its own code, SA-SWI-35. What changed uses each
+  host's newest list of every copy of `sw-inventory-state.json` (an older read never replaces a newer list); a copy that
+  cannot be read is never written over. The controller step runs with `no_log` and hands its result to the next task
+  through a private file in the job's own folder, deleted when read; a crash there is said in fixed words.
+- Docs: `docs/LINUX_SW_INVENTORY.md` (*More than one share*). Tests: `tests/test_sw_inventory.py` (MoreShares),
+  `tests/swinv/run_sw_inventory_test.sh` (runs 1c, 1d, 1e, 3).
 
 ## 1.135.0 — 2026-11-26
 
