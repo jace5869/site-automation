@@ -90,3 +90,11 @@ tr.xr>td.srv-xd{padding:10px 16px 14px 44px;background:var(--card-strong)}
   .srv-exp,.srv-col,.srv-foot{display:none!important}
   .srv-meter i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* 1.138.0: narrow-screen section jump select (replaces rail below 900 px; hidden until script runs) */
+.rail-mob{display:none;align-items:center;gap:10px;margin:0 0 14px}
+.rail-mob .lbl{margin:0;white-space:nowrap}
+.rail-sel{font:inherit;font-size:13.5px;min-height:32px;padding:5px 10px;border-radius:8px;border:1px solid var(--edge);background:var(--card);color:var(--ink);max-width:100%;flex:0 1 280px}
+.rail-sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:900px){.rail-mob:not([hidden]){display:flex}.js .appbar .nav.railed{display:none}}
+@media print{.rail-mob{display:none!important}}

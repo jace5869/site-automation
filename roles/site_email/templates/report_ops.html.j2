@@ -31,9 +31,12 @@
 {#- a verdict only where there is one to give: a report that only informs leads with its title -#}
 {%- set verdict = st in ['ok', 'warning', 'critical'] -%}
 {%- set opsword = {'ok': 'Healthy', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Not rated', 'unknown': 'Unavailable', 'low': 'Low'} -%}
-{%- set has_servers = r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0 -%}
+{#- The findings role supplies its default false. Standalone report documents describe their own sections. -#}
+{%- set server_features = report_servers_view | default(true) | string | lower in ['true', 'yes', 'on', '1'] -%}
+{%- set has_servers = server_features and r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0 -%}
 {#- 1.138.0: shared macros extracted to report_macros.html.j2 (pure refactor) -#}
 {%- from 'report_macros.html.j2' import icon, copyicons, nbw, keep, dw, chip, breakable, xmini with context -%}
+{%- from 'report_macros.html.j2' import section_count with context -%}
 <!DOCTYPE html>
 {%- set _motion = 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | trim | lower) %}{# YAML: an unquoted off is false #}
 <html lang="en"{% if _motion in ['off', 'always'] %} class="motion-{{ _motion }}"{% endif %}>
@@ -305,13 +308,6 @@ input.selc{margin:0 6px 0 0;vertical-align:-2px}tr.sel-on td{background:var(--ac
   :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx{margin:0 auto}
   :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .nav.railed{display:flex}
 }
-/* 1.138.0: narrow-screen section jump select (replaces rail below 900 px; hidden until script runs) */
-.rail-mob{display:none;align-items:center;gap:10px;margin:0 0 14px}
-.rail-mob .lbl{margin:0;white-space:nowrap}
-.rail-sel{font:inherit;font-size:13.5px;min-height:32px;padding:5px 10px;border-radius:8px;border:1px solid var(--edge);background:var(--card);color:var(--ink);max-width:100%;flex:0 1 280px}
-.rail-sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (max-width:900px){.rail-mob:not([hidden]){display:flex}.js .appbar .nav.railed{display:none}}
-@media print{.rail-mob{display:none!important}}
 /* above a table: its filter (the script's), Columns (check boxes the CSS acts on) and CSV (the script's) */
 .tools2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 10px}
 .tools2 .sp{flex:1}
@@ -787,7 +783,7 @@ footer{margin-top:32px}
 {%- for s in secs %}
 {%- if s.rail | default(true) %}
 {%- set ss = s.status | default('') %}
-{%- set sc = (s.rows | length) if (s.rows is defined and s.rows) else ((s.servers | length) if (s.servers is defined and s.servers) else ((s.cards | length) if (s.cards is defined and s.cards) else ((s.passed | length) if (s.passed is defined and s.passed) else ((s.groups | length) if (s.groups is defined and s.groups) else ((s.causes | length) if (s.causes is defined and s.causes) else ((s.issues | length) if (s.issues is defined and s.issues) else ((s.glance | length) if (s.glance is defined and s.glance) else ((s.tiles | length) if (s.tiles is defined and s.tiles) else ((s.lines | length) if (s.lines is defined and s.lines) else ((r.teams.hosts | default({}) | length) if (s.team_view | default(false) and r.teams is defined) else 0)))))))))) %}
+{%- set sc = section_count(s, has_servers) | int %}
 <a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}{{ s.title | e }}{% if sc %} <span class="n">{{ sc }}</span>{% endif %}</a>
 {%- endif %}
 {%- endfor %}
@@ -823,7 +819,7 @@ footer{margin-top:32px}
 {%- for i in g[1] %}
 {%- set s = secs[i - 1] %}
 {%- set ss = s.status | default('') %}
-{%- set sc = (s.rows | length) if (s.rows is defined and s.rows) else ((s.servers | length) if (s.servers is defined and s.servers) else ((s.cards | length) if (s.cards is defined and s.cards) else ((s.passed | length) if (s.passed is defined and s.passed) else ((s.groups | length) if (s.groups is defined and s.groups) else ((s.causes | length) if (s.causes is defined and s.causes) else ((s.issues | length) if (s.issues is defined and s.issues) else ((s.glance | length) if (s.glance is defined and s.glance) else ((s.tiles | length) if (s.tiles is defined and s.tiles) else ((s.lines | length) if (s.lines is defined and s.lines) else ((r.teams.hosts | default({}) | length) if (s.team_view | default(false) and r.teams is defined) else 0)))))))))) %}
+{%- set sc = section_count(s, has_servers) | int %}
 <a href="#s{{ i }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if sc %}<span class="n">{{ sc }}</span>{% endif %}</a>
 {%- endfor %}
 </details>
@@ -831,11 +827,11 @@ footer{margin-top:32px}
 </nav>
 {%- endif %}
 <main class="main" id="top">
-{%- if secs | length > 2 %}
+{%- if has_servers and secs | length > 2 %}
 <div class="rail-mob" hidden><label for="rail-jump"><span class="lbl">Sections</span></label><select class="rail-sel" id="rail-jump" aria-label="Jump to section">
 <option value="top">Top</option>
 {%- for s in secs %}{% if s.rail | default(true) %}
-{%- set sc = (s.rows | length) if (s.rows is defined and s.rows) else ((s.servers | length) if (s.servers is defined and s.servers) else ((s.cards | length) if (s.cards is defined and s.cards) else ((s.passed | length) if (s.passed is defined and s.passed) else ((s.groups | length) if (s.groups is defined and s.groups) else ((s.causes | length) if (s.causes is defined and s.causes) else ((s.issues | length) if (s.issues is defined and s.issues) else ((s.glance | length) if (s.glance is defined and s.glance) else ((s.tiles | length) if (s.tiles is defined and s.tiles) else ((s.lines | length) if (s.lines is defined and s.lines) else ((r.teams.hosts | default({}) | length) if (s.team_view | default(false) and r.teams is defined) else 0)))))))))) %}
+{%- set sc = section_count(s, has_servers) | int %}
 <option value="s{{ loop.index }}">{{ s.title | e }}{% if sc %} ({{ sc }}){% endif %}</option>
 {%- endif %}{% endfor %}
 </select></div>
@@ -1069,7 +1065,7 @@ footer{margin-top:32px}
 {%- set xp = (s.columns is defined and s.rows | default([]) and blist[loop.index0] is none) or s.text | default('') | string | length > 220 %}
 {%- if s.team_view | default(false) and r.teams is defined %}
 {%- include 'report_teams.html.j2' %}
-{%- elif s.server_view | default(false) %}
+{%- elif has_servers and s.server_view | default(false) %}
 {%- include 'report_servers.html.j2' %}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
@@ -1400,7 +1396,8 @@ footer{margin-top:32px}
 </div>
 <script id="site-report-js">
 {% include 'site_report.js' %}
-{% include 'report_pop.js' %}
+{% include 'report_pop.js' %}{% if has_servers %}
+{% include 'report_servers.js' %}{% endif %}
 </script>
 </body>
 </html>

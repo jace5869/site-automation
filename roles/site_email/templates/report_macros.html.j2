@@ -1,6 +1,6 @@
 {#- 1.138.0: Shared macros for the web report looks (report_atlas.html.j2, report_brief.html.j2, report_ops.html.j2).
     Pure refactor from the three identical copies: icon, copyicons, nbw, keep, dw, chip, breakable, xmini.
-    Imported with context so xmini sees words (with a local fallback if imported without context). -#}
+    Imported with context so xmini sees words. -#}
 {%- macro icon(k) -%}
 {%- if k == 'ok' -%}
 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -68,7 +68,6 @@
 {%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
 {%- macro xmini(t) %}
-{%- set _w = words if words is defined else ('ok', 'warning', 'critical', 'info', 'unknown', 'low') %}
 {%- if t.text | default('') %}<p class="xt0">{{ t.text | e }}</p>{% endif %}
 {%- if t.rows | default([]) %}
 <div class="tw"><table class="mini">
@@ -79,7 +78,7 @@
 {%- set xl = (t.links[loop.index0] if t.links is defined and t.links | length > loop.index0 else '') | default('', true) %}{#- 1.69.2: a second link column (links2, at link2_col: a host's Collection opens the collection) #}{%- set xl2 = (t.links2[loop.index0] if t.links2 is defined and t.links2 | length > loop.index0 else '') | default('', true) %}
 {%- set xt = (t.link_titles[loop.index0] if t.link_titles is defined and t.link_titles | length > loop.index0 else '') | default('', true) %}{%- set xt2 = (t.link2_titles[loop.index0] if t.link2_titles is defined and t.link2_titles | length > loop.index0 else '') | default('', true) %}
 {%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
-<tr{% if gr in _w %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set cu = xl if loop.first else (xl2 if loop.index0 == t.link2_col | default(1) else '') %}{% set ct = xt if loop.first else xt2 %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if cu %}<a class="hl" href="{{ cu | e }}" target="_blank" rel="noopener" title="{{ ct | e }}">{% endif %}{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}{% if cu %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>{% endif %}</td>{% endfor %}</tr>
+<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set cu = xl if loop.first else (xl2 if loop.index0 == t.link2_col | default(1) else '') %}{% set ct = xt if loop.first else xt2 %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if cu %}<a class="hl" href="{{ cu | e }}" target="_blank" rel="noopener" title="{{ ct | e }}">{% endif %}{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}{% if cu %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>{% endif %}</td>{% endfor %}</tr>
 {%- endfor %}
 {%- if t.rows | length > 100 %}<!--/defer-mini-->{% endif %}
 </tbody>
@@ -91,3 +90,11 @@
 {#- 1.88.0: the cross-check's opened rule - each host's verdict line, then the four sources side by side #}
 {%- if t.who | default([]) %}{% for c in t.who %}<div class="who"><p class="wh">{{ c.host | e }}</p><p class="wv w-{{ c.kind | e }}"><svg viewBox="0 0 16 16" aria-hidden="true">{% if c.kind == 'look' %}<path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/>{% elif c.kind == 'agree' %}<path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>{% else %}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>{% endif %}</svg><span>{{ c.line | e }}</span></p><div class="wg">{% for col in c.cols %}<div class="wc"><h4>{{ col.title | e }}{% if col.sub | default('') %} <small>({{ col.sub | e }})</small>{% endif %}</h4>{% if col.pre | default([]) %}<pre class="wp">{% for l in col.pre %}<span{% if l.mark %} class="wdl" title="The line ACT named as deciding it"{% endif %}>{{ l.t | e }}</span>{% endfor %}</pre>{% endif %}<p class="wr t-{{ col.tone | e }}">{{ col.word | e }}</p>{% if col.note | default('') %}<p class="wn">{{ col.note | e }}</p>{% endif %}</div>{% endfor %}</div></div>{% endfor %}{% endif %}{% if t.who_more | default('') %}<p class="wmore">{{ t.who_more | e }}</p>{% endif %}
 {%- endmacro %}
+
+{%- macro section_count(s, has_servers) -%}
+{%- set count = namespace(value=0) -%}
+{%- for key in (['rows', 'servers', 'cards', 'passed', 'groups', 'causes', 'issues', 'glance', 'tiles', 'lines'] if has_servers else ['rows']) -%}
+{%- if not count.value and s[key] | default([]) -%}{%- set count.value = s[key] | length -%}{%- endif -%}
+{%- endfor -%}
+{{ count.value or (r.teams.hosts | default({}) | length if has_servers and s.team_view | default(false) and r.teams is defined else 0) }}
+{%- endmacro -%}

@@ -38,6 +38,15 @@
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.servers | default([]) %}
+{%- set statuses = s.servers | map(attribute='status') | unique | list %}
+{%- if statuses | length > 1 %}
+<div class="srv-severity pt-sev" role="group" aria-label="Severity" hidden>
+<button type="button" class="pt-sb" data-sev="" aria-pressed="true">All</button>
+{%- for k in ['critical', 'warning', 'low', 'info', 'unknown', 'ok'] if k in statuses %}
+<button type="button" class="pt-sb s-{{ k }}" data-sev="{{ k }}" aria-pressed="false">{{ 'Not reached' if k == 'unknown' else chipword[k] }}</button>
+{%- endfor %}
+</div>
+{%- endif %}
 <div class="tools2 srv-tools">
 <input class="filter" type="search" hidden placeholder="Search {{ s.servers | length }} server{{ '' if s.servers | length == 1 else 's' }} or findings" aria-label="Search {{ s.title | e }}"><span class="shown"></span>
 <span class="sp"></span>

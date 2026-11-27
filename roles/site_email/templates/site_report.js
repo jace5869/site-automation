@@ -134,21 +134,12 @@
       railAuto=1;rh.checked=true;root.setAttribute('data-rail','hidden');all('.tw').forEach(function(w){fit1(w)})}}
   fit();var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(function(){fit()},120)});
   all('details.sec').forEach(function(d){d.addEventListener('toggle',function(){fit()})});
-  /* the section in view, marked in the bar and in the rail; 1.138.0: synced with narrow-screen select (.rail-sel) */
+  /* the section in view, marked in the bar and in the rail */
   var links={};all('.nav a,.rail a').forEach(function(a){var k=a.getAttribute('href').slice(1);(links[k]=links[k]||[]).push(a)});
-  var rsel=document.querySelector('select.rail-sel');
-  if(rsel){var rmob=rsel.closest('.rail-mob');if(rmob)rmob.hidden=false;
-    rsel.addEventListener('change',function(){var id=rsel.value;if(!id)return;
-      try{liftFor('#'+id)}catch(x){}
-      var t=document.getElementById(id);if(!t)return;
-      openDetails(t);
-      try{history.replaceState(history.state,'','#'+id)}catch(x){}
-      try{t.scrollIntoView({behavior:'auto',block:'start'})}catch(x){t.scrollIntoView(true)}})}
-  if(window.IntersectionObserver&&(Object.keys(links).length||rsel)){var seen={};
+  if(window.IntersectionObserver&&Object.keys(links).length){var seen={};
     var io=new IntersectionObserver(function(es){es.forEach(function(e){seen[e.target.id]=e.isIntersecting});
       var first=null;all('details.sec').forEach(function(d){if(!first&&!d.hidden&&seen[d.id])first=d.id});
       Object.keys(links).forEach(function(k){links[k].forEach(function(a){a.classList.toggle('on',k===first)})});
-      if(rsel&&first&&rsel.value!==first)rsel.value=first;
       (links[first]||[]).forEach(function(l){var n=l.parentNode;
         if(n.classList.contains('nav')&&n.scrollWidth>n.clientWidth)n.scrollLeft=l.offsetLeft-n.clientWidth/3})},{rootMargin:'-70px 0px -55% 0px'});
     all('details.sec').forEach(function(d){io.observe(d)})}
@@ -298,22 +289,7 @@
     if(!r)return;
     if(r._detail){unpack(r._detail);r._detail=null;r._x=r.nextElementSibling;bindNew(r._x)}
     if(!r._x)return;
-    r._o=!r._o;var det=r._x.querySelector('details.srv-det');if(det&&r._o)det.open=true;
-    b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
-  /* 1.138.0: clicking a server row toggles its expander; Expand all / Collapse all toggle visible rows via vis() */
-  document.addEventListener('click',function(e){var tr=e.target.closest&&e.target.closest('table.srv-tbl>tbody>tr:not(.xr)');
-    if(!tr||e.target.closest('a,button,input,select,label,summary'))return;
-    var xb=tr.querySelector('.xb');if(xb)xb.click()});
-  all('.srv-exp,.srv-col').forEach(function(btn){var sec=btn.closest('details.sec'),tb=sec&&sec.querySelector('.tw table.xt');
-    if(!tb||!tb.tBodies[0])return;btn.hidden=false;var exp=btn.classList.contains('srv-exp');
-    btn.addEventListener('click',function(){if(exp&&tb._expand)tb._expand();
-      [].slice.call(tb.tBodies[0].rows).forEach(function(r){if(r.classList.contains('xr')||r.classList.contains('pt-fold'))return;
-        if(exp&&r.hidden)return;
-        if(exp&&r._detail){unpack(r._detail);r._detail=null;r._x=r.nextElementSibling;bindNew(r._x)}
-        if(!r._x)return;
-        var det=r._x.querySelector('details.srv-det');if(det&&exp)det.open=true;
-        r._o=exp;var xb=r.querySelector('.xb');if(xb)xb.setAttribute('aria-expanded',String(exp));vis(r)});
-      if(window.siteReport&&window.siteReport.rowsChanged)window.siteReport.rowsChanged()})});
+    r._o=!r._o;b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
   /* 1.76.5: a cell said in words keeps its raw key (a check id, a raw JSON message) in its title: the table's data-keys {n: columns, k: [[row, column, key]]} */
   function cellKeys(tb){if(!tb.matches('table[data-keys]'))return;try{var d=JSON.parse(tb.getAttribute('data-keys')),b=[].filter.call(tb.tBodies[0].rows,function(x){return !x.classList.contains('xr')}),off=tb.rows[0].cells.length-d.n;
     d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}}
@@ -388,9 +364,7 @@
       var count=function(){if(!n)return;var total=pending?+countAll:rows.length,k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<total?k+' of '+total:''};
       counts.push(count);count();
       if(f)f.addEventListener('input',function(){if(tb._expand)tb._expand();var q=f.value.trim().toLowerCase();tb._cq=!!q;
-        /* 1.138.0: also match deferred / opened finding detail text in server tables */
-        rows.forEach(function(r){if(r._ft===undefined)r._ft=((r.textContent||'')+(r._detail?' '+detailText(r._detail):r._x?' '+r._x.textContent:'')).toLowerCase();
-          r._f=!!q&&r._ft.indexOf(q)<0;vis(r)});capApply();count();if(tb._expand)fitRows(tb)});
+        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count();if(tb._expand)fitRows(tb)});
       /* one choice at a time per list (1.67.0): a row stays when the chosen value is one of its own (data-f<n>: |a|b|) */
       dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){if(tb._expand)tb._expand();tb._cf=dd.some(function(x){return !!x.value});
         rows.forEach(function(r){var off=false;dd.forEach(function(x){var v=x.value;
