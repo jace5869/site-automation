@@ -2224,7 +2224,8 @@ class Page(unittest.TestCase):
             out = self.dom("area=monitor&style=%s&freeze=1" % st)
             self.assertIn('data-ready="1"', out, st)
             self.assertIn('class="wx wx-fleet"', out, st)
-            self.assertIn("13 down", out, st)
+            self.assertIn("4 down", out, st)
+            self.assertIn("9 off", out, st)
             self.assertIn("SITEADIRDCV01", out, st)                     # the Not up list
             self.assertIn("VMs in vCenter, not monitored in SolarWinds", out, st)
             self.assertRegex(out, r"group \d+ of \d+ · problems first", st)    # the Spotlight's cue
@@ -2245,8 +2246,8 @@ class Page(unittest.TestCase):
         self.assertIn("Save picture", out)
         self.assertIn("Add to selection", out)
         out = self.dom("area=monitor&style=metro&monitor=bulk&freeze=1")
-        self.assertIn("Share 13 nodes to Teams", out)
-        self.assertIn("13 selected", out)
+        self.assertIn("Share 4 nodes to Teams", out)
+        self.assertIn("4 selected", out)
         self.assertIn("Wall: " + self.url + "wall?area=monitor", out)
 
     def test_stale_solarwinds_is_never_green(self):
