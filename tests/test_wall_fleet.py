@@ -1378,7 +1378,7 @@ class Gate4(unittest.TestCase):
 
     def test_gate4_15_non_unicast_ips_never_match(self):
         self.rows[0]["Status"] = 2
-        for addr in ("::", "0.0.0.0", "0.1.2.3", "::ffff:127.0.0.1", "fe80::1", "127.0.0.1", str(__import__("ipaddress").IPv4Address(0xE0000001)), "::1", "169.254.1.2"):
+        for addr in ("::", "0.0.0.0", str(__import__("ipaddress").IPv4Address(0x00010203)), "::ffff:127.0.0.1", "fe80::1", "127.0.0.1", str(__import__("ipaddress").IPv4Address(0xE0000001)), "::1", "169.254.1.2"):
             self.rows[0]["IPAddress"] = addr
             fm = self.model(view([vm("other", ip=addr, power="poweredOff")], self.now))
             self.assertEqual(by_name(fm)["APP"][18], "down", addr)
