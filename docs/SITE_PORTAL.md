@@ -1357,7 +1357,7 @@ The monitor's CA goes to its reader only. The shared trust bundle stays the same
   - Includes live feed freshness pills, 4 KPI tiles with rolling 4 h sparklines, Spotlight strip, 4 h limit-banded trends, DC-to-DC AD replication matrix, monitored estate node squares, 4 h timeline, a slide-over detail drawer with **Copy Teams summary**, and a **1920 Board** mode (`?area=health&board=1`).
   - Missing, unconfigured, failed, or stale feeds always show grey **Not read** / **Not current** with the exact reason — never green.
 - **Site map** (`/portal/sitemap`, alias `/portal/wall/map`, API `/portal/api/sitemap`, enabled by `portal_site_map: true`):
-  - Places sites by SolarWinds `Orion.WorldMap.Point` latitude/longitude first, then custom properties (`netmap_lat_property` / `netmap_lon_property`), then `portal_wall_site_places` / `netmap_sites`. Invalid coordinates and `(0, 0)` (Null Island) are rejected with a reason, and **unplaced sites are never dropped** — they stay in the side list's unplaced queue and the sortable **List (fallback)** view.
+  - Places sites by `portal_site_map_coords` overrides first (matched case-insensitively, overriding SolarWinds), then SolarWinds `Orion.WorldMap.Point` latitude/longitude, then custom properties (`netmap_lat_property` / `netmap_lon_property`), then `portal_wall_site_places` / `netmap_sites`. Invalid coordinates and `(0, 0)` (Null Island) are rejected with a reason, and **unplaced sites are never dropped** — they stay in the side list's unplaced queue and the sortable **List (fallback)** view. Each site shows its coordinate source (`settings`, `SolarWinds`, or `none`) in its details drawer and the list view.
   - Works completely **offline** (zero internet requests): coastlines are drawn from the locally bundled Natural Earth 1:110m vector land polygons (`static/wall-land.js`).
   - Supports pan/zoom, spatial clustering with multi-segment status rings and cluster popovers, curved inter-site WAN links, distinct accessible status pin shapes (critical octagon, warning diamond, stale dashed hollow circle, OK circle), region quick-zoom pills derived from placed sites, **Auto-tour**, **1920 Board** mode (`?board=1`), and a site/WAN detail drawer with RTT limit trend and Teams summary copy.
 
@@ -1374,7 +1374,28 @@ The monitor's CA goes to its reader only. The shared trust bundle stays the same
 | `portal_wall_sustained_minutes` | `15` | Minutes a metric breach must hold before appearing on the wall (1 to 240) |
 | `portal_wall_down_polls` | `2` | Consecutive down polls required to confirm a node/WAN outage (1 to 10) |
 | `portal_site_map` | `true` | Enable the offline Site map page (`/portal/sitemap`, alias `/portal/wall/map`) |
+| `portal_site_map_coords` | `{}` | Per-site `[lat, lon]` overrides for `/portal/sitemap` (case-insensitive; overrides SolarWinds) |
 | `portal_my_access` | `true` | Enable the read-only My access page (`/portal/access`, alias `/portal/my-access`) |
+
+#### Correct a site's place on the map
+
+Use `portal_site_map_coords` when a site's pin on `/portal/sitemap` is in the wrong place in SolarWinds, missing from `Orion.WorldMap.Point`, or stuck in the unplaced queue with `(0, 0)` (Null Island).
+
+1. Open `/portal/sitemap` and note the exact site name shown in the side list or the **List (fallback)** view. Each site displays its coordinate source (`settings`, `SolarWinds`, or `none`) in the **Source** column and in its details drawer.
+2. Add `portal_site_map_coords` in `playbooks/group_vars/all.yml` (or the **Site portal - deploy** template's Variables) with `[latitude, longitude]` for each site to override (site names match case-insensitively):
+
+   ```yaml
+   portal_site_map_coords:
+     SITEA: [39.4, -93.2]
+     SITEB: [50.1, 8.7]
+   ```
+
+3. Run **Site portal - deploy** and reload `/portal/sitemap`.
+4. Confirm the site pin moved and its coordinate source reads `settings` (`portal_site_map_coords`) in the site details drawer and list view.
+
+- **Precedence:** `portal_site_map_coords` always wins over SolarWinds `Orion.WorldMap.Point`, custom properties, and `portal_wall_site_places` / `netmap_sites` for matching sites.
+- **Validation and warnings:** every `[lat, lon]` entry is checked with `valid_coord` (latitude `-90` to `90`, longitude `-180` to `180`, not `(0, 0)`). Invalid values are ignored (the site keeps its SolarWinds position or stays unplaced) and shown in a plain warning banner on the page — never crashing the map.
+- **Unknown site names:** any valid entry whose site name does not match a site on the map is reported in the same warning banner so spelling differences stand out immediately.
 
 ### Make a screen the ops wall (1.135.0)
 
@@ -2168,6 +2189,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_wall_style` | `cockpit` | the wall's style when the address names none: `lights`, `cockpit`, `map`, `strata`, `relay` or `metro` |
 | `portal_wall_health` | `true` | enable the Network & AD health area on `/portal/wall?area=health` (live SolarWinds + AD report DB) |
 | `portal_site_map` | `true` | enable the offline Site map page (`/portal/sitemap`, SolarWinds lat/lon, bundled `wall-land.js`) |
+| `portal_site_map_coords` | `{}` | per-site `[lat, lon]` overrides for `/portal/sitemap` (case-insensitive; overrides SolarWinds) |
 | `portal_my_access` | `true` | enable the read-only My access page (`/portal/access`) |
 
 ## When something is wrong

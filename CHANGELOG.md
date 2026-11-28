@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.141.1 — 2026-11-28
+
+- **Site map coordinate overrides (`portal_site_map_coords`)** (`roles/site_portal_stack/defaults/main.yml`, `tasks/main.yml`, `files/site_portal.py`, `files/wall_health.py`, `files/static/site-map.js`, `files/static/site-map.css`, `playbooks/group_vars/all.yml`, `docs/SITE_PORTAL.md`):
+  - Added `portal_site_map_coords` (default `{}`), wired to the portal via `PORTAL_SITE_MAP_COORDS`: maps site names (matched case-insensitively against the map's site names) to `[lat, lon]`, overriding SolarWinds `Orion.WorldMap.Point` and placing previously unplaced or Null Island sites.
+  - Validates every override with `valid_coord` (rejecting non-numeric, out-of-range, malformed, and `(0, 0)` Null Island values): invalid entries and unknown site names are ignored/reported in a plain warning banner on `/portal/sitemap` without crashing.
+  - Each site now shows its coordinate source (`settings`, `SolarWinds`, or `none`) in the site details drawer, the sortable List view, and the side list.
+  - Added a commented `SITEA` / `SITEB` example in `playbooks/group_vars/all.yml`, the *"Correct a site's place on the map"* section in `docs/SITE_PORTAL.md`, and unit/UI tests in `tests/test_site_map_coords_1411.py`.
+
 ## 1.141.0 — 2026-11-28
 
 - **Two new ops-center wall Teams share cards (`wall_live.py`, `wall_model.py`, `wall_fleet.py`, `site_portal.py`, `static/wall-cards.js`, `static/wall-page.js`, `static/wall-page.css`, `static/wall-styles.js`, `static/portal.js`)**, built in the same dark report-card style and 4-state Copy helper (`window.SAPortalCopy`: *Copying…*, *Copied*, *Text only* with why, *Copy failed* with why, plus *Save picture* and *Preview card*) as the 1.140.0 down-nodes card:

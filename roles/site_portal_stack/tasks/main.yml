@@ -481,10 +481,12 @@
       - 0 < portal_wall_wan_loss_warn | float < portal_wall_wan_loss_crit | float <= 100
       - portal_wall_sustained_minutes | int >= 1 and portal_wall_sustained_minutes | int <= 240
       - portal_wall_down_polls | int >= 1 and portal_wall_down_polls | int <= 10
+      # 1.141.1: Site map coordinate overrides mapping (individual entries are validated at runtime with valid_coord)
+      - portal_site_map_coords is mapping
     fail_msg: >-
       The wall's settings (docs/SITE_PORTAL.md, "The ops-center wall"): portal_wall_title 1 to 40 characters; portal_wall_seconds 30 to 3600;
       portal_wall_auth_retry_minutes 5 to 1440; each warning under its critical, both 1 to 100; portal_wall_high_minutes 1 to 240; the lists
-      as lists (no blank group names in portal_wall_feedback_groups / _readers) and portal_wall_site_places a mapping; portal_wall_vcenter: true needs the "VMware vCenter" credential on this deploy (or
+      as lists (no blank group names in portal_wall_feedback_groups / _readers) and portal_wall_site_places / portal_site_map_coords as mappings; portal_wall_vcenter: true needs the "VMware vCenter" credential on this deploy (or
       portal_wall_vcenter_host / _username / _password), portal_wall_ontap: true the "NetApp ONTAP" one and ontap_clusters - nothing was changed.
     quiet: true
 
@@ -1308,6 +1310,7 @@
       # 1.138.0: Network & AD health wall area, offline Site map, and read-only My access
       PORTAL_WALL_HEALTH: "{{ '1' if portal_wall_health | bool else '0' }}"
       PORTAL_SITE_MAP: "{{ '1' if portal_site_map | bool else '0' }}"
+      PORTAL_SITE_MAP_COORDS: "{{ portal_site_map_coords | default({}, true) }}"   # 1.141.1: per-site [lat, lon] overrides for /portal/sitemap
       PORTAL_MY_ACCESS: "{{ '1' if portal_my_access | bool else '0' }}"
       PORTAL_SWIS_CA: "{{ '/app/solarwinds-health.pem' if _portal_swis_health | bool and portal_solarwinds_ca_file | length else '' }}"
       PORTAL_HEALTH_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_swis_health | bool else '' }}"
