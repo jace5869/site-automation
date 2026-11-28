@@ -977,6 +977,36 @@ def extend(wall, fleet, why, tracker, now):
             tracker.fleet = Tracker()
         conditions = tracker.fleet.update(conditions, now, set(recovered))
     wall["conds"].extend(conditions)
+    # 1.141.0: enrich ESXi outage card hosts (IP) and affected VMs (SolarWinds service group) when Ops monitor is active
+    esxi = (wall.get("cards") or {}).get("esxi")
+    if isinstance(esxi, dict) and esxi.get("hosts"):
+        gnames = fleet.get("groups") or []
+        by_name = {}
+        for row in fleet.get("nodes") or ():
+            if not isinstance(row, (list, tuple)) or len(row) < 13 or "v" in str(row[12]):
+                continue
+            gi = row[0]
+            ginfo = gnames[gi] if isinstance(gi, int) and 0 <= gi < len(gnames) else None
+            gname = ginfo[0] if ginfo and ginfo[1] in ("g", "c") else ""
+            nm = str(row[1] or "").strip().casefold()
+            ip = str(row[2] or "").strip()
+            if nm:
+                by_name.setdefault(nm, (gname, ip))
+                short_nm = nm.split(".", 1)[0]
+                if short_nm and short_nm != nm:
+                    by_name.setdefault(short_nm, (gname, ip))
+        for h in esxi["hosts"]:
+            if not h.get("ip"):
+                hn = str(h.get("name") or "").strip().casefold()
+                hit = by_name.get(hn) or by_name.get(hn.split(".", 1)[0])
+                if hit and hit[1]:
+                    h["ip"] = hit[1]
+            for v in h.get("vms") or ():
+                if not v.get("service"):
+                    vn = str(v.get("name") or "").strip().casefold()
+                    hit = by_name.get(vn) or by_name.get(vn.split(".", 1)[0])
+                    if hit and hit[0]:
+                        v["service"] = hit[0]
 
 
 def ordering(data, log):

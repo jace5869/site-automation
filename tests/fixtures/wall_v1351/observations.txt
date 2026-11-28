@@ -1,5 +1,5 @@
 {
-  "etag": "\"20f96643d5b4e344d37f\"",
+  "etag": "\"50d3a5f637d9f2057c41\"",
   "repeat": 304,
   "fleet": [
     404,
@@ -32,6 +32,10 @@
     "name",
     "runtime.host",
     "runtime.powerState",
+    "runtime.connectionState",
+    "runtime.bootTime",
+    "runtime.dasVmProtection.dasProtected",
+    "runtime.vmFailoverInProgress",
     "summary.quickStats.overallCpuUsage",
     "summary.runtime.maxCpuUsage",
     "summary.quickStats.guestMemoryUsage",
@@ -45,7 +49,7 @@
   ],
   "retrieve": [
     "RetrievePropertiesEx",
-    "<_this type=\"PropertyCollector\">pc</_this><specSet><propSet><type>HostSystem</type><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>runtime.connectionState</pathSet><pathSet>runtime.powerState</pathSet><pathSet>runtime.inMaintenanceMode</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.quickStats.overallMemoryUsage</pathSet><pathSet>summary.hardware.cpuMhz</pathSet><pathSet>summary.hardware.numCpuCores</pathSet><pathSet>summary.hardware.memorySize</pathSet><pathSet>vm</pathSet><pathSet>datastore</pathSet><pathSet>overallStatus</pathSet><pathSet>triggeredAlarmState</pathSet></propSet><propSet><type>ClusterComputeResource</type><pathSet>name</pathSet><pathSet>host</pathSet></propSet><propSet><type>Datastore</type><pathSet>name</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.accessible</pathSet><pathSet>summary.type</pathSet><pathSet>summary.multipleHostAccess</pathSet><pathSet>host</pathSet><pathSet>vm</pathSet></propSet><propSet><type>VirtualMachine</type><pathSet>name</pathSet><pathSet>runtime.host</pathSet><pathSet>runtime.powerState</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.runtime.maxCpuUsage</pathSet><pathSet>summary.quickStats.guestMemoryUsage</pathSet><pathSet>summary.config.memorySizeMB</pathSet><pathSet>guestHeartbeatStatus</pathSet><pathSet>guest.toolsRunningStatus</pathSet><pathSet>guest.toolsVersionStatus2</pathSet><pathSet>config.template</pathSet><pathSet>config.managedBy.extensionKey</pathSet><pathSet>config.managedBy.type</pathSet></propSet><objectSet><obj type=\"ContainerView\">view</obj><skip>true</skip><selectSet xsi:type=\"TraversalSpec\"><name>view</name><type>ContainerView</type><path>view</path><skip>false</skip></selectSet></objectSet></specSet><options><maxObjects>1000</maxObjects></options>"
+    "<_this type=\"PropertyCollector\">pc</_this><specSet><propSet><type>HostSystem</type><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>runtime.connectionState</pathSet><pathSet>runtime.powerState</pathSet><pathSet>runtime.inMaintenanceMode</pathSet><pathSet>runtime.standbyMode</pathSet><pathSet>runtime.inQuarantineMode</pathSet><pathSet>runtime.bootTime</pathSet><pathSet>runtime.dasHostState.state</pathSet><pathSet>recentTask</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.quickStats.overallMemoryUsage</pathSet><pathSet>summary.hardware.cpuMhz</pathSet><pathSet>summary.hardware.numCpuCores</pathSet><pathSet>summary.hardware.memorySize</pathSet><pathSet>vm</pathSet><pathSet>datastore</pathSet><pathSet>overallStatus</pathSet><pathSet>triggeredAlarmState</pathSet></propSet><propSet><type>ClusterComputeResource</type><pathSet>name</pathSet><pathSet>host</pathSet><pathSet>configuration.dasConfig.enabled</pathSet></propSet><propSet><type>Datastore</type><pathSet>name</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.accessible</pathSet><pathSet>summary.type</pathSet><pathSet>summary.multipleHostAccess</pathSet><pathSet>host</pathSet><pathSet>vm</pathSet></propSet><propSet><type>VirtualMachine</type><pathSet>name</pathSet><pathSet>runtime.host</pathSet><pathSet>runtime.powerState</pathSet><pathSet>runtime.connectionState</pathSet><pathSet>runtime.bootTime</pathSet><pathSet>runtime.dasVmProtection.dasProtected</pathSet><pathSet>runtime.vmFailoverInProgress</pathSet><pathSet>summary.quickStats.overallCpuUsage</pathSet><pathSet>summary.runtime.maxCpuUsage</pathSet><pathSet>summary.quickStats.guestMemoryUsage</pathSet><pathSet>summary.config.memorySizeMB</pathSet><pathSet>guestHeartbeatStatus</pathSet><pathSet>guest.toolsRunningStatus</pathSet><pathSet>guest.toolsVersionStatus2</pathSet><pathSet>config.template</pathSet><pathSet>config.managedBy.extensionKey</pathSet><pathSet>config.managedBy.type</pathSet></propSet><objectSet><obj type=\"ContainerView\">view</obj><skip>true</skip><selectSet xsi:type=\"TraversalSpec\"><name>view</name><type>ContainerView</type><path>view</path><skip>false</skip></selectSet></objectSet></specSet><options><maxObjects>1000</maxObjects></options>"
   ],
   "shape": {
     "hosts": [
@@ -57,6 +61,11 @@
         "state": "connected",
         "maint": null,
         "power": "",
+        "standby": "",
+        "quarantine": null,
+        "boot_time": "",
+        "das_state": "",
+        "tasks": [],
         "cpu_pct": null,
         "mem_pct": null,
         "vms": [],
@@ -71,6 +80,11 @@
         "state": "disconnected",
         "maint": null,
         "power": "",
+        "standby": "",
+        "quarantine": null,
+        "boot_time": "",
+        "das_state": "",
+        "tasks": [],
         "cpu_pct": null,
         "mem_pct": null,
         "vms": [],
@@ -101,6 +115,10 @@
         "name": "app",
         "host": "host-a",
         "power": "",
+        "conn": "",
+        "boot_time": "",
+        "das_protected": null,
+        "failover": null,
         "cpu_pct": null,
         "mem_pct": null,
         "heartbeat": null

@@ -48,11 +48,14 @@ HTTP_ALLOWED = ("GET",)
 PAGE = 1000                         # objects per RetrievePropertiesEx page
 
 HOST_PATHS = ("name", "parent", "runtime.connectionState", "runtime.powerState", "runtime.inMaintenanceMode",
+              "runtime.standbyMode", "runtime.inQuarantineMode", "runtime.bootTime", "runtime.dasHostState.state", "recentTask",
               "summary.quickStats.overallCpuUsage", "summary.quickStats.overallMemoryUsage", "summary.hardware.cpuMhz",
               "summary.hardware.numCpuCores", "summary.hardware.memorySize", "vm", "datastore", "overallStatus", "triggeredAlarmState")
-CLUSTER_PATHS = ("name", "host")
+CLUSTER_PATHS = ("name", "host", "configuration.dasConfig.enabled")
 DS_PATHS = ("name", "summary.capacity", "summary.freeSpace", "summary.accessible", "summary.type", "summary.multipleHostAccess", "host", "vm")
-VM_PATHS = ("name", "runtime.host", "runtime.powerState", "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
+VM_PATHS = ("name", "runtime.host", "runtime.powerState", "runtime.connectionState", "runtime.bootTime",
+            "runtime.dasVmProtection.dasProtected", "runtime.vmFailoverInProgress",
+            "summary.quickStats.overallCpuUsage", "summary.runtime.maxCpuUsage",
             "summary.quickStats.guestMemoryUsage", "summary.config.memorySizeMB", "guestHeartbeatStatus",
             "guest.toolsRunningStatus", "guest.toolsVersionStatus2", "config.template", "config.managedBy.extensionKey", "config.managedBy.type")
 SPECS = (("HostSystem", HOST_PATHS), ("ClusterComputeResource", CLUSTER_PATHS), ("Datastore", DS_PATHS), ("VirtualMachine", VM_PATHS))
@@ -360,6 +363,22 @@ class VcenterSource(object):
                 # 1.131.1 (Codex #10): the alarm's display name is optional - a timeout or a vanished definition never costs
                 # the inventory already read (the red host and the disconnected ones are in it); the name is just not shown
                 pass
+        # 1.141.0: read recentTask info ONLY for down hosts so planned reboots / maintenance tasks are distinguished from unexpected outages
+        tasks = sorted({ref[1] for typ, _, v in objs if typ == "HostSystem"
+                        and v.get("runtime.connectionState") in ("notResponding", "disconnected")
+                        for ref in v.get("recentTask") or [] if isinstance(ref, tuple) and ref[0] == "Task"})
+        if tasks:
+            refs = "".join("<objectSet>%s</objectSet>" % _mor("obj", "Task", tid) for tid in tasks[:64])
+            task_spec = ("<specSet><propSet><type>Task</type><pathSet>info.name</pathSet><pathSet>info.descriptionId</pathSet>"
+                         "<pathSet>info.state</pathSet><pathSet>info.startTime</pathSet><pathSet>info.completeTime</pathSet>"
+                         "</propSet>%s</specSet>" % refs)
+            try:
+                objs.extend(self._properties(task_spec))
+            except (NotSent, AuthError):
+                raise
+            except Exception:  # pylint: disable=broad-except
+                # 1.141.0: task lookup is optional - a pruned task never drops the inventory already read
+                pass
         return objs
 
     def _properties(self, spec):
@@ -439,6 +458,11 @@ def shape(objs, fleet=False):
     names = dict(((t, i), v.get("name", i)) for t, i, v in objs)
     nm = lambda ref: names.get(tuple(ref), ref[1]) if isinstance(ref, tuple) else ""     # noqa: E731
     alarms = {i: v["info.name"] for t, i, v in objs if t == "Alarm" and v.get("info.name")}
+    # 1.141.0: recent Task details for down hosts (planned reboot / maintenance detection)
+    tasks = {i: {"name": v.get("info.name") or "", "desc": v.get("info.descriptionId") or "",
+                 "state": v.get("info.state") or "", "start": v.get("info.startTime") or "",
+                 "end": v.get("info.completeTime") or ""}
+             for t, i, v in objs if t == "Task"}
     hosts, clusters, dss, vms = [], [], [], []
     for t, i, v in objs:
         if t == "HostSystem":
@@ -446,19 +470,26 @@ def shape(objs, fleet=False):
             par = v.get("parent")
             state = v.get("runtime.connectionState") or ""
             ok = state == "connected"
-            hosts.append({"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
-                          "overall": v.get("overallStatus"),
-                          # 1.131.1 (Codex #11): the triggered alarms by name (None: its name not read) and color - the model
-                          # lights Host hardware from the hardware alarms only, never from overallStatus
-                          "triggered": [[alarms.get(ref[1]), ref[2] if len(ref) > 2 else ""] for ref in v.get("triggeredAlarmState") or []
-                                        if isinstance(ref, tuple) and ref[0] == "Alarm"],
-                          "state": state, "maint": _bool(v.get("runtime.inMaintenanceMode")), "power": v.get("runtime.powerState") or "",
-                          "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
-                          "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
-                          "vms": sorted(nm(r) for r in v.get("vm") or [] if isinstance(r, tuple)),
-                          "datastores": sorted(nm(r) for r in v.get("datastore") or [] if isinstance(r, tuple))})
+            row = {"name": v.get("name", i), "cluster": nm(par) if isinstance(par, tuple) and par[0] == "ClusterComputeResource" else "",
+                   "overall": v.get("overallStatus"),
+                   # 1.131.1 (Codex #11): the triggered alarms by name (None: its name not read) and color - the model
+                   # lights Host hardware from the hardware alarms only, never from overallStatus
+                   "triggered": [[alarms.get(ref[1]), ref[2] if len(ref) > 2 else ""] for ref in v.get("triggeredAlarmState") or []
+                                 if isinstance(ref, tuple) and ref[0] == "Alarm"],
+                   "state": state, "maint": _bool(v.get("runtime.inMaintenanceMode")), "power": v.get("runtime.powerState") or "",
+                   "standby": v.get("runtime.standbyMode") or "", "quarantine": _bool(v.get("runtime.inQuarantineMode")),
+                   "boot_time": v.get("runtime.bootTime") or "", "das_state": v.get("runtime.dasHostState.state") or "",
+                   "tasks": [tasks[ref[1]] for ref in v.get("recentTask") or [] if isinstance(ref, tuple) and ref[0] == "Task" and ref[1] in tasks],
+                   "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), mhz * cores) if ok else None,
+                   "mem_pct": _pct(v.get("summary.quickStats.overallMemoryUsage"), mem / 1048576.0) if ok else None,
+                   "vms": sorted(nm(r) for r in v.get("vm") or [] if isinstance(r, tuple)),
+                   "datastores": sorted(nm(r) for r in v.get("datastore") or [] if isinstance(r, tuple))}
+            hosts.append(row)
         elif t == "ClusterComputeResource":
-            clusters.append({"name": v.get("name", i), "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple))})
+            cl = {"name": v.get("name", i), "hosts": sorted(nm(r) for r in v.get("host") or [] if isinstance(r, tuple))}
+            if "configuration.dasConfig.enabled" in v:
+                cl["ha"] = _bool(v.get("configuration.dasConfig.enabled"))
+            clusters.append(cl)
         elif t == "Datastore":
             dss.append({"name": v.get("name", i), "type": v.get("summary.type") or "", "capacity": _int(v.get("summary.capacity"), None),
                         "shared": _bool(v.get("summary.multipleHostAccess")),
@@ -471,6 +502,9 @@ def shape(objs, fleet=False):
                         "vcls": managed in (("VirtualCenter", "vcls-entity"), ("com.vmware.vim.eam", "cluster-agent")),
                         "tools": v.get("guest.toolsRunningStatus"), "tools_version": v.get("guest.toolsVersionStatus2"),
                         "name": v.get("name", i), "host": nm(v.get("runtime.host")), "power": v.get("runtime.powerState") or "",
+                        "conn": v.get("runtime.connectionState") or "", "boot_time": v.get("runtime.bootTime") or "",
+                        "das_protected": _bool(v.get("runtime.dasVmProtection.dasProtected")),
+                        "failover": _bool(v.get("runtime.vmFailoverInProgress")),
                         "cpu_pct": _pct(v.get("summary.quickStats.overallCpuUsage"), v.get("summary.runtime.maxCpuUsage")) if on else None,
                         "mem_pct": _pct(v.get("summary.quickStats.guestMemoryUsage"), v.get("summary.config.memorySizeMB")) if on else None,
                         "heartbeat": v.get("guestHeartbeatStatus") or None})     # not read: unknown
@@ -775,13 +809,14 @@ class Collector(object):
         twice. It is checked every cycle while stopped (no restart needed)."""
 
     def __init__(self, sources, seconds=60, auth_retry=900, log=None, keep_seconds=3900, clock=time.time, state_file=None,
-                 mono=None, reset=None, fleet=False):
+                 mono=None, reset=None, fleet=False, cap_keep_days=7):
         self.sources = list(sources)
         if fleet:
             for source in self.sources:
                 if isinstance(source, VcenterSource):
                     source.fleet = True
         self.seconds, self.auth_retry, self.keep = max(1, int(seconds)), max(1, int(auth_retry)), int(keep_seconds)
+        self.cap_keep = max(1, int(cap_keep_days or 7)) * 86400
         raw_log = log or (lambda d: None)
 
         def safe_log(d):
@@ -796,6 +831,8 @@ class Collector(object):
         self.st = dict((s.key, {"kind": s.kind, "name": s.name, "state": "never", "why": getattr(s, "why", "") if isinstance(s, BrokenSource) else "",
                                 "at": None, "tried": None, "next_try": None, "snap": None, "fail_since": None}) for s in self.sources)
         self.hist = {}
+        self.cap_hist = {}                                     # 1.141.0: capacity trend samples (ds / vol), separate from CPU/mem hist
+        self._cap_dirty = False
         self.tools_seen = {}
         self.instances = {}
         self.stop_ev = threading.Event()
@@ -821,9 +858,40 @@ class Collector(object):
             except Exception as e:  # pylint: disable=broad-except  - never a stop of the portal: no logins instead
                 self._stop_all("the wall's journal could not be opened (%s)" % short(e), persist=False)
             self._load_tools()
+            self._load_cap()
 
     # ---- 1.131.1 (Codex #5): which VMs ran Tools, kept across restarts - a VM that hangs while the portal restarts stays watched
     TOOLS_FILE, TOOLS_MAX = "wall-tools-seen.json", 4 * 1024 * 1024
+    # ---- 1.141.0: datastore & ONTAP volume used-bytes samples for Capacity card "Days to full" trend (persisted across restarts)
+    CAP_FILE, CAP_MAX, CAP_SAMPLE_MIN_S, CAP_POINTS_MAX = "wall-capacity-hist.json", 4 * 1024 * 1024, 900, 200
+
+    def _load_cap(self):
+        try:
+            raw = _read_regular(self._path(self.CAP_FILE), self.CAP_MAX)
+            d = json.loads(raw.decode("utf-8"))
+        except FileNotFoundError:
+            return
+        except Exception as e:  # pylint: disable=broad-except
+            self.log({"event": "wall", "cap_history": "not read", "why": short(e)})
+            return
+        if isinstance(d, list):
+            for entry in d[:20000]:
+                if not (isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], list) and isinstance(entry[1], list)):
+                    continue
+                k = tuple(str(x) for x in entry[0])
+                pts = []
+                for p in entry[1][-self.CAP_POINTS_MAX:]:
+                    if isinstance(p, list) and len(p) == 3 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in p):
+                        pts.append((float(p[0]), int(p[1]), int(p[2])))
+                if len(k) >= 3 and pts:
+                    self.cap_hist[k] = collections.deque(pts, maxlen=self.CAP_POINTS_MAX)
+
+    def _save_cap(self):
+        if not self.state_file:
+            return
+        with self.lock:
+            rows = [[list(k), [[round(t, 1), u, sz] for t, u, sz in q]] for k, q in self.cap_hist.items() if q]
+        self._write_file(self._path(self.CAP_FILE), json.dumps(rows, separators=(",", ":")))
 
     def _load_tools(self):
         try:
@@ -1167,6 +1235,8 @@ class Collector(object):
                         self.tools_seen[keep.key] = self.tools_seen.pop(drop.key)
                     for k in [k for k in self.hist if k[0] == drop.key]:
                         self.hist[(keep.key,) + k[1:]] = self.hist.pop(k)
+                    for k in [k for k in self.cap_hist if len(k) >= 2 and k[1] == drop.key]:
+                        self.cap_hist[(k[0], keep.key) + k[2:]] = self.cap_hist.pop(k)
                 bare, full = getattr(drop, "host", ""), getattr(keep, "host", "")
                 if bare and full and not _fqdn(bare) and _fqdn(full) and full.split(".", 1)[0].casefold() == bare.casefold():
                     self.log({"event": "wall", "source": drop.key, "state": "duplicate vCenter",
@@ -1188,9 +1258,14 @@ class Collector(object):
                 if getattr(s, "vcenter_omitted", False):
                     st["vcenter_omitted"] = True
                 self._keep(s.key, snap, done)
+            if s.kind in ("vcenter", "ontap"):
+                self._keep_cap(s.kind, s.key, snap, done)
         if getattr(self, "_tools_dirty", False):
             self._tools_dirty = False
             self._save_tools()
+        if getattr(self, "_cap_dirty", False):
+            self._cap_dirty = False
+            self._save_cap()
         if was in ("auth", "error", "paused"):
             self.log({"event": "wall", "source": s.key, "state": "read again"})
 
@@ -1224,10 +1299,41 @@ class Collector(object):
             if not q:
                 del self.hist[k]
 
+    def _keep_cap(self, kind, key, snap, t):
+        """1.141.0: record datastore & ONTAP volume (t, used_bytes, size_bytes) samples for Capacity card Days to full trend."""
+        add = []
+        if kind == "vcenter":
+            for d in snap.get("datastores") or []:
+                dn, cap, free = d.get("name"), d.get("capacity"), d.get("free")
+                if dn and isinstance(cap, (int, float)) and cap > 0 and isinstance(free, (int, float)) and 0 <= free <= cap:
+                    add.append((("ds", key, str(dn)), int(cap) - int(free), int(cap)))
+        elif kind == "ontap":
+            for v in snap.get("volumes") or []:
+                vn, svm, sz, used = v.get("name"), v.get("svm") or "", v.get("size"), v.get("used")
+                if vn and isinstance(sz, (int, float)) and sz > 0 and isinstance(used, (int, float)) and 0 <= used <= sz:
+                    add.append((("vol", key, str(svm), str(vn)), int(used), int(sz)))
+        dirty = False
+        for k, used, sz in add:
+            q = self.cap_hist.setdefault(k, collections.deque(maxlen=self.CAP_POINTS_MAX))
+            if not q or (t - q[-1][0]) >= self.CAP_SAMPLE_MIN_S or q[-1][2] != sz or abs(used - q[-1][1]) >= max(1, sz // 100):
+                q.append((float(t), used, sz))
+                dirty = True
+        cut = t - self.cap_keep
+        for k in [k for k in self.cap_hist if len(k) >= 2 and k[1] == key]:
+            q = self.cap_hist[k]
+            while q and q[0][0] < cut:
+                q.popleft()
+                dirty = True
+            if not q:
+                del self.cap_hist[k]
+        if dirty:
+            self._cap_dirty = True
+
     def view(self):
         with self.lock:
             return {"sources": dict((k, dict(v)) for k, v in self.st.items()),
-                    "history": dict((k, list(q)) for k, q in self.hist.items())}
+                    "history": dict((k, list(q)) for k, q in self.hist.items()),
+                    "cap_history": dict((k, list(q)) for k, q in self.cap_hist.items())}
 
 
 def _hosts(v):

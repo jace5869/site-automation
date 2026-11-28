@@ -1229,6 +1229,11 @@ no longer in the latest read, they say when it was last seen.
 
 Since 1.140.0, every portal server list (Ops monitor *Not up* and full list modal, Network & AD health wall, Active Directory domain controller status table, and VMware cluster ESXi hosts) also includes per-row checkboxes (**Space** to toggle, **Shift+click** for a range), a live **`n selected`** count, **Clear**, visible keyboard/click cues, a per-server **Copy ▾** control (**Copy both** / **Copy text** / **Copy picture**), and a **Copy selected** / **Copy all shown** control (copying ticked rows when selected, or all shown rows when nothing is ticked) as rich HTML + plain text and a ~700 px Teams picture card (command copy blocks stay raw command text only).
 
+Since 1.141.0, the ops wall adds two report-card Teams shares using the same dark card style and four-state **Copy ▾** helper (*Copying…*, *Copied*, *Text only* with why, *Copy failed* with why, plus *Save picture* and *Preview card*):
+
+- **ESXi host unexpected outage card** (on the VMware area and `?open=card:esxi`): lists down ESXi hosts from the live vCenter collector, automatically excluding maintenance mode, quarantine, standby, recent vCenter reboot/shutdown/maintenance tasks (within `portal_wall_planned_reboot_minutes`), and host globs in `portal_wall_planned_reboot`. Each down host nests its affected VMs (**VM | Service | Powered state | HA restarted elsewhere?**), ordered worst first with total and per-host counts, and `Wall: <url>` last. Missing or stale vCenter fields stay grey **not read**, never green.
+- **Capacity card** (on the Storage area and `?open=card:capacity`): lists full VMware datastores (`DS`, using `portal_wall_datastore_warn` / `_crit`) and NetApp ONTAP volumes (`VOL`, using `portal_wall_volume_warn` / `_crit`) from live vCenter and ONTAP reads — **Name | Where | Used %** (with configured warning/critical limit ticks drawn on each bar) **| Free | Days to full** (computed from persisted live capacity trend samples over `portal_wall_capacity_trend_days`, or *no trend*). Ordered fullest first with header `<site> · <time> · n over critical, n over warning`, link last, readable with 40 rows at 2× HiDPI PNG, and grey **not read** whenever a source or field is missing or stale.
+
 ### Ops monitor (1.136.0)
 
 **On by default since 1.140.0.** Run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the same credential the live Network map uses). Set `portal_wall_monitor: false` to hide the Ops monitor area and deploy without the monitor files or SolarWinds requirement.
@@ -1548,6 +1553,10 @@ in force.
 | `portal_wall_high_pct` | 90 | a host's or VM's CPU or memory at this % or more ... | VMware |
 | `portal_wall_high_minutes` | 15 | ... for this many minutes: warning (shorter spikes stay off) | VMware |
 | `portal_wall_maintenance_expected` | [] | hosts whose maintenance mode is expected (any other: warning) | VMware |
+| `portal_wall_planned_reboot` | [] | host globs in a planned/known reboot (excluded from the ESXi unexpected outage card) | VMware |
+| `portal_wall_planned_reboot_minutes` | 30 | minutes after a vCenter reboot/maintenance task during which a down host counts as planned | VMware |
+| `portal_wall_volume_warn` / `_crit` | 85 / 95 | NetApp ONTAP and SolarWinds volume % used warning / critical limits | Storage |
+| `portal_wall_capacity_trend_days` | 7 | lookback window (days) for the Capacity card's Days to full trend | Storage and VMware |
 | `portal_wall_vm_heartbeat` | true | watch for loss of previously running Tools on powered-on workload VMs | VMware |
 | `portal_wall_exclude` | {} | name globs by object kind | VMware and Storage |
 | `portal_wall_ds_ignore` | `['iso', 'isos', 'iso-*', 'iso_*', '*-iso', '*_iso', '*-isos', '*content-library*']` | datastore names outside the capacity watch (whole-name globs) | VMware and Storage |

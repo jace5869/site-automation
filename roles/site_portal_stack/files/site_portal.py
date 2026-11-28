@@ -7298,7 +7298,7 @@ def netapp_page(cfg, cn, statics, token=""):
 
 
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
-WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
+WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js", "wall-cards.js")
 FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
 HEALTH_STATIC = ("wall-health.js", "wall-health.css")           # 1.138.0: Network & AD health wall area
 SITEMAP_STATIC = ("site-map.js", "site-map.css")                # 1.138.0: Site map (SolarWinds lat/lon, offline wall-land.js)
@@ -7414,7 +7414,8 @@ class WallLive(object):
                 try:
                     self.collector = wall_live.Collector(src, seconds=cfg.wall_opts["seconds"], auth_retry=cfg.wall_auth_retry,
                                                          log=lambda d: _safe_add(log, dict({"event": "wall"}, **d)), keep_seconds=keep,
-                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), fleet=cfg.wall_fleet)
+                                                         state_file=os.path.join(cfg.data, "wall-backoff.json"), fleet=cfg.wall_fleet,
+                                                         cap_keep_days=cfg.wall_opts["cap_trend_days"])
                     self.collector.start()
                 except Exception as e:  # pylint: disable=broad-except  - the wall never stops the portal
                     why = "collector not started: " + clean(str(e), 200)
@@ -7620,11 +7621,12 @@ def wall_page(cfg, cn, statics, token=""):
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-cards.js?v=%s" defer></script>'
             '<script src="%sstatic/wall-styles.js?v=%s" defer></script>%s%s<script src="%sstatic/wall-page.js?v=%s" defer></script>'
             % (cfg.path, cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
                (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
                ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
-               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"),
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-cards.js"), cfg.path, v("wall-styles.js"),
                ('<script src="%sstatic/wall-fleet.js?v=%s" defer></script>' % (cfg.path, v("wall-fleet.js"))) if cfg.wall_fleet else "",
                ('<script src="%sstatic/wall-health.js?v=%s" defer></script>' % (cfg.path, v("wall-health.js"))) if health_on else "",
                cfg.path, v("wall-page.js")))

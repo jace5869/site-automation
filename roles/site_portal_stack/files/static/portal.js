@@ -1966,6 +1966,16 @@ function keyboard() {
         b.append(el("span", "omark", e[1]), mid, tag);
         menu.append(b);
       }
+      // 1.141.0: optional extra menu actions (e.g. Save picture, Preview card)
+      if (Array.isArray(opts.extraEntries) && opts.extraEntries.length) {
+        menu.append(el("div", "copy-sep"));
+        for (const e of opts.extraEntries) {
+          const b = el("button", "copy-opt"); b.type = "button"; b.setAttribute("role", "menuitem"); b.setAttribute("data-mode", e[0]);
+          const mid = el("span"); mid.append(el("strong", "", e[2]), el("small", "", e[3] || ""));
+          b.append(el("span", "omark", e[1]), mid, el("span", "", e[4] || ""));
+          menu.append(b);
+        }
+      }
       sp.append(mainBtn, tog, menu);
       let resetTimer = null;
       const run = (mode) => {

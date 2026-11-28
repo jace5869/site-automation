@@ -10,6 +10,7 @@ settings (the thresholds). Its answer: the wall conditions open now and cleared 
   - a condition keeps its start while it stays open (Tracker); one that goes away is "cleared" for 4 hours (the Map's timeline).
 Standard library only; no I/O (the caller reads, this works it out), so the tests drive it with made-up reads."""
 import collections
+import datetime
 import fnmatch
 import math
 import re
@@ -64,7 +65,9 @@ DEFAULTS = {"ds_warn": 85.0, "ds_crit": 95.0, "aggr_warn": 85.0, "aggr_crit": 97
             "wan_util_warn": 75.0, "wan_util_crit": 90.0,
             "wan_rtt_warn": 80.0, "wan_rtt_crit": 150.0,
             "wan_loss_warn": 1.0, "wan_loss_crit": 3.0,
-            "sustained_minutes": 15, "down_polls": 2}
+            "sustained_minutes": 15, "down_polls": 2,
+            # 1.141.0: ESXi unexpected outage & Capacity Teams share cards
+            "planned_reboot": [], "planned_reboot_minutes": 30, "cap_trend_days": 7}
 
 
 def opts_of(o):
@@ -115,6 +118,9 @@ def opts_of(o):
     out["ad_old_minutes"] = max(10, min(10080, out["ad_old_minutes"]))
     out["sustained_minutes"] = max(1, min(240, out["sustained_minutes"]))
     out["down_polls"] = max(1, min(10, out["down_polls"]))
+    # 1.141.0: clamp planned reboot window and capacity trend lookback
+    out["planned_reboot_minutes"] = max(5, min(1440, out["planned_reboot_minutes"]))
+    out["cap_trend_days"] = max(1, min(90, out["cap_trend_days"]))
     return out
 
 
@@ -304,12 +310,19 @@ class Tracker(object):
         self.keep, self.open, self.cleared = keep, {}, collections.OrderedDict()
         self.aliases = set()
         self.first = None                      # the first read it saw: "watching since" (memory only)
+        self.host_vms = {}                     # 1.141.0: (vc, host) -> {vm_key: {id, name, power, service}} while host connected
+        self.outage_vms = {}                   # 1.141.0: (vc, host) -> frozen pre-outage VMs while host is unexpectedly down
 
     def merge_vcenter(self, alias, name):
         """Rekey prior observations when two authenticated endpoints prove to be the same inventory."""
         if (alias, name) in self.aliases:
             return
         self.aliases.add((alias, name))
+        for store in (self.host_vms, self.outage_vms):
+            for (vc, hn), val in list(store.items()):
+                if vc == alias:
+                    store.setdefault((name, hn), {}).update(val)
+                    del store[(vc, hn)]
         for conditions in (self.open, self.cleared):
             for old_id, c in list(conditions.items()):
                 if c.get("vc") != alias:
@@ -425,9 +438,12 @@ def vmware_part(view, o, now):
                    "ds": sorted(h.get("datastores") or []), "power": h.get("power") or "", "site": site_of(rx, h.get("cluster"), hn), "st": "ok"}
             if down:
                 row["st"] = "crit"
-                conds.append({"id": "host:%s:%s" % (name, hn), "kind": "host", "t": "%s %s" % (hn, "not responding" if st == "notResponding" else "disconnected"),
-                              "obj": "cluster %s · %d VMs on it" % (row["cluster"] or "-", row["nvms"]), "feed": fk, "vc": name, "host": hn,
-                              "cluster": row["cluster"], "site": row["site"]})
+                c_host = {"id": "host:%s:%s" % (name, hn), "kind": "host", "t": "%s %s" % (hn, "not responding" if st == "notResponding" else "disconnected"),
+                          "obj": "cluster %s · %d VMs on it" % (row["cluster"] or "-", row["nvms"]), "feed": fk, "vc": name, "host": hn,
+                          "cluster": row["cluster"], "site": row["site"]}
+                if isinstance(h.get("since"), (int, float)):
+                    c_host["start"] = float(h["since"])
+                conds.append(c_host)
             elif st != "connected" or maint is None:
                 row["st"] = "stale"                    # its state or its maintenance mode not read: unknown - never up, never green
             else:
@@ -775,6 +791,604 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
     return part, conds, feeds, ok
 
 
+# ---- 1.141.0: ESXi unexpected outage & Capacity report cards (Teams share cards) --------------------------------------------
+PLANNED_TASK_TOKENS = (
+    "reboothost", "shutdownhost", "entermaintenancemode", "exitmaintenancemode",
+    "powerdownhosttostandby", "host.reboot", "host.shutdown", "host.entermaintenance",
+    "remediate", "installupdate", "stage", "vum", "vlcm", "lifecycle", "firmware",
+)
+MIN_TREND_SPAN_S = 1800
+
+
+def _iso_epoch(text):
+    """Parse a vCenter ISO 8601 timestamp -> UTC epoch seconds, or None."""
+    s = str(text or "").strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp()
+
+
+def _cap_free(b):
+    if b is None:
+        return "not read"
+    b = float(b)
+    if b >= 1024 ** 4:
+        return "%.1f TB" % (b / 1024 ** 4)
+    if b >= 1024 ** 3:
+        return "%.0f GB" % (b / 1024 ** 3)
+    if b > 0:
+        return "%.0f MB" % (b / 1024 ** 2)
+    return "0 GB"
+
+
+def _planned_reason(h, o, ref_time):
+    """1.141.0: classify whether a down ESXi host is in maintenance mode or a planned/known reboot (from what vCenter reports)."""
+    if h.get("maint") is True:
+        return "maintenance mode"
+    if h.get("quarantine") is True:
+        return "quarantine mode"
+    if str(h.get("standby") or "").strip().lower() in ("entering", "in", "exiting"):
+        return "standby mode"
+    if str(h.get("power") or "").strip().lower() == "standby":
+        return "host in standby"
+    if h.get("planned_reboot") is True:
+        return "planned reboot"
+    if matches(h.get("name"), o.get("planned_reboot")):
+        return "planned reboot (portal_wall_planned_reboot)"
+    win = int(o.get("planned_reboot_minutes", 30)) * 60
+    for task in h.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        tname = str(task.get("name") or "")
+        tdesc = str(task.get("desc") or "")
+        joined = (tname + " " + tdesc).lower()
+        if not any(tok in joined for tok in PLANNED_TASK_TOKENS):
+            continue
+        tstate = str(task.get("state") or "").lower()
+        label = tname or tdesc or "reboot"
+        if tstate in ("running", "queued"):
+            return "planned task (%s)" % label
+        if tstate == "success":
+            ts = _iso_epoch(task.get("end")) or _iso_epoch(task.get("start"))
+            if ts is not None and ref_time is not None and -300 <= (float(ref_time) - ts) <= win:
+                return "planned reboot task (%s)" % label
+    return ""
+
+
+def days_to_full(samples, size, free, max_days=7, anchor=None):
+    """1.141.0: OLS growth trend from live capacity samples [(t, used[, size])] -> (days_or_None, text, sev)."""
+    if size is None or not isinstance(size, (int, float)) or size <= 0 or free is None or not isinstance(free, (int, float)):
+        return None, "not read", "stale"
+    if free <= 0:
+        return 0.0, "< 1 d", "crit"
+    pts = []
+    for p in samples or ():
+        if not isinstance(p, (list, tuple)) or len(p) < 2:
+            continue
+        try:
+            t = float(p[0])
+            u = float(p[1])
+            sz = float(p[2]) if len(p) >= 3 and p[2] is not None else None
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(t) and math.isfinite(u) and u >= 0:
+            pts.append((t, u, sz))
+    if len(pts) < 2:
+        return None, "no trend", "none"
+    pts.sort(key=lambda x: x[0])
+    ref = float(anchor) if anchor is not None else pts[-1][0]
+    cut = ref - max(1, int(max_days or 7)) * 86400.0
+    pts = [p for p in pts if p[0] >= cut]
+    # Keep only the trailing contiguous run at the current capacity (a resize invalidates older samples)
+    tol = max(1.0, float(size) * 0.01)
+    same = []
+    for p in reversed(pts):
+        if p[2] is not None and abs(p[2] - float(size)) > tol:
+            break
+        same.append(p)
+    same.reverse()
+    if len(same) < 2 or (same[-1][0] - same[0][0]) < MIN_TREND_SPAN_S:
+        return None, "no trend", "none"
+    n = float(len(same))
+    mt = sum(p[0] for p in same) / n
+    mu = sum(p[1] for p in same) / n
+    vt = sum((p[0] - mt) ** 2 for p in same)
+    if vt <= 0:
+        return None, "no trend", "none"
+    cov = sum((p[0] - mt) * (p[1] - mu) for p in same)
+    rate_bps = cov / vt
+    if not math.isfinite(rate_bps) or rate_bps <= 0:
+        return None, "no trend", "none"
+    days = float(free) / (rate_bps * 86400.0)
+    if not math.isfinite(days) or days > 3650:
+        return None, "no trend", "none"
+    if days < 1.0:
+        return round(days, 2), "< 1 d", "crit"
+    d_int = max(1, int(round(days)))
+    if days < 7.0:
+        return round(days, 1), "%d d" % d_int, "crit"
+    if days < 14.0:
+        return round(days, 1), "%d d" % d_int, "warn"
+    return round(days, 1), "%d d" % d_int, "ok"
+
+
+def esxi_card(view, vm, conds, feeds, o, tracker, now):
+    """1.141.0: live ESXi host unexpected outage report card model (excludes maintenance & planned reboots; worst first)."""
+    srcs = sorted([dict(s, key=k) for k, s in ((view or {}).get("sources") or {}).items() if s.get("kind") == "vcenter"],
+                  key=lambda s: str(s.get("name")))
+    if not srcs:
+        return {"configured": False, "state": "off", "fresh": "stale", "asof": None,
+                "why": "no vCenter configured", "counts": {"hosts": 0, "vms": 0, "not_restarted": 0, "restarted": 0,
+                                                           "powering_on": 0, "not_read_vms": 0, "not_read_hosts": 0, "excluded": 0},
+                "hosts": [], "excluded": [], "unread_hosts": [], "unread": []}
+    cond_start = {}
+    for c in conds or ():
+        if c.get("kind") == "host" and c.get("end") is None:
+            cond_start[(c.get("vc") or "", c.get("host") or "")] = c.get("start")
+    down_hosts, excluded_hosts, unread_hosts, unread = [], [], [], []
+    asofs, worst_fresh = [], "ok"
+    fresh_rank = {"ok": 0, "late": 1, "stale": 2}
+    any_snap = False
+    for src in srcs:
+        vc_name = str(src.get("name") or "")
+        fk = _vc_feed(src)
+        f = feeds.get(fk) or {}
+        f_state = f.get("state") or src.get("state") or "never"
+        f_asof = f.get("asof") if f.get("asof") is not None else src.get("at")
+        f_fresh = f.get("fresh") or fstate(None if f_asof is None else max(0, int(now - float(f_asof))), o)
+        if f_state != "ok":
+            f_fresh = "stale"
+        if fresh_rank.get(f_fresh, 2) > fresh_rank.get(worst_fresh, 0):
+            worst_fresh = f_fresh
+        if f_asof is not None:
+            asofs.append(float(f_asof))
+        snap = src.get("snap") or {}
+        if f_state != "ok":
+            unread.append("vCenter %s: %s" % (vc_name, src.get("why") or ("login failed" if f_state == "auth" else "not read")))
+        elif f_fresh == "stale":
+            unread.append("vCenter %s: data not current" % vc_name)
+        if not snap:
+            if f_state == "ok":
+                unread.append("vCenter %s: no inventory read yet" % vc_name)
+            continue
+        any_snap = True
+        read_fresh = (f_state == "ok" and f_fresh != "stale")
+        ref_time = f_asof if f_asof is not None else now
+        hosts_raw = [h for h in (snap.get("hosts") or []) if not matches(h.get("name"), o["exclude"].get("hosts"))]
+        vms_raw = [v for v in (snap.get("vms") or [])
+                   if not matches(v.get("name"), o["exclude"].get("vms")) and v.get("template") is not True and v.get("vcls") is not True]
+        host_states = {str(h.get("name") or ""): str(h.get("state") or "") for h in hosts_raw}
+        cluster_ha = {str(c.get("name") or ""): c.get("ha") for c in (snap.get("clusters") or []) if isinstance(c, dict)}
+        vms_by_id, vms_by_name, vms_by_host, vms_by_prev = {}, {}, collections.defaultdict(list), collections.defaultdict(list)
+        for v in vms_raw:
+            vid = str(v.get("id") or "")
+            vname = str(v.get("name") or vid)
+            if vid:
+                vms_by_id[vid] = v
+            if vname:
+                vms_by_name[vname] = v
+            vh = str(v.get("host") or "")
+            if vh:
+                vms_by_host[vh].append(v)
+            prev_h = str(v.get("ha_from") or v.get("prev_host") or "")
+            if prev_h:
+                vms_by_prev[prev_h].append(v)
+        # Update Tracker's pre-outage host->VMs map so HA-restarted VMs stay linked to the downed host
+        if tracker is not None:
+            for h in hosts_raw:
+                hn = str(h.get("name") or "")
+                st_ = str(h.get("state") or "")
+                if st_ == "connected" and read_fresh:
+                    tracker.outage_vms.pop((vc_name, hn), None)
+                    cur_map = {}
+                    for v in vms_by_host.get(hn, ()):
+                        vk = str(v.get("id") or v.get("name") or "")
+                        if vk:
+                            cur_map[vk] = {"id": str(v.get("id") or ""), "name": str(v.get("name") or vk),
+                                           "service": str(v.get("service") or "")}
+                    for vn in h.get("vms") or ():
+                        if vn in vms_by_name:
+                            v = vms_by_name[vn]
+                            vk = str(v.get("id") or v.get("name") or "")
+                            if vk:
+                                cur_map.setdefault(vk, {"id": str(v.get("id") or ""), "name": str(v.get("name") or vk),
+                                                        "service": str(v.get("service") or "")})
+                    tracker.host_vms[(vc_name, hn)] = cur_map
+        for h in hosts_raw:
+            hn = str(h.get("name") or "")
+            st_ = str(h.get("state") or "")
+            cl = str(h.get("cluster") or "")
+            maint = h.get("maint") if isinstance(h.get("maint"), bool) else None
+            if st_ not in DOWN_STATES + ("connected",):
+                unread_hosts.append({"name": hn, "vc": vc_name, "cluster": cl, "why": "host state not read"})
+                unread.append("host %s: state not read" % hn)
+                continue
+            if st_ == "connected":
+                if maint is None:
+                    unread.append("host %s: maintenance mode not read" % hn)
+                continue
+            # Host is down (notResponding / disconnected)
+            why_excl = _planned_reason(h, o, ref_time)
+            if why_excl:
+                excluded_hosts.append({"name": hn, "vc": vc_name, "cluster": cl, "conn": st_, "reason": why_excl})
+                if tracker is not None:
+                    tracker.outage_vms.pop((vc_name, hn), None)
+                continue
+            if maint is None:
+                unread.append("host %s: maintenance mode not read" % hn)
+            # Gather all affected VMs: frozen pre-outage VMs + currently mapped VMs + host's vm list + ha_from hints
+            affected = collections.OrderedDict()
+            if tracker is not None:
+                if (vc_name, hn) not in tracker.outage_vms:
+                    tracker.outage_vms[(vc_name, hn)] = dict(tracker.host_vms.get((vc_name, hn)) or {})
+                frozen = tracker.outage_vms[(vc_name, hn)]
+            else:
+                frozen = {}
+            for vk, info in frozen.items():
+                affected[vk] = dict(info)
+            for v in list(vms_by_host.get(hn, ())) + list(vms_by_prev.get(hn, ())):
+                vk = str(v.get("id") or v.get("name") or "")
+                if vk:
+                    entry = {"id": str(v.get("id") or ""), "name": str(v.get("name") or vk), "service": str(v.get("service") or "")}
+                    affected.setdefault(vk, entry)
+                    if tracker is not None:
+                        frozen.setdefault(vk, entry)
+            for vn in h.get("vms") or ():
+                if matches(vn, o["exclude"].get("vms")):
+                    continue
+                v = vms_by_name.get(vn)
+                if v is not None:
+                    if v.get("template") is True or v.get("vcls") is True:
+                        continue
+                    vk = str(v.get("id") or v.get("name") or "")
+                    entry = {"id": str(v.get("id") or ""), "name": str(v.get("name") or vn), "service": str(v.get("service") or "")}
+                else:
+                    vk = str(vn)
+                    entry = {"id": "", "name": str(vn), "service": ""}
+                if vk:
+                    affected.setdefault(vk, entry)
+                    if tracker is not None:
+                        frozen.setdefault(vk, entry)
+            vm_rows = []
+            c_ha = cluster_ha.get(cl)
+            for vk, info in affected.items():
+                v = (vms_by_id.get(info["id"]) if info.get("id") else None) or vms_by_name.get(info["name"])
+                vname = (v.get("name") if v else None) or info["name"]
+                svc = (v.get("service") if v and v.get("service") else None) or info.get("service") or ""
+                if v is None:
+                    p_lbl, p_sev = "Not read", "stale"
+                    ha_val, ha_lbl, ha_tgt, ha_why, ha_sev, sev = None, "Not read", "", "VM not in current inventory", "stale", "stale"
+                else:
+                    cur_h = str(v.get("host") or "")
+                    cur_h_st = host_states.get(cur_h, "")
+                    pwr = v.get("power")
+                    conn = str(v.get("conn") or "")
+                    failover = v.get("failover")
+                    das_p = v.get("das_protected")
+                    moved = bool(cur_h and cur_h != hn and cur_h_st == "connected")
+                    if moved:
+                        if pwr == "poweredOn" and conn not in ("disconnected", "inaccessible", "orphaned"):
+                            ha_val, ha_tgt, ha_why = True, cur_h, ""
+                            if failover is True:
+                                p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powering on (HA)", "warn", "Yes \u2192 " + cur_h, "warn", "warn"
+                            else:
+                                p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powered on", "ok", "Yes \u2192 " + cur_h, "ok", "ok"
+                        elif failover is True:
+                            ha_val, ha_tgt, ha_why = True, cur_h, ""
+                            p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powering on (HA)", "warn", "Yes \u2192 " + cur_h, "warn", "warn"
+                        elif pwr in ("poweredOff", "suspended"):
+                            p_lbl = "Powered off" if pwr == "poweredOff" else "Suspended"
+                            ha_val, ha_tgt, ha_why = False, cur_h, "on %s, %s" % (cur_h, p_lbl.lower())
+                            p_sev, ha_lbl, ha_sev, sev = "crit", "No \u00b7 " + ha_why, "crit", "crit"
+                        else:
+                            p_lbl, p_sev = "Not read", "stale"
+                            ha_val, ha_tgt, ha_why = None, cur_h, "power state not read"
+                            ha_lbl, ha_sev, sev = "Not read", "stale", "stale"
+                    else:
+                        if pwr not in POWER_KNOWN:
+                            p_lbl, p_sev = "Not read", "stale"
+                            ha_val, ha_tgt, ha_why = None, "", "power state not read"
+                            ha_lbl, ha_sev, sev = "Not read", "stale", "stale"
+                        elif failover is True:
+                            p_lbl, p_sev = "Powering on (HA)", "warn"
+                            ha_val, ha_tgt, ha_why = False, "", "failover in progress"
+                            ha_lbl, ha_sev, sev = "No \u00b7 failover in progress", "warn", "warn"
+                        else:
+                            if conn == "inaccessible":
+                                p_lbl = "Inaccessible"
+                            elif conn == "orphaned":
+                                p_lbl = "Orphaned"
+                            elif pwr == "poweredOff":
+                                p_lbl = "Powered off"
+                            elif pwr == "suspended":
+                                p_lbl = "Suspended"
+                            else:
+                                p_lbl = "Disconnected"
+                            p_sev = "crit"
+                            ha_val, ha_tgt = False, ""
+                            if c_ha is False:
+                                ha_why = "cluster HA disabled"
+                            elif das_p is False:
+                                ha_why = "not HA protected"
+                            elif conn == "inaccessible":
+                                ha_why = "inaccessible"
+                            else:
+                                ha_why = "still on down host"
+                            ha_lbl, ha_sev, sev = "No \u00b7 " + ha_why, "crit", "crit"
+                # Stale/failed vCenter feed: never green
+                if not read_fresh:
+                    if p_sev == "ok":
+                        p_sev = "stale"
+                    if ha_sev == "ok":
+                        ha_sev = "stale"
+                    if sev == "ok":
+                        sev = "stale"
+                vm_rows.append({"name": vname, "id": str(info.get("id") or ""), "service": svc,
+                                "power": p_lbl, "power_sev": p_sev, "ha": ha_val, "ha_label": ha_lbl,
+                                "ha_target": ha_tgt, "ha_reason": ha_why, "ha_sev": ha_sev, "sev": sev})
+            vm_rank = {"crit": 0, "stale": 1, "warn": 2, "ok": 3}
+            vm_rows.sort(key=lambda r: (vm_rank.get(r["sev"], 1), r["name"].casefold()))
+            hc = {
+                "total": len(vm_rows),
+                "not_restarted": sum(1 for r in vm_rows if r["ha"] is False),
+                "restarted": sum(1 for r in vm_rows if r["ha"] is True),
+                "powering_on": sum(1 for r in vm_rows if r["sev"] == "warn"),
+                "not_read": sum(1 for r in vm_rows if r["ha"] is None),
+            }
+            conn_txt = "Not responding" if st_ == "notResponding" else "Disconnected"
+            note = conn_txt + (" \u00b7 maintenance mode not read" if maint is None else " \u00b7 not in maintenance \u00b7 no reboot task")
+            since = cond_start.get((vc_name, hn))
+            if since is None:
+                since = h.get("since") if isinstance(h.get("since"), (int, float)) else f_asof
+            down_hosts.append({
+                "name": hn, "vc": vc_name, "cluster": cl, "ip": str(h.get("ip") or ""),
+                "conn": st_, "since": since, "feed": fk, "stale": not read_fresh,
+                "maint_unknown": maint is None, "note": note,
+                "sev": "stale" if not read_fresh else ("crit" if hc["not_restarted"] or hc["not_read"] or hc["total"] == 0 else "warn"),
+                "counts": hc, "vms": vm_rows,
+            })
+    # Worst first: most unrecovered VMs, then most unread VMs, then most powering on, then most total affected VMs, then earliest outage
+    down_hosts.sort(key=lambda x: (-x["counts"]["not_restarted"], -x["counts"]["not_read"], -x["counts"]["powering_on"],
+                                   -x["counts"]["total"], x["since"] if x["since"] is not None else 1e18, x["name"].casefold()))
+    counts = {
+        "hosts": len(down_hosts),
+        "vms": sum(h["counts"]["total"] for h in down_hosts),
+        "not_restarted": sum(h["counts"]["not_restarted"] for h in down_hosts),
+        "restarted": sum(h["counts"]["restarted"] for h in down_hosts),
+        "powering_on": sum(h["counts"]["powering_on"] for h in down_hosts),
+        "not_read_vms": sum(h["counts"]["not_read"] for h in down_hosts),
+        "not_read_hosts": len(unread_hosts),
+        "excluded": len(excluded_hosts),
+    }
+    if not any_snap or (not down_hosts and (worst_fresh != "ok" or unread or unread_hosts)):
+        state = "stale"
+    elif down_hosts:
+        if worst_fresh == "stale" and all(h["stale"] for h in down_hosts):
+            state = "stale"
+        elif counts["not_restarted"] or counts["not_read_vms"] or counts["powering_on"] or counts["vms"] == 0:
+            state = "crit"
+        else:
+            state = "warn"
+    else:
+        state = "ok"
+    why = " \u00b7 ".join(unread[:3]) if unread else ""
+    return {"configured": True, "state": state, "fresh": worst_fresh, "asof": min(asofs) if asofs else None,
+            "why": why, "counts": counts, "hosts": down_hosts, "excluded": excluded_hosts,
+            "unread_hosts": unread_hosts, "unread": unread[:10]}
+
+
+def _cap_samples(cap_hist, *keys):
+    for k in keys:
+        if k in cap_hist:
+            return cap_hist[k]
+    return None
+
+
+def capacity_card(view, vm, st, feeds, o, now):
+    """1.141.0: live Capacity report card model (VMware datastores + NetApp ONTAP volumes; fullest first; configured limits)."""
+    sources_map = (view or {}).get("sources") or {}
+    vc_srcs = sorted([dict(s, key=k) for k, s in sources_map.items() if s.get("kind") == "vcenter"], key=lambda s: str(s.get("name")))
+    on_srcs = sorted([dict(s, key=k) for k, s in sources_map.items() if s.get("kind") == "ontap"], key=lambda s: str(s.get("name")))
+    cap_hist = (view or {}).get("cap_history") or {}
+    limits = {"ds": [o["ds_warn"], o["ds_crit"]], "vol": [o["volume_warn"], o["volume_crit"]], "trend_days": o["cap_trend_days"]}
+    if not vc_srcs and not on_srcs:
+        return {"configured": False, "state": "off", "fresh": "stale", "asof": None, "why": "no vCenter or ONTAP configured",
+                "limits": limits,
+                "sources": {"vcenter": {"configured": False, "fresh": "stale", "state": "off", "count": 0, "unread": 0},
+                            "ontap": {"configured": False, "fresh": "stale", "state": "off", "count": 0, "unread": 0}},
+                "counts": {"total": 0, "crit": 0, "warn": 0, "ds": 0, "vol": 0, "not_read": 0, "ds_total": 0, "vol_total": 0},
+                "rows": [], "unread": []}
+    fresh_rank = {"ok": 0, "late": 1, "stale": 2}
+    rows, unread, asofs = [], [], []
+    # Map vCenter name -> source info & host -> cluster
+    vc_key_by_name = {str(s.get("name") or ""): s["key"] for s in vc_srcs}
+    vc_at_by_name = {str(s.get("name") or ""): s.get("at") for s in vc_srcs}
+    host_cluster = {}
+    for h in vm.get("hosts") or ():
+        if h.get("n") and h.get("cluster"):
+            host_cluster[(h.get("vc") or "", h["n"])] = h["cluster"]
+    # Evaluate vCenter source freshness & watched datastores
+    vc_info = {"configured": bool(vc_srcs), "fresh": "ok" if vc_srcs else "stale", "state": "ok" if vc_srcs else "off", "count": 0, "unread": 0}
+    if not vc_srcs:
+        unread.append("vCenter not configured (VMware datastores not read)")
+    else:
+        for src in vc_srcs:
+            vc_name = str(src.get("name") or "")
+            fk = _vc_feed(src)
+            f = feeds.get(fk) or {}
+            f_state = f.get("state") or src.get("state") or "never"
+            f_asof = f.get("asof") if f.get("asof") is not None else src.get("at")
+            f_fresh = f.get("fresh") or fstate(None if f_asof is None else max(0, int(now - float(f_asof))), o)
+            if f_state != "ok":
+                f_fresh = "stale"
+                vc_info["state"] = "stale"
+                vc_info["unread"] += 1
+                unread.append("vCenter %s: %s" % (vc_name, src.get("why") or "not read"))
+            elif not src.get("snap"):
+                f_fresh = "stale"
+                vc_info["state"] = "stale"
+                vc_info["unread"] += 1
+                unread.append("vCenter %s: no inventory read yet" % vc_name)
+            elif f_fresh == "stale":
+                vc_info["state"] = "stale"
+                unread.append("vCenter %s: data not current" % vc_name)
+            if fresh_rank.get(f_fresh, 2) > fresh_rank.get(vc_info["fresh"], 0):
+                vc_info["fresh"] = f_fresh
+            if f_asof is not None:
+                asofs.append(float(f_asof))
+        paths = st.get("paths") or {}
+        ds_warn, ds_crit = o["ds_warn"], o["ds_crit"]
+        for d in vm.get("datastores") or ():
+            if not d.get("capacity_watched"):
+                continue
+            vc_info["count"] += 1
+            dn, vc_name, fk = d.get("n") or "", d.get("vc") or "", d.get("feed") or ""
+            pct, size, free = d.get("v"), d.get("size"), d.get("free")
+            if pct is None:
+                vc_info["unread"] += 1
+                unread.append("datastore %s: capacity or free space not read" % dn)
+                continue
+            if pct < ds_warn:
+                continue
+            f = feeds.get(fk) or {}
+            is_stale = f.get("state") != "ok" or f.get("fresh") == "stale"
+            cls = sorted({host_cluster.get((vc_name, hn), "") for hn in (d.get("hosts") or ()) if host_cluster.get((vc_name, hn))})
+            p_rows = (paths.get(dn) or {}).get("rows") or []
+            p_aggr = next((r.get("aggr") for r in p_rows if r.get("aggr")), "")
+            where_parts = []
+            if cls:
+                where_parts.append(", ".join(cls[:2]))
+            if p_aggr:
+                where_parts.append(p_aggr)
+            where = " \u00b7 ".join(where_parts) if where_parts else vc_name
+            sk = vc_key_by_name.get(vc_name, "vcenter:" + vc_name)
+            samples = _cap_samples(cap_hist, ("ds", sk, dn), ("ds", vc_name, dn))
+            d_num, d_txt, d_sev = days_to_full(samples, size, free, o["cap_trend_days"], anchor=vc_at_by_name.get(vc_name))
+            if is_stale and d_sev == "ok":
+                d_sev = "stale"
+            sev = "crit" if pct >= ds_crit else "warn"
+            rows.append({
+                "kind": "ds", "name": dn, "where": where, "pct": round(float(pct), 1),
+                "size": int(size or 0), "free": int(free or 0), "free_text": _cap_free(free),
+                "warn": ds_warn, "crit": ds_crit, "sev": sev,
+                "days": d_num, "days_text": d_txt, "days_sev": d_sev,
+                "feed": fk, "stale": is_stale, "vc": vc_name, "inaccessible": d.get("accessible") is False,
+            })
+    # Evaluate ONTAP source freshness & watched volumes
+    on_info = {"configured": bool(on_srcs), "fresh": "ok" if on_srcs else "stale", "state": "ok" if on_srcs else "off", "count": 0, "unread": 0}
+    vol_warn, vol_crit = o["volume_warn"], o["volume_crit"]
+    if not on_srcs:
+        unread.append("ONTAP not configured (NetApp volumes not read)")
+    else:
+        for src in on_srcs:
+            fk = src["key"]
+            addr = str(src.get("name") or "")
+            snap = src.get("snap") or {}
+            cl = str(snap.get("cluster") or addr)
+            f = feeds.get(fk) or {}
+            f_state = f.get("state") or src.get("state") or "never"
+            f_asof = f.get("asof") if f.get("asof") is not None else src.get("at")
+            f_fresh = f.get("fresh") or fstate(None if f_asof is None else max(0, int(now - float(f_asof))), o)
+            if f_state != "ok":
+                f_fresh = "stale"
+                on_info["state"] = "stale"
+                on_info["unread"] += 1
+                unread.append("ONTAP %s: %s" % (addr, src.get("why") or "not read"))
+            elif not snap:
+                f_fresh = "stale"
+                on_info["state"] = "stale"
+                on_info["unread"] += 1
+                unread.append("ONTAP %s: not read yet" % addr)
+            elif f_fresh == "stale":
+                on_info["state"] = "stale"
+                unread.append("ONTAP %s: data not current" % addr)
+            if fresh_rank.get(f_fresh, 2) > fresh_rank.get(on_info["fresh"], 0):
+                on_info["fresh"] = f_fresh
+            if f_asof is not None:
+                asofs.append(float(f_asof))
+            if not snap:
+                continue
+            vols = snap.get("volumes")
+            if vols is None:
+                on_info["state"] = "stale"
+                on_info["unread"] += 1
+                unread.append("ONTAP %s: volumes not read" % addr)
+                continue
+            root_aggrs = {a["name"] for a in snap.get("aggrs") or [] if a.get("name") and a.get("is_root") is True}
+            ls_dests = {r.get("dst") for r in snap.get("snapmirror") or [] if str(r.get("type")).lower() == "ls"}
+            is_stale = f_state != "ok" or f_fresh == "stale"
+            for v in vols:
+                vn = str(v.get("name") or "")
+                svm = str(v.get("svm") or "")
+                aggr = str(v.get("aggr") or "")
+                dest = "%s:%s" % (svm, vn)
+                if v.get("is_svm_root") is True or v.get("is_node_root") is True or (aggr and aggr in root_aggrs):
+                    continue
+                if v.get("type") == "ls" or (v.get("type") == "dp" and (dest in ls_dests or v.get("destination_type") == "ls")):
+                    continue
+                if matches(vn, o["exclude"].get("volumes")):
+                    continue
+                on_info["count"] += 1
+                sz, used = v.get("size"), v.get("used")
+                if not (isinstance(sz, (int, float)) and not isinstance(sz, bool) and sz > 0
+                        and isinstance(used, (int, float)) and not isinstance(used, bool) and 0 <= used <= sz):
+                    on_info["unread"] += 1
+                    unread.append("volume %s (%s): size or used space not read" % (vn, cl))
+                    continue
+                pct = round(100.0 * float(used) / float(sz), 1)
+                if pct < vol_warn:
+                    continue
+                free = max(0, int(sz) - int(used))
+                where = ", ".join(x for x in (aggr, svm) if x) or cl
+                samples = _cap_samples(cap_hist, ("vol", fk, svm, vn), ("vol", addr, svm, vn), ("vol", cl, svm, vn))
+                d_num, d_txt, d_sev = days_to_full(samples, sz, free, o["cap_trend_days"], anchor=f_asof)
+                if is_stale and d_sev == "ok":
+                    d_sev = "stale"
+                sev = "crit" if pct >= vol_crit else "warn"
+                rows.append({
+                    "kind": "vol", "name": vn, "where": where, "pct": pct,
+                    "size": int(sz), "free": free, "free_text": _cap_free(free),
+                    "warn": vol_warn, "crit": vol_crit, "sev": sev,
+                    "days": d_num, "days_text": d_txt, "days_sev": d_sev,
+                    "feed": fk, "stale": is_stale, "cluster": cl, "svm": svm, "aggr": aggr,
+                })
+    # Fullest first (highest used % first, then crit before warn, then fewest days to full, then name)
+    rows.sort(key=lambda r: (-r["pct"], 0 if r["sev"] == "crit" else 1, r["days"] if r["days"] is not None else 1e9, r["name"].casefold()))
+    # Overall freshness across configured sources
+    cfg_fresh = [info["fresh"] for info in (vc_info, on_info) if info["configured"]]
+    worst_fresh = max(cfg_fresh, key=lambda x: fresh_rank.get(x, 2)) if cfg_fresh else "stale"
+    counts = {
+        "total": len(rows),
+        "crit": sum(1 for r in rows if r["sev"] == "crit"),
+        "warn": sum(1 for r in rows if r["sev"] == "warn"),
+        "ds": sum(1 for r in rows if r["kind"] == "ds"),
+        "vol": sum(1 for r in rows if r["kind"] == "vol"),
+        "not_read": len(unread),
+        "ds_total": vc_info["count"],
+        "vol_total": on_info["count"],
+    }
+    if counts["crit"]:
+        state = "crit"
+    elif counts["warn"]:
+        state = "warn"
+    elif worst_fresh != "ok" or unread:
+        state = "stale"
+    else:
+        state = "ok"
+    why = " \u00b7 ".join(unread[:3]) if unread else ""
+    return {"configured": True, "state": state, "fresh": worst_fresh, "asof": min(asofs) if asofs else None,
+            "why": why, "limits": limits, "sources": {"vcenter": vc_info, "ontap": on_info},
+            "counts": counts, "rows": rows, "unread": unread[:10]}
+
+
 def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why="", off_why=None, fleet=None, fleet_why="", health=None):
     """-> the answer of /api/wall (times: epoch seconds)"""
     o = opts_of(opts)
@@ -836,10 +1450,14 @@ def build(view, nm, nm_asof, opts, tracker, now, enclave="", title="", nm_why=""
             x["why"] = off_why.get("vmware") or "no vCenter login: the portal's deploy needs the \"VMware vCenter\" credential (portal_wall_vcenter)"
         areas.append(x)
     sites = sorted(set(c.get("site") for c in conds if c.get("site")) | set(h["site"] for h in vm["hosts"] if h.get("site")))
+    cards = {
+        "esxi": esxi_card(view, vm, conds, feeds, o, tracker, now),
+        "capacity": capacity_card(view, vm, st, feeds, o, now),
+    }
     result = {"now": now, "since": tracker.first if tracker is not None else None, "title": title or "Ops center", "enclave": enclave, "late": o["late"], "stale": o["stale"], "seconds": o["seconds"],
-            "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st,
-            "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
-                           "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"]},
+            "areas": areas, "feeds": feeds, "kinds": ks, "conds": conds, "vmware": vm, "storage": st, "cards": cards,
+            "thresholds": {"snapmirror_lag_hours": [o["snapmirror_lag_warn_hours"], o["snapmirror_lag_crit_hours"]], "ds": [o["ds_warn"], o["ds_crit"]], "vol": [o["volume_warn"], o["volume_crit"]], "aggr": [o["aggr_warn"], o["aggr_crit"]], "high": [o["high_pct"], o["high_minutes"]],
+                           "maintenance_expected": o["maintenance_expected"], "vm_heartbeat": o["vm_heartbeat"], "cap_trend_days": o["cap_trend_days"]},
             "sites": [{"id": s, "place": place_of(s, o)} for s in sites]}
     if fleet is not None or fleet_why:
         import wall_fleet

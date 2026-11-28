@@ -456,6 +456,11 @@
       - portal_wall_hw_alarms | reject('string') | list | length == 0
       - 0 <= portal_wall_snapmirror_lag_warn_hours | float(-1) < portal_wall_snapmirror_lag_crit_hours | float(-1)
       - portal_wall_maintenance_expected is sequence and portal_wall_maintenance_expected is not string
+      # 1.141.0: ESXi unexpected outage & Capacity share card settings
+      - portal_wall_planned_reboot is sequence and portal_wall_planned_reboot is not string and portal_wall_planned_reboot is not mapping
+      - portal_wall_planned_reboot | reject('string') | list | length == 0
+      - portal_wall_planned_reboot_minutes | int >= 5 and portal_wall_planned_reboot_minutes | int <= 1440
+      - portal_wall_capacity_trend_days | int >= 1 and portal_wall_capacity_trend_days | int <= 90
       - portal_wall_site_places is mapping
       - portal_wall_feedback_groups is sequence and portal_wall_feedback_groups is not string
       - portal_wall_feedback_readers is sequence and portal_wall_feedback_readers is not string
@@ -722,6 +727,7 @@
     - {src: static/wall-styles.js, dest: static/wall-styles.js}          # 1.135.0: the Strata, Relay and Metro styles
     - {src: static/wall-styles.css, dest: static/wall-styles.css}
     - {src: static/wall-share.js, dest: static/wall-share.js}            # 1.135.0: Share to Teams
+    - {src: static/wall-cards.js, dest: static/wall-cards.js}            # 1.141.0: ESXi outage & Capacity Teams share cards
     - {src: static/portal-looks.css, dest: static/portal-looks.css}      # 1.135.0: the looks (portal_look)
     - {src: static/portal-looks.js, dest: static/portal-looks.js}
     - {src: static/portal-ops.js, dest: static/portal-ops.js}
@@ -1289,6 +1295,12 @@
         snapmirror_lag_warn_hours: "{{ portal_wall_snapmirror_lag_warn_hours | float }}"
         snapmirror_lag_crit_hours: "{{ portal_wall_snapmirror_lag_crit_hours | float }}"
         maintenance_expected: "{{ portal_wall_maintenance_expected | default([], true) }}"
+        # 1.141.0: ESXi unexpected outage & Capacity report card settings
+        planned_reboot: "{{ portal_wall_planned_reboot | default([], true) }}"
+        planned_reboot_minutes: "{{ portal_wall_planned_reboot_minutes | int }}"
+        cap_trend_days: "{{ portal_wall_capacity_trend_days | int }}"
+        volume_warn: "{{ portal_wall_volume_warn | float }}"
+        volume_crit: "{{ portal_wall_volume_crit | float }}"
         vm_heartbeat: "{{ portal_wall_vm_heartbeat | bool }}"
         site_pattern: "{{ portal_wall_site_pattern | default('', true) }}"
         site_places: "{{ portal_wall_site_places | default({}, true) }}"

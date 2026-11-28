@@ -221,6 +221,7 @@
     var items = a.id === "monitor" && a.st === "stale" ? [] : A.nowList(a.id).filter(function (i) { return i.type === "cond"; });
     box.appendChild(h("div", "sh", [A.word(a.st, a.word || sevWord(a.st)), h("small", "", ["Spotlight · " + a.name]),
       h("b", "", [items[0] ? items[0].t : a.st === "stale" ? a.name + ": data not current" : a.name + ": nothing open"]),
+      window.SAWallCards && (a.id === "vmware" || a.id === "storage") ? h("button", "sx-insp kxh", [a.id === "vmware" ? "Share ESXi outage" : "Share capacity"], {type: "button", "data-d": a.id === "vmware" ? "card:esxi" : "card:capacity", title: "Open the Teams report card"}) : null,
       items[0] ? h("button", "sx-insp", ["Inspect →"], {type: "button", "data-d": "c:" + items[0].id}) : null]));
     if (a.id === "storage") {
       var rows = capRows(8, "storage");

@@ -270,6 +270,9 @@ portal_wall_aggr_crit: 97                           # ... critical
 portal_wall_high_pct: 90                            # a host's or VM's CPU or memory at this % or more ...
 portal_wall_high_minutes: 15                        # ... for this many minutes or longer: warning (shorter spikes stay off the wall)
 portal_wall_maintenance_expected: []                # hosts whose maintenance mode is expected (names; * and ? match): quiet. Any other host in maintenance: warning
+portal_wall_planned_reboot: []                      # 1.141.0: hosts in a planned/known reboot (names; * and ? match): excluded from the ESXi unexpected outage card
+portal_wall_planned_reboot_minutes: 30              # 1.141.0: minutes after a vCenter reboot/maintenance task during which a down host counts as a planned reboot (5 to 1440)
+portal_wall_capacity_trend_days: 7                  # 1.141.0: lookback window in days for the Capacity card's Days to full trend (1 to 90)
 portal_wall_vm_heartbeat: true                      # previously running Tools stop or heartbeat turns red on a powered-on workload VM
 portal_wall_site_pattern: "{{ netmap_site_pattern | default('', true) }}"   # the site of a cluster / host / datastore: the regex's first group on its name; default the network map's netmap_site_pattern, "" = a 4-letter, 2-digit prefix (SITA01)
 portal_wall_site_places: {}                         # the Map style's dots: {SITA01: DE} (a country code) or {SITA01: [10.4, 51.2]} (longitude, latitude); a site not here: netmap_sites ({lat, lon} by name or pattern, any case); none = the sites as a list
@@ -292,8 +295,8 @@ portal_wall_health: true                            # 1.138.0: enable the Networ
 portal_wall_health_seconds: 60                      # 1.138.0: how often SolarWinds SWIS is polled for Network & AD health and Site map (30 to 3600)
 portal_wall_ad_repl_warn_hours: 6                   # 1.138.0: AD replication lag warning threshold in hours (0.1 to 720, below crit)
 portal_wall_ad_repl_crit_hours: 24                  # 1.138.0: AD replication lag critical threshold in hours (above warn, max 720)
-portal_wall_volume_warn: 85                         # 1.138.0: SolarWinds Orion.Volumes percent-used warning limit (1 to 99, below crit)
-portal_wall_volume_crit: 95                         # 1.138.0: SolarWinds Orion.Volumes percent-used critical limit (above warn, max 100)
+portal_wall_volume_warn: 85                         # 1.138.0 / 1.141.0: SolarWinds & ONTAP volume percent-used warning limit (1 to 99, below crit)
+portal_wall_volume_crit: 95                         # 1.138.0 / 1.141.0: SolarWinds & ONTAP volume percent-used critical limit (above warn, max 100)
 portal_wall_if_err_warn: 1.0                        # 1.138.0: sustained interface error/discard rate warning percent (0.01 to 99, below crit)
 portal_wall_if_err_crit: 2.5                        # 1.138.0: sustained interface error/discard rate critical percent (above warn, max 100)
 portal_wall_wan_util_warn: 75                       # 1.138.0: sustained WAN uplink utilization warning percent (1 to 99, below crit)

@@ -944,6 +944,18 @@
     // 1.135.0: Share to Teams open: a refresh keeps it (its text and picture are a snapshot) - the card is redrawn on the next open
     if (again && card.querySelector(".share")) return;
     var i = ref.indexOf(":"), kind = ref.slice(0, i), key = ref.slice(i + 1);
+    if (kind === "card" && (key === "esxi" || key === "capacity") && window.SAWallCards) {
+      if (again) return;
+      lastFocus = document.activeElement;
+      openRef = ref;
+      card.classList.add("wc-modal");
+      window.SAWallCards.renderModal(card, key, API, closeDetail);
+      back.classList.add("on");
+      tip.classList.remove("on");
+      var cx = card.querySelector(".x"); if (cx) cx.focus();
+      return;
+    }
+    card.classList.remove("wc-modal");
     if (kind === "ds") { openDs(key, again); return; }
     var m = DET[kind] ? DET[kind](key) : null;
     clear(card);
@@ -960,6 +972,7 @@
     if (!openRef) return false;
     openRef = "";
     back.classList.remove("on");
+    card.classList.remove("wc-modal");
     clear(card);
     if (lastFocus && lastFocus.focus) try { lastFocus.focus(); } catch (e) { /* gone */ }
     return true;
@@ -1256,6 +1269,7 @@
     if (!stg.smBroken.length) body.appendChild(h("tr", "", [h("td", "", [word(status("ok", ntFeed(), W.storage.ran.sm), status("ok", ntFeed(), W.storage.ran.sm) === "ok" ? "None over threshold or unhealthy" : null)], {colspan: 4})]));
     tb.appendChild(body);
     return [khead("Storage · " + (stg.clusters.join(", ") || "NetApp"), "storage"),
+      window.SAWallCards ? window.SAWallCards.capacity.panel(API) : null,
       panel("Aggregates", stg.aggr.length + " · warning at " + t[0] + " %, critical at " + t[1] + " %", ntFeed(), g.length ? h("div", "gauges c" + Math.min(8, g.length) + " cm4", g) : h("p", "note", [stg.why || "No NetApp run in the report database yet."])),
       h("div", "counters cc4", [CT.sm(), CT.nodes(), CT.ds(), ctr({k: "aggr", need: true, needWhy: "no NetApp read: the NetApp page's run or the NetApp ONTAP credential", kinds: ["aggrfull", "aggrwarn"], l: "Aggregates full", v: nOpen(["aggrfull", "aggrwarn"]).length, st: nOpen("aggrfull").length ? "crit" : nOpen("aggrwarn").length ? "warn" : "ok", word: nOpen("aggrfull").length ? null : "Warning", feed: ntFeed(), det: detOf(nOpen(["aggrfull", "aggrwarn"])) || "all under " + t[0] + " %"})]),
       h("div", "split grow", [panel("Fullest datastores", "top " + Math.min(12, stg.ds.length) + " of " + stg.dsTotal + " · warning " + thr("ds")[0] + " %, critical " + thr("ds")[1] + " % · click: storage path", vcFeed() || ntFeed(),
@@ -1269,6 +1283,7 @@
       nOpen("host").some(function (x) { return x.cluster === c.n && !condStale(x); }), c.down.length); });
     var hu = hostsUp(), nc = Math.min(10, g.length);
     return [khead("VMware · " + v.vcenters.map(function (x) { return x.name; }).join(", "), "vmware"),
+      window.SAWallCards ? window.SAWallCards.esxi.panel(API) : null,
       panel("Clusters", "CPU and memory · the line: " + thr("high")[0] + " % for " + thr("high")[1] + " min", vcFeed(), h("div", "gauges gm200 c" + Math.max(1, nc) + " cm4", g)),
       h("div", "split even", [panel("Hosts", hu[0] + " of " + hu[1] + " connected", vcFeed(), h("div", "gauges gm170 c" + Math.max(1, Math.min(6, hg.length)) + " cm" + Math.max(1, Math.min(4, hg.length)), hg)),
         panel("Conditions", "routine vCenter alarms are not on the wall", null, h("div", "counters cc3 ccm2", [CT.hosts(), CT.vc(), CT.dsi(), CT.hung(), CT.maint(), CT.hot(), CT.hardware()]))]),
@@ -1335,6 +1350,7 @@
     level: level, thr: thr, greyReasons: greyReasons, freshTxt: freshTxt, freshK: freshK, freshArea: freshArea, dsLevel: dsLevel, vcFeed: vcFeed, ntFeed: ntFeed,
     unreach: function () { return UNREACH; }, logo: root.getAttribute("data-logo") || "", later: later, ROT: ROT,
     dsRef: dsRef, cond: function (id) { return BY[id] || null; }, condFeed: condFeed, lastKnown: lastKnown, openDetail: openDetail, setArea: setArea, render: function () { render(); }, fit: fitScreen,
+    wallPath: String(SRC || "").replace(/api\/wall$/, "wall"),
     share: function (id) { if (!BY[id]) return; openDetail("c:" + id); openShare(id); }
   };
   if (globalThis.SAWallFleet) Object.assign(API, {
@@ -1447,7 +1463,7 @@
   var LVIEWS = {
     storage: function () {
       var stg = W.storage, t = thr("aggr"), dt = thr("ds"), n = areaCounts("storage");
-      return lAreaHead("storage").concat([h("div", "av", [
+      return lAreaHead("storage").concat([window.SAWallCards ? window.SAWallCards.capacity.panel(API) : null, h("div", "av", [
         h("div", "card span2", [h("h2", "", ["Aggregates, % used", h("span", "r", [h("span", "chip", ["marks: warning " + t[0] + ", critical " + t[1]])])]),
           stg.aggr.length ? h("div", "gauges", stg.aggr.slice(0, 4).map(function (a) { return lGauge(a.n, a.v, t[0], t[1], size(a.free) + " free", withFresh(level(a.v, t[0], t[1]), a.feed), "aggr:" + a.ref, a.feed); })) : h("p", "legend", [stg.why || "No NetApp run yet."])]),
         h("div", "card", [h("h2", "", ["Now"]), bigs([[n.crit + n.warn, "wall conditions"], [stg.nodes[0] + " / " + stg.nodes[1], "nodes up", "ctr:nodes"], [stg.smBroken.length, "SnapMirror health and lag", "ctr:sm"], [nOpen(["dsfull", "dswarn"]).length, "datastores full", "ctr:ds"]])]),
@@ -1464,7 +1480,7 @@
       hosts.sort(function (a, b) { return RK[a.st] - RK[b.st] || (a.n < b.n ? -1 : 1); });
       var bad = hosts.filter(function (x) { return x.st !== "ok"; }).length, shown = Math.max(bad, Math.min(hosts.length, 120)), rest = hosts.slice(shown);
       var hot = v.hot.map(function (x) { var c = BY[x.cond]; return h("div", "row", [lamp(withFresh("warn", x.feed)), h("span", "", [h("b", "", [(c ? c.t : x.n) + (c ? " for " + dur(NOW() - c.start) : "")]), h("br"), h("span", "legend", [x.k + " · " + (x.host ? "host " + x.host : "")])])], {"data-d": "c:" + x.cond, tabindex: "0", role: "button"}); });
-      return lAreaHead("vmware").concat([h("div", "av", [
+      return lAreaHead("vmware").concat([window.SAWallCards ? window.SAWallCards.esxi.panel(API) : null, h("div", "av", [
         h("div", "card span2", [h("h2", "", ["Hosts (" + v.hosts.length + ", problems first)", h("span", "r", [h("span", "chip", [(hu[1] - hu[0]) + " not responding"])])]), lCells(hosts.slice(0, shown)),
           rest.length ? h("p", "legend", ["+" + rest.length + " more not shown (" + rest.length + " " + WORD[rest[0].st].toLowerCase() + ")"]) : null]),
         h("div", "card", [h("h2", "", ["Now"]), bigs([[n.crit + n.warn, "wall conditions open"], [hu[0] + " / " + hu[1], "hosts up", "ctr:hosts"], [v.vcenters.filter(function (x) { return x.up; }).length + " / " + v.vcenters.length, "vCenters reachable", "ctr:vc"], [nOpen("dsi").length, "datastores inaccessible", "ctr:dsi"]])]),
@@ -1692,6 +1708,10 @@
     sites().forEach(function (id) { n[siteState(id).k]++; });
     [["crit", "down"], ["warn", "warning"], ["stale", "not current"], ["ok", "ok"]].forEach(function (k) { if (!n[k[0]]) return; t.appendChild(h("span", "tag k-" + k[0], [h("i", "", [GLYPH[k[0]]]), " " + n[k[0]] + " " + k[1]])); });
     if (scopeArea()) add(t, [fullLink(scopeArea())]);          // none for VMware (no portal page): nothing added
+    if (window.SAWallCards && (scopeArea() === "vmware" || scopeArea() === "storage")) {
+      t.appendChild(h("button", "wc-prevbtn kxh", [scopeArea() === "vmware" ? "Share ESXi outage" : "Share capacity"],
+        {type: "button", "data-d": scopeArea() === "vmware" ? "card:esxi" : "card:capacity"}));
+    }
     c.appendChild(t);
     r.appendChild(c);
   }

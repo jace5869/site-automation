@@ -510,6 +510,17 @@ portal_public_url: https://stigman.example.mil/portal/
 ## maintenance: warning
 # portal_wall_maintenance_expected: []
 
+## 1.141.0: hosts in a planned/known reboot (names; * and ? match): excluded from the ESXi
+## unexpected outage card
+# portal_wall_planned_reboot: []
+
+## 1.141.0: minutes after a vCenter reboot/maintenance task during which a down host counts as a
+## planned reboot (5 to 1440)
+# portal_wall_planned_reboot_minutes: 30
+
+## 1.141.0: lookback window in days for the Capacity card's Days to full trend (1 to 90)
+# portal_wall_capacity_trend_days: 7
+
 ## previously running Tools stop or heartbeat turns red on a powered-on workload VM
 # portal_wall_vm_heartbeat: true
 
@@ -571,10 +582,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## 1.138.0: AD replication lag critical threshold in hours (above warn, max 720)
 # portal_wall_ad_repl_crit_hours: 24
 
-## 1.138.0: SolarWinds Orion.Volumes percent-used warning limit (1 to 99, below crit)
+## 1.138.0 / 1.141.0: SolarWinds & ONTAP volume percent-used warning limit (1 to 99, below crit)
 # portal_wall_volume_warn: 85
 
-## 1.138.0: SolarWinds Orion.Volumes percent-used critical limit (above warn, max 100)
+## 1.138.0 / 1.141.0: SolarWinds & ONTAP volume percent-used critical limit (above warn, max 100)
 # portal_wall_volume_crit: 95
 
 ## 1.138.0: sustained interface error/discard rate warning percent (0.01 to 99, below crit)
