@@ -203,17 +203,21 @@ class Page(unittest.TestCase):
         self.assertIn("CORA %", t.section(web, "By collection")["columns"])
 
     def test_atlas_tiles_by_their_count(self):
-        """Six tiles are 3 + 3 in atlas as in ops: its tiles carry their count, and the stylesheet sets the columns by it."""
-        import test_report_fit as rf
+        from test_server_view_reports import _render
         web = f.stig_scorecard_join(self.doc, None, "scorecard")["web"]
-        n = len(web["summary"])
-        self.assertEqual(n, 6)
-        self.assertIn('<div class="tiles t%d">' % n, rf.render("atlas", web))
-        # 1.71.0: ops draws the dashboard's tiles (At a glance); without a dashboard, its own row by the count
-        self.assertRegex(rf.render("ops", web), r'<div class="dtiles n\d" data-p="\d">')
-        self.assertIn('<div class="tiles t%d">' % n, rf.render("ops", dict((k, v) for k, v in web.items() if k != "dashboard")))
-        css = rf.render("atlas", web)
-        self.assertIn("@media(min-width:721px){.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}}", css)
+        self.assertEqual(len(web["summary"]), 6)
+        for look in ("atlas", "ops"):
+            with self.subTest(look=look):
+                template = "report_%s.html.j2" % look
+                html = _render(template, web)
+                self.assertRegex(html, r'<div class="dtiles n5" data-p="\d+">')
+                self.assertIn('aria-label="CORA 12.0 %"', html)
+                self.assertIn('>This week</div>', html)
+        legacy = _render("report_atlas.html.j2", web, report_servers_view=False)
+        self.assertIn('<div class="tiles t6">', legacy)
+        self.assertIn("@media(min-width:721px){.tiles.t6{grid-template-columns:repeat(3,minmax(0,1fr))}}", legacy)
+        without_dashboard = {k: v for k, v in web.items() if k != "dashboard"}
+        self.assertIn('<div class="tiles t6">', _render("report_ops.html.j2", without_dashboard))
 
     def test_the_label_is_short(self):
         self.assertNotIn("method", t.tile(self.doc, "CORA risk")["label"])

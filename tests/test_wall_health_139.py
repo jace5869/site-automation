@@ -361,7 +361,7 @@ class SettingsAndAssetsTests(unittest.TestCase):
         t = read(ROLE, "tasks", "main.yml")
         doc = read(ROOT, "docs", "SITE_PORTAL.md")
         ch = read(ROOT, "CHANGELOG.md")
-        self.assertTrue(ch.startswith("# Changelog\n\n## 1.138.0 — "))
+        self.assertTrue("\n## 1.138.0 — " in ch)
         for setting in ("portal_wall_health", "portal_wall_health_seconds", "portal_wall_ad_repl_warn_hours",
                         "portal_wall_ad_repl_crit_hours", "portal_wall_volume_warn", "portal_wall_volume_crit",
                         "portal_wall_if_err_warn", "portal_wall_if_err_crit", "portal_wall_wan_util_warn",
