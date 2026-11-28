@@ -490,7 +490,9 @@ Complete every acceptance check before re-enabling scheduled jobs:
    `SA-AAPBK-17` without stopping AAP services, and prints the CLI + verify/restart commands), then
    run the printed CLI directly on `aap-class01` as `ansible`
    (`ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml`) and
-   verify services with `systemctl --user list-units` and `podman ps`. Use **AAP - bundle for
+   verify services with `systemctl --user list-units` and `podman ps`. Every backup stop prints a
+   one-line `SA-AAPBK-nn` summary plus `Cause:` and full `Log:` path (see `docs/AAP_BACKUP.md`
+   Troubleshooting for `SA-AAPBK-01` through `SA-AAPBK-17`). Use **AAP - bundle for
    air-gap** in AAP to verify and package bundles; optionally enable retention
    (`aap_backup_retention_enabled: true`). Opt-in `aap_backup_self_hosted_mode: "detach"` is
    **test before use** only in a maintenance window.

@@ -1972,5 +1972,113 @@ print("DETACHED MOCK INSTALLER OK")
         self.assertTrue(os.path.isfile(os.path.join(qdir2, "ERROR.txt")))
 
 
+class ErrorMessagePassTests(unittest.TestCase):
+    """Verify uniform SA-AAPBK-nn error format, secret redaction, log paths, and Troubleshooting anchors."""
+
+    def _assert_stop_format(self, code, msg, require_log_file=True):
+        lines = str(msg).splitlines()
+        self.assertEqual(len(lines), 2, "Expected exactly 2 lines for %s, got: %r" % (code, msg))
+        anchor = code.lower()
+        self.assertRegex(
+            lines[0],
+            r"^%s: .+ - .+\. See docs/AAP_BACKUP\.md#%s$" % (re.escape(code), re.escape(anchor)),
+            lines[0],
+        )
+        self.assertLessEqual(len(lines[0]), 200, "Headline too long: %r" % lines[0])
+        self.assertRegex(lines[1], r"^Cause: .+ \| Log: .+$", lines[1])
+        log_path = lines[1].split(" | Log: ", 1)[1].strip()
+        if require_log_file:
+            self.assertTrue(os.path.isabs(log_path), "Expected absolute log path: %r" % log_path)
+            self.assertTrue(os.path.isfile(log_path), "Log path does not exist: %r" % log_path)
+            self.assertEqual(stat.S_IMODE(os.stat(log_path).st_mode), 0o600, log_path)
+        return lines[0], lines[1], log_path
+
+    def test_error_format_redaction_exc_cmd_and_logs(self):
+        tmp = tempfile.mkdtemp(prefix="sa-aapbk-errfmt-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bpath = os.path.join(tmp, "mnt_backup")
+        os.makedirs(bpath)
+        idir = _make_mock_installer_dir(tmp)
+        mountinfo = _make_mountinfo(os.path.join(tmp, "mountinfo"), [
+            ("/", "xfs", "/dev/mapper/rhel-root", "rw"),
+            (os.path.realpath(bpath), "nfs4", "192.0.2.50:/exports/aap_backup", "rw"),
+        ])
+        mock_pod = _make_mock_podman(os.path.join(tmp, "mock-podman"))
+
+        # 1. Python exception cause includes ExcType + last line + file:line (SA-AAPBK-10)
+        with self.assertRaises(bk.StopError) as cm10:
+            bk.read_mounts(os.path.join(tmp, "missing-mountinfo"))
+        _, cause10, _ = self._assert_stop_format("SA-AAPBK-10", str(cm10.exception))
+        self.assertRegex(cause10, r"(FileNotFoundError|OSError): .+\(site_aap_backup\.py:\d+\)")
+
+        # 2. Failing command + stderr tail + secret redaction + quarantine installer.log (SA-AAPBK-07)
+        secret_fail_ap = _write_exe(os.path.join(tmp, "mock-ap-secret-fail"), """#!/usr/bin/env python3
+import sys
+sys.stderr.write("line1: connecting to https://admin:SuperSecret99@aap01.corp.example.mil\\n")
+sys.stderr.write("line2: db_password=TopSecretDbPass Authorization: Bearer eyJsecretToken123\\n")
+sys.exit(2)
+""")
+        def _big(_p):
+            return {"total_bytes": 500 * GIB, "available_bytes": 450 * GIB, "used_bytes": 50 * GIB, "used_pct": 10.0}
+        with self.assertRaises(bk.StopError) as cm07:
+            bk.action_backup(dict(
+                action="backup",
+                backup_path=bpath,
+                expected_mount=os.path.realpath(bpath),
+                estimate_gb=50,
+                margin_pct=25,
+                installer_dir=idir,
+                ansible_playbook_bin=secret_fail_ap,
+                installer_extra_args=["--vault-password-file", "/home/ansible/.my_vault_pw", "-e", "api_token=LeakMeNot"],
+                mountinfo_path=mountinfo,
+                podman_bin=mock_pod,
+            ), statvfs_fn=_big)
+        _, cause07, log07 = self._assert_stop_format("SA-AAPBK-07", str(cm07.exception))
+        self.assertIn("cmd=", cause07)
+        self.assertIn("rc=2", cause07)
+        self.assertIn("stderr=", cause07)
+        self.assertTrue(log07.endswith("/installer.log"), log07)
+        with open(log07, encoding="utf-8") as fh:
+            log_body = fh.read()
+        for leaked in ("SuperSecret99", "TopSecretDbPass", "eyJsecretToken123", ".my_vault_pw", "LeakMeNot"):
+            self.assertNotIn(leaked, str(cm07.exception))
+            self.assertNotIn(leaked, log_body)
+
+        # 3. Schedule stop (SA-AAPBK-16) matches 2-line format with file:line and log file
+        bad_sched = sched.reconcile_schedule(WeeklyBerlinSchedule.FakeApi(), {
+            "enabled": True, "schedule_when": "bad-token password=HiddenSchedPw", "schedule_timezone": "Europe/Berlin",
+        })
+        self.assertTrue(bad_sched.get("failed"))
+        _, cause16, log16 = self._assert_stop_format("SA-AAPBK-16", bad_sched["msg"])
+        self.assertRegex(cause16, r"ValueError: .+\(site_aap_backup_schedule\.py:\d+\)")
+        self.assertNotIn("HiddenSchedPw", bad_sched["msg"])
+        with open(log16, encoding="utf-8") as fh:
+            self.assertNotIn("HiddenSchedPw", fh.read())
+
+        # 4. Every code 01..17 formatted cleanly by StopError and has anchored Troubleshooting entry in docs/AAP_BACKUP.md
+        with open(os.path.join(REPO, "docs", "AAP_BACKUP.md"), encoding="utf-8") as fh:
+            doc = fh.read()
+        self.assertIn("## Troubleshooting\n", doc)
+        ts_section = doc.split("## Troubleshooting\n", 1)[1]
+        for num in range(1, 18):
+            code = "SA-AAPBK-%02d" % num
+            err = bk.StopError(code, "simulated error for %s" % code)
+            self._assert_stop_format(code, str(err))
+            heading = "### %s\n" % code
+            self.assertIn(heading, ts_section, "Missing Troubleshooting heading %s" % code)
+            entry = ts_section.split(heading, 1)[1].split("\n### SA-AAPBK-", 1)[0]
+            for field in ("- **Meaning:**", "- **Likely causes:**", "- **How to check:**", "- **Fix:**"):
+                self.assertIn(field, entry, "Missing %s under %s" % (field, code))
+
+        # 5. account.yml SA-AAPBK-04 stop follows the same contract
+        with open(os.path.join(REPO, "roles", "aap_backup", "tasks", "account.yml"), encoding="utf-8") as fh:
+            acct_src = fh.read()
+        self.assertIn("SA-AAPBK-04:", acct_src)
+        self.assertIn("See docs/AAP_BACKUP.md#sa-aapbk-04", acct_src)
+        self.assertIn("Cause:", acct_src)
+        self.assertIn("| Log:", acct_src)
+        self.assertNotIn("STOP [SA-AAPBK", acct_src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

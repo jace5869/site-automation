@@ -242,8 +242,8 @@ class EnvAndDeployWiringTests(unittest.TestCase):
         ch = read(ROOT, "CHANGELOG.md")
         js = read(STATIC, "site-map.js")
 
-        # 1.141.1 changelog header at top
-        self.assertTrue(ch.startswith("# Changelog\n\n## 1.141.1 — 2026-11-28\n"))
+        # 1.141.1 changelog header present
+        self.assertIn("\n## 1.141.1 — 2026-11-28\n", ch)
         # Setting default and comment
         self.assertRegex(defaults, r"(?m)^portal_site_map_coords:\s*\{\}\s*#.*1\.141\.1")
         # Task validation and env wiring

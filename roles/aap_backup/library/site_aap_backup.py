@@ -267,6 +267,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -274,7 +275,9 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
+import traceback
 import uuid
 try:
     from urllib.parse import urlparse
@@ -324,15 +327,213 @@ SENSITIVE_ARG_FLAGS = (
 )
 SENSITIVE_ARG_SUBSTRS = ("password", "passwd", "secret", "token", "vault_pass", "api_key")
 
+STOP_DEFAULTS = {
+    "SA-AAPBK-01": "Invalid backup path - set an absolute aap_backup_path on a dedicated mount",
+    "SA-AAPBK-02": "Backup mount unavailable or not writable - mount the backup share read-write for aap_backup_user",
+    "SA-AAPBK-03": "Insufficient free space on backup mount - extend the LV or NFS quota and retry",
+    "SA-AAPBK-04": "AAP installer prerequisite missing - verify aap_installer_dir, inventory, ansible-playbook, and aap_backup_user",
+    "SA-AAPBK-05": "Exact AAP build/release unreadable - verify aap_installer_dir or set aap_backup_version_override",
+    "SA-AAPBK-06": "Backup lock held by another run - wait for the active backup or bundle to finish and retry",
+    "SA-AAPBK-07": "Containerized installer backup failed - inspect the log, fix the installer error, and retry",
+    "SA-AAPBK-08": "Installer exited 0 with no backup payload - inspect installer inventory and retry",
+    "SA-AAPBK-09": "Backup manifest verification failed - check storage integrity and rerun backup",
+    "SA-AAPBK-10": "Mount table unreadable - check /proc/self/mountinfo or aap_backup_mountinfo_path and retry",
+    "SA-AAPBK-11": "Source backup not found or invalid ID - run AAP - backup first or set a valid aap_backup_bundle_id",
+    "SA-AAPBK-12": "Source backup verification failed - do not transfer; rerun AAP - backup first",
+    "SA-AAPBK-13": "Matching offline bundle installer missing or mismatched - stage the exact-build AAP 2.7 bundle installer and retry",
+    "SA-AAPBK-14": "Custom EE image export failed - verify local podman images or adjust aap_backup_ee_images",
+    "SA-AAPBK-15": "Air-gap bundle verification or archive failed - do not transfer; inspect quarantine log and retry",
+    "SA-AAPBK-16": "Weekly backup schedule failed - fix schedule settings or AAP API credential and retry",
+    "SA-AAPBK-17": "Self-hosted AAP backup refused - run the printed CLI directly on the AAP host as aap_backup_user",
+}
+
+_SECRET_KV_RE = re.compile(
+    r"(?i)(\b[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|vault[_-]?pass|private[_-]?key)[A-Za-z0-9_.-]*\s*[=:]\s*)(?:'[^']*'|\"[^\"]*\"|[^\s,;]+)"
+)
+_SECRET_AUTH_RE = re.compile(r"(?i)(\b(?:Bearer|Basic|Token)\s+)([^\s,;\"']+)")
+_SECRET_URL_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)")
+_SECRET_PEM_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
+_SECRET_CLI_FLAG_RE = re.compile(
+    r"(--(?:vault-password-file|vault-pass-file|vault-id|extra-vars)\s+)(?:'[^']*'|\"[^\"]*\"|\S+)"
+)
+
+
+def _redact_secrets(text):
+    s = str(text or "")
+    if not s:
+        return ""
+    s = _SECRET_PEM_RE.sub("<redacted-private-key>", s)
+    s = _SECRET_URL_RE.sub(r"\1<redacted>\3", s)
+    s = _SECRET_AUTH_RE.sub(r"\1<redacted>", s)
+    s = _SECRET_CLI_FLAG_RE.sub(r"\1<redacted>", s)
+    s = _SECRET_KV_RE.sub(r"\1<redacted>", s)
+    return s
+
+
+def _sanitize_cmd_for_display(cmd):
+    out = []
+    args = list(cmd or [])
+    i = 0
+    while i < len(args):
+        s = str(args[i])
+        if s == "-e" and i + 1 < len(args):
+            nxt = str(args[i + 1])
+            nxt_low = nxt.lower()
+            if nxt.startswith("backup_dir=") and not any(tok in nxt_low for tok in SENSITIVE_ARG_SUBSTRS):
+                out.append(s)
+                out.append(nxt)
+            else:
+                out.append(s)
+                out.append("<redacted>")
+            i += 2
+            continue
+        if s in SENSITIVE_ARG_FLAGS:
+            out.append(s)
+            if s != "--ask-vault-pass" and i + 1 < len(args):
+                out.append("<redacted>")
+                i += 2
+            else:
+                i += 1
+            continue
+        if any(s.startswith(f + "=") for f in SENSITIVE_ARG_FLAGS):
+            out.append(s.split("=", 1)[0] + "=<redacted>")
+            i += 1
+            continue
+        low = s.lower()
+        if any(tok in low for tok in SENSITIVE_ARG_SUBSTRS):
+            out.append("<redacted>")
+            i += 1
+            continue
+        out.append(_redact_secrets(s))
+        i += 1
+    return " ".join(shlex.quote(tok) if (" " in tok or "\t" in tok) else tok for tok in out)
+
+
+def _format_exception(exc):
+    tb = getattr(exc, "__traceback__", None)
+    if tb is None:
+        tb = sys.exc_info()[2]
+    loc = ""
+    if tb is not None:
+        try:
+            frames = traceback.extract_tb(tb)
+            if frames:
+                last = frames[-1]
+                loc = " (%s:%d)" % (os.path.basename(last.filename), last.lineno)
+        except Exception:
+            loc = ""
+    msg_lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+    last_line = _redact_secrets(msg_lines[-1]) if msg_lines else ""
+    head = "%s: %s" % (type(exc).__name__, last_line) if last_line else type(exc).__name__
+    return "%s%s" % (head, loc)
+
+
+def _format_traceback(exc):
+    tb = getattr(exc, "__traceback__", None)
+    if tb is None:
+        tb = sys.exc_info()[2]
+    try:
+        return _redact_secrets("".join(traceback.format_exception(type(exc), exc, tb)))
+    except Exception:
+        return _format_exception(exc)
+
+
+def _format_cmd_failure(cmd, rc, stderr="", stdout="", err="", tail_lines=4):
+    parts = ["cmd=%s" % _sanitize_cmd_for_display(cmd), "rc=%s" % rc]
+    if err:
+        parts.append("error=%s" % _redact_secrets(" ".join(str(err).splitlines())).strip())
+    src = (stderr or "").strip() or (stdout or "").strip()
+    if src:
+        lines = [ln.strip() for ln in src.splitlines() if ln.strip()]
+        tail = _redact_secrets(" | ".join(lines[-tail_lines:]))
+        if len(tail) > 400:
+            tail = "..." + tail[-397:]
+        parts.append("stderr=%s" % tail)
+    return " ".join(parts)
+
+
+def _write_error_log(code, headline, cause, extra_text="", preferred_path=""):
+    if preferred_path:
+        return os.path.abspath(preferred_path)
+    try:
+        log_dir = tempfile.gettempdir()
+        fname = "sa-aap-backup-%s-%s-%d-%s.log" % (
+            safe_filename(str(code).lower()),
+            utc_now().strftime("%Y%m%dT%H%M%SZ"),
+            os.getpid(),
+            uuid.uuid4().hex[:6],
+        )
+        log_path = os.path.abspath(os.path.join(log_dir, fname))
+        body = [
+            "time=%s" % iso_utc(),
+            "code=%s" % code,
+            "summary=%s" % headline,
+            "cause=%s" % _redact_secrets(cause),
+        ]
+        if extra_text:
+            body.append("--- details ---")
+            body.append(_redact_secrets(extra_text))
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(body) + "\n")
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        os.chmod(log_path, 0o600)
+        return log_path
+    except Exception as exc:
+        return "AAP job output (log file unavailable: %s)" % type(exc).__name__
+
+
+def _cleanup_temp_log(exc):
+    p = getattr(exc, "_temp_log", "")
+    if p and os.path.isfile(p):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+
 
 class StopError(Exception):
     """Coded operational stop (SA-AAPBK-nn)."""
 
-    def __init__(self, code, message, details=None):
-        super(StopError, self).__init__("STOP [%s]: %s" % (code, message))
-        self.code = code
-        self.message = message
-        self.details = details or {}
+    def __init__(self, code, summary, cause="", details=None, log_path="", extra_log=""):
+        code_str = str(code or "SA-AAPBK-01").strip()
+        raw_sum = " ".join(str(summary or "").splitlines()).strip()
+        if not cause:
+            if " - " in raw_sum:
+                use_summary = raw_sum
+                use_cause = raw_sum
+            else:
+                use_summary = STOP_DEFAULTS.get(code_str, "AAP backup stopped - inspect the log and retry")
+                use_cause = raw_sum or use_summary
+        else:
+            use_summary = raw_sum or STOP_DEFAULTS.get(code_str, "AAP backup stopped - inspect the log and retry")
+            use_cause = str(cause)
+
+        clean_cause = " ".join(_redact_secrets(use_cause).splitlines()).strip()
+        anchor = code_str.lower()
+        headline = "%s: %s. See docs/AAP_BACKUP.md#%s" % (code_str, use_summary.rstrip("."), anchor)
+        temp_created = not bool(log_path)
+        final_log = _write_error_log(code_str, headline, clean_cause, extra_text=extra_log, preferred_path=log_path)
+        full_msg = "%s\nCause: %s | Log: %s" % (headline, clean_cause, final_log)
+        super(StopError, self).__init__(full_msg)
+        self.code = code_str
+        self.summary = use_summary
+        self.headline = headline
+        self.cause = clean_cause
+        self.log_path = final_log
+        self._temp_log = final_log if (temp_created and os.path.isabs(final_log)) else ""
+        self.message = full_msg
+        det = dict(details or {})
+        det.setdefault("cause", clean_cause)
+        det.setdefault("log_path", final_log)
+        det.setdefault("doc_ref", "docs/AAP_BACKUP.md#%s" % anchor)
+        self.details = det
 
 
 # ---- formatting & time helpers --------------------------------------------------------------
@@ -763,7 +964,12 @@ def read_mounts(mountinfo_path="/proc/self/mountinfo"):
                 return parse_mountinfo(fh.read())
         except OSError as exc:
             last_err = exc
-    raise StopError("SA-AAPBK-10", "Could not read mount table (%s): %s" % (mountinfo_path, last_err))
+    raise StopError(
+        "SA-AAPBK-10",
+        "Mount table unreadable - check /proc/self/mountinfo or aap_backup_mountinfo_path and retry",
+        cause="failed reading %s: %s" % (", ".join(paths), _format_exception(last_err)),
+        extra_log=_format_traceback(last_err) if last_err is not None else "",
+    )
 
 
 def find_mount_for_path(path, mounts):
@@ -827,7 +1033,11 @@ def read_latest_backup(backup_path, reject_symlink=False, stop_code="SA-AAPBK-12
 def compute_required_space(backup_path, estimate_gb, margin_pct):
     """Require available >= baseline + ceil(baseline * margin_pct / 100)."""
     if margin_pct is None or int(margin_pct) < 0:
-        raise StopError("SA-AAPBK-03", "Invalid aap_backup_margin_pct (%r): must be >= 0." % (margin_pct,))
+        raise StopError(
+            "SA-AAPBK-03",
+            "Invalid backup space margin - set aap_backup_margin_pct to 0 or higher",
+            cause="aap_backup_margin_pct=%r must be >= 0" % (margin_pct,),
+        )
     latest = read_latest_backup(backup_path) if backup_path and os.path.isdir(backup_path) else None
     if latest and int(latest.get("payload_bytes") or 0) > 0:
         baseline_bytes = int(latest["payload_bytes"])
@@ -836,7 +1046,8 @@ def compute_required_space(backup_path, estimate_gb, margin_pct):
         if estimate_gb is None or int(estimate_gb) <= 0:
             raise StopError(
                 "SA-AAPBK-03",
-                "Backup baseline size is unknown: no prior verified backup exists and aap_backup_estimate_gb (%r) is not > 0." % (estimate_gb,),
+                "Backup baseline size unknown - set aap_backup_estimate_gb > 0 and retry",
+                cause="no prior verified backup exists and aap_backup_estimate_gb=%r is not > 0" % (estimate_gb,),
             )
         baseline_bytes = int(estimate_gb) * GIB
         baseline_source = "conservative estimate (%d GiB)" % int(estimate_gb)
@@ -1008,8 +1219,10 @@ def detect_aap_version(installer_dir, version_file="", version_override="", inst
     if not primary:
         raise StopError(
             "SA-AAPBK-05",
-            "Could not read the exact AAP build/release from installer directory (%s), container labels, or aap_backup_version_file. "
-            "Verify aap_installer_dir points to the AAP 2.7 containerized setup bundle or set aap_backup_version_override." % installer_dir,
+            "Exact AAP build/release unreadable - verify aap_installer_dir or set aap_backup_version_override",
+            cause="no version metadata found in %s, container labels (podman=%s), or aap_backup_version_file=%r" % (
+                installer_dir, podman_bin, version_file
+            ),
         )
 
     m_rel = re.match(r"^([0-9]+\.[0-9]+)", primary)
@@ -1044,19 +1257,29 @@ def validate_backup_path(backup_path):
     if not raw or not os.path.isabs(raw):
         raise StopError(
             "SA-AAPBK-01",
-            "aap_backup_path (%r) is unset or not an absolute path. Set aap_backup_path (e.g. /mnt/ansible_backup) in playbooks/group_vars/all.yml." % raw,
+            "Invalid backup path - set an absolute aap_backup_path in playbooks/group_vars/all.yml",
+            cause="aap_backup_path=%r is unset or not an absolute path" % raw,
         )
     parts = raw.split("/")
     if ".." in parts:
-        raise StopError("SA-AAPBK-01", "aap_backup_path (%r) must not contain '..' path segments." % raw)
+        raise StopError(
+            "SA-AAPBK-01",
+            "Invalid backup path - remove '..' segments from aap_backup_path",
+            cause="aap_backup_path=%r contains '..' path segments" % raw,
+        )
     norm = os.path.normpath(raw)
     if _is_forbidden_path(norm):
-        raise StopError("SA-AAPBK-01", "aap_backup_path (%r) cannot point to a forbidden or system directory." % norm)
+        raise StopError(
+            "SA-AAPBK-01",
+            "Backup path points to a forbidden system directory - set aap_backup_path to a dedicated backup mount",
+            cause="aap_backup_path=%r is in the forbidden system path list" % norm,
+        )
     real = os.path.normpath(os.path.realpath(norm))
     if _is_forbidden_path(real):
         raise StopError(
             "SA-AAPBK-01",
-            "aap_backup_path (%r) resolves via realpath to forbidden/system directory %r." % (norm, real),
+            "Backup path resolves to a forbidden system directory - set aap_backup_path to a dedicated backup mount",
+            cause="aap_backup_path=%r resolves via realpath to forbidden directory %r" % (norm, real),
         )
     return norm
 
@@ -1067,48 +1290,56 @@ def check_mount_and_writable(backup_path, expected_mount="", expected_source="",
     if not os.path.exists(norm) or not os.path.isdir(norm):
         raise StopError(
             "SA-AAPBK-02",
-            "Backup path %s does not exist or is not a directory. Confirm the backup filesystem/NFS share is mounted." % norm,
+            "Backup path missing - mount the backup filesystem or NFS share and retry",
+            cause="path %s does not exist or is not a directory" % norm,
         )
     real_path = os.path.normpath(os.path.realpath(norm))
     if _is_forbidden_path(real_path):
         raise StopError(
             "SA-AAPBK-01",
-            "Backup path %s resolves to forbidden/system path %s." % (norm, real_path),
+            "Backup path resolves to a forbidden system directory - set aap_backup_path to a dedicated backup mount",
+            cause="path %s resolves via realpath to forbidden directory %s" % (norm, real_path),
         )
     mounts = read_mounts(mountinfo_path)
     active = find_mount_for_path(real_path, mounts)
     if not active:
-        raise StopError("SA-AAPBK-02", "Could not resolve an active mount for %s (realpath %s)." % (norm, real_path))
+        raise StopError(
+            "SA-AAPBK-02",
+            "No active mount found for backup path - mount the backup filesystem and retry",
+            cause="no active mount entry matched %s (realpath %s)" % (norm, real_path),
+        )
 
     exp_mp = os.path.normpath(expected_mount.strip()) if expected_mount and expected_mount.strip() else ""
     exp_mp_real = os.path.normpath(os.path.realpath(exp_mp)) if exp_mp and os.path.exists(exp_mp) else exp_mp
     if exp_mp and active["mount_point"] not in (exp_mp, exp_mp_real):
         raise StopError(
             "SA-AAPBK-02",
-            "Backup path %s resolves to mount %s (source %s, type %s), but aap_backup_expected_mount requires %s. "
-            "An unmounted share exposing a local directory is refused." % (
+            "Backup path is not on the expected mount - mount the expected share or update aap_backup_expected_mount",
+            cause="%s resolves to mount %s (source %s, type %s), expected %s" % (
                 norm, active["mount_point"], active["source"], active["fstype"], exp_mp
             ),
         )
     if active["mount_point"] == "/" and not allow_root_fs:
         raise StopError(
             "SA-AAPBK-02",
-            "Backup path %s (realpath %s) resolves onto the root filesystem (/). Mount the dedicated backup share (or set aap_backup_allow_root_fs: true only for testing)." % (
-                norm, real_path
+            "Backup path is on the root filesystem (/) - mount the dedicated backup share and retry",
+            cause="%s (realpath %s) resolves onto root filesystem / (source %s, type %s); unmounted share refused" % (
+                norm, real_path, active["source"], active["fstype"]
             ),
         )
     if active["mount_point"] in SYSTEM_MOUNT_POINTS and not allow_root_fs:
         raise StopError(
             "SA-AAPBK-02",
-            "Backup path %s (realpath %s) resolves onto system mount %s (source %s, type %s), not a dedicated backup mount. "
-            "An unmounted share falling back to a local OS/system LV is refused; mount the dedicated backup filesystem and/or set aap_backup_expected_mount." % (
+            "Backup path is on a system mount - mount a dedicated backup filesystem or set aap_backup_expected_mount",
+            cause="%s (realpath %s) resolves onto system mount %s (source %s, type %s)" % (
                 norm, real_path, active["mount_point"], active["source"], active["fstype"]
             ),
         )
     if expected_source and expected_source.strip() and active["source"] != expected_source.strip():
         raise StopError(
             "SA-AAPBK-02",
-            "Backup mount %s has source %r, but aap_backup_expected_source requires %r." % (
+            "Backup mount source mismatch - mount the expected source or update aap_backup_expected_source",
+            cause="mount %s has source %r, expected %r" % (
                 active["mount_point"], active["source"], expected_source.strip()
             ),
         )
@@ -1118,21 +1349,22 @@ def check_mount_and_writable(backup_path, expected_mount="", expected_source="",
         if fs_low not in allowed_fs:
             raise StopError(
                 "SA-AAPBK-02",
-                "Backup mount %s has filesystem type %s, which is not in aap_backup_expected_fstypes (%s)." % (
+                "Unsupported backup filesystem type - mount an allowed filesystem or update aap_backup_expected_fstypes",
+                cause="mount %s has fstype %s, allowed: %s" % (
                     active["mount_point"], active["fstype"], ", ".join(allowed_fs)
                 ),
             )
     elif fs_low in PSEUDO_FSTYPES:
         raise StopError(
             "SA-AAPBK-02",
-            "Backup mount %s uses pseudo/ephemeral filesystem type %s, which is not allowed for persistent backups." % (
-                active["mount_point"], active["fstype"]
-            ),
+            "Backup path is on an ephemeral pseudo filesystem - mount persistent storage and retry",
+            cause="mount %s uses disallowed pseudo fstype %s" % (active["mount_point"], active["fstype"]),
         )
     if active["readonly"]:
         raise StopError(
             "SA-AAPBK-02",
-            "Backup mount %s (source %s) is mounted read-only (ro)." % (active["mount_point"], active["source"]),
+            "Backup mount is read-only - remount read-write and retry",
+            cause="mount %s (source %s) is mounted read-only (ro)" % (active["mount_point"], active["source"]),
         )
 
     if write_probe:
@@ -1158,15 +1390,16 @@ def check_mount_and_writable(backup_path, expected_mount="", expected_source="",
                 pass
             raise StopError(
                 "SA-AAPBK-02",
-                "Write probe failed on %s as uid %d: %s. Confirm ownership and write permissions for aap_backup_user." % (
-                    norm, os.geteuid(), exc
-                ),
+                "Backup path write probe failed - check ownership and write permissions for aap_backup_user",
+                cause="write probe on %s as uid %d failed: %s" % (norm, os.geteuid(), _format_exception(exc)),
+                extra_log=_format_traceback(exc),
             )
     else:
         if not os.access(norm, os.W_OK | os.X_OK):
             raise StopError(
                 "SA-AAPBK-02",
-                "Backup path %s is not writable by uid %d (check mode)." % (norm, os.geteuid()),
+                "Backup path is not writable - grant write permissions to aap_backup_user",
+                cause="%s failed W_OK|X_OK check for uid %d (check mode)" % (norm, os.geteuid()),
             )
     return {"path": norm, "realpath": real_path, "mount": active}
 
@@ -1176,7 +1409,12 @@ def check_free_space(backup_path, estimate_gb, margin_pct, statvfs_fn=read_statv
     try:
         st = statvfs_fn(backup_path)
     except OSError as exc:
-        raise StopError("SA-AAPBK-03", "Could not measure available space on %s: %s" % (backup_path, exc))
+        raise StopError(
+            "SA-AAPBK-03",
+            "Cannot measure free space on backup mount - check mount health and retry",
+            cause="statvfs(%s) failed: %s" % (backup_path, _format_exception(exc)),
+            extra_log=_format_traceback(exc),
+        )
     avail = int(st["available_bytes"])
     needed = int(req["required_bytes"])
     result = dict(req)
@@ -1193,12 +1431,12 @@ def check_free_space(backup_path, estimate_gb, margin_pct, statvfs_fn=read_statv
         shortfall = needed - avail
         raise StopError(
             "SA-AAPBK-03",
-            "Insufficient free space on %s: available %s < required %s (baseline %s from %s + %d%% margin %s; shortfall %s). "
-            "This job never extends LVM or modifies storage; extend the LV or NFS quota by at least %s and retry." % (
-                backup_path, fmt_bytes(avail), fmt_bytes(needed),
+            "Insufficient free space on backup mount - extend the LV or NFS quota by at least %s and retry" % fmt_bytes(shortfall),
+            cause="available %s < required %s on %s (baseline %s from %s + %d%% margin %s; shortfall %s; job never extends LVM)" % (
+                fmt_bytes(avail), fmt_bytes(needed), backup_path,
                 fmt_bytes(req["baseline_bytes"]), req["baseline_source"],
                 req["margin_pct"], fmt_bytes(req["margin_bytes"]),
-                fmt_bytes(shortfall), fmt_bytes(shortfall),
+                fmt_bytes(shortfall),
             ),
             details=result,
         )
@@ -1210,7 +1448,8 @@ def resolve_installer(installer_dir, installer_inventory="", ansible_playbook_bi
     if not raw_dir or not os.path.isdir(raw_dir):
         raise StopError(
             "SA-AAPBK-04",
-            "Installer directory aap_installer_dir (%r) does not exist or is not a directory." % raw_dir,
+            "Installer directory not found - set aap_installer_dir to the AAP 2.7 setup directory",
+            cause="aap_installer_dir=%r does not exist or is not a directory" % raw_dir,
         )
     inv_path = ""
     raw_inv = str(installer_inventory or "").strip()
@@ -1223,7 +1462,8 @@ def resolve_installer(installer_dir, installer_inventory="", ansible_playbook_bi
         else:
             raise StopError(
                 "SA-AAPBK-04",
-                "Installer inventory %s does not exist or is not readable." % cand,
+                "Installer inventory missing or unreadable - set aap_installer_inventory and verify permissions",
+                cause="inventory file %s does not exist or is not readable by uid %d" % (cand, os.geteuid()),
             )
     else:
         for name in ("inventory", "inventory-growth"):
@@ -1234,7 +1474,8 @@ def resolve_installer(installer_dir, installer_inventory="", ansible_playbook_bi
         if not inv_path:
             raise StopError(
                 "SA-AAPBK-04",
-                "No installer inventory found in %s (looked for 'inventory' and 'inventory-growth'). Set aap_installer_inventory." % raw_dir,
+                "Installer inventory not found - place inventory in aap_installer_dir or set aap_installer_inventory",
+                cause="neither 'inventory' nor 'inventory-growth' was readable in %s" % raw_dir,
             )
 
     ap = str(ansible_playbook_bin or "ansible-playbook").strip()
@@ -1242,7 +1483,8 @@ def resolve_installer(installer_dir, installer_inventory="", ansible_playbook_bi
     if not ap_exe or not os.path.isfile(ap_exe) or not os.access(ap_exe, os.X_OK):
         raise StopError(
             "SA-AAPBK-04",
-            "ansible-playbook executable (%r) not found or not executable on the AAP host." % ap,
+            "ansible-playbook executable not found - install ansible-core or set aap_installer_ansible_playbook_bin",
+            cause="executable %r not found or not executable on PATH" % ap,
         )
     return {
         "installer_dir": os.path.realpath(raw_dir),
@@ -1256,7 +1498,12 @@ def acquire_lock(backup_path, action_name):
     try:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     except OSError as exc:
-        raise StopError("SA-AAPBK-02", "Could not open backup lock file %s: %s" % (lock_path, exc))
+        raise StopError(
+            "SA-AAPBK-02",
+            "Cannot open backup lock file - check backup path permissions for aap_backup_user",
+            cause="open(%s) failed: %s" % (lock_path, _format_exception(exc)),
+            extra_log=_format_traceback(exc),
+        )
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (IOError, OSError) as exc:
@@ -1270,11 +1517,15 @@ def acquire_lock(backup_path, action_name):
         if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
             raise StopError(
                 "SA-AAPBK-06",
-                "Another AAP backup or bundle operation holds lock %s (%s). Wait for it to finish before retrying." % (
-                    lock_path, holder or "active lock"
-                ),
+                "Backup lock held by another run - wait for the active backup or bundle to finish and retry",
+                cause="flock(%s) busy (%s)" % (lock_path, holder or "active lock"),
             )
-        raise StopError("SA-AAPBK-06", "Could not acquire lock %s: %s" % (lock_path, exc))
+        raise StopError(
+            "SA-AAPBK-06",
+            "Failed to acquire backup lock - verify filesystem locking on backup mount and retry",
+            cause="flock(%s) failed: %s" % (lock_path, _format_exception(exc)),
+            extra_log=_format_traceback(exc),
+        )
     try:
         os.ftruncate(fd, 0)
         os.lseek(fd, 0, os.SEEK_SET)
@@ -1398,7 +1649,12 @@ def verify_sha256sums(root_dir, sums_name="SHA256SUMS", stop_code="SA-AAPBK-09")
         with open(sums_path, "r", encoding="utf-8") as fh:
             lines = [ln for ln in fh.read().splitlines() if ln.strip()]
     except OSError as exc:
-        raise StopError(stop_code, "Could not read manifest %s: %s" % (sums_path, exc))
+        raise StopError(
+            stop_code,
+            STOP_DEFAULTS.get(stop_code, "Manifest verification failed - inspect log and retry"),
+            cause="could not read manifest %s: %s" % (sums_path, _format_exception(exc)),
+            extra_log=_format_traceback(exc),
+        )
     if not lines:
         raise StopError(stop_code, "Manifest %s is empty." % sums_path)
     verified = 0
@@ -1410,7 +1666,15 @@ def verify_sha256sums(root_dir, sums_name="SHA256SUMS", stop_code="SA-AAPBK-09")
         target = _assert_no_symlink_path(root_dir, rel, stop_code)
         if not os.path.isfile(target):
             raise StopError(stop_code, "Missing file listed in %s: %s" % (sums_path, rel))
-        got_hash = sha256_file(target)
+        try:
+            got_hash = sha256_file(target)
+        except OSError as exc:
+            raise StopError(
+                stop_code,
+                STOP_DEFAULTS.get(stop_code, "Manifest verification failed - inspect log and retry"),
+                cause="could not hash %s: %s" % (rel, _format_exception(exc)),
+                extra_log=_format_traceback(exc),
+            )
         if got_hash != want_hash:
             raise StopError(
                 stop_code,
@@ -1420,7 +1684,7 @@ def verify_sha256sums(root_dir, sums_name="SHA256SUMS", stop_code="SA-AAPBK-09")
     return verified
 
 
-def quarantine_staging(backup_path, staging_dir, run_id, code, reason, extra_log_file=""):
+def quarantine_staging(backup_path, staging_dir, run_id, code, reason, extra_log_file="", extra_log_text=""):
     qroot = os.path.join(backup_path, "quarantine")
     try:
         _ensure_dir_0700(qroot)
@@ -1436,9 +1700,14 @@ def quarantine_staging(backup_path, staging_dir, run_id, code, reason, extra_log
                 _copy_file_0600(extra_log_file, os.path.join(qdest, "installer.log"))
             except OSError:
                 pass
+        elif extra_log_text:
+            try:
+                atomic_write_text(os.path.join(qdest, "installer.log"), _redact_secrets(extra_log_text), mode=0o600)
+            except OSError:
+                pass
         atomic_write_text(
             os.path.join(qdest, "ERROR.txt"),
-            "code=%s\ntime=%s\nreason=%s\n" % (code, iso_utc(), reason),
+            "code=%s\ntime=%s\nreason=%s\n" % (code, iso_utc(), _redact_secrets(reason)),
             mode=0o600,
         )
         _harden_tree_perms(qdest)
@@ -1878,6 +2147,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 
 os.umask(0o077)
@@ -1886,9 +2156,26 @@ GIB = 1024 ** 3
 
 class RunnerStop(Exception):
     def __init__(self, code, message):
-        super(RunnerStop, self).__init__("STOP [%s]: %s" % (code, message))
+        super(RunnerStop, self).__init__("%s: %s" % (code, message))
         self.code = code
         self.message = message
+
+
+def format_exc(exc):
+    tb = getattr(exc, "__traceback__", None) or sys.exc_info()[2]
+    loc = ""
+    if tb is not None:
+        try:
+            frames = traceback.extract_tb(tb)
+            if frames:
+                last = frames[-1]
+                loc = " (%s:%d)" % (os.path.basename(last.filename), last.lineno)
+        except Exception:
+            loc = ""
+    lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+    last_line = lines[-1] if lines else ""
+    head = "%s: %s" % (type(exc).__name__, last_line) if last_line else type(exc).__name__
+    return "%s%s" % (head, loc)
 
 
 def iso_utc():
@@ -2368,11 +2655,11 @@ def main():
         except subprocess.TimeoutExpired as exc:
             state = "timeout"
             rc = 124
-            err = str(exc)
+            err = format_exc(exc)
         except Exception as exc:
             state = "error"
             rc = 127
-            err = str(exc)
+            err = format_exc(exc)
         finally:
             aap_state, post_svcs = ensure_running(cfg.get("pre_services"), podman_bin, systemctl_bin)
             try:
@@ -2388,13 +2675,14 @@ def main():
 
         if state != "ok":
             if state == "timeout":
-                reason = "installer backup timed out after %ss" % cfg.get("timeout_seconds", 7200)
+                reason = "installer backup timed out after %ss (%s)" % (cfg.get("timeout_seconds", 7200), err)
             elif state == "error":
                 reason = err or "failed to run containerized installer backup"
             else:
                 reason = "installer exited rc=%d: %s" % (rc, " | ".join(tail[-5:]))
             qdir = quarantine_staging(backup_path, staging_dir, backup_id, "SA-AAPBK-07",
                                       "%s; %s" % (reason, aap_state["summary"]), log_file)
+            qlog = os.path.join(qdir, "installer.log") if (qdir and os.path.isfile(os.path.join(qdir, "installer.log"))) else (os.path.join(qdir, "ERROR.txt") if qdir else "")
             try:
                 if os.path.exists(log_file):
                     os.unlink(log_file)
@@ -2407,6 +2695,7 @@ def main():
                 "error": err or reason,
                 "tail": tail,
                 "quarantine_dir": qdir,
+                "quarantine_log_path": qlog,
                 "unit": unit,
                 "post_services": post_svcs,
                 "aap_service_state": aap_state,
@@ -2519,20 +2808,23 @@ def main():
                 "rc": 1,
                 "error": exc.message,
                 "quarantine_dir": qdir,
+                "quarantine_log_path": os.path.join(qdir, "ERROR.txt") if qdir else "",
                 "unit": unit,
                 "post_services": post_svcs,
                 "aap_service_state": aap_state,
                 "finished_utc": iso_utc(),
             })
         except Exception as exc:
+            ferr = format_exc(exc)
             qdir = quarantine_staging(backup_path, staging_dir, backup_id, "SA-AAPBK-09",
-                                      "%s; %s" % (exc, aap_state["summary"]))
+                                      "%s; %s" % (ferr, aap_state["summary"]))
             write_status(status_file, {
                 "state": "failed",
                 "stop_code": "SA-AAPBK-09",
                 "rc": 1,
-                "error": "Manifest generation/verification/publish failed: %s" % exc,
+                "error": "Manifest generation/verification/publish failed: %s" % ferr,
                 "quarantine_dir": qdir,
+                "quarantine_log_path": os.path.join(qdir, "ERROR.txt") if qdir else "",
                 "unit": unit,
                 "post_services": post_svcs,
                 "aap_service_state": aap_state,
@@ -2564,8 +2856,8 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
     if not sdrun:
         raise StopError(
             "SA-AAPBK-17",
-            "Refusing synchronous backup inside a self-hosted AAP job: '%s' was not found to detach the installer backup. "
-            "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
+            "Detached self-hosted backup unavailable - run the printed CLI directly on the AAP host as %s" % guidance["cli_user"],
+            cause="'%s' not found; run as %s: %s; verify: %s; restart: %s; %s" % (
                 systemd_run_bin, guidance["cli_user"], guidance["cli_command"],
                 " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
                 untouched["summary"],
@@ -2633,9 +2925,10 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
                 pass
         raise StopError(
             "SA-AAPBK-17",
-            "Failed to launch detached systemd-run --user unit for self-hosted AAP backup (%s). "
-            "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
-                exc, guidance["cli_user"], guidance["cli_command"],
+            "Failed to launch detached self-hosted backup - run the printed CLI directly on the AAP host as %s" % guidance["cli_user"],
+            cause="%s; run as %s: %s; verify: %s; restart: %s; %s" % (
+                _format_cmd_failure(launch_cmd, 127, err=_format_exception(exc)),
+                guidance["cli_user"], guidance["cli_command"],
                 " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
                 untouched["summary"],
             ),
@@ -2647,6 +2940,7 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
                 "verify_commands": guidance["verify_commands"],
                 "aap_service_state": untouched,
             },
+            extra_log=_format_traceback(exc),
         )
     if launch.returncode != 0:
         for p in (cfg_file, runner_script):
@@ -2655,12 +2949,12 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
                     os.unlink(p)
             except OSError:
                 pass
-        err_msg = ((launch.stderr or "") + " " + (launch.stdout or "")).strip()
         raise StopError(
             "SA-AAPBK-17",
-            "systemd-run --user refused detached launch (rc=%d: %s). Enable linger for %s or run directly on the AAP host as %s: %s  "
-            "Verify: %s  Restart: %s  %s" % (
-                launch.returncode, err_msg, guidance["cli_user"], guidance["cli_user"], guidance["cli_command"],
+            "Detached systemd-run launch refused - enable linger or run the printed CLI on the AAP host as %s" % guidance["cli_user"],
+            cause="%s; run as %s: %s; verify: %s; restart: %s; %s" % (
+                _format_cmd_failure(launch_cmd, launch.returncode, stderr=launch.stderr, stdout=launch.stdout),
+                guidance["cli_user"], guidance["cli_command"],
                 " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
                 untouched["summary"],
             ),
@@ -2673,6 +2967,7 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
                 "verify_commands": guidance["verify_commands"],
                 "aap_service_state": untouched,
             },
+            extra_log="stdout:\n%s\nstderr:\n%s\n" % (launch.stdout or "", launch.stderr or ""),
         )
 
     poll = max(0.05, float(poll_seconds if poll_seconds is not None else 5.0))
@@ -2864,7 +3159,11 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
         # Validate path before attempting lock
         norm_path = validate_backup_path(params["backup_path"])
         if not os.path.isdir(norm_path):
-            raise StopError("SA-AAPBK-02", "Backup path %s does not exist or is not a directory." % norm_path)
+            raise StopError(
+                "SA-AAPBK-02",
+                "Backup path missing - mount the backup filesystem or NFS share and retry",
+                cause="path %s does not exist or is not a directory" % norm_path,
+            )
 
         lock_fd = None
         if not check_mode:
@@ -2881,7 +3180,11 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
             self_hosted = _is_self_hosted_aap_run(awx_job_id, params.get("controller_host", ""))
             self_hosted_mode = str(params.get("self_hosted_mode") or "refuse").strip().lower()
             if self_hosted_mode not in ("refuse", "detach"):
-                raise StopError("SA-AAPBK-17", "Invalid aap_backup_self_hosted_mode (%r): must be 'refuse' or 'detach'." % self_hosted_mode)
+                raise StopError(
+                    "SA-AAPBK-17",
+                    "Invalid self-hosted backup mode - set aap_backup_self_hosted_mode to 'refuse' or 'detach'",
+                    cause="aap_backup_self_hosted_mode=%r is not 'refuse' or 'detach'" % self_hosted_mode,
+                )
             guidance = _build_manual_cli_guidance(backup_user, pre_services, pre)
 
             if check_mode:
@@ -2920,19 +3223,13 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 if self_hosted_mode == "refuse":
                     raise StopError(
                         "SA-AAPBK-17",
-                        "Preflight passed (AAP %s, mount %s, available %s >= required %s), but refusing to run AAP backup inside "
-                        "self-hosted AAP job (awx_job_id=%s, self_hosted_mode=refuse): stopping controller/receptor would kill the job "
-                        "mid-backup and leave AAP down. "
-                        "Run directly on the AAP host as %s (e.g. 'sudo -iu %s', then in ~/site-automation): %s  "
-                        "Verify AAP services after backup: %s  "
-                        "Restart if any service remains stopped: %s  "
-                        "%s" % (
+                        "Self-hosted AAP backup refused - run the printed CLI directly on the AAP host as %s" % guidance["cli_user"],
+                        cause="Preflight passed (AAP %s, mount %s, available %s >= required %s); self-hosted AAP job (awx_job_id=%s, self_hosted_mode=refuse) would kill itself mid-backup; run as %s: %s; verify: %s; restart: %s; %s" % (
                             pre["version"]["exact_version"],
                             pre["mount"]["mount_point"],
                             fmt_bytes(pre["space"]["available_bytes"]),
                             fmt_bytes(pre["space"]["required_bytes"]),
                             awx_job_id,
-                            guidance["cli_user"],
                             guidance["cli_user"],
                             guidance["cli_command"],
                             " && ".join(guidance["verify_commands"]),
@@ -2952,9 +3249,9 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 if not _resolve_exe(systemd_run_bin):
                     raise StopError(
                         "SA-AAPBK-17",
-                        "Self-hosted AAP job (awx_job_id=%s) requires '%s --user' to detach the installer backup, but '%s' is not available. "
-                        "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
-                            awx_job_id, systemd_run_bin, systemd_run_bin,
+                        "Detached self-hosted backup unavailable - run the printed CLI directly on the AAP host as %s" % guidance["cli_user"],
+                        cause="self-hosted AAP job (awx_job_id=%s) requires '%s --user' which is not available; run as %s: %s; verify: %s; restart: %s; %s" % (
+                            awx_job_id, systemd_run_bin,
                             guidance["cli_user"], guidance["cli_command"],
                             " && ".join(guidance["verify_commands"]),
                             " ; ".join(guidance["restart_commands"]),
@@ -3076,18 +3373,22 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                         ),
                     }
                 if dstate == "lock_busy":
+                    code_lb = dres.get("stop_code") or "SA-AAPBK-06"
                     raise StopError(
-                        dres.get("stop_code") or "SA-AAPBK-06",
-                        dres.get("error") or "Another AAP backup or bundle operation holds .aap-backup.lock.",
+                        code_lb,
+                        STOP_DEFAULTS.get(code_lb, "Backup lock held by another run - wait for it to finish and retry"),
+                        cause=dres.get("error") or "another AAP backup or bundle operation holds .aap-backup.lock",
                         details={"detached_unit": dunit, "aap_service_state": d_aap_state},
                     )
                 if dstate == "poll_timeout":
                     raise StopError(
                         "SA-AAPBK-07",
-                        "Timed out polling detached backup unit %s (%s). Inspect %s and 'systemctl --user status %s'." % (
-                            dunit, dres.get("error", ""), dres.get("status_file", ""), dunit
+                        "Detached backup polling timed out - inspect the systemd user unit and status file",
+                        cause="%s; unit=%s; status_file=%s" % (
+                            dres.get("error", "timed out polling detached backup unit"), dunit, dres.get("status_file", "")
                         ),
                         details={"detached_unit": dunit, "status_file": dres.get("status_file", "")},
+                        log_path=dres.get("log_file", "") if os.path.isfile(dres.get("log_file", "")) else "",
                     )
 
                 if not d_aap_state:
@@ -3098,25 +3399,45 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                     qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, stop_code,
                                               "%s; %s" % (dres.get("error") or dstate, d_aap_state["summary"]),
                                               dres.get("log_file", ""))
+                qlog = str(dres.get("quarantine_log_path") or "")
+                if not qlog and qdir:
+                    cand_ilog = os.path.join(qdir, "installer.log")
+                    qlog = cand_ilog if os.path.isfile(cand_ilog) else os.path.join(qdir, "ERROR.txt")
+                dtail = list(dres.get("tail") or [])
+                cmd_cause = _format_cmd_failure(
+                    cmd, dres.get("rc", 1),
+                    stderr="\n".join(dtail),
+                    err=dres.get("error") or dstate,
+                ) if stop_code == "SA-AAPBK-07" else (dres.get("error") or dstate)
+                sum_line = (
+                    "Containerized installer backup timed out - inspect installer.log or raise aap_backup_timeout_seconds and retry"
+                    if (stop_code == "SA-AAPBK-07" and dstate == "timeout")
+                    else STOP_DEFAULTS.get(stop_code, "Detached AAP backup failed - inspect the quarantine log and retry")
+                )
                 raise StopError(
                     stop_code,
-                    "Detached AAP backup failed (%s, rc=%s). Staging quarantined at %s; prior completed backup untouched. %s %s" % (
-                        dstate, dres.get("rc", 1), qdir or "(none)", dres.get("error") or "", d_aap_state["summary"]
+                    sum_line,
+                    cause="%s; unit=%s; staging quarantined at %s; prior completed backup untouched; %s" % (
+                        cmd_cause, dunit, qdir or "(none)", d_aap_state["summary"]
                     ),
                     details={
                         "rc": dres.get("rc", 1),
                         "quarantine_dir": qdir,
-                        "tail": list(dres.get("tail") or []),
+                        "tail": dtail,
                         "detached_unit": dunit,
                         "aap_service_state": d_aap_state,
                         "post_services": d_post_svcs,
                     },
+                    log_path=qlog,
                 )
 
             run_state = "error"
             run_rc = 1
             run_tail = []
+            run_stdout = ""
+            run_stderr = ""
             run_error = ""
+            run_tb = ""
             aap_service_state = None
             post_services = None
             with _ignore_sighup():
@@ -3130,51 +3451,76 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                         timeout=timeout_s,
                     )
                     run_rc = int(proc.returncode)
-                    run_tail = ((proc.stderr or "") + "\n" + (proc.stdout or "")).strip().splitlines()[-15:]
+                    run_stdout = proc.stdout or ""
+                    run_stderr = proc.stderr or ""
+                    run_tail = (run_stderr + "\n" + run_stdout).strip().splitlines()[-15:]
                     run_state = "ok" if run_rc == 0 else "failed"
                 except subprocess.TimeoutExpired as exc:
                     run_state = "timeout"
                     run_rc = 124
-                    run_error = str(exc)
+                    run_stdout = (exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or ""))
+                    run_stderr = (exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or ""))
+                    run_error = _format_exception(exc)
+                    run_tb = _format_traceback(exc)
                 except OSError as exc:
                     run_state = "error"
                     run_rc = 127
-                    run_error = str(exc)
+                    run_error = _format_exception(exc)
+                    run_tb = _format_traceback(exc)
                 finally:
                     # ALWAYS restart any pre_services stopped by the installer (even on failure/timeout/crash)
                     aap_service_state, post_services = _ensure_services_running(pre_services, podman_bin, systemctl_bin)
 
             if run_state == "timeout":
+                full_log_txt = "cmd=%s\ntimeout_seconds=%s\nerror=%s\n--- stderr ---\n%s\n--- stdout ---\n%s\n" % (
+                    _sanitize_cmd_for_display(cmd), timeout_s, run_error, run_stderr, run_stdout
+                )
+                cmd_cause = _format_cmd_failure(cmd, run_rc, stderr=run_stderr, stdout=run_stdout, err=run_error)
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "installer backup timed out; %s" % aap_service_state["summary"])
+                                          "%s; %s" % (cmd_cause, aap_service_state["summary"]),
+                                          extra_log_text=full_log_txt)
+                qlog = os.path.join(qdir, "installer.log") if qdir else ""
                 raise StopError(
                     "SA-AAPBK-07",
-                    "Containerized installer backup timed out after %ss. Staging quarantined at %s; prior completed backup untouched. %s" % (
-                        timeout_s, qdir, aap_service_state["summary"]
+                    "Containerized installer backup timed out - inspect installer.log or raise aap_backup_timeout_seconds and retry",
+                    cause="%s; timeout=%ss; staging quarantined at %s; prior completed backup untouched; %s" % (
+                        cmd_cause, timeout_s, qdir or "(none)", aap_service_state["summary"]
                     ),
                     details={"quarantine_dir": qdir, "error": run_error, "aap_service_state": aap_service_state, "post_services": post_services},
+                    log_path=qlog,
                 )
             if run_state == "error":
+                full_log_txt = "cmd=%s\nerror=%s\n%s\n" % (_sanitize_cmd_for_display(cmd), run_error, run_tb)
+                cmd_cause = _format_cmd_failure(cmd, run_rc, err=run_error)
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "%s; %s" % (run_error, aap_service_state["summary"]))
+                                          "%s; %s" % (cmd_cause, aap_service_state["summary"]),
+                                          extra_log_text=full_log_txt)
+                qlog = os.path.join(qdir, "installer.log") if qdir else ""
                 raise StopError(
                     "SA-AAPBK-07",
-                    "Failed to run containerized installer backup: %s. Staging quarantined at %s. %s" % (
-                        run_error, qdir, aap_service_state["summary"]
-                    ),
+                    "Failed to execute containerized installer backup - verify ansible-playbook and installer permissions",
+                    cause="%s; staging quarantined at %s; %s" % (cmd_cause, qdir or "(none)", aap_service_state["summary"]),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state, "post_services": post_services},
+                    log_path=qlog,
                 )
             if run_rc != 0:
-                reason = "installer exited rc=%d: %s" % (run_rc, " | ".join(run_tail[-5:]))
+                full_log_txt = "cmd=%s\nrc=%d\n--- stderr ---\n%s\n--- stdout ---\n%s\n" % (
+                    _sanitize_cmd_for_display(cmd), run_rc, run_stderr, run_stdout
+                )
+                cmd_cause = _format_cmd_failure(cmd, run_rc, stderr=run_stderr, stdout=run_stdout)
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "%s; %s" % (reason, aap_service_state["summary"]))
+                                          "%s; %s" % (cmd_cause, aap_service_state["summary"]),
+                                          extra_log_text=full_log_txt)
+                qlog = os.path.join(qdir, "installer.log") if qdir else ""
                 raise StopError(
                     "SA-AAPBK-07",
-                    "Containerized installer backup failed (rc=%d). Staging quarantined at %s; prior completed backup untouched. Tail: %s. %s" % (
-                        run_rc, qdir, " | ".join(run_tail[-5:]), aap_service_state["summary"]
+                    "Containerized installer backup failed - inspect installer.log, fix the installer error, and retry",
+                    cause="%s; staging quarantined at %s; prior completed backup untouched; %s" % (
+                        cmd_cause, qdir or "(none)", aap_service_state["summary"]
                     ),
                     details={"rc": run_rc, "quarantine_dir": qdir, "tail": run_tail,
                              "aap_service_state": aap_service_state, "post_services": post_services},
+                    log_path=qlog,
                 )
 
             # Enforce 0700/0600 on all installer-written dirs/files before verification & publish
@@ -3184,54 +3530,74 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 payload_files = walk_relative_files(staging_dir, exclude_names=("SHA256SUMS", "manifest.json"),
                                                     reject_symlinks=True, stop_code="SA-AAPBK-09")
             except StopError as exc:
-                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, exc.code, exc.message)
+                _cleanup_temp_log(exc)
+                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, exc.code,
+                                          "%s; %s" % (exc.cause, aap_service_state["summary"]))
                 raise StopError(
                     exc.code,
-                    "%s Staging quarantined at %s. %s" % (exc.message, qdir, aap_service_state["summary"]),
+                    exc.summary,
+                    cause="%s; staging quarantined at %s; %s" % (exc.cause, qdir or "(none)", aap_service_state["summary"]),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
             payload_files = [(rel, ap) for rel, ap in payload_files if rel.startswith("payload/")]
             if not payload_files:
-                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-08", "empty backup payload")
+                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-08",
+                                          "installer exited 0 with no backup payload files under %s; %s" % (payload_dir, aap_service_state["summary"]))
                 raise StopError(
                     "SA-AAPBK-08",
-                    "Installer exited 0 but wrote no backup payload files under %s. Staging quarantined at %s. %s" % (
-                        payload_dir, qdir, aap_service_state["summary"]
+                    "Installer exited 0 with no backup payload - inspect installer inventory and retry",
+                    cause="no payload files written under %s; staging quarantined at %s; %s" % (
+                        payload_dir, qdir or "(none)", aap_service_state["summary"]
                     ),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
 
             non_empty = [ap for _, ap in payload_files if os.path.getsize(ap) > 0]
             if not non_empty:
-                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-08", "all payload files are 0 bytes")
+                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-08",
+                                          "all %d payload file(s) under %s are 0 bytes; %s" % (len(payload_files), payload_dir, aap_service_state["summary"]))
                 raise StopError(
                     "SA-AAPBK-08",
-                    "Installer backup produced only empty (0-byte) files. Staging quarantined at %s. %s" % (
-                        qdir, aap_service_state["summary"]
+                    "Installer backup produced only 0-byte payload files - inspect installer output and retry",
+                    cause="all %d payload file(s) under %s are 0 bytes; staging quarantined at %s; %s" % (
+                        len(payload_files), payload_dir, qdir or "(none)", aap_service_state["summary"]
                     ),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
 
             try:
                 sums_path, file_entries, payload_bytes = write_sha256sums(staging_dir, payload_files, "SHA256SUMS")
                 verified_count = verify_sha256sums(staging_dir, "SHA256SUMS", stop_code="SA-AAPBK-09")
                 if verified_count != len(payload_files):
-                    raise StopError("SA-AAPBK-09", "Verified file count (%d) != payload file count (%d)." % (verified_count, len(payload_files)))
+                    raise StopError(
+                        "SA-AAPBK-09",
+                        "Backup manifest verification failed - check storage integrity and rerun backup",
+                        cause="verified file count (%d) != payload file count (%d)" % (verified_count, len(payload_files)),
+                    )
             except StopError as exc:
-                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, exc.code, exc.message)
+                _cleanup_temp_log(exc)
+                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, exc.code,
+                                          "%s; %s" % (exc.cause, aap_service_state["summary"]))
                 raise StopError(
                     exc.code,
-                    "%s Staging quarantined at %s. %s" % (exc.message, qdir, aap_service_state["summary"]),
+                    exc.summary,
+                    cause="%s; staging quarantined at %s; %s" % (exc.cause, qdir or "(none)", aap_service_state["summary"]),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
             except Exception as exc:
-                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-09", str(exc))
+                ferr = _format_exception(exc)
+                qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-09",
+                                          "%s; %s\n%s" % (ferr, aap_service_state["summary"], _format_traceback(exc)))
                 raise StopError(
                     "SA-AAPBK-09",
-                    "Manifest generation/verification failed: %s. Staging quarantined at %s. %s" % (
-                        exc, qdir, aap_service_state["summary"]
-                    ),
+                    "Backup manifest generation or verification failed - check storage integrity and rerun backup",
+                    cause="%s; staging quarantined at %s; %s" % (ferr, qdir or "(none)", aap_service_state["summary"]),
                     details={"quarantine_dir": qdir, "aap_service_state": aap_service_state},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
 
             finished = utc_now()
@@ -3535,7 +3901,12 @@ def _inspect_installer_tarball(tar_path):
     except StopError:
         raise
     except Exception as exc:
-        raise StopError("SA-AAPBK-13", "Could not inspect installer bundle tarball %s: %s" % (tar_path, exc))
+        raise StopError(
+            "SA-AAPBK-13",
+            "Could not inspect installer bundle tarball - verify the archive is intact and readable",
+            cause="tarfile.open(%s) failed: %s" % (tar_path, _format_exception(exc)),
+            extra_log=_format_traceback(exc),
+        )
 
     if not has_image:
         raise StopError(
@@ -3716,14 +4087,24 @@ def _discover_podman_images(podman_bin, explicit_images, auto_discover, include_
     for img in explicit:
         if img not in by_name:
             # Double-check via podman image exists / inspect
+            chk_cmd = [exe, "image", "exists", img]
             try:
-                chk = subprocess.run([exe, "image", "exists", img], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+                chk = subprocess.run(chk_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=15)
                 if chk.returncode != 0:
-                    raise StopError("SA-AAPBK-14", "Explicit custom EE image %r is not present in local podman storage." % img)
+                    raise StopError(
+                        "SA-AAPBK-14",
+                        "Explicit custom EE image missing locally - load or pull the image or update aap_backup_ee_images",
+                        cause=_format_cmd_failure(chk_cmd, chk.returncode, stderr=chk.stderr, stdout=chk.stdout),
+                    )
             except StopError:
                 raise
             except Exception as exc:
-                raise StopError("SA-AAPBK-14", "Could not verify EE image %r: %s" % (img, exc))
+                raise StopError(
+                    "SA-AAPBK-14",
+                    "Could not verify custom EE image - check local podman availability and retry",
+                    cause=_format_cmd_failure(chk_cmd, 127, err=_format_exception(exc)),
+                    extra_log=_format_traceback(exc),
+                )
             selected.append({"image": img, "id": "", "digest": "", "source": "explicit"})
         else:
             row = dict(by_name[img])
@@ -3910,7 +4291,12 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                 with open(src_manifest_path, "r", encoding="utf-8") as fh:
                     src_manifest = json.load(fh)
             except Exception as exc:
-                raise StopError("SA-AAPBK-12", "Could not read source backup manifest %s: %s" % (src_manifest_path, exc))
+                raise StopError(
+                    "SA-AAPBK-12",
+                    "Source backup manifest unreadable - do not transfer; rerun AAP - backup first",
+                    cause="failed reading %s: %s" % (src_manifest_path, _format_exception(exc)),
+                    extra_log=_format_traceback(exc),
+                )
 
             # 2. Verify source backup SHA256SUMS before bundling (SA-AAPBK-12; rejects symlinks)
             verified_backup_files = verify_sha256sums(src_backup_dir, "SHA256SUMS", stop_code="SA-AAPBK-12")
@@ -3923,7 +4309,12 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                     ansible_playbook_bin=params.get("ansible_playbook_bin", "ansible-playbook"),
                 )
             except StopError as exc:
-                raise StopError("SA-AAPBK-13", "Bundle installer prerequisite missing: %s" % exc.message)
+                _cleanup_temp_log(exc)
+                raise StopError(
+                    "SA-AAPBK-13",
+                    "Bundle installer prerequisite missing - verify aap_installer_dir, inventory, and ansible-playbook",
+                    cause=exc.cause,
+                )
 
             backup_aap = src_manifest.get("aap") or {}
             backup_build = str(backup_aap.get("installer_build") or "").strip()
@@ -4205,14 +4596,25 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                         img = item["image"]
                         tar_name = "%s.tar" % safe_filename(img.replace("/", "_").replace(":", "-"))
                         tar_dest = os.path.join(staging_dir, "ee-images", tar_name)
-                        proc = subprocess.run(
-                            [podman_exe, "save", "-o", tar_dest, img],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=1800,
-                        )
+                        save_cmd = [podman_exe, "save", "-o", tar_dest, img]
+                        try:
+                            proc = subprocess.run(
+                                save_cmd,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=1800,
+                            )
+                        except Exception as exc:
+                            raise StopError(
+                                "SA-AAPBK-14",
+                                "Custom EE image export failed - verify local podman storage and retry",
+                                cause=_format_cmd_failure(save_cmd, 127, err=_format_exception(exc)),
+                                extra_log=_format_traceback(exc),
+                            )
                         if proc.returncode != 0 or not os.path.isfile(tar_dest) or os.path.getsize(tar_dest) == 0:
                             raise StopError(
                                 "SA-AAPBK-14",
-                                "podman save failed for EE image %r (rc=%d): %s" % (img, proc.returncode, (proc.stderr or "").strip()),
+                                "Custom EE image export failed - check podman stderr and free space and retry",
+                                cause=_format_cmd_failure(save_cmd, proc.returncode, stderr=proc.stderr, stdout=proc.stdout),
+                                extra_log="stdout:\n%s\nstderr:\n%s\n" % (proc.stdout or "", proc.stderr or ""),
                             )
                         os.chmod(tar_dest, 0o600)
                         insp = item.get("inspect") or _inspect_image_digest(podman_exe, img)
@@ -4387,7 +4789,12 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                         with tarfile.open(staged_tar, "r") as tf_chk:
                             tar_names = set(tf_chk.getnames())
                     except Exception as exc:
-                        raise StopError("SA-AAPBK-15", "Bundle archive %s failed readability check before publish: %s" % (staged_tar, exc))
+                        raise StopError(
+                            "SA-AAPBK-15",
+                            "Air-gap bundle archive readability check failed - do not transfer; inspect quarantine log and retry",
+                            cause="tarfile.open(%s) failed: %s" % (staged_tar, _format_exception(exc)),
+                            extra_log=_format_traceback(exc),
+                        )
                     want_sums_member = "%s/SHA256SUMS" % bundle_run_id
                     want_man_member = "%s/bundle-manifest.json" % bundle_run_id
                     if want_sums_member not in tar_names or want_man_member not in tar_names:
@@ -4471,18 +4878,29 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                     ),
                 }
             except StopError as exc:
+                _cleanup_temp_log(exc)
                 _cleanup_partial_bundle_artifacts()
                 qsrc = staging_dir if os.path.isdir(staging_dir) else final_dir_candidate
-                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, exc.code, exc.message)
-                raise StopError(exc.code, "%s Staging quarantined at %s." % (exc.message, qdir), details={"quarantine_dir": qdir})
+                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, exc.code, exc.cause)
+                raise StopError(
+                    exc.code,
+                    exc.summary,
+                    cause="%s; staging quarantined at %s" % (exc.cause, qdir or "(none)"),
+                    details={"quarantine_dir": qdir},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
+                )
             except Exception as exc:
                 _cleanup_partial_bundle_artifacts()
+                ferr = _format_exception(exc)
                 qsrc = staging_dir if os.path.isdir(staging_dir) else final_dir_candidate
-                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, "SA-AAPBK-15", str(exc))
+                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, "SA-AAPBK-15",
+                                          "%s\n%s" % (ferr, _format_traceback(exc)))
                 raise StopError(
                     "SA-AAPBK-15",
-                    "Air-gap bundle assembly failed: %s. Staging quarantined at %s." % (exc, qdir),
+                    "Air-gap bundle assembly failed - do not transfer; inspect quarantine log and retry",
+                    cause="%s; staging quarantined at %s" % (ferr, qdir or "(none)"),
                     details={"quarantine_dir": qdir},
+                    log_path=os.path.join(qdir, "ERROR.txt") if qdir else "",
                 )
         finally:
             release_lock(lock_fd)
@@ -4568,7 +4986,13 @@ def main():
     try:
         res = dispatch(module.params, check_mode=module.check_mode)
     except StopError as exc:
-        module.fail_json(msg=str(exc), stop_code=exc.code, details=exc.details)
+        module.fail_json(
+            msg=str(exc),
+            stop_code=exc.code,
+            cause=exc.cause,
+            log_path=exc.log_path,
+            details=exc.details,
+        )
     module.exit_json(**res)
 
 

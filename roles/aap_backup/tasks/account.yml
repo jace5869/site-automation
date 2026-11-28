@@ -17,9 +17,9 @@
 
 - name: AAP backup | stop if aap_backup_user does not exist on target host
   ansible.builtin.fail:
-    msg: >-
-      STOP [SA-AAPBK-04]: Non-root AAP installation owner '{{ aap_backup_user }}' does not exist on this host.
-      Set aap_backup_user to the account that owns the containerized AAP 2.7 installation.
+    msg: |-
+      SA-AAPBK-04: AAP installation owner '{{ aap_backup_user }}' not found - set aap_backup_user to the non-root AAP owner account. See docs/AAP_BACKUP.md#sa-aapbk-04
+      Cause: cmd="getent passwd {{ aap_backup_user }}" returned empty on {{ inventory_hostname }} (login user '{{ _aapbk_me }}') | Log: {{ lookup('env', 'ANSIBLE_LOG_PATH') | default('AAP job output', true) }}
   when: _aapbk_passwd | length == 0
 
 - name: AAP backup | record uid, home and whether become is needed

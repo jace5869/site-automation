@@ -79,9 +79,8 @@
 ## AAPBK-07.
 # aap_backup_timeout_seconds: 7200
 
-## Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'refuse' (default:
-## preflight then stop with SA-AAPBK-17 and exact CLI + restart/verify commands; never stops AAP) or
-## 'detach' (opt-in, test before use: systemd-run --user).
+## Self-hosted AAP job mode: 'refuse' (default: preflight then SA-AAPBK-17 with CLI + verify/restart
+## commands; never stops AAP) or 'detach' (opt-in, test before use: systemd-run --user).
 # aap_backup_self_hosted_mode: "refuse"
 
 ## Polling interval in seconds while waiting for a detached systemd-run --user installer backup

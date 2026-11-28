@@ -223,28 +223,157 @@ are not available.
 
 ## Coded stops (`SA-AAPBK-nn`)
 
-Every failure prints `STOP [SA-AAPBK-nn]: ...` with the exact values measured and the operator
-action required:
+Every failure prints ONE short summary line followed by a `Cause:` line carrying the redacted
+underlying error (Python exception last line + `file:line`, or failing command + stderr tail) and
+the full log path:
+
+```text
+SA-AAPBK-nn: <what failed> - <do this>. See docs/AAP_BACKUP.md#sa-aapbk-nn
+Cause: <redacted error or command + stderr tail> | Log: <full log path>
+```
 
 | Code | Stage | Cause and operator action |
 |---|---|---|
-| `SA-AAPBK-01` | Preflight | `aap_backup_path` unset, relative, contains `..`, or resolves via `realpath` to a forbidden/system directory. Set an absolute path such as `/mnt/ansible_backup`. |
-| `SA-AAPBK-02` | Preflight / Retention | Path missing, not on the expected active mount, on `/` or a system LV mount (unmounted share), wrong mount source/fstype, read-only, symlink rejected in retention, or write probe failed as `ansible`. |
-| `SA-AAPBK-03` | Preflight / Bundle | Free space `< baseline + margin` (or unknown baseline/margin). Output shows available, required, and exact shortfall; extend LV or NFS quota and retry. |
-| `SA-AAPBK-04` | Preflight | `aap_installer_dir`, installer inventory, `ansible-playbook`, or `aap_backup_user` missing or unreadable on the AAP host. |
-| `SA-AAPBK-05` | Preflight | Exact AAP build/release could not be read from installer metadata, container labels, or `aap_backup_version_file`. |
-| `SA-AAPBK-06` | Preflight | Another backup or bundle run holds `<aap_backup_path>/.aap-backup.lock`. Wait for it to finish. |
-| `SA-AAPBK-07` | Backup | `ansible.containerized_installer.backup` returned non-zero or timed out. Staging quarantined; `finally` restarts stopped services and prints AAP state; previous backup untouched. |
-| `SA-AAPBK-08` | Backup | Installer exited 0 but wrote no non-empty backup payload files. Staging quarantined. |
-| `SA-AAPBK-09` | Manifest | Failed to write or read-back verify `SHA256SUMS` (or symlink rejected). Staging quarantined; previous backup untouched. |
-| `SA-AAPBK-10` | Target list | Could not read `/proc/self/mountinfo` or `/proc/mounts`. |
-| `SA-AAPBK-11` | Bundle | Requested `aap_backup_bundle_id` invalid (must match safe ID regex with no `..`/`/`) or backup ID / `backups/latest.json` not found. |
-| `SA-AAPBK-12` | Bundle | Source backup `SHA256SUMS` verification failed (or symlink rejected) before bundling. Do not carry over a corrupt backup. |
-| `SA-AAPBK-13` | Bundle | Offline bundle installer (`bundle/` images), exact build parity, inventory, `group_vars`/`host_vars`, or extra file missing/mismatched. |
-| `SA-AAPBK-14` | Bundle | Explicit custom EE image missing locally, `podman save` failed, or 0 EEs found when `aap_backup_ee_require_at_least_one: true`. |
-| `SA-AAPBK-15` | Bundle | Bundle `SHA256SUMS`, `.tar`, or `.tar.sha256` read-back verification failed (or symlink rejected) before publishing. Partial `.tar*` unlinked, `bundles/` left clean, staging quarantined; do not transfer. |
-| `SA-AAPBK-16` | Schedule | Invalid weekly schedule string/timezone or AAP API error while reconciling the optional weekly Berlin schedule. |
-| `SA-AAPBK-17` | Self-hosted guard | Self-hosted in-AAP backup refused (default `aap_backup_self_hosted_mode: refuse`, or opt-in `detach` when `systemd-run --user` is unavailable). Runs preflight, prints exact CLI + verify/restart commands; never stops any AAP service. |
+| [`SA-AAPBK-01`](#sa-aapbk-01) | Preflight | `aap_backup_path` unset, relative, contains `..`, or resolves via `realpath` to a forbidden/system directory. Set an absolute path such as `/mnt/ansible_backup`. |
+| [`SA-AAPBK-02`](#sa-aapbk-02) | Preflight / Retention | Path missing, not on the expected active mount, on `/` or a system LV mount (unmounted share), wrong mount source/fstype, read-only, symlink rejected in retention, or write probe failed as `ansible`. |
+| [`SA-AAPBK-03`](#sa-aapbk-03) | Preflight / Bundle | Free space `< baseline + margin` (or unknown baseline/margin). Output shows available, required, and exact shortfall; extend LV or NFS quota and retry. |
+| [`SA-AAPBK-04`](#sa-aapbk-04) | Preflight | `aap_installer_dir`, installer inventory, `ansible-playbook`, or `aap_backup_user` missing or unreadable on the AAP host. |
+| [`SA-AAPBK-05`](#sa-aapbk-05) | Preflight | Exact AAP build/release could not be read from installer metadata, container labels, or `aap_backup_version_file`. |
+| [`SA-AAPBK-06`](#sa-aapbk-06) | Preflight | Another backup or bundle run holds `<aap_backup_path>/.aap-backup.lock`. Wait for it to finish. |
+| [`SA-AAPBK-07`](#sa-aapbk-07) | Backup | `ansible.containerized_installer.backup` returned non-zero or timed out. Staging quarantined; `finally` restarts stopped services and prints AAP state; previous backup untouched. |
+| [`SA-AAPBK-08`](#sa-aapbk-08) | Backup | Installer exited 0 but wrote no non-empty backup payload files. Staging quarantined. |
+| [`SA-AAPBK-09`](#sa-aapbk-09) | Manifest | Failed to write or read-back verify `SHA256SUMS` (or symlink rejected). Staging quarantined; previous backup untouched. |
+| [`SA-AAPBK-10`](#sa-aapbk-10) | Target list | Could not read `/proc/self/mountinfo` or `/proc/mounts`. |
+| [`SA-AAPBK-11`](#sa-aapbk-11) | Bundle | Requested `aap_backup_bundle_id` invalid (must match safe ID regex with no `..`/`/`) or backup ID / `backups/latest.json` not found. |
+| [`SA-AAPBK-12`](#sa-aapbk-12) | Bundle | Source backup `SHA256SUMS` verification failed (or symlink rejected) before bundling. Do not carry over a corrupt backup. |
+| [`SA-AAPBK-13`](#sa-aapbk-13) | Bundle | Offline bundle installer (`bundle/` images), exact build parity, inventory, `group_vars`/`host_vars`, or extra file missing/mismatched. |
+| [`SA-AAPBK-14`](#sa-aapbk-14) | Bundle | Explicit custom EE image missing locally, `podman save` failed, or 0 EEs found when `aap_backup_ee_require_at_least_one: true`. |
+| [`SA-AAPBK-15`](#sa-aapbk-15) | Bundle | Bundle `SHA256SUMS`, `.tar`, or `.tar.sha256` read-back verification failed (or symlink rejected) before publishing. Partial `.tar*` unlinked, `bundles/` left clean, staging quarantined; do not transfer. |
+| [`SA-AAPBK-16`](#sa-aapbk-16) | Schedule | Invalid weekly schedule string/timezone or AAP API error while reconciling the optional weekly Berlin schedule. |
+| [`SA-AAPBK-17`](#sa-aapbk-17) | Self-hosted guard | Self-hosted in-AAP backup refused (default `aap_backup_self_hosted_mode: refuse`, or opt-in `detach` when `systemd-run --user` is unavailable). Runs preflight, prints exact CLI + verify/restart commands; never stops any AAP service. |
+
+## Troubleshooting
+
+Each coded stop prints a link directly to its entry below plus the redacted `Cause:` and full `Log:` path.
+
+### SA-AAPBK-01
+
+- **Meaning:** `aap_backup_path` (or `protect_backup_id` / action) failed path or identifier validation before touching storage.
+- **Likely causes:** `aap_backup_path` is empty, relative, contains `..`, points to a forbidden system directory (`/`, `/tmp`, `/etc`, `/var/tmp`, etc.), or is a symlink resolving to a forbidden directory.
+- **How to check:** Inspect `aap_backup_path` in `playbooks/group_vars/all.yml` and run `realpath <aap_backup_path>` on `aap01.corp.example.mil`.
+- **Fix:** Set `aap_backup_path` to an absolute path on a dedicated backup mount (for example `/mnt/ansible_backup`) with no `..` segments or symlinks to system directories, then retry.
+
+### SA-AAPBK-02
+
+- **Meaning:** The backup destination is missing, not mounted on the expected filesystem, read-only, not writable by `aap_backup_user`, or contains an unsafe symlink during retention.
+- **Likely causes:** Unmounted NFS share falling back to `/` or a local OS LV (`/var`, `/home`, `/mnt`), mount source or filesystem type mismatch against `aap_backup_expected_*`, read-only NFS export or remount, wrong directory ownership/mode for `ansible`, or a symlink placed under `backups/` or `quarantine/`.
+- **How to check:** On `aap01.corp.example.mil` as `ansible`, run `findmnt -T /mnt/ansible_backup`, `ls -ld /mnt/ansible_backup`, and `touch /mnt/ansible_backup/.probe && rm /mnt/ansible_backup/.probe`.
+- **Fix:** Mount the dedicated backup share read-write (`mount /mnt/ansible_backup`), fix ownership (`chown ansible:ansible /mnt/ansible_backup && chmod 0700 /mnt/ansible_backup`), remove any symlinks under `backups/` or `quarantine/`, or update `aap_backup_expected_mount` / `aap_backup_expected_source` / `aap_backup_expected_fstypes`, then retry.
+
+### SA-AAPBK-03
+
+- **Meaning:** Free space on the backup mount is below `baseline + margin`, or the space estimate/margin configuration is invalid or unreadable. This job never extends LVM or changes storage.
+- **Likely causes:** The backup LV or NFS quota is too small for the last verified backup size (or `aap_backup_estimate_gb`) plus `aap_backup_margin_pct`, an air-gap bundle needs 2x content + `aap_backup_bundle_overhead_pct` to pack `.tar`, or `aap_backup_estimate_gb <= 0` with no prior backup.
+- **How to check:** Read the shortfall in the `Cause:` line and run `df -h /mnt/ansible_backup` and `du -sh /mnt/ansible_backup/*` on `aap01.corp.example.mil`.
+- **Fix:** Extend the backup LV or NFS quota by at least the reported shortfall, remove old unneeded bundles or enable simple retention, or set `aap_backup_estimate_gb > 0` / `aap_backup_margin_pct >= 0`, then retry.
+
+### SA-AAPBK-04
+
+- **Meaning:** A required host account or installer prerequisite (`aap_backup_user`, `aap_installer_dir`, installer inventory, or `ansible-playbook`) is missing or unreadable on the AAP host.
+- **Likely causes:** `aap_backup_user` does not exist on the target host, `aap_installer_dir` points to the wrong path, the inventory file was renamed from `inventory`/`inventory-growth` without setting `aap_installer_inventory`, or `ansible-playbook` is not in `PATH` for `ansible`.
+- **How to check:** Run `getent passwd ansible`, `ls -la <aap_installer_dir>`, and `which ansible-playbook` as `ansible` on `aap01.corp.example.mil`.
+- **Fix:** Set `aap_backup_user`, `aap_installer_dir`, `aap_installer_inventory`, or `aap_installer_ansible_playbook_bin` to the actual paths on the AAP host, ensure `ansible` can read the inventory and execute `ansible-playbook`, and retry.
+
+### SA-AAPBK-05
+
+- **Meaning:** The exact AAP 2.7 build/release could not be read from installer metadata, bundle directory name, container labels, or `aap_backup_version_file`.
+- **Likely causes:** `aap_installer_dir` is an unversioned directory missing `MANIFEST.json` / `VERSION` / `RELEASE` and `podman` cannot inspect running AAP containers (stopped services or wrong user).
+- **How to check:** Inspect `<aap_installer_dir>/collections/ansible_collections/ansible/containerized_installer/MANIFEST.json` and run `podman ps -a` as `ansible`.
+- **Fix:** Point `aap_installer_dir` at the full AAP 2.7 containerized setup directory, or set `aap_backup_version_file` or `aap_backup_version_override` (e.g. `"2.7-1.1"`) in `playbooks/group_vars/all.yml`, and retry.
+
+### SA-AAPBK-06
+
+- **Meaning:** Another `AAP - backup` or `AAP - bundle for air-gap` run currently holds `<aap_backup_path>/.aap-backup.lock` (or filesystem locking failed).
+- **Likely causes:** A backup or bundle job is already running (locally via CLI or in a detached unit), or an NFS mount is mounted with `nolock` / broken `rpc.statd`.
+- **How to check:** Read the lock holder printed in `Cause:` or run `cat /mnt/ansible_backup/.aap-backup.lock`, `ps -ef | grep site_aap_backup`, and `systemctl --user list-units 'sa-aap-backup*'`.
+- **Fix:** Wait for the active backup or bundle run to finish and retry. If no process is running and NFS locking fails, verify NFSv4 / `rpc-statd` mount options on the share.
+
+### SA-AAPBK-07
+
+- **Meaning:** `ansible.containerized_installer.backup` returned non-zero, timed out, failed to launch, or a detached backup unit stopped without reporting success. Staging was quarantined and any stopped AAP services were restarted by the `finally` guard; the prior verified backup is untouched.
+- **Likely causes:** Missing `--vault-password-file` in `aap_installer_extra_args`, PostgreSQL dump failure, disk full mid-backup, `fapolicyd` / SELinux denial, or `aap_backup_timeout_seconds` exceeded.
+- **How to check:** Open the full `Log:` path (`<aap_backup_path>/quarantine/<backup_id>/installer.log`), check `ERROR.txt`, and verify AAP health with `systemctl --user list-units 'automation*' 'postgresql*' 'redis*' 'receptor*'` and `podman ps -a`.
+- **Fix:** Resolve the installer error shown in `installer.log` (for example add vault arguments, clear disk pressure, or raise `aap_backup_timeout_seconds`), confirm all AAP services are running, and rerun the backup.
+
+### SA-AAPBK-08
+
+- **Meaning:** The containerized installer exited `0`, but wrote no backup payload files (or only 0-byte files) under staging `payload/`. Staging was quarantined and the prior verified backup is untouched.
+- **Likely causes:** Installer inventory skipped all hosts or overrode `backup_dir` inside `inventory` / `group_vars`, causing output to land elsewhere.
+- **How to check:** Read `<aap_backup_path>/quarantine/<backup_id>/ERROR.txt` and check `backup_dir` definitions in `<aap_installer_dir>/inventory` and `group_vars/`.
+- **Fix:** Remove any hardcoded `backup_dir` override in the installer inventory that blocks `-e backup_dir=...`, confirm the target host is active in the inventory, and rerun the backup.
+
+### SA-AAPBK-09
+
+- **Meaning:** Generating or read-back verifying `SHA256SUMS` / `manifest.json` failed, or a symlink was found inside the backup staging tree. Staging was quarantined and the prior verified backup is untouched.
+- **Likely causes:** Storage I/O error or NFS disconnect during hashing, external modification of files in `.staging/`, or a symlink written into `payload/`.
+- **How to check:** Read `<aap_backup_path>/quarantine/<backup_id>/ERROR.txt` (the `Log:` path) and check `dmesg` / NFS mount logs for storage errors.
+- **Fix:** Verify the backup storage is healthy and free of symlinks, then rerun the backup.
+
+### SA-AAPBK-10
+
+- **Meaning:** `AAP - list backup targets` or preflight could not read `/proc/self/mountinfo` (or `/proc/mounts`, or a custom `aap_backup_mountinfo_path`).
+- **Likely causes:** Restricted container/chroot environment without `/proc` mounted, or an invalid `aap_backup_mountinfo_path` override.
+- **How to check:** Run `ls -la /proc/self/mountinfo /proc/mounts` on `aap01.corp.example.mil` and check `aap_backup_mountinfo_path` in `playbooks/group_vars/all.yml`.
+- **Fix:** Reset `aap_backup_mountinfo_path` to `/proc/self/mountinfo` and confirm `/proc` is readable by `aap_backup_user`, then retry.
+
+### SA-AAPBK-11
+
+- **Meaning:** `AAP - bundle for air-gap` could not find a completed backup to package, or `aap_backup_bundle_id` failed safe-ID validation.
+- **Likely causes:** No backup has succeeded yet (`backups/latest.json` missing), `aap_backup_bundle_id` has a typo or disallowed characters (`..`, `/`, spaces), or the requested backup directory lacks `manifest.json`.
+- **How to check:** Run `ls -la /mnt/ansible_backup/backups` and `cat /mnt/ansible_backup/backups/latest.json` on `aap01.corp.example.mil`.
+- **Fix:** Run **AAP - backup** first (via CLI on the AAP host) or set `aap_backup_bundle_id` to an existing completed backup ID matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, then retry.
+
+### SA-AAPBK-12
+
+- **Meaning:** Pre-bundle verification of the source backup's `SHA256SUMS` or `manifest.json` failed, or a symlink was detected under `backups/`. Do not carry over this backup.
+- **Likely causes:** File corruption on storage, manual edit/deletion inside `backups/<id>/payload/`, or a symlink placed in `backups/`.
+- **How to check:** Inspect the `Cause:` and `Log:` path and run `(cd /mnt/ansible_backup/backups/<backup_id> && sha256sum -c SHA256SUMS)` as `ansible`.
+- **Fix:** Do not transfer the corrupt backup. Run a fresh **AAP - backup** (or point `aap_backup_bundle_id` to an older backup whose `sha256sum -c SHA256SUMS` passes) and rerun **AAP - bundle for air-gap**.
+
+### SA-AAPBK-13
+
+- **Meaning:** The offline AAP 2.7 bundle installer (`bundle/` container images), exact build/collection parity, installer inventory, `group_vars`/`host_vars`, or `aap_backup_bundle_extra_files` is missing, ambiguous, or mismatched with the source backup.
+- **Likely causes:** `aap_installer_dir` is an online-only installer (no `bundle/images/*`), the setup tarball is a different AAP build or collection version than the backup, multiple matching tarballs exist in `aap_backup_installer_bundle_search_dirs`, or an extra file path does not exist or is a symlink.
+- **How to check:** Compare `aap` metadata in `/mnt/ansible_backup/backups/<backup_id>/manifest.json` against `ls -la <aap_installer_dir>/bundle` and your setup bundle `.tar.gz` filename.
+- **Fix:** Stage the exact-same-build AAP 2.7 **offline setup bundle** (with `bundle/` images), set `aap_backup_installer_bundle` explicitly when multiple archives exist, remove symlinks or fix paths in `aap_backup_bundle_extra_files`, and retry.
+
+### SA-AAPBK-14
+
+- **Meaning:** Exporting custom Execution Environment (EE) images failed: `podman` is unavailable, an explicit image in `aap_backup_ee_images` is not in local Podman storage, `podman save` failed, or zero EEs were found while `aap_backup_ee_require_at_least_one: true`.
+- **Likely causes:** The custom EE image was not pulled into `ansible`'s rootless Podman store, image name/tag typo in `aap_backup_ee_images`, wrong `aap_backup_ee_image_patterns`, or disk full during `podman save`.
+- **How to check:** Run `podman images --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}'` as `ansible` on `aap01.corp.example.mil` and check the failing `podman` command and stderr in `Cause:` / `Log:`.
+- **Fix:** Pull or build the missing EE image as `ansible`, correct `aap_backup_ee_images` / `aap_backup_ee_image_patterns` (or set `aap_backup_ee_require_at_least_one: false` if no custom EEs are used), and retry.
+
+### SA-AAPBK-15
+
+- **Meaning:** Bundle assembly, single `SHA256SUMS` verification, or `.tar` / `.tar.sha256` read-back verification failed before publishing into `bundles/`. Partial `.tar*` files were unlinked, `bundles/` was left clean, and staging was quarantined. Do not transfer.
+- **Likely causes:** Disk filled up mid-tar, storage I/O error during read-back verification, or a symlink encountered inside the staging tree.
+- **How to check:** Read `<aap_backup_path>/quarantine/<bundle_id>/ERROR.txt` (the `Log:` path) and run `df -h /mnt/ansible_backup`.
+- **Fix:** Free space or resolve the storage error reported in `ERROR.txt`, confirm `bundles/` has no partial files, and rerun **AAP - bundle for air-gap**.
+
+### SA-AAPBK-16
+
+- **Meaning:** Reconciling the optional weekly Europe/Berlin schedule in AAP failed due to an invalid schedule setting or an AAP API error.
+- **Likely causes:** `aap_backup_schedule_when` is not `'weekly <Mon..Sun> HH:MM'`, invalid IANA timezone, missing Red Hat Ansible Automation Platform credential on **AAP - backup**, wrong organization/template name, or insufficient AAP API permissions.
+- **How to check:** Inspect `Cause:` and the `Log:` file, verify the AAP credential attached to **AAP - backup**, and confirm `aap_backup_schedule_organization` and `aap_backup_schedule_template` match AAP.
+- **Fix:** Fix `aap_backup_schedule_when` / `aap_backup_schedule_timezone`, attach an AAP credential with organization Admin rights (or run **AAP - set up job templates** first), or set `aap_backup_schedule_enabled: false` to manage schedules manually.
+
+### SA-AAPBK-17
+
+- **Meaning:** The self-hosted guard stopped an in-AAP backup job before touching any AAP service (default `aap_backup_self_hosted_mode: "refuse"`, invalid mode value, or opt-in `"detach"` when `systemd-run --user` is unavailable or refused launch).
+- **Likely causes:** Normal single-host protection — running `ansible.containerized_installer.backup` synchronously from a job on the same AAP host would stop controller/receptor and kill its own job. In opt-in `detach` mode, `loginctl enable-linger ansible` or the user D-Bus session is missing.
+- **How to check:** Confirm `Preflight passed` and `AAP state: untouched` in `Cause:`. If using opt-in `detach`, run `loginctl show-user ansible -p Linger` and `systemd-run --user true` as `ansible`.
+- **Fix:** For normal single-host backups, SSH to the AAP host as `ansible` and run the exact CLI command printed in `Cause:` (`ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml`), then verify services with the printed `systemctl --user` / `podman ps` commands. To test opt-in `detach`, enable linger (`sudo loginctl enable-linger ansible`) and validate in a maintenance window.
 
 ## Settings reference
 
