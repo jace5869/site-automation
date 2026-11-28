@@ -7,6 +7,7 @@
 - Unavailable report and portal looks use their defaults and log a warning.
 - Portal deployment warns when nobody is configured as an admin or runner.
 - SMB inventory explains the user@REALM and negotiate settings for FIPS hosts.
+- Ops monitor (`portal_wall_monitor`) is now on by default (`true`); set `portal_wall_monitor: false` to hide the Ops monitor area.
 - Ops monitor can show a SolarWinds-down VM as powered off while all vCenter inventories are current and uniquely identify it.
 
 ## 1.138.0 — 2026-11-28

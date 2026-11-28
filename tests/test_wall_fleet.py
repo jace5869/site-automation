@@ -1558,9 +1558,9 @@ class Gate5(unittest.TestCase):
         assertion = next(t for t in tasks if t.get("ansible.builtin.include_tasks") == "wall_monitor.yml")
         self.assertEqual(assertion["when"], "_portal_wall_monitor | bool")
 
-    def test_gate5_20_preview_opt_in(self):
+    def test_gate5_20_monitor_default_on(self):
         import yaml
-        self.assertIs(yaml.safe_load((self.role/"defaults/main.yml").read_text())["portal_wall_monitor"],False)
+        self.assertIs(yaml.safe_load((self.role/"defaults/main.yml").read_text())["portal_wall_monitor"], True)
 
 
 class MonitorIsolationFixes(unittest.TestCase):

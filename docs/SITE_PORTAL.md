@@ -1229,9 +1229,7 @@ no longer in the latest read, they say when it was last seen.
 
 ### Ops monitor (1.136.0)
 
-**The preview is off by default.** The default deploy keeps the same files and answers as 1.135.1, apart from two wall script version hashes. The Actions page stays the same.
-
-**To set up** this opt-in preview, set `portal_wall_monitor: true` and run **Site portal - deploy** with the **SolarWinds (read-only)** credential.
+**On by default since 1.140.0.** Run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the same credential the live Network map uses). Set `portal_wall_monitor: false` to hide the Ops monitor area and deploy without the monitor files or SolarWinds requirement.
 
 A wall area (`?area=monitor`, in the area menu and in *rotate areas*) with **every node SolarWinds watches as one square**,
 up or down, grouped by service, and what vCenter says of the same VM. It is in every style - Strata, Relay and Metro draw
@@ -1309,7 +1307,7 @@ wall's own collector (only with the monitor on does it read each VM's `guest.ipA
 
 | Setting | Default | What it does |
 |---|---|---|
-| `portal_wall_monitor` | `false` | Enable the preview with `true`. |
+| `portal_wall_monitor` | `true` | On by default since 1.140.0; set `false` to hide the Ops monitor area. |
 | `portal_wall_monitor_seconds` | `60` | how often SolarWinds is read (60 to 3600); LATE / STALE stretch with it |
 | `portal_wall_monitor_group_by` | `groups` | SolarWinds' groups (a node in each group it is a direct member of), or `custom:<property>` - a node custom property such as `custom:ServiceGroup` |
 | `portal_wall_monitor_groups` | `[]` | only these groups, in this order (any case); the rest under *Workloads (no group)* |
@@ -1317,7 +1315,7 @@ wall's own collector (only with the monitor on does it read each VM's `guest.ipA
 | `portal_wall_monitor_max_nodes` | `10000` | at most this many nodes read (100 to 50000) |
 | `portal_wall_monitor_poll_stale_minutes` | `15` | a node SolarWinds itself last polled (`LastSync`) longer ago is not current: grey, never green, never a recovery |
 
-The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with the preview on and default grouping. It stays the same with the monitor off.
+The deploy summary's *Wall:* line ends with *Ops monitor on (by groups)* with default grouping, and omits it when `portal_wall_monitor: false`.
 The monitor's CA goes to its reader only. The shared trust bundle stays the same.
 
 #### Known limits until 1.136.1

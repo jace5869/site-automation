@@ -97,6 +97,7 @@ chmod 0644 "$k"/*.key
 printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n' "$py" > "$work/inv.yml"
 cat > "$work/vars.json" <<EOF
 {"target": "localhost", "ansible_become": false, "portal_scope": "user", "portal_config_dir": "$work/etc",
+ "portal_wall_monitor": false,
  "report_banner": true, "report_banner_text": "CUI", "report_time_zone": "America/New_York",
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",

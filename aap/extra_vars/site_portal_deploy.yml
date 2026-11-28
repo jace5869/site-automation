@@ -522,14 +522,15 @@ portal_public_url: https://stigman.example.mil/portal/
 ## sites as a list
 # portal_wall_site_places: {}
 
-## 1.136.0: Ops monitor (opt-in preview, off by default; docs/SITE_PORTAL.md, "Ops monitor") - a
-## wall area (?area=monitor, in every style, in the rotation) with every node SolarWinds watches as
-## one square, up or down, grouped by service, and a dated vCenter note for a matching VM.
-## SolarWinds supplies the status. Click a node for its card (Copy text / picture for Teams), tick
-## several and "Share selected to Teams". Read by the portal itself with the network map's
-## "SolarWinds (read-only)" login (SWQL SELECTs only: Orion.Nodes, Orion.Container,
-## Orion.ContainerMembers) while the wall is open. true | false (opt-in preview)
-# portal_wall_monitor: false
+## 1.136.0: Ops monitor (on by default since 1.140.0, false to hide the Ops monitor area;
+## docs/SITE_PORTAL.md, "Ops monitor") - a wall area (?area=monitor, in every style, in the
+## rotation) with every node SolarWinds watches as one square, up or down, grouped by service, and a
+## dated vCenter note for a matching VM. SolarWinds supplies the status. Click a node for its card
+## (Copy text / picture for Teams), tick several and "Share selected to Teams". Read by the portal
+## itself with the network map's "SolarWinds (read-only)" login (SWQL SELECTs only: Orion.Nodes,
+## Orion.Container, Orion.ContainerMembers) while the wall is open. on by default since 1.140.0,
+## false to hide the Ops monitor area
+# portal_wall_monitor: true
 
 ## SolarWinds is read every this many seconds while the wall is open (60 to 3600); LATE / STALE
 ## stretch with it

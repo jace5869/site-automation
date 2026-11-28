@@ -47,13 +47,14 @@ class Deploy(unittest.TestCase):
                                   vars_files=[str(ROLE / "defaults/main.yml"), str(overrides)], tasks=steps))
 
             if not invalid:
-                for switch_value in (False, "omitted", "no", None):
+                case(dict(portal_wall_monitor=False), False)
+                for switch_value in (False, "no", None):
                     for bad in (float("inf"), None, {"a": 1}, [1], "x"):
                         values = {"portal_wall_monitor_" + k: bad for k in
                                   ("seconds", "group_by", "groups", "vm_match", "max_nodes", "poll_stale_minutes")}
-                        if switch_value != "omitted":
-                            values["portal_wall_monitor"] = switch_value
+                        values["portal_wall_monitor"] = switch_value
                         case(values, False)
+                case({}, True)
             case(dict(portal_wall_monitor=True, portal_wall_monitor_seconds=float("inf") if invalid else 60), True)
             path = Path(tmp) / "play.yml"
             path.write_text(yaml.safe_dump(plays, sort_keys=False))
