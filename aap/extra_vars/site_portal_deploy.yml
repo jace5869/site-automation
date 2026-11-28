@@ -622,6 +622,10 @@ portal_public_url: https://stigman.example.mil/portal/
 ## 1.138.0: enable the offline Site map page (/portal/sitemap, alias /portal/wall/map; true | false)
 # portal_site_map: true
 
+## 1.141.1: per-site [lat, lon] overrides for /portal/sitemap (matched case-insensitively; overrides
+## SolarWinds WorldMapPoint; bad values are ignored with a warning on the page)
+# portal_site_map_coords: {}
+
 ## 1.138.0: enable the read-only My access page (/portal/access, alias /portal/my-access; true |
 ## false)
 # portal_my_access: true

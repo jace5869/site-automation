@@ -1,4 +1,4 @@
-/* 1.138.0: Offline Wall Map of Sites placed by SolarWinds Orion.WorldMap.Point lat/lon (/portal/sitemap).
+/* 1.138.0 / 1.141.1: Offline Wall Map of Sites placed by portal_site_map_coords overrides & SolarWinds Orion.WorldMap.Point lat/lon (/portal/sitemap).
    Matches mock/site-map.html across all 10 portal looks, light & dark, 800 / 1280 / 1920 px board.
    Uses bundled Natural Earth 1:110m vector land polygons from static/wall-land.js (window.WALL_LAND) - zero internet.
    Strict CSP: pure DOM/SVG creation only (no HTML string injection or inline style attributes). */
@@ -105,13 +105,29 @@
   function statusWord(st) { return st === "crit" ? "CRITICAL" : st === "warn" ? "WARNING" : st === "ok" ? "OK" : "NOT CURRENT"; }
   function statusRank(st) { return st === "crit" ? 0 : st === "warn" ? 1 : st === "stale" ? 2 : 3; }
 
+  // 1.141.1: normalize coordinate source label to "settings", "SolarWinds", or "none"
+  function coordSourceKind(s) {
+    if (!s || !s.placed) return "none";
+    if (s.coord_source_kind) return String(s.coord_source_kind);
+    var src = String(s.coord_source || "").toLowerCase();
+    if (!src) return "none";
+    if (src.indexOf("portal_site_map_coords") >= 0 || src.indexOf("site_places") >= 0 || src === "settings") return "settings";
+    return "SolarWinds";
+  }
+  function coordSourceDetail(s) {
+    var kind = coordSourceKind(s);
+    if (kind === "none") return "none";
+    var raw = s && s.coord_source ? String(s.coord_source) : "";
+    return raw && raw.toLowerCase() !== kind.toLowerCase() ? (kind + " (" + raw + ")") : kind;
+  }
+
   function filteredSites() {
     var list = (S.data && S.data.sites) || [];
     var q = (S.query || "").trim().toLowerCase();
     return list.filter(function (s) {
       if (S.filter === "unplaced" && s.placed) return false;
       if (S.filter !== "all" && S.filter !== "unplaced" && s.status !== S.filter) return false;
-      if (q && ((s.name || "") + " " + (s.region || "") + " " + (s.coord_source || "") + " " + (s.unplaced_why || "")).toLowerCase().indexOf(q) < 0) return false;
+      if (q && ((s.name || "") + " " + (s.region || "") + " " + coordSourceKind(s) + " " + (s.coord_source || "") + " " + (s.unplaced_why || "")).toLowerCase().indexOf(q) < 0) return false;
       return true;
     });
   }
@@ -444,13 +460,15 @@
       var av, bv;
       if (k === "status") { av = statusRank(a.status); bv = statusRank(b.status); }
       else if (k === "name") { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
+      else if (k === "source") { av = coordSourceKind(a).toLowerCase(); bv = coordSourceKind(b).toLowerCase(); }
       else if (k === "nodes") { av = a.down * 10000 - a.nodes; bv = b.down * 10000 - b.nodes; }
       else if (k === "rtt") { av = a.rtt === null ? -1 : a.rtt; bv = b.rtt === null ? -1 : b.rtt; }
       else if (k === "loss") { av = a.loss === null ? -1 : a.loss; bv = b.loss === null ? -1 : b.loss; }
       else { av = a.wan_util || 0; bv = b.wan_util || 0; }
       return av < bv ? -dir : av > bv ? dir : 0;
     });
-    var cols = [["name", "Site"], ["status", "Status"], ["coord", "Lat / Lon (Source)"], ["nodes", "Nodes (Up/Down)"],
+    // 1.141.1: dedicated Source column (settings / SolarWinds / none) in list view
+    var cols = [["name", "Site"], ["status", "Status"], ["coord", "Lat / Lon"], ["source", "Source"], ["nodes", "Nodes (Up/Down)"],
       ["util", "WAN Util"], ["rtt", "RTT"], ["loss", "Loss"], ["issues", "Active issues"]];
     var trH = h("tr");
     cols.forEach(function (c) {
@@ -466,17 +484,19 @@
     });
     var tb = h("tbody");
     if (!rows.length) {
-      tb.appendChild(h("tr", "", [h("td", "", ["No sites match the active filter."], {colspan: 8})]));
+      tb.appendChild(h("tr", "", [h("td", "", ["No sites match the active filter."], {colspan: 9})]));
     } else {
       rows.forEach(function (s) {
+        var srcKind = coordSourceKind(s);
         var tr = h("tr", "", [
           h("td", "", [h("b", "", [s.name])]),
           h("td", "", [h("span", "sm-badge " + s.status, [statusWord(s.status)])]),
-          h("td", "mono", [s.placed ? (s.lat.toFixed(3) + ", " + s.lon.toFixed(3) + " · " + s.coord_source) : ("Unplaced — " + (s.unplaced_why || "no coords"))]),
+          h("td", "mono", [s.placed ? (s.lat.toFixed(3) + ", " + s.lon.toFixed(3)) : ("Unplaced — " + (s.unplaced_why || "no coords"))]),
+          h("td", "", [h("span", "sm-src " + srcKind.toLowerCase(), [srcKind], {title: coordSourceDetail(s)})]),
           h("td", "mono", [s.up + "/" + s.nodes + (s.down ? " (" + s.down + " down)" : "")]),
           h("td", "mono", [s.wan_util == null ? "Not read" : s.wan_util + "%"]),
-          h("td", "mono", [s.rtt !== null ? (s.rtt + " ms") : "—"]),
-          h("td", "mono", [s.loss !== null ? (s.loss + "%") : "—"]),
+          h("td", "mono", [s.rtt != null ? (s.rtt + " ms") : "—"]),
+          h("td", "mono", [s.loss != null ? (s.loss + "%") : "—"]),
           h("td", "", [(s.issues && s.issues.length) ? s.issues.slice(0, 2).map(function (i) { return i.obj + ": " + i.why; }).join("; ") : "—"])
         ]);
         tr.addEventListener("click", function () { S.selected = s.id; S.drawer = {kind: "site", item: s}; render(); });
@@ -512,7 +532,9 @@
 
     if (k === "site") {
       addKV("Status", statusWord(it.status));
-      addKV("Placement", it.placed ? (it.lat.toFixed(4) + "°, " + it.lon.toFixed(4) + "° (" + it.coord_source + ")") : ("Unplaced — " + (it.unplaced_why || "no coordinates")));
+      addKV("Placement", it.placed ? (it.lat.toFixed(4) + "°, " + it.lon.toFixed(4) + "°") : ("Unplaced — " + (it.unplaced_why || "no coordinates")));
+      // 1.141.1: explicit coordinate source (settings / SolarWinds / none) in site details
+      addKV("Coordinate source", coordSourceDetail(it));
       addKV("Region", it.region || "—");
       addKV("Nodes", it.up + " up / " + it.down + " down / " + it.warn + " warn / " + it.stale + " stale (of " + it.nodes + ")");
       addKV("WAN", (it.wan_down ? (it.wan_down + " link down · ") : "") + "Max util " + (it.wan_util == null ? "not read" : it.wan_util + "%"));
@@ -625,6 +647,20 @@
       cnt.unplaced ? h("span", "sub", [cnt.unplaced + " unplaced site(s) kept in queue — never dropped"]) : null
     ]));
 
+    // 2b. 1.141.1: Plain warning banner for ignored or unknown portal_site_map_coords entries
+    var warns = Array.isArray(doc.warnings) ? doc.warnings.filter(Boolean) : [];
+    if (warns.length) {
+      var wList = h("ul", "sm-warn-list");
+      warns.forEach(function (w) { wList.appendChild(h("li", "", [String(w)])); });
+      ROOT.appendChild(h("div", "sm-ban warn sm-coord-warn", [
+        h("span", "tag", ["SETTINGS WARNING"]),
+        h("div", "sm-warn-body", [
+          h("b", "", ["Site map coordinate overrides (portal_site_map_coords):"]),
+          wList
+        ])
+      ], {role: "status"}));
+    }
+
     // 3. Toolbar
     var bar = h("div", "sm-bar");
     var vSeg = h("div", "sm-seg", [], {role: "group", "aria-label": "View mode"});
@@ -688,10 +724,12 @@
       var placedS = sites.filter(function (s) { return s.placed; });
       var unplS = sites.filter(function (s) { return !s.placed; });
       function siteCard(s) {
+        var srcKind = coordSourceKind(s);
         var it = h("button", "sm-item " + s.status + (S.selected === s.id ? " sel" : ""), [
           h("div", "sm-item-t", [h("b", "", [s.name]), h("span", "sm-badge " + s.status, [statusWord(s.status)])]),
           h("div", "sm-item-m", [s.up + "/" + s.nodes + " up" + (s.down ? " · " + s.down + " down" : "") +
-            (s.rtt !== null ? " · " + s.rtt + " ms" : "") + (s.placed ? "" : " · " + (s.unplaced_why || "no coordinates"))])
+            (s.rtt != null ? " · " + s.rtt + " ms" : "") + " · " + srcKind +
+            (s.placed ? "" : " · " + (s.unplaced_why || "no coordinates"))])
         ], {type: "button"});
         it.addEventListener("click", function () {
           S.selected = s.id; S.drawer = {kind: "site", item: s}; S.tour = false;

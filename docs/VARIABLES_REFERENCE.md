@@ -2391,6 +2391,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_wall_sustained_minutes` | `15` | 1.138.0: minutes a utilization, error, latency or loss breach must hold to appear on the wall (1 to 240) |
 | `portal_wall_down_polls` | `2` | 1.138.0: consecutive down polls required before raising a node/WAN down wall condition (1 to 10) |
 | `portal_site_map` | `true` | 1.138.0: enable the offline Site map page (/portal/sitemap, alias /portal/wall/map; true \| false) |
+| `portal_site_map_coords` | `{}` | 1.141.1: per-site [lat, lon] overrides for /portal/sitemap (matched case-insensitively; overrides SolarWinds WorldMapPoint; bad values are ignored with a warning on the page) |
 | `portal_my_access` | `true` | 1.138.0: enable the read-only My access page (/portal/access, alias /portal/my-access; true \| false) |
 | `portal_wall_feedback` | `true` | Feedback (docs/SITE_PORTAL.md, "Wall feedback: how to open it and who sees it"): a Feedback button on the wall (hidden in kiosk), kept on the portal server (its data volume), listed at <portal>/wall/feedback for the readers. No email. |
 | `portal_wall_feedback_groups` | `[]` | AD groups that see and may use the button ([] = everyone who can open the wall) |

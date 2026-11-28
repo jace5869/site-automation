@@ -1,4 +1,4 @@
-/* 1.138.0: Offline wall map of sites placed by SolarWinds lat/lon (/portal/sitemap, static/site-map.js)
+/* 1.138.0 / 1.141.1: Offline wall map of sites placed by portal_site_map_coords & SolarWinds lat/lon (/portal/sitemap, static/site-map.js)
    Matches mock/site-map.html across all 10 portal looks, light & dark, 800 / 1280 / 1920 px board.
    Bundled coastline from static/wall-land.js (no internet). No inline style. Missing/stale = grey, never green. */
 
@@ -91,6 +91,13 @@ html.sm-board .sm-stage{height:calc(100vh - 180px);min-height:580px}
 .sm-ban .tag{font:700 10.5px/1 var(--mono);padding:3px 6px;border-radius:4px;border:1px solid currentColor;text-transform:uppercase}
 .sm-ban.crit .tag{color:var(--critical)}.sm-ban.warn .tag{color:var(--warning)}.sm-ban.ok .tag{color:var(--ok)}.sm-ban.stale .tag{color:var(--unknown)}
 .sm-ban .sub{color:var(--muted);font-size:12px}
+/* 1.141.1: Coordinate source tag (settings / SolarWinds / none) & settings warning list */
+.sm-src{display:inline-block;font:600 11px/1.1 var(--mono);padding:2px 6px;border-radius:4px;border:1px solid var(--edge);background:var(--card-strong);color:var(--ink);white-space:nowrap}
+.sm-src.settings{border-color:var(--accent);color:var(--accent)}
+.sm-src.none{border-style:dashed;color:var(--muted)}
+.sm-coord-warn{align-items:flex-start}
+.sm-warn-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.sm-warn-list{margin:0;padding-left:18px;font-size:12.5px;color:var(--ink)}
 
 /* Toolbar */
 .sm-bar{

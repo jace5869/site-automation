@@ -780,6 +780,29 @@ class Config(object):
         # 1.138.0: Network & AD health wall area, Site map (SolarWinds lat/lon), and read-only My access page
         self.wall_health = self.wall and flag(g("PORTAL_WALL_HEALTH", "1")) and (wall_health is not None)
         self.site_map = flag(g("PORTAL_SITE_MAP", "1")) and (wall_health is not None)
+        # 1.141.1: per-site [lat, lon] coordinate overrides for /portal/sitemap (bad JSON or non-mapping -> warning on page, never crash)
+        raw_smc = e.get("PORTAL_SITE_MAP_COORDS")
+        self.site_map_coords = {}
+        self.site_map_coords_warnings = []
+        if isinstance(raw_smc, str):
+            raw_smc = raw_smc.strip()
+        if raw_smc not in (None, ""):
+            if isinstance(raw_smc, str):
+                try:
+                    raw_smc = json.loads(raw_smc)
+                except ValueError:
+                    self.site_map_coords_warnings.append(
+                        "portal_site_map_coords could not be read (invalid JSON); overrides ignored."
+                    )
+                    raw_smc = {}
+            if raw_smc is None:
+                raw_smc = {}
+            elif isinstance(raw_smc, dict):
+                self.site_map_coords = raw_smc
+            else:
+                self.site_map_coords_warnings.append(
+                    "portal_site_map_coords must be a mapping of site name to [lat, lon]; overrides ignored."
+                )
         self.my_access = flag(g("PORTAL_MY_ACCESS", "1")) and (my_access is not None)
         self.health_swis_url = g("PORTAL_HEALTH_SWIS_URL", self.swis_url).strip()
         self.swis_ca = g("PORTAL_SWIS_CA", "") or None

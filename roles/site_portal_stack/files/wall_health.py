@@ -8,7 +8,8 @@ Active Directory report DB runs via AdDb.read_wall, and optional Ops monitor fle
   children behind a down parent are suppressed and counted.
 - Missing, unconfigured, failed, or stale feeds always report grey 'not read' / 'Not current' with why,
   never green.
-- Site map places sites by SolarWinds Orion.WorldMap.Point lat/lon (then custom properties, then
+- Site map places sites by portal_site_map_coords overrides first (1.141.1, case-insensitive, overriding
+  SolarWinds), then SolarWinds Orion.WorldMap.Point lat/lon (then custom properties, then
   portal_wall_site_places / netmap_sites), rejects invalid / (0, 0) coordinates, and never drops unplaced sites.
 Standard library only (site_swis imported optionally)."""
 import collections
@@ -27,7 +28,7 @@ except ImportError:
 
 import wall_model
 
-VERSION = "1.138.0"
+VERSION = "1.141.1"
 
 # ---- 1.138.0: defaults and option clamping -------------------------------------------------------------------
 DEFAULTS = {
@@ -162,6 +163,52 @@ def valid_coord(lat, lon):
     if abs(la) < 1e-6 and abs(lo) < 1e-6:
         return False, None, "coordinate (0, 0) rejected as unset default (Null Island)"
     return True, (round(la, 4), round(lo, 4)), ""
+
+
+def parse_site_map_coords(raw):
+    """1.141.1: parse and validate portal_site_map_coords ({site_name: [lat, lon]}).
+    - Matches site names case-insensitively (keyed by casefolded trimmed site name).
+    - Validates every coordinate pair with valid_coord(); bad entries are ignored with a plain warning, never a crash.
+    Returns (valid_by_cf, warnings) where valid_by_cf maps cf -> {'name': original_name, 'coord': (lat, lon)}."""
+    if raw is None or raw == "":
+        return {}, []
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return {}, []
+        try:
+            raw = json.loads(s)
+        except ValueError:
+            return {}, ["portal_site_map_coords could not be read (invalid JSON); overrides ignored."]
+        if raw is None:
+            return {}, []
+    if not isinstance(raw, dict):
+        return {}, ["portal_site_map_coords must be a mapping of site name to [lat, lon]; overrides ignored."]
+    valid = {}
+    seen_cf = {}
+    warnings = []
+    for raw_key, val in raw.items():
+        name = "" if raw_key is None else str(raw_key).strip()
+        if not name:
+            warnings.append("portal_site_map_coords has a blank site name; ignored.")
+            continue
+        cf = name.casefold()
+        if cf in seen_cf:
+            warnings.append(
+                "portal_site_map_coords lists '%s' more than once (case-insensitive match with '%s'); keeping first entry."
+                % (name, seen_cf[cf])
+            )
+            continue
+        seen_cf[cf] = name
+        if not isinstance(val, (list, tuple)) or len(val) != 2:
+            warnings.append("portal_site_map_coords['%s'] ignored: expected [lat, lon]." % name)
+            continue
+        ok, coord, why = valid_coord(val[0], val[1])
+        if not ok:
+            warnings.append("portal_site_map_coords['%s'] ignored: %s." % (name, why))
+            continue
+        valid[cf] = {"name": name, "coord": coord}
+    return valid, warnings
 
 
 def _mean_valid(pts):
@@ -559,9 +606,9 @@ class HealthTracker(object):
                     dq.append([bucket, rtt_val])
 
 
-# ---- 1.138.0: Pure model builders (deterministic, easily unit-tested) ---------------------------------------
-def _assign_sites(nodes, connections, netmap_opts, site_places):
-    """Map every node id -> site name, and gather site coordinates with provenance."""
+# ---- 1.138.0 / 1.141.1: Pure model builders (deterministic, easily unit-tested) -------------------------------
+def _assign_sites(nodes, connections, netmap_opts, site_places, site_map_coords=None):
+    """Map every node id -> site name, and gather site coordinates with provenance and override warnings."""
     nm = dict(netmap_opts or {"site_by": "location"})
     no_site = str(nm.get("no_site") or "Unassigned")
     node_site = {}
@@ -656,26 +703,57 @@ def _assign_sites(nodes, connections, netmap_opts, site_places):
                 return tuple(hit)
         return None
 
+    # 1.141.1: per-site [lat, lon] overrides (portal_site_map_coords) win over SolarWinds; bad entries ignored + warned
+    overrides, coord_warnings = parse_site_map_coords(site_map_coords)
+    site_names = set(node_site.values())
+    site_cf_set = {s.casefold() for s in site_names}
+
     coords = {}
-    for sname in set(node_site.values()):
+    for sname in site_names:
+        ov = overrides.get(sname.casefold())
+        if ov:
+            p = ov["coord"]
+            coords[sname] = {
+                "placed": True, "lat": p[0], "lon": p[1],
+                "source": "portal_site_map_coords", "kind": "settings", "why": "",
+            }
+            continue
         p = _mean_valid(wm_pts.get(sname))
         if p:
-            coords[sname] = {"placed": True, "lat": p[0], "lon": p[1], "source": "Orion.WorldMap.Point", "why": ""}
+            coords[sname] = {
+                "placed": True, "lat": p[0], "lon": p[1],
+                "source": "Orion.WorldMap.Point", "kind": "SolarWinds", "why": "",
+            }
             continue
         p = _mean_valid(prop_pts.get(sname))
         if p:
-            coords[sname] = {"placed": True, "lat": p[0], "lon": p[1], "source": "CustomProperty(%s/%s)" % (lat_p, lon_p), "why": ""}
+            coords[sname] = {
+                "placed": True, "lat": p[0], "lon": p[1],
+                "source": "CustomProperty(%s/%s)" % (lat_p, lon_p), "kind": "SolarWinds", "why": "",
+            }
             continue
         if sname != no_site:
             c = lookup_conf(sname)
             if c:
-                coords[sname] = {"placed": True, "lat": c[0], "lon": c[1], "source": "Configured site_places", "why": ""}
+                coords[sname] = {
+                    "placed": True, "lat": c[0], "lon": c[1],
+                    "source": "Configured site_places", "kind": "settings", "why": "",
+                }
                 continue
         why = (wm_rejected[sname][0] if wm_rejected.get(sname)
-               else "no Orion.WorldMap.Point latitude/longitude or configured site_places entry")
-        coords[sname] = {"placed": False, "lat": None, "lon": None, "source": "", "why": why}
+               else "no Orion.WorldMap.Point latitude/longitude or portal_site_map_coords entry")
+        coords[sname] = {"placed": False, "lat": None, "lon": None, "source": "", "kind": "none", "why": why}
 
-    return node_site, coords, no_site
+    unknown_sites = []
+    if nodes:
+        for cf, ov in overrides.items():
+            if cf not in site_cf_set:
+                unknown_sites.append(ov["name"])
+                coord_warnings.append(
+                    "portal_site_map_coords names unknown site '%s' (not found among the map's sites)." % ov["name"]
+                )
+
+    return node_site, coords, no_site, coord_warnings, unknown_sites
 
 
 def _ad_matrix(ad_run, o, ad_fresh, now):
@@ -858,7 +936,7 @@ def build_health_model(swis_snap, swis_meta, ad_run, ad_meta, opts, tracker, now
     volumes = list((swis_snap or {}).get("volumes") or [])
     interfaces = list((swis_snap or {}).get("interfaces") or [])
     node_groups = dict((swis_snap or {}).get("groups") or {})
-    node_site, _, no_site = _assign_sites(nodes, conns, netmap_opts, site_places)
+    node_site, _, no_site, _, _ = _assign_sites(nodes, conns, netmap_opts, site_places)
     node_by = {n["id"]: n for n in nodes if n.get("id") is not None}
 
     # Pre-compute confirmed down nodes + parent/child dependency suppression via topology
@@ -1365,8 +1443,11 @@ def _region_of(lat, lon):
     return "Other"
 
 
-def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, site_places=None, enclave="", title=""):
-    """1.138.0: Build the live Site map model from SolarWinds nodes, Orion.WorldMap.Point lat/lon, and topology.
+def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, site_places=None, enclave="", title="",
+                  site_map_coords=None, coord_warnings=None):
+    """1.138.0 / 1.141.1: Build the live Site map model from SolarWinds nodes, portal_site_map_coords overrides,
+    Orion.WorldMap.Point lat/lon, and topology.
+    - portal_site_map_coords overrides SolarWinds case-insensitively; bad entries & unknown sites are warned, never crash.
     - Rejects (0, 0) / invalid coordinates.
     - Never drops unplaced sites (placed: false + unplaced_why).
     - Missing/failed/stale SolarWinds feed -> every site status is 'stale' (grey), never green."""
@@ -1379,11 +1460,21 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
     sw_fresh, sw_age = feed_freshness(sw_state, sw_asof, now, o["late"], o["stale"])
     stale_feed = sw_fresh in ("stale", "not_read") or bool((swis_snap or {}).get("cut"))
 
+    if site_map_coords is None and isinstance(opts, dict) and "site_map_coords" in opts:
+        site_map_coords = opts.get("site_map_coords")
+
     nodes = list((swis_snap or {}).get("nodes") or [])
     conns = list((swis_snap or {}).get("connections") or [])
     interfaces = list((swis_snap or {}).get("interfaces") or [])
     if_by = {i.get("id"): i for i in interfaces if i.get("id") is not None}
-    node_site, coords, no_site = _assign_sites(nodes, conns, netmap_opts, site_places)
+    node_site, coords, no_site, assign_warnings, unknown_sites = _assign_sites(
+        nodes, conns, netmap_opts, site_places, site_map_coords=site_map_coords
+    )
+    all_warnings = []
+    for w in list(coord_warnings or []) + list(assign_warnings or []):
+        s = str(w).strip()
+        if s and s not in all_warnings:
+            all_warnings.append(s)
     node_by = {n["id"]: n for n in nodes if n.get("id") is not None}
 
     # Group nodes into sites
@@ -1458,7 +1549,7 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
     region_pts = collections.defaultdict(list)
     poll_stale_s = o["poll_stale_minutes"] * 60
     for sname, snodes in site_nodes.items():
-        cinfo = coords.get(sname) or {"placed": False, "lat": None, "lon": None, "source": "", "why": "no coordinate"}
+        cinfo = coords.get(sname) or {"placed": False, "lat": None, "lon": None, "source": "", "kind": "none", "why": "no coordinate"}
         up = down = warn = unk = unman = 0
         issues = []
         rtts = []
@@ -1511,6 +1602,7 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
             "lat": cinfo["lat"],
             "lon": cinfo["lon"],
             "coord_source": cinfo["source"],
+            "coord_source_kind": cinfo.get("kind") or ("none" if not cinfo["placed"] else "SolarWinds"),   # 1.141.1: settings | SolarWinds | none
             "unplaced_why": cinfo["why"],
             "status": sst,
             "nodes": len(snodes),
@@ -1576,6 +1668,8 @@ def build_sitemap(swis_snap, swis_meta, opts, tracker, now, netmap_opts=None, si
         "regions": regions,
         "sites": sites,
         "links": links,
+        "warnings": all_warnings,                # 1.141.1: plain warnings for ignored/unknown portal_site_map_coords entries
+        "unknown_coord_sites": unknown_sites,    # 1.141.1: configured override site names not present on the map
         "limits": {
             "wan_util": [o["wan_util_warn"], o["wan_util_crit"]],
             "wan_rtt": [o["wan_rtt_warn"], o["wan_rtt_crit"]],
@@ -1778,6 +1872,8 @@ class HealthBoard(object):
                 site_places=(getattr(self.cfg, "wall_opts", None) or {}).get("site_places"),
                 enclave=getattr(self.cfg, "wall_enclave", ""),
                 title="Site map",
+                site_map_coords=getattr(self.cfg, "site_map_coords", None),
+                coord_warnings=getattr(self.cfg, "site_map_coords_warnings", None),
             )
 
     def answer_health(self, etag_in="", now=None):
