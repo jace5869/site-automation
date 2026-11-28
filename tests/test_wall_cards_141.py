@@ -389,6 +389,119 @@ class EsxiCardModelTests(unittest.TestCase):
         self.assertEqual(m3["cards"]["esxi"]["state"], "stale")
         self.assertIn("connection refused", m3["cards"]["esxi"]["why"])
 
+    def test_non_outage_tasks_and_already_booted_reboot_do_not_hide_outage(self):
+        """1.141.0 regression: ExitMaintenanceMode, stage, EnterMaintenanceMode (maint=False), and RebootHost older than boot_time must not suppress real ESXi outages."""
+        vc_key = "vcenter:vc01.corp.example.mil"
+        hosts = [
+            # Real outage shortly after ExitMaintenanceMode_Task
+            {"name": "sitea-esx21", "cluster": "C1", "state": "notResponding", "maint": False, "vms": [],
+             "tasks": [{"name": "ExitMaintenanceMode_Task", "desc": "HostSystem.exitMaintenanceMode", "state": "success",
+                        "start": _iso(NOW - 300), "end": _iso(NOW - 240)}]},
+            # Real outage with stage task (running or recent success)
+            {"name": "sitea-esx22", "cluster": "C1", "state": "notResponding", "maint": False, "vms": [],
+             "tasks": [{"name": "StagePatches_Task", "desc": "Host.stage", "state": "running",
+                        "start": _iso(NOW - 120), "end": ""}]},
+            # Real outage after completed EnterMaintenanceMode_Task when maint is False
+            {"name": "sitea-esx23", "cluster": "C1", "state": "disconnected", "maint": False, "vms": [],
+             "tasks": [{"name": "EnterMaintenanceMode_Task", "desc": "HostSystem.enterMaintenanceMode", "state": "success",
+                        "start": _iso(NOW - 600), "end": _iso(NOW - 540)}]},
+            # Real outage after RebootHost_Task that already finished booting (boot_time > task.end)
+            {"name": "sitea-esx24", "cluster": "C1", "state": "notResponding", "maint": False,
+             "boot_time": _iso(NOW - 300), "vms": [],
+             "tasks": [{"name": "RebootHost_Task", "desc": "HostSystem.reboot", "state": "success",
+                        "start": _iso(NOW - 600), "end": _iso(NOW - 540)}]},
+            # Legitimate planned reboot: RebootHost_Task succeeded and host has NOT booted since (boot_time < task.end)
+            {"name": "sitea-esx25", "cluster": "C1", "state": "notResponding", "maint": False,
+             "boot_time": _iso(NOW - 86400), "vms": [],
+             "tasks": [{"name": "RebootHost_Task", "desc": "HostSystem.reboot", "state": "success",
+                        "start": _iso(NOW - 300), "end": _iso(NOW - 240)}]},
+        ]
+        view = {"sources": {vc_key: {"kind": "vcenter", "name": "vc01.corp.example.mil", "state": "ok", "at": NOW - 10,
+                                     "snap": {"clusters": [], "hosts": hosts, "datastores": [], "vms": []}}},
+                "history": {}, "cap_history": {}}
+        m = WM.build(view, None, None, demo.OPTS, WM.Tracker(), NOW)
+        esxi = m["cards"]["esxi"]
+        down_names = {h["name"] for h in esxi["hosts"]}
+        excl_names = {e["name"] for e in esxi["excluded"]}
+        self.assertEqual(down_names, {"sitea-esx21", "sitea-esx22", "sitea-esx23", "sitea-esx24"})
+        self.assertEqual(excl_names, {"sitea-esx25"})
+
+    def test_templates_vcls_in_host_vms_excluded_and_ha_to_excluded_host_ok(self):
+        """1.141.0 regression: templates/vCLS listed in h['vms'] are skipped (never 'Not read'); VMs HA-restarted onto excluded connected hosts render ok."""
+        vc_key = "vcenter:vc01.corp.example.mil"
+        hosts = [
+            {"name": "sitea-esx07", "cluster": "C1", "state": "notResponding", "maint": False,
+             "vms": ["sitea-sql-01", "tmpl-rhel9", "vCLS-1"]},
+            {"name": "sitea-esx-excl", "cluster": "C1", "state": "connected", "maint": False,
+             "vms": ["sitea-app-01"]},
+        ]
+        vms = [
+            {"id": "vm-1", "name": "sitea-sql-01", "host": "sitea-esx07", "power": "poweredOff",
+             "conn": "disconnected", "template": False, "vcls": False},
+            {"id": "vm-2", "name": "sitea-app-01", "host": "sitea-esx-excl", "ha_from": "sitea-esx07",
+             "power": "poweredOn", "conn": "connected", "template": False, "vcls": False},
+            {"id": "vm-tpl", "name": "tmpl-rhel9", "host": "sitea-esx07", "power": "poweredOff",
+             "conn": "disconnected", "template": True, "vcls": False},
+            {"id": "vm-vcls", "name": "vCLS-1", "host": "sitea-esx07", "power": "poweredOn",
+             "conn": "disconnected", "template": False, "vcls": True},
+        ]
+        opts = dict(demo.OPTS, exclude={"hosts": ["sitea-esx-excl"]})
+        view = {"sources": {vc_key: {"kind": "vcenter", "name": "vc01.corp.example.mil", "state": "ok", "at": NOW - 10,
+                                     "snap": {"clusters": [], "hosts": hosts, "datastores": [], "vms": vms}}},
+                "history": {}, "cap_history": {}}
+        m = WM.build(view, None, None, opts, WM.Tracker(), NOW)
+        esxi = m["cards"]["esxi"]
+        self.assertEqual(esxi["counts"]["hosts"], 1)
+        h0 = esxi["hosts"][0]
+        by_vm = {v["name"]: v for v in h0["vms"]}
+        self.assertEqual(set(by_vm), {"sitea-sql-01", "sitea-app-01"})
+        self.assertNotIn("tmpl-rhel9", by_vm)
+        self.assertNotIn("vCLS-1", by_vm)
+        self.assertEqual(h0["counts"]["not_read"], 0)
+        self.assertIs(by_vm["sitea-app-01"]["ha"], True)
+        self.assertEqual(by_vm["sitea-app-01"]["ha_target"], "sitea-esx-excl")
+        self.assertEqual(by_vm["sitea-app-01"]["sev"], "ok")
+
+    def test_missing_or_invalid_vm_conn_and_empty_hosts_never_render_green(self):
+        """1.141.0 regression: moved VM with missing/invalid conn and empty snap['hosts'] must never render ok/green."""
+        vc_key = "vcenter:vc01.corp.example.mil"
+        hosts = [
+            {"name": "sitea-esx07", "cluster": "C1", "state": "notResponding", "maint": False, "vms": []},
+            {"name": "sitea-esx01", "cluster": "C1", "state": "connected", "maint": False,
+             "vms": ["vm-conn-empty", "vm-conn-invalid", "vm-conn-ok"]},
+        ]
+        vms = [
+            {"id": "v1", "name": "vm-conn-empty", "host": "sitea-esx01", "ha_from": "sitea-esx07",
+             "power": "poweredOn", "conn": "", "template": False, "vcls": False},
+            {"id": "v2", "name": "vm-conn-invalid", "host": "sitea-esx01", "ha_from": "sitea-esx07",
+             "power": "poweredOn", "conn": "invalid", "template": False, "vcls": False},
+            {"id": "v3", "name": "vm-conn-ok", "host": "sitea-esx01", "ha_from": "sitea-esx07",
+             "power": "poweredOn", "conn": "connected", "template": False, "vcls": False},
+        ]
+        view = {"sources": {vc_key: {"kind": "vcenter", "name": "vc01.corp.example.mil", "state": "ok", "at": NOW - 10,
+                                     "snap": {"clusters": [], "hosts": hosts, "datastores": [], "vms": vms}}},
+                "history": {}, "cap_history": {}}
+        m = WM.build(view, None, None, demo.OPTS, WM.Tracker(), NOW)
+        by_vm = {v["name"]: v for v in m["cards"]["esxi"]["hosts"][0]["vms"]}
+        self.assertEqual(by_vm["vm-conn-empty"]["sev"], "stale")
+        self.assertEqual(by_vm["vm-conn-empty"]["power_sev"], "stale")
+        self.assertEqual(by_vm["vm-conn-empty"]["ha_sev"], "stale")
+        self.assertIsNone(by_vm["vm-conn-empty"]["ha"])
+        self.assertEqual(by_vm["vm-conn-invalid"]["sev"], "crit")
+        self.assertEqual(by_vm["vm-conn-invalid"]["power_sev"], "crit")
+        self.assertEqual(by_vm["vm-conn-invalid"]["ha_sev"], "crit")
+        self.assertIs(by_vm["vm-conn-invalid"]["ha"], False)
+        self.assertEqual(by_vm["vm-conn-ok"]["sev"], "ok")
+        self.assertIs(by_vm["vm-conn-ok"]["ha"], True)
+
+        # Empty snap["hosts"] must be stale (never green)
+        view_empty = {"sources": {vc_key: {"kind": "vcenter", "name": "vc01.corp.example.mil", "state": "ok", "at": NOW - 10,
+                                           "snap": {"clusters": [], "hosts": [], "datastores": [], "vms": []}}},
+                      "history": {}, "cap_history": {}}
+        m_empty = WM.build(view_empty, None, None, demo.OPTS, WM.Tracker(), NOW)
+        self.assertEqual(m_empty["cards"]["esxi"]["state"], "stale")
+        self.assertTrue(any("no hosts read" in u for u in m_empty["cards"]["esxi"]["unread"]))
+
 
 class CapacityCardModelTests(unittest.TestCase):
     def test_forty_items_ordering_counts_and_exclusions(self):
@@ -481,6 +594,31 @@ class CapacityCardModelTests(unittest.TestCase):
         self.assertEqual(m3["cards"]["capacity"]["fresh"], "stale")
         self.assertTrue(all(r["stale"] and r["days_sev"] != "ok" for r in m3["cards"]["capacity"]["rows"]))
 
+    def test_ontap_volume_over_100_pct_used_is_critical_not_unread(self):
+        """1.141.0 regression: ONTAP volumes with used > size (snapshot spill / logical space >100%) must show critical, not 'not read'."""
+        view, opts = make_cards_fixture()
+        view["sources"]["vcenter:vc01.corp.example.mil"]["snap"]["datastores"] = [
+            {"name": "DS_OK", "type": "VMFS", "capacity": 4 * TB, "free": 3 * TB,
+             "accessible": True, "shared": True, "hosts": ["sitea-esx01.corp.example.mil"], "vms": 2}
+        ]
+        view["sources"]["ontap:ontap01.corp.example.mil"]["snap"]["volumes"] = [
+            {"name": "vol_spill", "svm": "svm1", "state": "online", "type": "rw",
+             "is_svm_root": False, "is_node_root": False, "size": 1000 * GB, "used": 1085 * GB, "aggr": "aggr1_ssd_n01"},
+        ]
+        m = WM.build(view, None, None, opts, WM.Tracker(), NOW)
+        cap = m["cards"]["capacity"]
+        self.assertEqual(cap["state"], "crit")
+        self.assertEqual(cap["unread"], [])
+        self.assertEqual(cap["counts"]["not_read"], 0)
+        self.assertEqual(len(cap["rows"]), 1)
+        row = cap["rows"][0]
+        self.assertEqual(row["name"], "vol_spill")
+        self.assertEqual(row["pct"], 108.5)
+        self.assertEqual(row["sev"], "crit")
+        self.assertEqual(row["free"], 0)
+        self.assertEqual(row["days_text"], "< 1 d")
+        self.assertEqual(row["days_sev"], "crit")
+
 
 class LiveCollectorTests(unittest.TestCase):
     def test_vcenter_shape_reads_tasks_standby_and_ha_fields(self):
@@ -553,6 +691,43 @@ class LiveCollectorTests(unittest.TestCase):
             self.assertEqual(len(v2["cap_history"][("ds", "vcenter:vc1", "DS1")]), 2)
             self.assertEqual(len(v2["cap_history"][("vol", "ontap:on1", "svm1", "vol1")]), 2)
             c2.stop()
+
+    def test_cap_history_covers_full_window_under_churn_and_records_over_100_pct(self):
+        """1.141.0 regression: cap_history covers full 7d/30d/90d window even under >=1% churn (not truncated to ~2d/3.3h), updates q[-1] in place, and records >100% used volumes."""
+        sz = 1000 * GB
+        for days, poll_s in ((7, 60), (30, 900), (90, 900)):
+            c = WL.Collector([], clock=lambda: NOW, cap_keep_days=days)
+            total_s = (days + 2) * 86400
+            t0 = NOW - total_s
+            step_count = total_s // poll_s
+            # Simulate linear growth + >=1% oscillating churn on every poll (worst case for point cap)
+            for i in range(step_count + 1):
+                ts = t0 + i * poll_s
+                base_used = int(500 * GB + (350 * GB) * (i / float(step_count)))
+                churn = (20 * GB) if (i % 2) else 0
+                snap = {"cluster": "C1", "nodes": [], "aggrs": [], "luns": [], "snapmirror": [], "failed": {},
+                        "volumes": [{"name": "vol_churn", "svm": "svm1", "state": "online",
+                                     "size": sz, "used": base_used + churn, "aggr": "aggr1"}]}
+                c._keep_cap("ontap", "ontap:on1", snap, ts)
+            pts = c.view()["cap_history"][("vol", "ontap:on1", "svm1", "vol_churn")]
+            self.assertLessEqual(len(pts), WL.Collector.CAP_POINTS_MAX)
+            span_days = (pts[-1][0] - pts[0][0]) / 86400.0
+            self.assertGreaterEqual(span_days, days - 0.6, "window truncated for %dd: %.2fd" % (days, span_days))
+            c.stop()
+
+        # Verify in-place q[-1] update within a step once len(q) >= 2 AND >100%-used volume recording
+        c3 = WL.Collector([], clock=lambda: NOW, cap_keep_days=7)
+        k = ("vol", "ontap:on1", "svm1", "vol_spill")
+        for dt, used_gb in ((0, 800), (900, 820), (1800, 1050)):
+            snap = {"cluster": "C1", "nodes": [], "aggrs": [], "luns": [], "snapmirror": [], "failed": {},
+                    "volumes": [{"name": "vol_spill", "svm": "svm1", "state": "online",
+                                 "size": sz, "used": used_gb * GB, "aggr": "aggr1"}]}
+            c3._keep_cap("ontap", "ontap:on1", snap, NOW - 3600 + dt)
+        pts3 = c3.view()["cap_history"][k]
+        self.assertEqual(len(pts3), 2)
+        self.assertEqual(pts3[-1][1], 1050 * GB)
+        self.assertEqual(pts3[-1][0], NOW - 1800)
+        c3.stop()
 
 
 class CardsStaticAndClientTests(unittest.TestCase):

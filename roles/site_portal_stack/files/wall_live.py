@@ -1305,18 +1305,31 @@ class Collector(object):
         if kind == "vcenter":
             for d in snap.get("datastores") or []:
                 dn, cap, free = d.get("name"), d.get("capacity"), d.get("free")
-                if dn and isinstance(cap, (int, float)) and cap > 0 and isinstance(free, (int, float)) and 0 <= free <= cap:
+                if (dn and isinstance(cap, (int, float)) and not isinstance(cap, bool) and math.isfinite(cap) and cap > 0
+                        and isinstance(free, (int, float)) and not isinstance(free, bool) and math.isfinite(free) and 0 <= free <= cap):
                     add.append((("ds", key, str(dn)), int(cap) - int(free), int(cap)))
         elif kind == "ontap":
             for v in snap.get("volumes") or []:
                 vn, svm, sz, used = v.get("name"), v.get("svm") or "", v.get("size"), v.get("used")
-                if vn and isinstance(sz, (int, float)) and sz > 0 and isinstance(used, (int, float)) and 0 <= used <= sz:
+                # 1.141.0: allow used > sz (ONTAP snapshot spill / logical space >100%)
+                if (vn and isinstance(sz, (int, float)) and not isinstance(sz, bool) and math.isfinite(sz) and sz > 0
+                        and isinstance(used, (int, float)) and not isinstance(used, bool) and math.isfinite(used) and 0 <= used):
                     add.append((("vol", key, str(svm), str(vn)), int(used), int(sz)))
         dirty = False
+        # 1.141.0: space committed points across the configured cap_keep window so CAP_POINTS_MAX never truncates 7-90d trends
+        step = max(self.CAP_SAMPLE_MIN_S, -(-self.cap_keep // max(1, self.CAP_POINTS_MAX - 2)))
         for k, used, sz in add:
             q = self.cap_hist.setdefault(k, collections.deque(maxlen=self.CAP_POINTS_MAX))
-            if not q or (t - q[-1][0]) >= self.CAP_SAMPLE_MIN_S or q[-1][2] != sz or abs(used - q[-1][1]) >= max(1, sz // 100):
+            if not q or q[-1][2] != sz:
                 q.append((float(t), used, sz))
+                dirty = True
+            elif t < q[-1][0]:
+                continue
+            elif (t - q[-1][0]) >= self.CAP_SAMPLE_MIN_S or abs(used - q[-1][1]) >= max(1, sz // 100):
+                if len(q) >= 2 and q[-2][2] == sz and (q[-1][0] - q[-2][0]) < step:
+                    q[-1] = (float(t), used, sz)
+                else:
+                    q.append((float(t), used, sz))
                 dirty = True
         cut = t - self.cap_keep
         for k in [k for k in self.cap_hist if len(k) >= 2 and k[1] == key]:

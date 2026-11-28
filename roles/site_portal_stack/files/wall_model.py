@@ -793,10 +793,11 @@ def storage_part(nm, nm_asof, vm, o, now, why="", view=None):
 
 # ---- 1.141.0: ESXi unexpected outage & Capacity report cards (Teams share cards) --------------------------------------------
 PLANNED_TASK_TOKENS = (
-    "reboothost", "shutdownhost", "entermaintenancemode", "exitmaintenancemode",
+    "reboothost", "shutdownhost", "entermaintenancemode",
     "powerdownhosttostandby", "host.reboot", "host.shutdown", "host.entermaintenance",
-    "remediate", "installupdate", "stage", "vum", "vlcm", "lifecycle", "firmware",
+    "remediate", "installupdate", "vum", "vlcm", "lifecycle", "firmware",
 )
+VM_CONN_BAD = ("disconnected", "inaccessible", "invalid", "orphaned")
 MIN_TREND_SPAN_S = 1800
 
 
@@ -844,13 +845,18 @@ def _planned_reason(h, o, ref_time):
     if matches(h.get("name"), o.get("planned_reboot")):
         return "planned reboot (portal_wall_planned_reboot)"
     win = int(o.get("planned_reboot_minutes", 30)) * 60
+    boot_ts = _iso_epoch(h.get("boot_time"))
     for task in h.get("tasks") or []:
         if not isinstance(task, dict):
             continue
         tname = str(task.get("name") or "")
         tdesc = str(task.get("desc") or "")
         joined = (tname + " " + tdesc).lower()
-        if not any(tok in joined for tok in PLANNED_TASK_TOKENS):
+        matched = [tok for tok in PLANNED_TASK_TOKENS if tok in joined]
+        if not matched:
+            continue
+        # 1.141.0: enter-maintenance tasks only suppress when the host is actually in maintenance mode
+        if all("entermaintenance" in tok for tok in matched) and h.get("maint") is not True:
             continue
         tstate = str(task.get("state") or "").lower()
         label = tname or tdesc or "reboot"
@@ -858,6 +864,9 @@ def _planned_reason(h, o, ref_time):
             return "planned task (%s)" % label
         if tstate == "success":
             ts = _iso_epoch(task.get("end")) or _iso_epoch(task.get("start"))
+            # 1.141.0: ignore completed tasks older than the host's boot_time (already booted, later outage is unexpected)
+            if ts is not None and boot_ts is not None and ts < boot_ts:
+                continue
             if ts is not None and ref_time is not None and -300 <= (float(ref_time) - ts) <= win:
                 return "planned reboot task (%s)" % label
     return ""
@@ -962,10 +971,21 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
         any_snap = True
         read_fresh = (f_state == "ok" and f_fresh != "stale")
         ref_time = f_asof if f_asof is not None else now
-        hosts_raw = [h for h in (snap.get("hosts") or []) if not matches(h.get("name"), o["exclude"].get("hosts"))]
-        vms_raw = [v for v in (snap.get("vms") or [])
+        all_hosts = snap.get("hosts") or []
+        if not all_hosts:
+            # 1.141.0: empty host list is unread, never renders green
+            unread.append("vCenter %s: no hosts read" % vc_name)
+        all_vms = snap.get("vms") or []
+        hosts_raw = [h for h in all_hosts if not matches(h.get("name"), o["exclude"].get("hosts"))]
+        vms_raw = [v for v in all_vms
                    if not matches(v.get("name"), o["exclude"].get("vms")) and v.get("template") is not True and v.get("vcls") is not True]
-        host_states = {str(h.get("name") or ""): str(h.get("state") or "") for h in hosts_raw}
+        # 1.141.0: include excluded hosts in host_states so VMs HA-restarted onto them stay recognized as connected
+        host_states = {str(h.get("name") or ""): str(h.get("state") or "") for h in all_hosts}
+        # 1.141.0: track raw template/vCLS VMs so h["vms"] entries for them are skipped instead of listed as "Not read"
+        skip_vm_by_host = {(str(v.get("host") or ""), str(v.get("name") or ""))
+                           for v in all_vms if v.get("template") is True or v.get("vcls") is True}
+        skip_vm_names = {str(v.get("name") or "")
+                         for v in all_vms if v.get("template") is True or v.get("vcls") is True}
         cluster_ha = {str(c.get("name") or ""): c.get("ha") for c in (snap.get("clusters") or []) if isinstance(c, dict)}
         vms_by_id, vms_by_name, vms_by_host, vms_by_prev = {}, {}, collections.defaultdict(list), collections.defaultdict(list)
         for v in vms_raw:
@@ -997,6 +1017,8 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                     for vn in h.get("vms") or ():
                         if vn in vms_by_name:
                             v = vms_by_name[vn]
+                            if (hn, vn) in skip_vm_by_host and str(v.get("host") or "") != hn:
+                                continue
                             vk = str(v.get("id") or v.get("name") or "")
                             if vk:
                                 cur_map.setdefault(vk, {"id": str(v.get("id") or ""), "name": str(v.get("name") or vk),
@@ -1046,10 +1068,13 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                     continue
                 v = vms_by_name.get(vn)
                 if v is not None:
-                    if v.get("template") is True or v.get("vcls") is True:
+                    if (hn, vn) in skip_vm_by_host and str(v.get("host") or "") != hn and str(v.get("ha_from") or v.get("prev_host") or "") != hn:
                         continue
                     vk = str(v.get("id") or v.get("name") or "")
                     entry = {"id": str(v.get("id") or ""), "name": str(v.get("name") or vn), "service": str(v.get("service") or "")}
+                elif vn in skip_vm_names:
+                    # 1.141.0: exclude template/vCLS VMs from a down host's affected list
+                    continue
                 else:
                     vk = str(vn)
                     entry = {"id": "", "name": str(vn), "service": ""}
@@ -1075,13 +1100,18 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                     das_p = v.get("das_protected")
                     moved = bool(cur_h and cur_h != hn and cur_h_st == "connected")
                     if moved:
-                        if pwr == "poweredOn" and conn not in ("disconnected", "inaccessible", "orphaned"):
+                        # 1.141.0: green only from allow-list (conn == "connected"); bad conn -> crit, missing/unknown -> stale
+                        if conn in VM_CONN_BAD:
+                            p_lbl = conn.capitalize()
+                            ha_val, ha_tgt, ha_why = False, cur_h, "on %s, %s" % (cur_h, conn)
+                            p_sev, ha_lbl, ha_sev, sev = "crit", "No \u00b7 " + ha_why, "crit", "crit"
+                        elif pwr == "poweredOn" and conn == "connected":
                             ha_val, ha_tgt, ha_why = True, cur_h, ""
                             if failover is True:
                                 p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powering on (HA)", "warn", "Yes \u2192 " + cur_h, "warn", "warn"
                             else:
                                 p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powered on", "ok", "Yes \u2192 " + cur_h, "ok", "ok"
-                        elif failover is True:
+                        elif failover is True and conn == "connected":
                             ha_val, ha_tgt, ha_why = True, cur_h, ""
                             p_lbl, p_sev, ha_lbl, ha_sev, sev = "Powering on (HA)", "warn", "Yes \u2192 " + cur_h, "warn", "warn"
                         elif pwr in ("poweredOff", "suspended"):
@@ -1090,7 +1120,8 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                             p_sev, ha_lbl, ha_sev, sev = "crit", "No \u00b7 " + ha_why, "crit", "crit"
                         else:
                             p_lbl, p_sev = "Not read", "stale"
-                            ha_val, ha_tgt, ha_why = None, cur_h, "power state not read"
+                            ha_val, ha_tgt = None, cur_h
+                            ha_why = "power state not read" if pwr not in POWER_KNOWN else "connection state not read"
                             ha_lbl, ha_sev, sev = "Not read", "stale", "stale"
                     else:
                         if pwr not in POWER_KNOWN:
@@ -1106,6 +1137,8 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                                 p_lbl = "Inaccessible"
                             elif conn == "orphaned":
                                 p_lbl = "Orphaned"
+                            elif conn == "invalid":
+                                p_lbl = "Invalid"
                             elif pwr == "poweredOff":
                                 p_lbl = "Powered off"
                             elif pwr == "suspended":
@@ -1118,8 +1151,8 @@ def esxi_card(view, vm, conds, feeds, o, tracker, now):
                                 ha_why = "cluster HA disabled"
                             elif das_p is False:
                                 ha_why = "not HA protected"
-                            elif conn == "inaccessible":
-                                ha_why = "inaccessible"
+                            elif conn in ("inaccessible", "invalid", "orphaned"):
+                                ha_why = conn
                             else:
                                 ha_why = "still on down host"
                             ha_lbl, ha_sev, sev = "No \u00b7 " + ha_why, "crit", "crit"
@@ -1338,8 +1371,9 @@ def capacity_card(view, vm, st, feeds, o, now):
                     continue
                 on_info["count"] += 1
                 sz, used = v.get("size"), v.get("used")
-                if not (isinstance(sz, (int, float)) and not isinstance(sz, bool) and sz > 0
-                        and isinstance(used, (int, float)) and not isinstance(used, bool) and 0 <= used <= sz):
+                # 1.141.0: allow used > sz (ONTAP snapshot spill / logical space >100%) so full volumes show critical, not 'not read'
+                if not (isinstance(sz, (int, float)) and not isinstance(sz, bool) and math.isfinite(sz) and sz > 0
+                        and isinstance(used, (int, float)) and not isinstance(used, bool) and math.isfinite(used) and 0 <= used):
                     on_info["unread"] += 1
                     unread.append("volume %s (%s): size or used space not read" % (vn, cl))
                     continue
