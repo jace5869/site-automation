@@ -374,7 +374,7 @@ def _fmt_checked(raw, tz):
         return st
     g = m.groups()
     base = "%s-%s-%s %s:%s UTC" % (g[0], g[1], g[2], g[3], g[4])
-    return tm.local(base, tz) if tz is not None else base
+    return getattr(tm, "local")(base, tz) if tz is not None else base
 
 
 def _meter_mask(flags, max_segs=24):
