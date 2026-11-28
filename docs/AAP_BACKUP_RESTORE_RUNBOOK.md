@@ -27,9 +27,9 @@ AAP 2.7 build/release.
 | `SHA256SUMS` | Single SHA-256 manifest covering every file in the bundle |
 | `bundle-manifest.json` | Machine-readable metadata (versions, digests, counts, sizes) |
 | `backup/` | Complete verified AAP backup payload, inner `backup/SHA256SUMS`, `backup/manifest.json` |
-| `installer/` | Original `inventory`, optional `extras/`, and the **exact same** AAP 2.7 installer package |
+| `installer/` | Original `inventory`, carried `group_vars/` and `host_vars/` (when present), optional `extras/`, and the **exact same build** offline AAP 2.7 bundle installer (with `bundle/` images) |
 | `ee-images/` | Exported custom EE `.tar` files (`podman save`) and `ee-images.json` with digests |
-| `collections/` | Carried collection `.tar.gz` archives and `collections.json` |
+| `collections/` | Carried collection `.tar.gz` archives (`MANIFEST.json` at archive root, ready for Hub upload) and `collections.json` |
 | `docs/` | This printable restore runbook PDF (`Site-Automation-AAP-Backup-Restore-Guide.pdf`) |
 
 Stop immediately if any check hits a coded stop below and resolve before continuing:
@@ -125,17 +125,24 @@ sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 ansible
      `python3`, `tar`, `gzip`).
    - Class-side TLS certificate and private key for `aap-class01.classified.example.mil` (plus
      class-side DoD / enclave CA bundle in `/etc/pki/ca-trust/source/anchors/` and `update-ca-trust`).
-   - Escrowed installer database/admin passwords and vault password (if the saved inventory is vaulted).
+   - Escrowed installer database/admin passwords and, if the carried inventory or `group_vars`/`host_vars`
+     contains Ansible Vault secrets, stage the vault password file at `/home/ansible/.vault_pass` with
+     `chmod 0600` (remove it after Step 6 if site policy forbids keeping it on disk).
    - Confirm outbound integrations (SMTP, ServiceNow, vCenter) are held until acceptance in Step 9.
 
-## Step 3. Unpack the matching installer and prepare inventory for the DIFFERENT hostname (`SA-AAPRS-04`)
+## Step 3. Unpack the matching bundle installer and run clean offline `install` (`SA-AAPRS-04`)
 
 Because the class-side AAP host has a **different FQDN** (`aap-class01.classified.example.mil`
-instead of `aap01.corp.example.mil`), you must edit the carried inventory before installing.
+instead of `aap01.corp.example.mil`), follow the exact AAP 2.7 containerized installer order:
+(1) clean offline `install` with the new hostname inventory, (2) map source-host backup files so
+host-keyed backup lookup succeeds during `restore`, and (3) re-run `install` after `restore` to
+reconcile configs, TLS certificates, and service URLs to the new hostname.
 
-1. Unpack the exact matching installer carried in `installer/` into `/home/ansible/`:
+1. Unpack the exact-same-build offline bundle installer carried in `installer/` into `/home/ansible/`
+   under `umask 077` (confirm `$INST_DIR/bundle/` contains offline container images):
 
 ```bash
+umask 077
 BUNDLE=/mnt/aap_stage/restore/aap-airgap-YYYYMMDDTHHMMSSZ
 mkdir -p -m 0700 /home/ansible/aap-install
 tar -xzf "$BUNDLE"/installer/*.tar.gz -C /home/ansible/aap-install
@@ -143,38 +150,48 @@ ls -la /home/ansible/aap-install
 ```
 
    Set `INST_DIR` to the unpacked release directory (for example
-   `/home/ansible/aap-install/ansible-automation-platform-containerized-setup-bundle-2.7-1.1-x86_64`).
+   `/home/ansible/aap-install/ansible-automation-platform-containerized-setup-bundle-2.7-1.1-x86_64`)
+   and verify `ls -la "$INST_DIR/bundle"` lists offline images.
 
-2. Copy the carried inventory into `$INST_DIR/inventory` (`chmod 0600`) and copy any files in
-   `installer/extras/` to their target paths:
+2. Copy the carried `inventory`, `group_vars/` and `host_vars/` (when present), and any files in
+   `installer/extras/` into `$INST_DIR` with restrictive permissions (`0700` dirs, `0600` files):
 
 ```bash
+umask 077
 cp "$BUNDLE/installer/inventory" "$INST_DIR/inventory"
 chmod 0600 "$INST_DIR/inventory"
+[ -d "$BUNDLE/installer/group_vars" ] && cp -a "$BUNDLE/installer/group_vars" "$INST_DIR/group_vars"
+[ -d "$BUNDLE/installer/host_vars" ] && cp -a "$BUNDLE/installer/host_vars" "$INST_DIR/host_vars"
 ```
 
-3. Edit `$INST_DIR/inventory` by hand for the **new class-side hostname** and offline bundle:
+3. Edit `$INST_DIR/inventory` (and any host-named file under `host_vars/`, renaming
+   `host_vars/aap01.corp.example.mil` to `host_vars/aap-class01.classified.example.mil` if present)
+   for the **new class-side hostname** and offline bundle. Keep every INI host entry and its hostvars
+   on **one single line** (Ansible INI inventories do not support trailing `\` line continuations):
 
 | Inventory item | Source (unclass) example | Class-side change |
 |---|---|---|
-| Host lines in `[automationgateway]`, `[automationcontroller]`, `[automationhub]`, `[automationeda]`, `[database]`, `[redis]` | `aap01.corp.example.mil` | Replace every occurrence with `aap-class01.classified.example.mil` |
+| Host lines in `[automationgateway]`, `[automationcontroller]`, `[automationhub]`, `[automationeda]`, `[database]`, `[redis]` | `aap01.corp.example.mil` | Replace every occurrence with `aap-class01.classified.example.mil` (one single INI line per host) |
 | `gateway_main_url`, `controller_main_url`, `hub_main_url`, `eda_main_url` | `https://aap01.corp.example.mil` | Update to `https://aap-class01.classified.example.mil` |
 | `bundle_install` and `bundle_dir` | (online or source bundle path) | Set `bundle_install=true` and `bundle_dir=<INST_DIR>/bundle` so the installer pulls zero images from the internet |
 | `*_tls_cert` and `*_tls_key` (`gateway`, `controller`, `hub`, `eda`, `postgresql`, `redis`, `receptor`) | source cert paths | Point to the class-side certificates issued for `aap-class01.classified.example.mil` |
 | `custom_ca_cert` | source CA file | Point to the class-side root/intermediate CA bundle |
 | `[execution_nodes]` | (not present on single-host source) | Keep commented out during Step 3 and Step 4; add `aap-exec01.classified.example.mil` in Step 6 after the clean restore |
 
-4. Verify no stale source FQDN remains in `$INST_DIR/inventory`:
+4. Verify no stale source FQDN remains in `$INST_DIR/inventory` and that no INI line ends with `\`:
 
 ```bash
 grep -n "corp\.example\.mil" "$INST_DIR/inventory" || echo "OK: no old FQDN"
+grep -n '\\$' "$INST_DIR/inventory" || echo "OK: no invalid INI backslash continuations"
 ```
 
-5. Run the offline clean install from `$INST_DIR` as `ansible`:
+5. Run the offline clean install from `$INST_DIR` as `ansible` (pass `--vault-password-file` when
+   your inventory or `group_vars`/`host_vars` uses Ansible Vault; omit that flag only if unvaulted):
 
 ```bash
 cd "$INST_DIR"
-ansible-playbook -i inventory ansible.containerized_installer.install
+ansible-playbook -i inventory ansible.containerized_installer.install \
+  --vault-password-file /home/ansible/.vault_pass
 ```
 
 6. Verify every AAP container and systemd user unit is up before restoring data:
@@ -188,21 +205,71 @@ curl -sk https://aap-class01.classified.example.mil/api/gateway/v1/ping/
    **Expected result:** all units `active (running)` and gateway ping returns HTTP 200 JSON. On
    failure, stop with **`SA-AAPRS-04`**.
 
-## Step 4. Restore the verified backup and adjust for the new hostname (`SA-AAPRS-04`)
+## Step 4. Map source-host backup files, run `restore`, and re-run `install` (`SA-AAPRS-04`)
 
-1. Point `backup_dir` at the verified `backup/payload` tree inside the extracted bundle and run
-   `ansible.containerized_installer.restore` from `$INST_DIR` as `ansible`:
+`ansible.containerized_installer.backup` keys host-scoped backup directories and files by the source
+host's `inventory_hostname` (`aap01.corp.example.mil`). Running `restore` directly against the raw
+bundle payload with the renamed `aap-class01.classified.example.mil` inventory breaks host-keyed
+backup lookup. Follow all four substeps in order:
+
+1. **Preserve the verified bundle and map source-host backup entries to the new hostname:**
+   Copy `$BUNDLE/backup/payload` to a private working directory (`umask 077`, mode `0700`) so the
+   signed bundle copy stays untouched, then map source-host entries (`aap01.corp.example.mil`) to
+   `aap-class01.classified.example.mil`:
+
+```bash
+umask 077
+WORK_BACKUP=/mnt/aap_stage/restore/payload-mapped
+rm -rf "$WORK_BACKUP"
+cp -a "$BUNDLE/backup/payload" "$WORK_BACKUP"
+chmod 0700 "$WORK_BACKUP"
+ls -la "$WORK_BACKUP"
+if [ -d "$WORK_BACKUP/aap01.corp.example.mil" ]; then
+  mv "$WORK_BACKUP/aap01.corp.example.mil" "$WORK_BACKUP/aap-class01.classified.example.mil"
+fi
+find "$WORK_BACKUP" -depth -name '*aap01.corp.example.mil*' | while IFS= read -r p; do
+  mv "$p" "${p//aap01.corp.example.mil/aap-class01.classified.example.mil}"
+done
+```
+
+   > **Alternative host-alias mapping:** if your installer build expects the source `inventory_hostname`
+   > unchanged inside `backup_dir`, run `restore` with a temporary restore inventory whose host line
+   > keeps the source key on **one single INI line** pointing at the new host
+   > (`aap01.corp.example.mil ansible_host=aap-class01.classified.example.mil`), and then switch back
+   > to `$INST_DIR/inventory` (`aap-class01.classified.example.mil`) for Step 4.3 below.
+
+2. **Run `ansible.containerized_installer.restore`** from `$INST_DIR` as `ansible` pointing
+   `backup_dir` at `$WORK_BACKUP` and passing `--vault-password-file`:
 
 ```bash
 cd "$INST_DIR"
 ansible-playbook -i inventory ansible.containerized_installer.restore \
-  -e "backup_dir=$BUNDLE/backup/payload"
+  --vault-password-file /home/ansible/.vault_pass \
+  -e "backup_dir=$WORK_BACKUP"
 ```
 
    Wait for the playbook to finish cleanly (`failed=0`). If it fails, preserve full stdout/stderr
    and container logs and stop with **`SA-AAPRS-04`**.
 
-2. **Different-hostname post-restore reconciliation (hand steps):**
+3. **Re-run `ansible.containerized_installer.install` post-restore (required for different hostname):**
+   Per the AAP 2.7 containerized installer docs, re-run `install` with the new class-side
+   `$INST_DIR/inventory` after `restore` completes so container configurations, class-side TLS
+   certificates, Receptor identity, Gateway routes, and systemd user units are reconciled to
+   `aap-class01.classified.example.mil`:
+
+```bash
+cd "$INST_DIR"
+ansible-playbook -i inventory ansible.containerized_installer.install \
+  --vault-password-file /home/ansible/.vault_pass
+systemctl --user list-units 'automation*' 'postgresql*' 'redis*' 'receptor*'
+podman ps --format 'table {{.Names}}\t{{.Status}}'
+curl -sk https://aap-class01.classified.example.mil/api/gateway/v1/ping/
+```
+
+   **Expected result:** `failed=0`, all systemd user units `active (running)`, and gateway ping
+   returns HTTP 200 JSON. On failure, stop with **`SA-AAPRS-04`**.
+
+4. **Different-hostname post-restore reconciliation (hand steps):**
    Restoring a backup captured on `aap01.corp.example.mil` onto `aap-class01.classified.example.mil`
    may carry database rows that still reference the old hostname. Check and fix each item:
 
@@ -297,12 +364,12 @@ sudo firewall-cmd --reload
 ```
 
 2. **Add the execution node to `$INST_DIR/inventory` on `aap-class01`:**
-   Add an `[execution_nodes]` group and peer linkage pointing at the controller host:
+   Add an `[execution_nodes]` group and peer linkage pointing at the controller host, keeping all
+   hostvars on **one single INI line** (do not split INI host lines with `\`):
 
 ```ini
 [execution_nodes]
-aap-exec01.classified.example.mil receptor_type=execution \
-  receptor_peers=aap-class01.classified.example.mil
+aap-exec01.classified.example.mil receptor_type=execution receptor_peers=aap-class01.classified.example.mil
 ```
 
    Confirm `aap-exec01.classified.example.mil` is NOT placed in `[automationcontroller]`,
@@ -313,7 +380,8 @@ aap-exec01.classified.example.mil receptor_type=execution \
 
 ```bash
 cd "$INST_DIR"
-ansible-playbook -i inventory ansible.containerized_installer.install
+ansible-playbook -i inventory ansible.containerized_installer.install \
+  --vault-password-file /home/ansible/.vault_pass
 ```
 
 4. **Verify execution node health and EE availability:**
@@ -415,8 +483,9 @@ Complete every acceptance check before re-enabling scheduled jobs:
 5. **Class-side backup protection:** configure `aap_backup_path` on the class side, run one manual
    **AAP - backup** to confirm ongoing protection, and optionally enable the weekly Berlin schedule
    (`aap_backup_schedule_enabled: true`) and simple retention (`aap_backup_retention_enabled: true`).
-6. **Clean up staging:** once signed off, securely remove `/mnt/aap_stage/restore` (keep the
-   verified archive on protected archival media per site retention policy).
+6. **Clean up staging:** once signed off, securely remove `/mnt/aap_stage/restore` (including
+   `payload-mapped`) and remove `/home/ansible/.vault_pass` if site policy forbids keeping the vault
+   password file on disk (keep the verified archive on protected archival media per site policy).
 
 If any acceptance step fails (`SA-AAPRS-05`), keep the carry-over bundle intact, keep unapproved
 schedules paused, and remediate or retry on a clean isolated target.
@@ -425,10 +494,10 @@ schedules paused, and remediate or retry on a clean isolated target.
 
 | Step | Verification item | Operator / Date | Result |
 |---|---|---|---|
-| 1 | Archive `.tar.sha256`, outer `SHA256SUMS`, and `backup/SHA256SUMS` all OK | | PASS / FAIL |
-| 2 | Target RHEL release, arch, DNS (`aap-class01`), linger/subuid, and class certs verified | | PASS / FAIL |
-| 3 | Matching installer unpacked; inventory edited for new FQDN; offline `install` green | | PASS / FAIL |
-| 4 | `restore` green; stale old FQDN removed; gateway/controller URLs updated; schedules held | | PASS / FAIL |
+| 1 | Archive `.tar.sha256`, outer `SHA256SUMS`, and `backup/SHA256SUMS` all OK (extracted with `umask 077`) | | PASS / FAIL |
+| 2 | Target RHEL release, arch, DNS (`aap-class01`), linger/subuid, vault password file, and class certs verified | | PASS / FAIL |
+| 3 | Exact-build offline bundle installer unpacked (`bundle/` images present); `inventory`/`group_vars`/`host_vars` prepared; offline `install` green | | PASS / FAIL |
+| 4 | Source-host backup mapped; `restore` + post-restore `install` green; stale old FQDN removed; URLs updated; schedules held | | PASS / FAIL |
 | 5 | Custom EEs loaded & pushed to class Hub; collections uploaded & approved | | PASS / FAIL |
 | 6 | Execution node (`aap-exec01`) installed, Ready in Instances, Receptor mesh healthy | | PASS / FAIL |
 | 7 | `site-automation` synced on class Git; class credentials set; setup jobs & audit green | | PASS / FAIL |

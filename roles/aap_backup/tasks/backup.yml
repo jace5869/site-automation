@@ -35,6 +35,12 @@
     installer_extra_args: "{{ aap_installer_extra_args }}"
     installer_become: "{{ aap_installer_become }}"
     timeout_seconds: "{{ aap_backup_timeout_seconds }}"
+    self_hosted_mode: "{{ aap_backup_self_hosted_mode }}"
+    detach_poll_seconds: "{{ aap_backup_detach_poll_seconds }}"
+    awx_job_id: "{{ awx_job_id | default(tower_job_id | default('')) | string }}"
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'TOWER_HOST'), true) | default('') }}"
+    systemd_run_bin: "{{ aap_backup_systemd_run_bin }}"
+    systemctl_bin: "{{ aap_backup_systemctl_bin }}"
     version_file: "{{ aap_backup_version_file }}"
     version_override: "{{ aap_backup_version_override }}"
     mountinfo_path: "{{ aap_backup_mountinfo_path }}"
@@ -44,13 +50,15 @@
   become_user: "{{ aap_backup_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ _aapbk_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _aapbk_uid }}/bus"
   register: _aapbk_run
 
 - name: AAP backup | show backup result summary
   ansible.builtin.debug:
     msg:
       - "{{ _aapbk_run.msg }}"
-      - "Host: {{ inventory_hostname }} (as {{ aap_backup_user }}, become={{ _aapbk_need_become }})"
+      - "Host: {{ inventory_hostname }} (as {{ aap_backup_user }}, become={{ _aapbk_need_become }}, detached={{ _aapbk_run.detached | default(false) }})"
+      - "{{ (_aapbk_run.aap_service_state | default({})).summary | default('AAP state: unknown') }}"
       - "Exact AAP build/release: {{ (_aapbk_run.version | default(_aapbk_run.preflight.version | default({}))).exact_version | default('unknown') }}"
       - "Backup directory: {{ _aapbk_run.backup_dir | default('(check mode - not written)') }}"
       - "Manifest SHA-256 (SHA256SUMS): {{ _aapbk_run.sha256sums_sha256 | default('(check mode)') }}"
@@ -105,5 +113,7 @@
         payload_bytes: "{{ _aapbk_run.payload_bytes | default(0) | int }}"
         file_count: "{{ _aapbk_run.file_count | default(0) | int }}"
         sha256sums_sha256: "{{ _aapbk_run.sha256sums_sha256 | default('') }}"
+        detached: "{{ _aapbk_run.detached | default(false) | bool }}"
+        aap_service_state: "{{ (_aapbk_run.aap_service_state | default({})).status | default('') }}"
         check_mode: "{{ ansible_check_mode | bool }}"
   when: _aapbk_run is defined

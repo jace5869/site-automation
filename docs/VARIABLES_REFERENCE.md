@@ -33,9 +33,13 @@ File: `roles/aap_backup/defaults/main.yml`
 | `aap_installer_inventory` | (empty) | Installer inventory filename inside aap_installer_dir, or an absolute path (empty = first existing of inventory, inventory-growth). |
 | `aap_installer_playbook` | `"ansible.containerized_installer.backup"` | Containerized installer backup playbook FQCN or path run from aap_installer_dir. |
 | `aap_installer_ansible_playbook_bin` | `"ansible-playbook"` | Path or command name for ansible-playbook on the AAP host used to run the containerized installer backup. |
-| `aap_installer_extra_args` | `[]` | Extra command-line arguments passed to the containerized installer backup playbook (e.g. [--vault-password-file, /home/ansible/.vault_pass]). |
+| `aap_installer_extra_args` | `[]` | Extra command-line arguments passed to the containerized installer backup playbook (e.g. [--vault-password-file, /home/ansible/.vault_pass]; no_log in module). |
 | `aap_installer_become` | `false` | Pass --become to the containerized installer backup invocation when the installer inventory requires privilege escalation. |
 | `aap_backup_timeout_seconds` | `7200` | Maximum seconds to wait for the containerized installer backup command before timing out with SA-AAPBK-07. |
+| `aap_backup_self_hosted_mode` | `"detach"` | Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'detach' (via systemd-run --user) or 'refuse' (stop with SA-AAPBK-17 and exact CLI). |
+| `aap_backup_detach_poll_seconds` | `5` | Polling interval in seconds while waiting for a detached systemd-run --user installer backup status file. |
+| `aap_backup_systemd_run_bin` | `"systemd-run"` | Path or command name for systemd-run on the AAP host used to detach self-hosted in-AAP backups as aap_backup_user. |
+| `aap_backup_systemctl_bin` | `"systemctl"` | Path or command name for systemctl on the AAP host used to inspect and restart stopped AAP user services in finally. |
 | `aap_backup_version_file` | (empty) | Explicit metadata file to read the exact AAP build and release from (empty = auto-read from installer dir and container labels). |
 | `aap_backup_version_override` | (empty) | Manual exact AAP build/release string used only when automatic version detection is unavailable (empty = auto-detect required). |
 | `aap_backup_pre_check_running_jobs` | `true` | Record running/pending AAP jobs via the AAP API before backup when an AAP credential is attached (read-only). |
@@ -54,7 +58,7 @@ File: `roles/aap_backup/defaults/main.yml`
 | `aap_backup_ca_path` | (empty) | CA certificate bundle path for AAP API calls (empty = system trust store). |
 | `aap_backup_api_timeout` | `30` | Seconds per AAP API request for pre-backup job lookup and optional schedule reconciliation. |
 | `aap_backup_bundle_id` | (empty) | ---- Air-gap bundle (1.142.0, playbooks/aap_backup_bundle.yml) ------------------------------ Completed backup ID to package into an air-gap bundle (empty = latest verified backup from backups/latest.json). |
-| `aap_backup_installer_bundle` | (empty) | Path to the exact original AAP 2.7 containerized setup bundle tarball on the AAP host (empty = search search_dirs or pack aap_installer_dir). |
+| `aap_backup_installer_bundle` | (empty) | Path to the exact-same-build offline AAP 2.7 containerized setup bundle tarball (with bundle/ images) on the AAP host (empty = search search_dirs or pack offline aap_installer_dir). |
 | `aap_backup_installer_bundle_search_dirs` | `[]` | Directories searched for the original AAP setup bundle .tar.gz when aap_backup_installer_bundle is empty (empty = ansible user's home). |
 | `aap_backup_bundle_extra_files` | `[]` | Extra files or folders (relative to aap_installer_dir or absolute) to include in installer/extras/ inside the bundle (e.g. group_vars, CA certs). |
 | `aap_backup_ee_images` | `[]` | Explicit custom execution environment image references to export with podman save (always exported when listed; missing image stops with SA-AAPBK-14). |

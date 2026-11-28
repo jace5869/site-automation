@@ -19,6 +19,8 @@ import getpass
 import importlib.util
 import json
 import os
+import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -64,13 +66,32 @@ def _make_mountinfo(path, entries):
     return path
 
 
-def _make_mock_installer_dir(base_dir, version="2.7-1.1", coll_ver="2.7.1", with_inventory=True, with_collections=True):
-    idir = os.path.join(base_dir, "ansible-automation-platform-containerized-setup-bundle-%s-x86_64" % version)
+def _make_mock_installer_dir(base_dir, version="2.7-1.1", coll_ver="2.7.1", with_inventory=True,
+                             with_collections=True, with_bundle_images=True, with_vars=False):
+    prefix = "ansible-automation-platform-containerized-setup-bundle" if with_bundle_images else "ansible-automation-platform-containerized-setup"
+    idir = os.path.join(base_dir, "%s-%s-x86_64" % (prefix, version))
     os.makedirs(idir, exist_ok=True)
     if with_inventory:
         inv = os.path.join(idir, "inventory")
         with open(inv, "w", encoding="utf-8") as fh:
             fh.write("[automationcontroller]\naap01.corp.example.mil\n[all:vars]\ncontroller_pg_database=awx\n")
+        os.chmod(inv, 0o644)
+    if with_vars:
+        gv = os.path.join(idir, "group_vars")
+        hv = os.path.join(idir, "host_vars")
+        os.makedirs(gv, exist_ok=True)
+        os.makedirs(hv, exist_ok=True)
+        with open(os.path.join(gv, "all.yml"), "w", encoding="utf-8") as fh:
+            fh.write("---\ncontroller_admin_password: placeholder-not-real\n")
+        os.chmod(os.path.join(gv, "all.yml"), 0o644)
+        with open(os.path.join(hv, "aap01.corp.example.mil.yml"), "w", encoding="utf-8") as fh:
+            fh.write("---\nansible_connection: local\n")
+        os.chmod(os.path.join(hv, "aap01.corp.example.mil.yml"), 0o644)
+    if with_bundle_images:
+        bimg = os.path.join(idir, "bundle", "images")
+        os.makedirs(bimg, exist_ok=True)
+        with open(os.path.join(bimg, "automation-controller-rhel9.tar.gz"), "wb") as fh:
+            fh.write(b"MOCK-OFFLINE-BUNDLE-IMAGE-PAYLOAD" * 16)
     if coll_ver:
         cdir = os.path.join(idir, "collections", "ansible_collections", "ansible", "containerized_installer")
         os.makedirs(cdir, exist_ok=True)
@@ -88,6 +109,147 @@ def _make_mock_installer_dir(base_dir, version="2.7-1.1", coll_ver="2.7.1", with
             tf.add(dummy, arcname="MANIFEST.json")
             os.unlink(dummy)
     return idir
+
+
+def _make_stateful_service_mocks(base_dir, fail_start=False):
+    """Create stateful mock podman + systemctl + systemd-run scripts sharing state_file for 1.142.0 recovery tests."""
+    state_file = os.path.join(base_dir, "svc_state.json")
+    with open(state_file, "w", encoding="utf-8") as fh:
+        json.dump({
+            "containers": {
+                "automation-controller-web": "Up 3 days",
+                "automation-gateway": "Up 3 days",
+                "postgresql": "Up 3 days",
+            },
+            "units": {
+                "postgresql.service": "active",
+                "automation-gateway.service": "active",
+                "automation-controller-web.service": "active",
+            },
+            "restarted_containers": [],
+            "restarted_units": [],
+            "detached_invocations": [],
+        }, fh)
+
+    podman_p = _write_exe(os.path.join(base_dir, "stateful-podman"), """#!/usr/bin/env python3
+import json, sys
+SF = %r
+FAIL_START = %r
+args = sys.argv[1:]
+with open(SF, "r", encoding="utf-8") as fh:
+    st = json.load(fh)
+if not args:
+    sys.exit(1)
+if args[0] == "ps":
+    for name, status in sorted(st["containers"].items()):
+        print(name + "\\t" + status)
+    sys.exit(0)
+if args[0] == "inspect":
+    print(json.dumps([{"Config": {"Labels": {"version": "2.7", "release": "1.1", "com.redhat.component": "automation-controller"}}}]))
+    sys.exit(0)
+if args[0] == "start" and len(args) >= 2:
+    cname = args[1]
+    if FAIL_START:
+        sys.stderr.write("simulated podman start failure\\n")
+        sys.exit(1)
+    st["containers"][cname] = "Up 1 second"
+    st["restarted_containers"].append(cname)
+    with open(SF, "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    sys.exit(0)
+sys.exit(0)
+""" % (state_file, fail_start))
+
+    systemctl_p = _write_exe(os.path.join(base_dir, "stateful-systemctl"), """#!/usr/bin/env python3
+import json, sys
+SF = %r
+FAIL_START = %r
+args = sys.argv[1:]
+if "--user" in args:
+    args = [a for a in args if a != "--user"]
+with open(SF, "r", encoding="utf-8") as fh:
+    st = json.load(fh)
+if args and args[0] == "list-units":
+    for unit, active in sorted(st["units"].items()):
+        sub = "running" if active == "active" else "dead"
+        print("%%s loaded %%s %%s AAP service" %% (unit, active, sub))
+    sys.exit(0)
+if args and args[0] == "start" and len(args) >= 2:
+    unit = args[1]
+    if FAIL_START:
+        sys.stderr.write("simulated systemctl start failure\\n")
+        sys.exit(1)
+    st["units"][unit] = "active"
+    st["restarted_units"].append(unit)
+    with open(SF, "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    sys.exit(0)
+if args and args[0] == "is-active":
+    print("active")
+    sys.exit(0)
+sys.exit(0)
+""" % (state_file, fail_start))
+
+    systemd_run_p = _write_exe(os.path.join(base_dir, "stateful-systemd-run"), """#!/usr/bin/env python3
+import json, subprocess, sys
+SF = %r
+args = sys.argv[1:]
+with open(SF, "r", encoding="utf-8") as fh:
+    st = json.load(fh)
+st["detached_invocations"].append(args)
+with open(SF, "w", encoding="utf-8") as fh:
+    json.dump(st, fh)
+# Locate command after options (--user, --unit X, --collect, --description Y)
+i = 0
+while i < len(args):
+    if args[i] in ("--unit", "--description"):
+        i += 2
+    elif args[i].startswith("--"):
+        i += 1
+    else:
+        break
+cmd = args[i:]
+subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+sys.exit(0)
+""" % state_file)
+
+    return state_file, podman_p, systemctl_p, systemd_run_p
+
+
+def _make_service_stopping_ansible_playbook(path, state_file, mode="ok"):
+    """Mock ansible-playbook that stops AAP services during backup, then succeeds, fails, or sleeps to time out."""
+    script = """#!/usr/bin/env python3
+import json, os, sys, time
+SF = %r
+MODE = %r
+args = sys.argv[1:]
+bdir = ""
+for i, a in enumerate(args):
+    if a == "-e" and i + 1 < len(args) and args[i + 1].startswith("backup_dir="):
+        bdir = args[i + 1].split("=", 1)[1]
+    elif a.startswith("backup_dir="):
+        bdir = a.split("=", 1)[1]
+with open(SF, "r", encoding="utf-8") as fh:
+    st = json.load(fh)
+st["containers"]["automation-controller-web"] = "Exited (0) 1 second ago"
+st["units"]["automation-controller-web.service"] = "inactive"
+with open(SF, "w", encoding="utf-8") as fh:
+    json.dump(st, fh)
+if MODE == "fail":
+    sys.stderr.write("simulated mid-backup failure after stopping controller\\n")
+    sys.exit(2)
+if MODE == "timeout":
+    time.sleep(5)
+    sys.exit(0)
+os.makedirs(bdir, exist_ok=True)
+outf = os.path.join(bdir, "controller-db.sql.gz")
+with open(outf, "wb") as fh:
+    fh.write(b"MOCK-AAP-PG-DUMP-DATA-" * 100)
+# Simulate installer leaving world-readable 0644 file to verify module hardens it to 0600
+os.chmod(outf, 0o644)
+print("MOCK INSTALLER BACKUP OK")
+""" % (state_file, mode)
+    return _write_exe(path, script)
 
 
 def _make_mock_ansible_playbook(path, mode="ok"):
@@ -805,6 +967,476 @@ class EndToEndPlaybooks(unittest.TestCase):
         with tarfile.open(os.path.join(self.bpath, "bundles", bundles[0]), "r") as tf:
             names = tf.getnames()
         self.assertTrue(any(n.endswith("/docs/Site-Automation-AAP-Backup-Restore-Guide.pdf") for n in names), names)
+
+        # 4. Self-hosted AAP job with self_hosted_mode=refuse stops with SA-AAPBK-17 and exact CLI
+        r4 = self._run_pb("aap_backup.yml", ["-e", "awx_job_id=999", "-e", "aap_backup_self_hosted_mode=refuse"])
+        self.assertNotEqual(r4.returncode, 0)
+        self.assertIn("SA-AAPBK-17", r4.stdout + r4.stderr)
+        self.assertIn("playbooks/aap_backup.yml", r4.stdout + r4.stderr)
+
+
+class GateReview1420Regressions(unittest.TestCase):
+    """1.142.0 regression tests for all five Carbon gate-review findings (P1 #1-#4, P2 #5)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sa-aapbk-gate1420-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bpath = os.path.join(self.tmp, "mnt_backup")
+        os.makedirs(self.bpath)
+        self.idir = _make_mock_installer_dir(self.tmp, version="2.7-1.1", coll_ver="2.7.1", with_bundle_images=True, with_vars=True)
+        self.mock_ap = _make_mock_ansible_playbook(os.path.join(self.tmp, "mock-ap"), "ok")
+        self.mock_pod = _make_mock_podman(os.path.join(self.tmp, "mock-podman"))
+        self.mountinfo = _make_mountinfo(os.path.join(self.tmp, "mountinfo"), [
+            ("/", "xfs", "/dev/mapper/rhel-root", "rw"),
+            (os.path.realpath(self.bpath), "nfs4", "192.0.2.50:/exports/aap_backup", "rw"),
+        ])
+        self.setup_tar = os.path.join(self.tmp, "ansible-automation-platform-containerized-setup-bundle-2.7-1.1-x86_64.tar.gz")
+        with tarfile.open(self.setup_tar, "w:gz") as tf:
+            tf.add(self.idir, arcname=os.path.basename(self.idir))
+        os.chmod(self.setup_tar, 0o644)
+        self.runbook_pdf = os.path.join(self.tmp, "Site-Automation-AAP-Backup-Restore-Guide.pdf")
+        with open(self.runbook_pdf, "wb") as fh:
+            fh.write(b"%PDF-1.4\n%Mock AAP Restore Runbook\n%%EOF\n")
+        os.chmod(self.runbook_pdf, 0o644)
+
+    def _statvfs(self, _p):
+        return {"total_bytes": 500 * GIB, "available_bytes": 450 * GIB, "used_bytes": 50 * GIB, "used_pct": 10.0}
+
+    def _backup_params(self, **over):
+        p = dict(
+            action="backup",
+            backup_path=self.bpath,
+            expected_mount=os.path.realpath(self.bpath),
+            estimate_gb=50,
+            margin_pct=25,
+            installer_dir=self.idir,
+            ansible_playbook_bin=self.mock_ap,
+            mountinfo_path=self.mountinfo,
+            podman_bin=self.mock_pod,
+            systemctl_bin="/no/such/systemctl",
+            systemd_run_bin="/no/such/systemd-run",
+            self_hosted_mode="detach",
+            detach_poll_seconds=0.05,
+            timeout_seconds=30,
+        )
+        p.update(over)
+        return p
+
+    def _bundle_params(self, **over):
+        p = dict(
+            action="bundle",
+            backup_path=self.bpath,
+            expected_mount=os.path.realpath(self.bpath),
+            mountinfo_path=self.mountinfo,
+            installer_dir=self.idir,
+            ansible_playbook_bin=self.mock_ap,
+            podman_bin=self.mock_pod,
+            bundle_id="",
+            installer_bundle=self.setup_tar,
+            installer_bundle_search_dirs=[],
+            ee_images=[],
+            ee_auto_discover=True,
+            ee_image_patterns=["*site-ee*", "*ee-*", "*-ee*"],
+            ee_exclude_patterns=["*automation-controller*", "*postgresql*"],
+            ee_require_at_least_one=True,
+            collections_dirs=[],
+            collections_auto_discover=True,
+            bundle_include_runbook=True,
+            bundle_runbook_path=self.runbook_pdf,
+            bundle_archive=True,
+            bundle_keep_dir=True,
+            bundle_overhead_pct=15,
+        )
+        p.update(over)
+        return p
+
+    # Finding 1 (P1): Never leave AAP down — self-hosted detach/refuse + finally service restart + plain AAP state
+    def test_f1_self_hosted_refuse_and_detach_and_finally_restart(self):
+        # 1a. Self-hosted AAP job with self_hosted_mode=refuse stops with SA-AAPBK-17 and exact CLI
+        with self.assertRaises(bk.StopError) as cm:
+            bk.action_backup(self._backup_params(awx_job_id="777", self_hosted_mode="refuse"), statvfs_fn=self._statvfs)
+        self.assertEqual(cm.exception.code, "SA-AAPBK-17")
+        self.assertIn(bk.CLI_BACKUP_CMD, str(cm.exception))
+        self.assertIn("AAP state: untouched", str(cm.exception))
+
+        # 1b. Self-hosted AAP job with detach mode but missing systemd-run refuses with SA-AAPBK-17 + exact CLI
+        with self.assertRaises(bk.StopError) as cm2:
+            bk.action_backup(self._backup_params(awx_job_id="778", self_hosted_mode="detach", systemd_run_bin="/no/systemd-run"),
+                             statvfs_fn=self._statvfs)
+        self.assertEqual(cm2.exception.code, "SA-AAPBK-17")
+        self.assertIn(bk.CLI_BACKUP_CMD, str(cm2.exception))
+        self.assertIn("AAP state: untouched", str(cm2.exception))
+
+        # 1c. Self-hosted AAP job when systemd-run --user fails (no user bus) refuses with SA-AAPBK-17 + exact CLI
+        bad_sdrun = _write_exe(os.path.join(self.tmp, "bad-sdrun"), "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n")
+        with self.assertRaises(bk.StopError) as cm3:
+            bk.action_backup(self._backup_params(awx_job_id="779", self_hosted_mode="detach", systemd_run_bin=bad_sdrun),
+                             statvfs_fn=self._statvfs)
+        self.assertEqual(cm3.exception.code, "SA-AAPBK-17")
+        self.assertIn(bk.CLI_BACKUP_CMD, str(cm3.exception))
+        self.assertIn("AAP state: untouched", str(cm3.exception))
+
+        # 1d. Self-hosted AAP job detaches via systemd-run --user, polls status file, and restarts stopped services
+        sf, pod_m, sys_m, sdrun_m = _make_stateful_service_mocks(self.tmp)
+        stop_ok_ap = _make_service_stopping_ansible_playbook(os.path.join(self.tmp, "stop-ok-ap"), sf, mode="ok")
+        res = bk.action_backup(
+            self._backup_params(awx_job_id="888", self_hosted_mode="detach", ansible_playbook_bin=stop_ok_ap,
+                                podman_bin=pod_m, systemctl_bin=sys_m, systemd_run_bin=sdrun_m, detach_poll_seconds=0.05),
+            statvfs_fn=self._statvfs,
+        )
+        self.assertTrue(res["changed"])
+        self.assertTrue(res["detached"])
+        self.assertTrue(res["detached_unit"].startswith("sa-aap-backup-"))
+        self.assertEqual(res["aap_service_state"]["status"], "recovered")
+        self.assertIn("AAP state: UP (restarted", res["msg"])
+        with open(sf, encoding="utf-8") as fh:
+            st_after = json.load(fh)
+        self.assertEqual(len(st_after["detached_invocations"]), 1)
+        self.assertIn("--user", st_after["detached_invocations"][0])
+        self.assertIn("automation-controller-web.service", st_after["restarted_units"])
+        self.assertIn("automation-controller-web", st_after["restarted_containers"])
+        self.assertEqual(st_after["units"]["automation-controller-web.service"], "active")
+        self.assertTrue(st_after["containers"]["automation-controller-web"].startswith("Up"))
+
+        # 1e. Synchronous failure after stopping services ALWAYS restarts stopped pre_services in finally
+        sub_fail = os.path.join(self.tmp, "sub_fail")
+        os.makedirs(sub_fail)
+        sf2, pod_m2, sys_m2, _ = _make_stateful_service_mocks(sub_fail)
+        stop_fail_ap = _make_service_stopping_ansible_playbook(os.path.join(sub_fail, "stop-fail-ap"), sf2, mode="fail")
+        with self.assertRaises(bk.StopError) as cm4:
+            bk.action_backup(
+                self._backup_params(ansible_playbook_bin=stop_fail_ap, podman_bin=pod_m2, systemctl_bin=sys_m2),
+                statvfs_fn=self._statvfs,
+            )
+        self.assertEqual(cm4.exception.code, "SA-AAPBK-07")
+        self.assertEqual(cm4.exception.details["aap_service_state"]["status"], "recovered")
+        self.assertIn("AAP state: UP (restarted", str(cm4.exception))
+        with open(sf2, encoding="utf-8") as fh:
+            st2 = json.load(fh)
+        self.assertEqual(st2["units"]["automation-controller-web.service"], "active")
+        self.assertTrue(st2["containers"]["automation-controller-web"].startswith("Up"))
+
+        # 1f. Timeout after stopping services ALWAYS restarts stopped pre_services in finally
+        sub_to = os.path.join(self.tmp, "sub_to")
+        os.makedirs(sub_to)
+        sf3, pod_m3, sys_m3, _ = _make_stateful_service_mocks(sub_to)
+        stop_to_ap = _make_service_stopping_ansible_playbook(os.path.join(sub_to, "stop-to-ap"), sf3, mode="timeout")
+        with self.assertRaises(bk.StopError) as cm5:
+            bk.action_backup(
+                self._backup_params(ansible_playbook_bin=stop_to_ap, podman_bin=pod_m3, systemctl_bin=sys_m3, timeout_seconds=1),
+                statvfs_fn=self._statvfs,
+            )
+        self.assertEqual(cm5.exception.code, "SA-AAPBK-07")
+        self.assertEqual(cm5.exception.details["aap_service_state"]["status"], "recovered")
+        self.assertIn("AAP state: UP (restarted", str(cm5.exception))
+
+        # 1g. When service restart itself fails, state plainly reports DEGRADED/DOWN
+        sub_deg = os.path.join(self.tmp, "sub_deg")
+        os.makedirs(sub_deg)
+        sf4, pod_m4, sys_m4, _ = _make_stateful_service_mocks(sub_deg, fail_start=True)
+        stop_fail_ap4 = _make_service_stopping_ansible_playbook(os.path.join(sub_deg, "stop-fail-ap4"), sf4, mode="fail")
+        with self.assertRaises(bk.StopError) as cm6:
+            bk.action_backup(
+                self._backup_params(ansible_playbook_bin=stop_fail_ap4, podman_bin=pod_m4, systemctl_bin=sys_m4),
+                statvfs_fn=self._statvfs,
+            )
+        self.assertIn(cm6.exception.details["aap_service_state"]["status"], ("degraded", "down"))
+        self.assertIn("AAP state: DEGRADED", str(cm6.exception))
+
+    # Finding 2 (P1): umask 077 everywhere, dirs 0700, files 0600, no_log on secret args, BUNDLE-INDEX says umask 077
+    def test_f2_umask_077_perms_no_log_and_bundle_index(self):
+        old_umask = os.umask(0o022)
+        self.addCleanup(os.umask, old_umask)
+
+        sub = os.path.join(self.tmp, "sub_perm")
+        os.makedirs(sub)
+        sf, pod_m, sys_m, _ = _make_stateful_service_mocks(sub)
+        ap_644 = _make_service_stopping_ansible_playbook(os.path.join(sub, "ap-644"), sf, mode="ok")
+        b_res = bk.action_backup(
+            self._backup_params(ansible_playbook_bin=ap_644, podman_bin=pod_m, systemctl_bin=sys_m),
+            statvfs_fn=self._statvfs,
+        )
+        # Verify backup tree permissions: all created dirs 0700, all files 0600 (zero group/other bits)
+        for root_sub in (".staging", "backups"):
+            p = os.path.join(self.bpath, root_sub)
+            self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o700, p)
+        for cur, dirs, files in os.walk(os.path.join(self.bpath, "backups")):
+            self.assertEqual(stat.S_IMODE(os.stat(cur).st_mode), 0o700, cur)
+            for d in dirs:
+                dp = os.path.join(cur, d)
+                self.assertEqual(stat.S_IMODE(os.stat(dp).st_mode), 0o700, dp)
+            for fn in files:
+                fp = os.path.join(cur, fn)
+                self.assertEqual(stat.S_IMODE(os.stat(fp).st_mode), 0o600, fp)
+
+        # Build bundle (both original tarball and packed installer_dir modes) under permissive caller umask 0022
+        bnd = bk.action_bundle(self._bundle_params(bundle_keep_dir=True), statvfs_fn=self._statvfs)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.bpath, "bundles")).st_mode), 0o700)
+        for cur, dirs, files in os.walk(os.path.join(self.bpath, "bundles")):
+            self.assertEqual(stat.S_IMODE(os.stat(cur).st_mode), 0o700, cur)
+            for d in dirs:
+                dp = os.path.join(cur, d)
+                self.assertEqual(stat.S_IMODE(os.stat(dp).st_mode), 0o700, dp)
+            for fn in files:
+                fp = os.path.join(cur, fn)
+                self.assertEqual(stat.S_IMODE(os.stat(fp).st_mode), 0o600, fp)
+
+        # BUNDLE-INDEX.txt instructs umask 077 before tar -xf
+        with open(os.path.join(bnd["bundle_dir"], "BUNDLE-INDEX.txt"), encoding="utf-8") as fh:
+            idx_txt = fh.read()
+        self.assertIn("umask 077", idx_txt)
+        self.assertLess(idx_txt.index("umask 077"), idx_txt.index("tar -xf"))
+
+        # Tar archive members carry zero group/other permission bits
+        with tarfile.open(bnd["archive_path"], "r") as tf:
+            for m in tf.getmembers():
+                self.assertEqual(m.mode & 0o077, 0, "%s has mode %o" % (m.name, m.mode))
+
+        # Packed installer_dir mode also produces 0600 tarball and zero go-bits inside
+        bnd_p = bk.action_bundle(self._bundle_params(installer_bundle="", bundle_archive=False, bundle_keep_dir=True),
+                                 statvfs_fn=self._statvfs)
+        inst_tars = [f for f in os.listdir(os.path.join(bnd_p["bundle_dir"], "installer")) if f.endswith(".tar.gz")]
+        self.assertEqual(len(inst_tars), 1)
+        inst_tar_path = os.path.join(bnd_p["bundle_dir"], "installer", inst_tars[0])
+        self.assertEqual(stat.S_IMODE(os.stat(inst_tar_path).st_mode), 0o600)
+        with tarfile.open(inst_tar_path, "r:gz") as tf:
+            for m in tf.getmembers():
+                self.assertEqual(m.mode & 0o077, 0, "%s has mode %o" % (m.name, m.mode))
+
+        # Verify no_log=True on installer_extra_args (and bundle_runbook_b64) in site_aap_backup.py argument_spec
+        with open(os.path.join(REPO, "roles", "aap_backup", "library", "site_aap_backup.py"), encoding="utf-8") as fh:
+            mod_src = fh.read()
+        self.assertRegex(mod_src, r"installer_extra_args\s*=\s*dict\([^\)]*no_log\s*=\s*True")
+        self.assertRegex(mod_src, r"bundle_runbook_b64\s*=\s*dict\([^\)]*no_log\s*=\s*True")
+        # Verify _sanitize_args redacts secrets
+        san = bk._sanitize_args(["--vault-password-file", "/home/ansible/.vp", "-e", "db_password=s3cr3t", "api_token=xyz"])
+        self.assertNotIn("/home/ansible/.vp", san)
+        self.assertNotIn("db_password=s3cr3t", san)
+        self.assertNotIn("api_token=xyz", san)
+        self.assertTrue(b_res["backup_id"])
+
+    # Finding 3 (P1): Require offline bundle/ images, exact build parity, copy group_vars/host_vars, Hub-ready collections
+    def test_f3_offline_bundle_images_exact_build_vars_and_hub_collections(self):
+        bk.action_backup(self._backup_params(), statvfs_fn=self._statvfs)
+
+        # 3a. Online installer dir (missing bundle/ images) rejected with SA-AAPBK-13
+        online_dir = _make_mock_installer_dir(os.path.join(self.tmp, "online"), version="2.7-1.1", coll_ver="2.7.1",
+                                              with_bundle_images=False)
+        with self.assertRaises(bk.StopError) as cm:
+            bk.action_bundle(self._bundle_params(installer_dir=online_dir, installer_bundle=""), statvfs_fn=self._statvfs)
+        self.assertEqual(cm.exception.code, "SA-AAPBK-13")
+        self.assertIn("bundle/", str(cm.exception))
+
+        # 3b. Online installer tarball (missing bundle/ images) rejected with SA-AAPBK-13
+        online_tar = os.path.join(self.tmp, "ansible-automation-platform-containerized-setup-bundle-2.7-1.1-x86_64-online.tar.gz")
+        with tarfile.open(online_tar, "w:gz") as tf:
+            tf.add(online_dir, arcname=os.path.basename(online_dir))
+        with self.assertRaises(bk.StopError) as cm2:
+            bk.action_bundle(self._bundle_params(installer_bundle=online_tar), statvfs_fn=self._statvfs)
+        self.assertEqual(cm2.exception.code, "SA-AAPBK-13")
+        self.assertIn("bundle/", str(cm2.exception))
+
+        # 3c. Same 2.7 major.minor but DIFFERENT build (2.7-1.2 vs 2.7-1.1) rejected with SA-AAPBK-13
+        diff_build_dir = _make_mock_installer_dir(os.path.join(self.tmp, "diff_build"), version="2.7-1.2", coll_ver="2.7.1",
+                                                  with_bundle_images=True)
+        diff_build_tar = os.path.join(self.tmp, "ansible-automation-platform-containerized-setup-bundle-2.7-1.2-x86_64.tar.gz")
+        with tarfile.open(diff_build_tar, "w:gz") as tf:
+            tf.add(diff_build_dir, arcname=os.path.basename(diff_build_dir))
+        with self.assertRaises(bk.StopError) as cm3:
+            bk.action_bundle(self._bundle_params(installer_dir=diff_build_dir, installer_bundle=""), statvfs_fn=self._statvfs)
+        self.assertEqual(cm3.exception.code, "SA-AAPBK-13")
+        with self.assertRaises(bk.StopError) as cm4:
+            bk.action_bundle(self._bundle_params(installer_bundle=diff_build_tar), statvfs_fn=self._statvfs)
+        self.assertEqual(cm4.exception.code, "SA-AAPBK-13")
+
+        # 3d. Search dir containing only mismatched build 2.7-1.2 MUST NOT fall back to matches[-1]
+        sdir = os.path.join(self.tmp, "search_only_wrong")
+        os.makedirs(sdir)
+        shutil.copy2(diff_build_tar, os.path.join(sdir, os.path.basename(diff_build_tar)))
+        self.assertEqual(bk._find_installer_bundle_tarball("", [sdir], "2.7-1.1"), "")
+
+        # 3e. Different collection version (2.7.2 vs 2.7.1) rejected with SA-AAPBK-13
+        diff_coll_dir = _make_mock_installer_dir(os.path.join(self.tmp, "diff_coll"), version="2.7-1.1", coll_ver="2.7.2",
+                                                 with_bundle_images=True)
+        with self.assertRaises(bk.StopError) as cm5:
+            bk.action_bundle(self._bundle_params(installer_dir=diff_coll_dir, installer_bundle=""), statvfs_fn=self._statvfs)
+        self.assertEqual(cm5.exception.code, "SA-AAPBK-13")
+
+        # 3f. Valid exact-build bundle copies group_vars/host_vars AND packs collections at archive root (Hub uploadable)
+        bnd = bk.action_bundle(self._bundle_params(bundle_keep_dir=True), statvfs_fn=self._statvfs)
+        self.assertTrue(os.path.isfile(os.path.join(bnd["bundle_dir"], "installer", "group_vars", "all.yml")))
+        self.assertTrue(os.path.isfile(os.path.join(bnd["bundle_dir"], "installer", "host_vars", "aap01.corp.example.mil.yml")))
+        with open(os.path.join(bnd["bundle_dir"], "bundle-manifest.json"), encoding="utf-8") as fh:
+            bman = json.load(fh)
+        self.assertTrue(bman["installer"]["group_vars_included"])
+        self.assertTrue(bman["installer"]["host_vars_included"])
+
+        # Inspect packed installed collection tarball: MANIFEST.json MUST sit directly at root (getmember("MANIFEST.json") works)
+        ci_tar = os.path.join(bnd["bundle_dir"], "collections", "ansible-containerized_installer-2.7.1.tar.gz")
+        self.assertTrue(os.path.isfile(ci_tar))
+        with tarfile.open(ci_tar, "r:gz") as tf:
+            names = tf.getnames()
+            self.assertIsNotNone(tf.getmember("MANIFEST.json"))
+            self.assertFalse(any(n.startswith("ansible_collections/") for n in names), names)
+            self.assertFalse(any(n.startswith("./") for n in names), names)
+
+    # Finding 4 (P1): Restore runbook order for different hostname, --vault-password-file, post-restore install, valid INI
+    def test_f4_restore_runbook_order_vault_and_valid_ini(self):
+        rb_path = os.path.join(REPO, "docs", "AAP_BACKUP_RESTORE_RUNBOOK.md")
+        with open(rb_path, encoding="utf-8") as fh:
+            text = fh.read()
+        # Every ```ini fenced block must be valid single-line INI (no trailing backslash continuations)
+        ini_blocks = re.findall(r"```ini\n(.*?)```", text, re.S)
+        self.assertGreaterEqual(len(ini_blocks), 1)
+        for blk in ini_blocks:
+            for ln in blk.splitlines():
+                s = ln.strip()
+                if not s or s.startswith("#") or s.startswith(";"):
+                    continue
+                self.assertFalse(s.endswith("\\"), "Invalid INI backslash continuation: %r" % ln)
+                if not (s.startswith("[") and s.endswith("]")):
+                    toks = shlex.split(s)
+                    self.assertGreaterEqual(len(toks), 1)
+        # Vault password file, group_vars/host_vars, source-host backup mapping, and install -> restore -> install order
+        self.assertIn("--vault-password-file", text)
+        self.assertIn("group_vars", text)
+        self.assertIn("host_vars", text)
+        self.assertIn("payload-mapped", text)
+        idx_map = text.index("payload-mapped")
+        idx_restore = text.index("ansible.containerized_installer.restore")
+        idx_install_1 = text.index("ansible.containerized_installer.install")
+        idx_install_post = text.index("ansible.containerized_installer.install", idx_restore)
+        self.assertLess(idx_install_1, idx_restore)
+        self.assertLess(idx_map, idx_restore)
+        self.assertLess(idx_restore, idx_install_post)
+        # Rebuilt PDF exists and is non-empty
+        pdf_path = os.path.join(REPO, "guides", "Site-Automation-AAP-Backup-Restore-Guide.pdf")
+        self.assertTrue(os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 10000)
+
+    # Finding 5 (P2): bundle_id/backup_id regex validation, realpath vs forbidden/system mounts, symlink rejection
+    def test_f5_id_validation_realpath_system_mounts_and_symlinks(self):
+        b_res = bk.action_backup(self._backup_params(), statvfs_fn=self._statvfs)
+
+        # 5a. Invalid bundle_id (traversal, absolute, slashes, leading dot) -> SA-AAPBK-11
+        for bad_id in ("../other", "/etc/passwd", "a/b", "..", ".hidden", "bad..id", "id with spaces"):
+            with self.assertRaises(bk.StopError) as cm:
+                bk.action_bundle(self._bundle_params(bundle_id=bad_id), statvfs_fn=self._statvfs)
+            self.assertEqual(cm.exception.code, "SA-AAPBK-11", bad_id)
+
+        # 5b. Invalid protect_backup_id -> SA-AAPBK-01
+        with self.assertRaises(bk.StopError) as cm_p:
+            bk.action_retention(dict(action="retention", backup_path=self.bpath, retention_enabled=True, protect_backup_id="../bad"))
+        self.assertEqual(cm_p.exception.code, "SA-AAPBK-01")
+
+        # 5c. Symlink backup_path pointing to forbidden system path (/etc, /tmp, /) caught via realpath -> SA-AAPBK-01
+        for target_sys in ("/etc", "/tmp", "/"):
+            lnk = os.path.join(self.tmp, "link_to_" + bk.safe_filename(target_sys))
+            os.symlink(target_sys, lnk)
+            with self.assertRaises(bk.StopError) as cm_sys:
+                bk.validate_backup_path(lnk)
+            self.assertEqual(cm_sys.exception.code, "SA-AAPBK-01", target_sys)
+
+        # 5d. Unmounted share on / AND on non-/ system LV (/var, /home, /tmp) rejected with SA-AAPBK-02
+        for sys_mp, dev in (("/", "/dev/mapper/rhel-root"), ("/var", "/dev/mapper/rhel-var"), ("/tmp", "/dev/mapper/rhel-tmp")):
+            mi_sys = _make_mountinfo(os.path.join(self.tmp, "mi_" + bk.safe_filename(sys_mp)), [
+                ("/", "xfs", "/dev/mapper/rhel-root", "rw"),
+                (sys_mp, "xfs", dev, "rw"),
+            ])
+            # For /var, test a fake path whose realpath sits under /var? Use /tmp (which contains self.bpath!) and /
+            if sys_mp in ("/", "/tmp"):
+                with self.assertRaises(bk.StopError) as cm_m:
+                    bk.check_mount_and_writable(self.bpath, expected_mount="", mountinfo_path=mi_sys, write_probe=False)
+                self.assertEqual(cm_m.exception.code, "SA-AAPBK-02", sys_mp)
+        # Also test non-/ /var LV directly with find_mount_for_path/check_mount_and_writable via /var/tmp subpath?
+        # Create a mountinfo where the parent directory of self.bpath is mounted as /var? No, check SYSTEM_MOUNT_POINTS directly
+        # AND test realpath under a real system mountpoint (/var if readable, or /tmp which is a non-/ LV in mi_tmp!).
+        mi_nonroot_lv = _make_mountinfo(os.path.join(self.tmp, "mi_nonroot_lv"), [
+            ("/", "xfs", "/dev/mapper/rhel-root", "rw"),
+            ("/tmp", "xfs", "/dev/mapper/rhel-tmp", "rw"),
+        ])
+        with self.assertRaises(bk.StopError) as cm_lv:
+            bk.check_mount_and_writable(self.bpath, expected_mount="", mountinfo_path=mi_nonroot_lv, write_probe=False)
+        self.assertEqual(cm_lv.exception.code, "SA-AAPBK-02")
+        self.assertIn("system mount /tmp", str(cm_lv.exception))
+
+        # 5e. verify_sha256sums rejects symlinked file, symlinked parent dir, and symlinked SHA256SUMS
+        vdir = os.path.join(self.tmp, "verify_sym")
+        os.makedirs(os.path.join(vdir, "payload"))
+        outside = os.path.join(self.tmp, "outside.txt")
+        with open(outside, "wb") as fh:
+            fh.write(b"secret-outside-data")
+        outside_hash = bk.sha256_file(outside)
+        os.symlink(outside, os.path.join(vdir, "payload", "link.dat"))
+        with open(os.path.join(vdir, "SHA256SUMS"), "w", encoding="utf-8") as fh:
+            fh.write("%s  payload/link.dat\n" % outside_hash)
+        with self.assertRaises(bk.StopError) as cm_v1:
+            bk.verify_sha256sums(vdir, "SHA256SUMS", stop_code="SA-AAPBK-09")
+        self.assertEqual(cm_v1.exception.code, "SA-AAPBK-09")
+        self.assertIn("symlink", str(cm_v1.exception).lower())
+
+        # Symlinked intermediate directory
+        vdir2 = os.path.join(self.tmp, "verify_sym_dir")
+        os.makedirs(os.path.join(vdir2, "payload"))
+        ext_dir = os.path.join(self.tmp, "ext_dir")
+        os.makedirs(ext_dir)
+        ext_file = os.path.join(ext_dir, "f.dat")
+        with open(ext_file, "wb") as fh:
+            fh.write(b"ext")
+        os.symlink(ext_dir, os.path.join(vdir2, "payload", "sub"))
+        with open(os.path.join(vdir2, "SHA256SUMS"), "w", encoding="utf-8") as fh:
+            fh.write("%s  payload/sub/f.dat\n" % bk.sha256_file(ext_file))
+        with self.assertRaises(bk.StopError) as cm_v2:
+            bk.verify_sha256sums(vdir2, "SHA256SUMS", stop_code="SA-AAPBK-09")
+        self.assertEqual(cm_v2.exception.code, "SA-AAPBK-09")
+
+        # Symlinked SHA256SUMS itself
+        vdir3 = os.path.join(self.tmp, "verify_sym_sums")
+        os.makedirs(vdir3)
+        os.symlink(os.path.join(b_res["backup_dir"], "SHA256SUMS"), os.path.join(vdir3, "SHA256SUMS"))
+        with self.assertRaises(bk.StopError) as cm_v3:
+            bk.verify_sha256sums(vdir3, "SHA256SUMS", stop_code="SA-AAPBK-09")
+        self.assertEqual(cm_v3.exception.code, "SA-AAPBK-09")
+
+        # 5f. action_retention rejects symlinks in backups/ and quarantine/ without deleting target
+        victim = os.path.join(self.tmp, "victim_dir")
+        os.makedirs(victim)
+        with open(os.path.join(victim, "manifest.json"), "w", encoding="utf-8") as fh:
+            json.dump({"backup_id": "aap-backup-20200101T000000Z", "finished_utc": "2020-01-01T00:00:00Z"}, fh)
+        sym_bk = os.path.join(self.bpath, "backups", "aap-backup-20200101T000000Z")
+        os.symlink(victim, sym_bk)
+        with self.assertRaises(bk.StopError) as cm_r1:
+            bk.action_retention(dict(action="retention", backup_path=self.bpath, retention_enabled=True, retention_keep=1))
+        self.assertEqual(cm_r1.exception.code, "SA-AAPBK-02")
+        self.assertTrue(os.path.isdir(victim))
+        os.unlink(sym_bk)
+
+        # Symlinked backup dir refused in action_bundle with SA-AAPBK-12
+        sym_bnd = os.path.join(self.bpath, "backups", "aap-backup-20200102T000000Z")
+        os.symlink(victim, sym_bnd)
+        with self.assertRaises(bk.StopError) as cm_b_sym:
+            bk.action_bundle(self._bundle_params(bundle_id="aap-backup-20200102T000000Z"), statvfs_fn=self._statvfs)
+        self.assertEqual(cm_b_sym.exception.code, "SA-AAPBK-12")
+        os.unlink(sym_bnd)
+
+        # Symlinked manifest.json inside a backup dir refused by retention with SA-AAPBK-02
+        bad_m_dir = os.path.join(self.bpath, "backups", "aap-backup-20200103T000000Z")
+        os.makedirs(bad_m_dir)
+        os.symlink(os.path.join(victim, "manifest.json"), os.path.join(bad_m_dir, "manifest.json"))
+        with self.assertRaises(bk.StopError) as cm_r3:
+            bk.action_retention(dict(action="retention", backup_path=self.bpath, retention_enabled=True, retention_keep=1))
+        self.assertEqual(cm_r3.exception.code, "SA-AAPBK-02")
+        shutil.rmtree(bad_m_dir)
+
+        # Symlink in quarantine/
+        qroot = os.path.join(self.bpath, "quarantine")
+        os.makedirs(qroot, exist_ok=True)
+        sym_q = os.path.join(qroot, "aap-backup-20200101T000000Z")
+        os.symlink(victim, sym_q)
+        with self.assertRaises(bk.StopError) as cm_r2:
+            bk.action_retention(dict(action="retention", backup_path=self.bpath, retention_enabled=True, retention_quarantine_days=1))
+        self.assertEqual(cm_r2.exception.code, "SA-AAPBK-02")
+        self.assertTrue(os.path.isdir(victim))
+        os.unlink(sym_q)
 
 
 if __name__ == "__main__":

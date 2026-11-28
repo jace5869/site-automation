@@ -76,8 +76,8 @@
 ## backups/latest.json).
 # aap_backup_bundle_id: ""
 
-## Path to the exact original AAP 2.7 containerized setup bundle tarball on the AAP host (empty =
-## search search_dirs or pack aap_installer_dir).
+## Path to the exact-same-build offline AAP 2.7 containerized setup bundle tarball (with bundle/
+## images) on the AAP host (empty = search search_dirs or pack offline aap_installer_dir).
 # aap_backup_installer_bundle: ""
 
 ## Directories searched for the original AAP setup bundle .tar.gz when aap_backup_installer_bundle

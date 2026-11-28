@@ -74,17 +74,25 @@ aap_installer_dir: /home/ansible/ansible-automation-platform-containerized-setup
    retention and optional schedule changes without writing any backup files.
 2. **Real backup (Run mode):** launch **AAP - backup** with Job type **Run** in the agreed backup
    window. The job:
+   - Sets `umask 077` (`0700` dirs, `0600` files, `no_log: true` on `installer_extra_args`) so
+     inventory and backup artifacts are never world-readable.
    - Acquires `<aap_backup_path>/.aap-backup.lock` (`SA-AAPBK-06` stops concurrent runs).
-   - Runs every preflight check (`SA-AAPBK-01` through `SA-AAPBK-05`) before invoking the
-     installer.
+   - Runs every preflight check (`SA-AAPBK-01` through `SA-AAPBK-05`), including `realpath` checks
+     against forbidden/system paths and system LV mounts, before invoking the installer.
    - Records active AAP containers, systemd user units, and (when an AAP credential is attached)
      other running/pending AAP jobs.
+   - **Never leaves AAP down:** when launched from an AAP job targeting the same AAP host, detaches
+     the installer backup into a transient `systemd-run --user` unit as `ansible` and polls a `0600`
+     status file (or refuses with `SA-AAPBK-17` and prints the exact CLI command when
+     `aap_backup_self_hosted_mode: refuse` or `systemd-run --user` is unavailable). In all modes,
+     a `finally` guard restarts any pre-backup services/containers that stopped and prints the
+     plain AAP service state on both success and failure/timeout.
    - Runs `ansible.containerized_installer.backup` from `aap_installer_dir` with `backup_dir` set
      to a unique staging folder `<aap_backup_path>/.staging/<backup_id>/payload` (`0700`).
    - Checks exit status (`SA-AAPBK-07`) and non-empty payload files (`SA-AAPBK-08`).
    - Writes relative-path `SHA256SUMS` and `manifest.json` (with exact AAP build/release, RHEL
      release, architecture, host FQDN, sizes, and pre/post service state), then **reads back and
-     verifies every SHA-256 entry** (`SA-AAPBK-09`).
+     verifies every SHA-256 entry** (rejecting symlinks, `SA-AAPBK-09`).
    - Atomically moves the verified staging folder to `backups/<backup_id>` and updates
      `backups/latest.json` (which becomes the baseline size for future free-space checks).
    - On any failure after staging begins, moves the partial staging folder into
@@ -116,11 +124,11 @@ classified side.
 | Bundle path | Contents |
 |---|---|
 | `backup/` | Complete verified AAP backup payload, inner `SHA256SUMS`, and `manifest.json` |
-| `installer/` | Original installer `inventory`, optional `extras/`, and the **exact same** AAP 2.7 containerized setup bundle `.tar.gz` (or packed `aap_installer_dir`) |
+| `installer/` | Original installer `inventory`, `group_vars/` and `host_vars/` (when present), optional `extras/`, and the **exact same build** offline AAP 2.7 bundle installer (with `bundle/` images) |
 | `ee-images/` | Exported custom EE tarballs (`podman save`) and `ee-images.json` with image digests and SHA-256 checksums |
-| `collections/` | Carried collection `.tar.gz` archives (plus packed `ansible_collections/`) and `collections.json` |
+| `collections/` | Carried collection `.tar.gz` archives (`MANIFEST.json` at archive root, ready for Hub upload) and `collections.json` |
 | `docs/` | Printable offline restore runbook PDF (`Site-Automation-AAP-Backup-Restore-Guide.pdf`) |
-| `BUNDLE-INDEX.txt` | Human-readable contents summary, component sizes, total size, and receipt verification steps |
+| `BUNDLE-INDEX.txt` | Human-readable contents summary, component sizes, total size, and receipt verification steps (starting with `umask 077`) |
 | `SHA256SUMS` | Single relative-path SHA-256 manifest covering every file in the bundle (`sha256sum -c SHA256SUMS`) |
 | `bundle-manifest.json` | Machine-readable metadata: exact AAP build/release, digests, file count, and sizes |
 
@@ -166,22 +174,23 @@ action required:
 
 | Code | Stage | Cause and operator action |
 |---|---|---|
-| `SA-AAPBK-01` | Preflight | `aap_backup_path` unset, relative, contains `..`, or points to a system directory. Set an absolute path such as `/mnt/ansible_backup`. |
-| `SA-AAPBK-02` | Preflight | Path missing, not on the expected active mount, on `/` (unmounted share), wrong mount source/fstype, read-only, or write probe failed as `ansible`. |
+| `SA-AAPBK-01` | Preflight | `aap_backup_path` unset, relative, contains `..`, or resolves via `realpath` to a forbidden/system directory. Set an absolute path such as `/mnt/ansible_backup`. |
+| `SA-AAPBK-02` | Preflight / Retention | Path missing, not on the expected active mount, on `/` or a system LV mount (unmounted share), wrong mount source/fstype, read-only, symlink rejected in retention, or write probe failed as `ansible`. |
 | `SA-AAPBK-03` | Preflight / Bundle | Free space `< baseline + margin` (or unknown baseline/margin). Output shows available, required, and exact shortfall; extend LV or NFS quota and retry. |
 | `SA-AAPBK-04` | Preflight | `aap_installer_dir`, installer inventory, `ansible-playbook`, or `aap_backup_user` missing or unreadable on the AAP host. |
 | `SA-AAPBK-05` | Preflight | Exact AAP build/release could not be read from installer metadata, container labels, or `aap_backup_version_file`. |
 | `SA-AAPBK-06` | Preflight | Another backup or bundle run holds `<aap_backup_path>/.aap-backup.lock`. Wait for it to finish. |
-| `SA-AAPBK-07` | Backup | `ansible.containerized_installer.backup` returned non-zero or timed out. Staging quarantined; previous backup untouched. |
+| `SA-AAPBK-07` | Backup | `ansible.containerized_installer.backup` returned non-zero or timed out. Staging quarantined; `finally` restarts stopped services and prints AAP state; previous backup untouched. |
 | `SA-AAPBK-08` | Backup | Installer exited 0 but wrote no non-empty backup payload files. Staging quarantined. |
-| `SA-AAPBK-09` | Manifest | Failed to write or read-back verify `SHA256SUMS`. Staging quarantined; previous backup untouched. |
+| `SA-AAPBK-09` | Manifest | Failed to write or read-back verify `SHA256SUMS` (or symlink rejected). Staging quarantined; previous backup untouched. |
 | `SA-AAPBK-10` | Target list | Could not read `/proc/self/mountinfo` or `/proc/mounts`. |
-| `SA-AAPBK-11` | Bundle | Requested backup ID (or `backups/latest.json`) not found. Run **AAP - backup** first. |
-| `SA-AAPBK-12` | Bundle | Source backup `SHA256SUMS` verification failed before bundling. Do not carry over a corrupt backup. |
-| `SA-AAPBK-13` | Bundle | Installer dir, inventory, setup bundle tarball, extra file missing, or AAP release mismatch between backup and installer. |
+| `SA-AAPBK-11` | Bundle | Requested `aap_backup_bundle_id` invalid (must match safe ID regex with no `..`/`/`) or backup ID / `backups/latest.json` not found. |
+| `SA-AAPBK-12` | Bundle | Source backup `SHA256SUMS` verification failed (or symlink rejected) before bundling. Do not carry over a corrupt backup. |
+| `SA-AAPBK-13` | Bundle | Offline bundle installer (`bundle/` images), exact build parity, inventory, `group_vars`/`host_vars`, or extra file missing/mismatched. |
 | `SA-AAPBK-14` | Bundle | Explicit custom EE image missing locally, `podman save` failed, or 0 EEs found when `aap_backup_ee_require_at_least_one: true`. |
-| `SA-AAPBK-15` | Bundle | Bundle `SHA256SUMS` or `.tar.sha256` read-back verification failed. Staging quarantined; do not transfer. |
+| `SA-AAPBK-15` | Bundle | Bundle `SHA256SUMS` or `.tar.sha256` read-back verification failed (or symlink rejected). Staging quarantined; do not transfer. |
 | `SA-AAPBK-16` | Schedule | Invalid weekly schedule string/timezone or AAP API error while reconciling the optional weekly Berlin schedule. |
+| `SA-AAPBK-17` | Self-hosted guard | Self-hosted in-AAP backup refused (`aap_backup_self_hosted_mode: refuse` or `systemd-run --user` unavailable). Prints the exact CLI command to run; AAP left untouched. |
 
 ## Settings reference
 
