@@ -1227,7 +1227,7 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
 
-Since 1.140.0, every portal server list (Ops monitor *Not up* and full list modal, Network & AD health wall, Active Directory domain controller status table, and VMware cluster ESXi hosts) also includes a per-server **Copy ▾** control (**Copy both** / **Copy text** / **Copy picture**) and a **Copy all shown** control beside **Expand all** that copies only the filtered/shown rows as rich HTML + plain text and a ~700 px Teams picture card (command copy blocks stay raw command text only).
+Since 1.140.0, every portal server list (Ops monitor *Not up* and full list modal, Network & AD health wall, Active Directory domain controller status table, and VMware cluster ESXi hosts) also includes per-row checkboxes (**Space** to toggle, **Shift+click** for a range), a live **`n selected`** count, **Clear**, visible keyboard/click cues, a per-server **Copy ▾** control (**Copy both** / **Copy text** / **Copy picture**), and a **Copy selected** / **Copy all shown** control (copying ticked rows when selected, or all shown rows when nothing is ticked) as rich HTML + plain text and a ~700 px Teams picture card (command copy blocks stay raw command text only).
 
 ### Ops monitor (1.136.0)
 
@@ -1256,12 +1256,15 @@ styles (720p to 4K, kiosk too). The earlier link `?area=fleet` also opens Ops mo
 **The node card** (a square, a row or a Spotlight chip): service (and the other groups it is in), IP, status and why, since
 when and how long, response time and loss, a dated vCenter note when matched, what SolarWinds says and when it last polled, the
 source and its age, where to check - and **Copy text**, **Copy picture**, **Copy both**, **Save picture** (as Share to Teams
-below) and **Add to selection**. **Share selected** puts one line a node on the clipboard, for example
+below) and **Add to selection**. **Share selected** builds a full down-nodes report card (1.140.0) in both text (plain + HTML table) and picture — longest down first, compact table rows (`+n more` only beyond 40 rows), wall link last — for example:
 
 ```
-4 nodes not up - SITEA - 05:42
-DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)
-DOWN  SITEASQLV05 - Databases - 192.0.2.82 - down 6 min (since 05:36)
+SITEA · 28 Nov 05:42 UTC · 2 nodes down
+
+Node | Server | Service | Down since | Down for
+SITEADIRDCV01 | 192.0.2.12 / sitea-esx01.corp.example.mil | Active Directory | 05:21 | 21 min
+SITEASQLV05 | 192.0.2.82 / sitea-esx02.corp.example.mil | Databases | 05:36 | 6 min
+
 Wall: https://<portal>/portal/wall?area=monitor
 ```
 

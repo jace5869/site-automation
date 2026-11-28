@@ -10,7 +10,7 @@
   "use strict";
   var A = null, F = null, FAIL = "", LOADED_AT = 0, lastBoot = 0, lastSeq = 0, BUSY = false, VER = 0;
   var B = null, P = {};                       // the board (kept across the page's redraws, so an open card survives them) and its parts
-  var SEL = Object.create(null), OV = null;          // no prototype: a key from the address (?node=) is only ever a node                    // the selection (node keys), the open card or list
+  var SEL = Object.create(null), LAST_SEL = "", OV = null;          // no prototype: a key from the address (?node=) is only ever a node                    // the selection (node keys), the open card or list
   var SPOT = {g: null, left: 20, pausedUntil: 0}, DWELL = 20;
   var LAY = {blocks: [], S: 10, k: 1};
   var ST_WORD = {d: "DOWN", w: "WARN", p: "OFF", m: "UNMANAGED", x: "UNKNOWN", u: "UP"};
@@ -198,11 +198,18 @@
     var s = shown(n);
     var word = statusWord(n, s);
     if (!n.vconly && (s === "lastdown" || s === "lastwarn")) word = (s === "lastdown" ? "DOWN" : "WARN") + " - last known, " + pollText(n);
-    return {st: word, sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, phrase: phrase(n), loss: n.loss, vc: vmText(n),
+    var sinceLocal = n.since ? ((A && A.when ? A.when(n.since) : hm(n.since)) + (n.exact ? "" : " or earlier"))
+      : (s === "up" || s === "off" || s === "info" ? "\u2014" : "not known");
+    var durText = n.since ? (A.dur(Math.max(0, NOW() - n.since)) + (n.exact ? "" : "+")) : "\u2014";
+    var serverStr = (n.ip && n.host) ? (n.ip + " / " + n.host) : (n.ip || n.host || "no IP");
+    return {st: word, sev: sevOf(s), name: n.name, svc: svcOf(n), ip: n.ip, host: n.host || "", server: serverStr,
+            since: n.since || 0, exact: !!n.exact, downSince: sinceLocal, downFor: durText,
+            downSec: n.since ? Math.max(0, Math.round((NOW() - n.since) / 1000)) : null,
+            phrase: phrase(n), loss: n.loss, vc: vmText(n),
             said: sevOf(s) === "stale" ? phrase(n) : n.why, up: s === "up" || s === "off"};
   }
-  function ctx(L) {
-    var w = W(), z = F.zone || "UTC", day = "", one = L.length === 1 ? L[0] : null;
+  function ctx(L, kind) {
+    var w = W(), z = F.zone || "UTC", day = "", bulk = kind === "bulk", one = L.length === 1 && !bulk ? L[0] : null;
     try { day = new Intl.DateTimeFormat("en-GB", {timeZone: z, day: "2-digit", month: "short"}).format(new Date(NOW())); } catch (e) { day = ""; }
     var base = location.origin + A.src.replace(/api\/wall$/, "wall") + "?area=monitor";
     var src = one ? srcOf(one) : null, vco = L.some(function (n) { return n.vconly; }), sw = L.some(function (n) { return !n.vconly; });
@@ -212,7 +219,7 @@
       notCur.some(function (n) { return n.flags.indexOf("o") >= 0; }) ? "SolarWinds itself has not polled some of these lately - their state is not current" :
       F.incomplete.length ? "the read is not whole: " + F.incomplete[0] :
       "a source of these is not current - the last known state";
-    return {site: w.enclave || "", stamp: hm(NOW()), day: day, zone: A.zoneName(),
+    return {site: w.enclave || "", stamp: hm(NOW()), day: day, zone: A.zoneName(), tz: z, bulk: bulk,
             src: one ? src.name + (one.vconly ? "" : " every " + F.seconds + " s") : (sw ? "SolarWinds every " + F.seconds + " s" : "") + (sw && vco ? " · " : "") + (vco ? "vCenter (VMs not in SolarWinds)" : ""),
             asof: src && src.asof ? hm(src.asof * 1000) : hm(NOW()), link: one ? base + "&node=" + encoded(one.key) : base, stale: stale};
   }
@@ -241,25 +248,27 @@
     P.ncount = h("span", "cue", [""]);
     P.selall = h("button", "btn", ["Select all down"], {type: "button", title: "Tick every node that is down now"});
     P.shsel = h("button", "btn pri", ["Share selected to Teams"], {type: "button", title: "The ticked nodes (none ticked: every node down) as one message and one picture"});
-    P.selc = h("span", "selc", ["0 selected"]);
+    P.selc = h("span", "selc", ["0 selected"], {"aria-live": "polite"});
     P.clr = h("button", "btn lnk", ["Clear"], {type: "button", title: "Untick every node", hidden: true});
+    P.selcue = h("span", "srv-sel-cue fl-click", ["Tick or Space to select · Shift+click range"]);
     P.copyBar = copyHelp.createFeedbackBar ? copyHelp.createFeedbackBar() : h("div", "copy-bar", null, {hidden: true});
     P.copyAll = copyHelp.createSplitControl ? copyHelp.createSplitControl({
       cls: "pri fl-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: 0,
       title: "Copy every node currently shown in Not up (text + picture)",
-      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown options",
+      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown or selected options",
       menuTitle: "Copy all shown", menuTag: "0 rows",
       subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
-      isEmpty: function () { return !notUpList().length; },
+      isEmpty: function () { return !(selected().length || notUpList().length); },
       onCopy: function (mode, btn, finish) {
-        var L = notUpList(); if (!L.length) { finish(); return Promise.resolve(); }
+        var sel = selected(), L = sel.length ? sel : notUpList();
+        if (!L.length) { finish(); return Promise.resolve(); }
         return copyNodesList(L, mode, btn, P.copyBar, finish);
       }
     }) : null;
     P.evs = h("div", "fl-evs");
     P.more = h("button", "fl-more", [""], {type: "button", hidden: true, title: "Every node not up, with checkboxes"});
     var list = h("section", "fl-panel fl-list", [h("div", "ph", [h("h3", "", ["Not up · worst first"]), P.ncount]),
-      h("div", "evh", [P.selall, P.shsel, P.copyAll, P.selc, P.clr]), P.evs, P.more, P.copyBar]);
+      h("div", "evh", [P.selall, P.shsel, P.copyAll, P.selc, P.clr, P.selcue]), P.evs, P.more, P.copyBar]);
     P.cmp = h("div", "fl-cmp");
     P.cmpcue = h("span", "cue", [""]);
     var cmp = h("section", "fl-panel fl-cov", [h("div", "ph", [h("h3", "", ["SolarWinds vs vCenter"]), P.cmpcue]), P.cmp]);
@@ -428,7 +437,9 @@
     });
   }
   function row(n, cls, barEl) {
-    var s = shown(n), cb = h("input", "", null, {type: "checkbox", "data-k": n.key, "aria-label": "select " + n.name, checked: !!SEL[n.key]});
+    var s = shown(n), ticked = !!SEL[n.key];
+    var cb = h("input", "srv-sel-cb", null, {type: "checkbox", "data-k": n.key, "aria-label": "select " + n.name,
+      title: "Select " + n.name + " (Space to toggle, Shift+click for range)", checked: ticked});
     var cp = copyHelp.createSplitControl ? copyHelp.createSplitControl({
       cls: "sm fl-row-copy", scope: "server", baseLabel: "Copy",
       title: "Copy " + n.name + " status and findings (text + picture)",
@@ -437,7 +448,7 @@
       subtitles: {both: "Text + inline PNG", text: "Status + all findings", picture: "PNG server card"},
       onCopy: function (mode, btn, finish) { return copyOneNode(n, mode, btn, barEl || P.copyBar, finish); }
     }) : null;
-    return h("div", "ev " + sevOf(s) + (cls ? " " + cls : ""), [
+    return h("div", "ev " + sevOf(s) + (ticked ? " srv-selected" : "") + (cls ? " " + cls : ""), [
       h("span", "s", [statusWord(n, s)]), h("span", "n", [cb, h("b", "", [n.name])]), h("span", "a", [n.since ? A.dur(NOW() - n.since) + (n.exact ? "" : "+") : ""]),
       cp,
       h("span", "d", [[svcOf(n), n.ip || "no IP", phrase(n)].filter(Boolean).join(" · ")])],
@@ -447,8 +458,10 @@
     var L = notUpList(), nsel = Object.keys(SEL).length;
     P.ncount.textContent = L.length ? L.length + " node" + (L.length === 1 ? "" : "s") : "";
     P.selc.textContent = nsel + " selected";
+    P.selc.classList.toggle("has-sel", nsel > 0);
     P.clr.hidden = !nsel;
-    if (P.copyAll && P.copyAll.setCount) P.copyAll.setCount(L.length);
+    if (P.copyAll && P.copyAll.setSelection) P.copyAll.setSelection(nsel, L.length, "node");
+    else if (P.copyAll && P.copyAll.setCount) P.copyAll.setCount(nsel || L.length);
     clear(P.evs);
     if (!L.length) {
       var cn = counts();
@@ -698,11 +711,16 @@
       ["Source", sr.name + " · " + (sr.asof != null ? "as of " + A.hms(sr.asof * 1000) + " (" + agoS(sr.asof) + ")" : "never read") + (fr === "ok" ? "" : fr === "late" ? " · LATE" : " · NOT CURRENT")],
       ["Check", n.vconly ? "vSphere Client of " + n.vc + " › VM " + n.name + " › Summary" : "SolarWinds › Node Details of " + n.name + (n.vm ? "; vSphere Client › VM › Summary" : "")]];
   }
+  function nodeOrder(a, b) {
+    return RANK[shown(a)] - RANK[shown(b)] || (a.since || 9e15) - (b.since || 9e15) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  }
   function openCard(L, kind, refreshing) {
     L = L.filter(Boolean);
     if (!L.length) return;
-    var one = L.length === 1 && kind !== "bulk", n = L[0], s = shown(n);
-    var keys = L.map(function (m) { return m.key; }), rows = L.map(share), context = ctx(L);
+    var one = L.length === 1 && kind !== "bulk";
+    if (!one) L = L.slice().sort(nodeOrder);
+    var n = L[0], s = shown(n);
+    var keys = L.map(function (m) { return m.key; }), rows = L.map(share), context = ctx(L, kind);
     var details = one ? cardDetails(n, s) : null;
     // The share's creation time is stamped when it opens. Only changes to the selected content need a new preview.
     var signature = JSON.stringify([keys, rows, details, context.stale, context.site, context.src, context.zone, one ? context.asof : null]);
@@ -723,7 +741,8 @@
     }
     var sh = nodesPanel(rows, context, extra, function () {
       var latest = keys.map(function (key) { return F.by[key]; }).filter(Boolean);
-      return [latest.map(share), ctx(latest)];
+      if (!one) latest.sort(nodeOrder);
+      return [latest.map(share), ctx(latest, kind)];
     });
     var card = h("div", "fl-card" + (one ? "" : " bulk"), [head, details ? h("div", "fl-cb", [kv(details)]) : null, sh], {role: "dialog", "aria-modal": "true", "aria-label": one ? n.name : "Share to Teams"});
     P.ov.appendChild(card);
@@ -749,21 +768,42 @@
     x.addEventListener("click", closeOv);
     var shareB = h("button", "btn pri", ["Share these to Teams"], {type: "button"});
     var selB = h("button", "btn", ["Tick all of these"], {type: "button"});
+    var selcModal = h("span", "selc", ["0 selected"], {"aria-live": "polite"});
+    var clrModal = h("button", "btn lnk", ["Clear"], {type: "button", title: "Untick selected nodes in this list", hidden: true});
     var modalBar = copyHelp.createFeedbackBar ? copyHelp.createFeedbackBar() : h("div", "copy-bar", null, {hidden: true});
+    var pickedInList = function () {
+      return L.map(function (n) { return F.by[n.key]; }).filter(function (n) { return n && SEL[n.key]; }).sort(nodeOrder);
+    };
     var copyAllModal = copyHelp.createSplitControl ? copyHelp.createSplitControl({
       cls: "pri fl-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: L.length,
       title: "Copy every node in this list (text + picture)",
-      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown options",
+      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown or selected options",
       menuTitle: "Copy all shown", menuTag: L.length + " row" + (L.length === 1 ? "" : "s"),
       subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
-      isEmpty: function () { return !L.length; },
+      isEmpty: function () { return !(pickedInList().length || L.length); },
       onCopy: function (mode, btn, finish) {
-        var now = L.map(function (n) { return F.by[n.key]; }).filter(Boolean);
+        var sel = pickedInList();
+        var now = sel.length ? sel : L.map(function (n) { return F.by[n.key]; }).filter(Boolean);
         if (!now.length) { finish(); return Promise.resolve(); }
         return copyNodesList(now, mode, btn, modalBar, finish);
       }
     }) : null;
     var box = h("div", "fl-evs all");
+    var syncModalSel = function () {
+      var nsel = pickedInList().length;
+      selcModal.textContent = nsel + " selected";
+      selcModal.classList.toggle("has-sel", nsel > 0);
+      clrModal.hidden = nsel === 0;
+      if (copyAllModal && copyAllModal.setSelection) copyAllModal.setSelection(nsel, L.length, "node");
+      else if (copyAllModal && copyAllModal.setCount) copyAllModal.setCount(nsel || L.length);
+      box.querySelectorAll(".ev").forEach(function (ev) {
+        var k = ev.getAttribute("data-k"), cb = ev.querySelector("input[type=checkbox][data-k]");
+        var on = !!(k && SEL[k]);
+        if (cb) cb.checked = on;
+        ev.classList.toggle("srv-selected", on);
+      });
+    };
+    OV.syncSel = syncModalSel;
     var shownRows = 0, more = h("button", "btn", [""], {type: "button"});
     var page = function () {                                           // 200 rows at a time: every one reachable, none built ahead
       L.slice(shownRows, shownRows + 200).forEach(function (n) { box.insertBefore(row(n, "", modalBar), more); });
@@ -778,16 +818,18 @@
     shareB.addEventListener("click", function () {
       var now = L.map(function (n) { return F.by[n.key]; }).filter(Boolean);     // the latest read's rows, never the list's old ones
       var sel = now.filter(function (n) { return SEL[n.key]; });
-      openCard(sel.length ? sel : now, "bulk");
+      openCard((sel.length ? sel : now).sort(nodeOrder), "bulk");
     });
-    selB.addEventListener("click", function () { L.forEach(function (n) { if (F.by[n.key]) SEL[n.key] = 1; }); box.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = true; }); notUp(); drawGrid(); });
+    selB.addEventListener("click", function () { L.forEach(function (n) { if (F.by[n.key]) SEL[n.key] = 1; }); syncModalSel(); notUp(); drawGrid(); });
+    clrModal.addEventListener("click", function () { L.forEach(function (n) { delete SEL[n.key]; }); LAST_SEL = ""; syncModalSel(); notUp(); drawGrid(); });
+    syncModalSel();
     P.ov.appendChild(h("div", "fl-card list", [h("h2", "", [h("span", "nm", [title]), h("small", "", [filter === "v" && !coverageCurrent() ? "–" : L.length + " node" + (L.length === 1 ? "" : "s")]), x]),
-      note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, copyAllModal, h("span", "fl-click", ["click a row for its card · tick to share several"])]), box, modalBar], {role: "dialog", "aria-modal": "true", "aria-label": title}));
+      note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, copyAllModal, selcModal, clrModal, h("span", "srv-sel-cue fl-click", ["Tick or Space to select · Shift+click range · click row for card"])]), box, modalBar], {role: "dialog", "aria-modal": "true", "aria-label": title}));
     P.ov.classList.add("on");
     if (!limit) x.focus();
     spotlight();
   }
-  function selected() { return Object.keys(SEL).map(function (k) { return F.by[k]; }).filter(Boolean).sort(function (a, b) { return RANK[shown(a)] - RANK[shown(b)] || (a.name < b.name ? -1 : 1); }); }
+  function selected() { return Object.keys(SEL).map(function (k) { return F.by[k]; }).filter(Boolean).sort(nodeOrder); }
 
   // ---------------------------------------------------------------- events
   function wire() {
@@ -798,10 +840,19 @@
       if (t.closest(".fl-card") && t.closest("button") && !t.closest(".fl-evs")) return;    // the card's own buttons
       var cb = t.closest("input[type=checkbox][data-k]");
       if (cb) {
-        var ck = cb.getAttribute("data-k"), inList = P.evs.contains(cb);
-        if (cb.checked) SEL[ck] = 1; else delete SEL[ck];
+        var ck = cb.getAttribute("data-k"), inList = P.evs.contains(cb), on = !!cb.checked;
+        if (e.shiftKey && LAST_SEL && LAST_SEL !== ck) {
+          var scope = cb.closest(".fl-evs") || P.evs;
+          var ks = [].map.call(scope.querySelectorAll("input[type=checkbox][data-k]"), function (x) { return x.getAttribute("data-k"); });
+          var aI = ks.indexOf(LAST_SEL), bI = ks.indexOf(ck);
+          if (aI >= 0 && bI >= 0) {
+            for (var ri = Math.min(aI, bI); ri <= Math.max(aI, bI); ri++) { if (on) SEL[ks[ri]] = 1; else delete SEL[ks[ri]]; }
+          }
+        }
+        if (on) SEL[ck] = 1; else delete SEL[ck];
+        LAST_SEL = ck;
         if (inList) { notUp(); var again = P.evs.querySelector('input[data-k="' + (window.CSS && CSS.escape ? CSS.escape(ck) : ck) + '"]'); if (again) again.focus(); }
-        else notUp();                    // ticked in the full list: the panel's boxes and count follow
+        else { notUp(); if (OV && OV.syncSel) OV.syncSel(); }                    // ticked in the full list: the panel's boxes and count follow
         drawGrid(); e.stopPropagation(); return;
       }
       var k = t.closest("[data-k]");
@@ -816,7 +867,7 @@
         return;
       }
       if (t === P.selall) { notUpList().forEach(function (n) { if (shown(n) === "down") SEL[n.key] = 1; }); notUp(); drawGrid(); return; }
-      if (t === P.clr) { SEL = Object.create(null); notUp(); drawGrid(); return; }
+      if (t === P.clr) { SEL = Object.create(null); LAST_SEL = ""; notUp(); drawGrid(); return; }
       if (t === P.shsel) {
         var sel = selected(), L2 = sel.length ? sel : notUpList().filter(function (n) { return shown(n) === "down"; });
         if (!L2.length) L2 = notUpList();                       // nothing ticked, nothing down: every node not up
@@ -1131,61 +1182,187 @@
   }
   var NSEV = {crit: {c: "#e0454b", ink: "#ffffff"}, warn: {c: "#e8a92c", ink: "#1a1200"}, stale: {c: "#8b95a3", ink: "#111418"},
               off: {c: "#8b95a3", ink: "#111418"}, ok: {c: "#2f9e65", ink: "#ffffff"}};
+  var S_RK = {crit: 0, warn: 1, stale: 2, off: 3, ok: 4};
   var PIC_MAX = 40, TEXT_MAX = 200;
-  function nline(n) { return n.st + "  " + n.name + " - " + (n.svc || "no group") + " - " + (n.ip || "no IP") + " - " + n.phrase; }
+  function rowSinceMs(n) {
+    if (n && typeof n.since === "number" && n.since > 0) return n.since < 1e11 ? n.since * 1000 : n.since;
+    return 0;
+  }
+  function fmtDurSec(sec) {
+    var m = Math.max(0, Math.round(sec / 60));
+    if (m < 60) return m + " min";
+    if (m >= 1440) { var dd = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60); return dd + " d" + (hh ? " " + hh + " h" : ""); }
+    return Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
+  }
+  function rowServer(n) {
+    if (n.server) return String(n.server);
+    if (n.ip && n.host) return n.ip + " / " + n.host;
+    return n.ip || n.host || "no IP";
+  }
+  function rowService(n) { return n.svc || "no group"; }
+  function rowDownSince(n, ctx) {
+    if (n.downSince) return String(n.downSince);
+    var ms = rowSinceMs(n);
+    if (ms) {
+      var z = (ctx && (ctx.tz || ctx.zone)) || "UTC", t = "";
+      try {
+        var nowMs = (ctx && typeof ctx.now === "number") ? (ctx.now < 1e11 ? ctx.now * 1000 : ctx.now) : Date.now();
+        var hmFmt = new Intl.DateTimeFormat("en-GB", {timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false});
+        t = nowMs - ms > 20 * 3600000
+          ? new Intl.DateTimeFormat("en-GB", {timeZone: z, day: "2-digit", month: "short"}).format(new Date(ms)) + " " + hmFmt.format(new Date(ms))
+          : hmFmt.format(new Date(ms));
+      } catch (e) { t = new Date(ms).toISOString().slice(11, 16); }
+      return t + (n.exact === false ? " or earlier" : "");
+    }
+    var ph = String(n.phrase || "");
+    var m = ph.match(/\(since\s+([^)]+)\)/i) || ph.match(/\bsince\s+([^,)]+)/i);
+    if (m) return m[1].trim();
+    return "\u2014";
+  }
+  function rowDownFor(n) {
+    if (n.downFor) return String(n.downFor);
+    if (typeof n.downSec === "number" && Number.isFinite(n.downSec)) return fmtDurSec(n.downSec) + (n.exact === false ? "+" : "");
+    var ph = String(n.phrase || "");
+    var m = ph.match(/^down\s+(at least\s+)?([^(]+)/i);
+    if (m) return m[2].trim() + (m[1] ? "+" : "");
+    var m2 = ph.match(/\(([^,)]+?)(?:,\s*since|\))/i);
+    if (m2 && !/^since\b/i.test(m2[1].trim())) return m2[1].trim();
+    return ph || "\u2014";
+  }
+  function rowDownSec(n) {
+    if (typeof n.downSec === "number" && Number.isFinite(n.downSec)) return n.downSec;
+    var dur = rowDownFor(n);
+    if (!dur || dur === "-" || dur === "\u2014") return -1;
+    var sec = 0, hit = false, m;
+    if ((m = dur.match(/(\d+)\s*d\b/i))) { sec += (+m[1]) * 86400; hit = true; }
+    if ((m = dur.match(/(\d+)\s*h\b/i))) { sec += (+m[1]) * 3600; hit = true; }
+    if ((m = dur.match(/(\d+)\s*m(?:in)?\b/i))) { sec += (+m[1]) * 60; hit = true; }
+    if ((m = dur.match(/(\d+)\s*s\b/i))) { sec += (+m[1]); hit = true; }
+    return hit ? sec : -1;
+  }
+  function sortShareRows(L) {
+    return (L || []).map(function (n, i) { return [n, i]; }).sort(function (a, b) {
+      var na = a[0], nb = b[0];
+      var ra = S_RK[na.sev] !== undefined ? S_RK[na.sev] : 2;
+      var rb = S_RK[nb.sev] !== undefined ? S_RK[nb.sev] : 2;
+      if (ra !== rb) return ra - rb;
+      var sa = rowSinceMs(na), sb = rowSinceMs(nb);
+      if (sa && sb && sa !== sb) return sa - sb;
+      if (sa && !sb) return -1;
+      if (!sa && sb) return 1;
+      var da = rowDownSec(na), db = rowDownSec(nb);
+      if (da >= 0 && db >= 0 && da !== db) return db - da;
+      if (da >= 0 && db < 0) return -1;
+      if (da < 0 && db >= 0) return 1;
+      return a[1] - b[1];
+    }).map(function (p) { return p[0]; });
+  }
+  function isSingleCard(L, ctx) { return L.length === 1 && !(ctx && ctx.bulk); }
+  function nline(n, ctx, mixed) {
+    var c = ctx && typeof ctx === "object" ? ctx : null;
+    var nodeCol = (mixed === true && n.st && n.st !== "DOWN" ? "[" + n.st + "] " : "") + (n.name || "unknown");
+    return [nodeCol, rowServer(n), rowService(n), rowDownSince(n, c), rowDownFor(n)].join(" | ");
+  }
   function nhead(L, ctx) {
-    var down = L.filter(function (n) { return n.st === "DOWN"; }).length, allBad = L.every(function (n) { return !n.up && n.st !== "INFO"; });
-    return L.length === 1 ? "[" + L[0].st + "] " + L[0].name + " - " + (L[0].svc || "no group") :
-      L.length + (allBad ? " nodes not up" : " nodes") + (down && down < L.length ? " (" + down + " down)" : "") + (ctx.site ? " - " + ctx.site : "") + " - " + ctx.stamp;
+    ctx = ctx || {};
+    if (isSingleCard(L, ctx)) return "[" + L[0].st + "] " + L[0].name + " - " + (L[0].svc || "no group");
+    var down = L.filter(function (n) { return n.st === "DOWN" || n.sev === "crit"; }).length;
+    var warn = L.filter(function (n) { return n.sev === "warn"; }).length;
+    var other = L.length - down - warn;
+    var allBad = L.every(function (n) { return !n.up && n.st !== "INFO"; });
+    var timeStr = [ctx.day, ctx.stamp, ctx.zone].filter(Boolean).join(" ");
+    var cntStr = down === L.length
+      ? down + " node" + (down === 1 ? "" : "s") + " down"
+      : down > 0
+        ? down + " node" + (down === 1 ? "" : "s") + " down" + (warn ? ", " + warn + " warning" : "") + (other ? ", " + other + " other" : "")
+        : warn === L.length
+          ? warn + " node" + (warn === 1 ? "" : "s") + " warning"
+          : L.length + (allBad ? " nodes not up" : " nodes");
+    return [ctx.site, timeStr, cntStr].filter(Boolean).join(" \u00b7 ");
   }
   // the link back to the wall: http(s) only (anything else: the wall's own path, never a script)
   function safeLink(u) { return /^https?:\/\//i.test(String(u || "")) ? String(u) : "#"; }
   function ntext(L, ctx) {
-    var out = [nhead(L, ctx)];
-    if (L.length === 1) {
-      var n = L[0];
-      out.push("IP " + (n.ip || "none") + " · " + n.phrase + (n.loss ? " · " + n.loss + "% loss" : ""));
+    ctx = ctx || {};
+    var one = isSingleCard(L, ctx);
+    var rows = one ? L : sortShareRows(L);
+    var out = [nhead(rows, ctx)];
+    if (one) {
+      var n = rows[0];
+      out.push("IP " + (n.ip || "none") + (n.host ? " · Host " + n.host : "") + " · " + n.phrase + (n.loss ? " · " + n.loss + "% loss" : ""));
       if (n.vc) out.push("vCenter says: " + n.vc);
       out.push("Source: " + ctx.src + " · as of " + (ctx.asof || ctx.stamp) + (ctx.site ? " · " + ctx.site : ""));
-    } else {
-      L.slice(0, TEXT_MAX).forEach(function (n) { out.push(nline(n) + (n.vc ? " · vCenter says: " + n.vc : "")); });
-      if (L.length > TEXT_MAX) out.push("+" + (L.length - TEXT_MAX) + " more on the wall");
+      if (ctx.stale) out.push("Not current: " + ctx.stale);
+      return out.join("\n") + "\nWall: " + ctx.link;
     }
+    var mixed = !rows.every(function (n) { return n.st === "DOWN"; });
+    out.push("");
+    out.push("Node | Server | Service | Down since | Down for");
+    rows.slice(0, TEXT_MAX).forEach(function (n) {
+      out.push(nline(n, ctx, mixed) + (n.vc ? " · vCenter says: " + n.vc : ""));
+    });
+    if (rows.length > TEXT_MAX) out.push("+" + (rows.length - TEXT_MAX) + " more on the wall");
     if (ctx.stale) out.push("Not current: " + ctx.stale);
-    return out.join("\n") + "\nWall: " + ctx.link;
+    out.push("");
+    out.push("Wall: " + ctx.link);
+    return out.join("\n");
   }
   function nhtml(L, ctx) {
+    ctx = ctx || {};
     var td = function (t, st) { return "<td" + (st ? ' style="' + st + '"' : "") + ">" + esc(t) + "</td>"; };
-    var rows = L.slice(0, TEXT_MAX).map(function (n) {
+    var th = function (t, st) { return "<th" + (st ? ' style="' + st + '"' : "") + ">" + esc(t) + "</th>"; };
+    var one = isSingleCard(L, ctx);
+    var rows = one ? L : sortShareRows(L);
+    var link = safeLink(ctx.link);
+    var linkTxt = link === "#" ? "Open on the wall" : ctx.link;
+    if (one) {
+      var n0 = rows[0], c0 = (NSEV[n0.sev] || NSEV.stale).c;
+      var oneRow = "<tr>" + td(n0.st, "color:" + c0 + ";font-weight:700;padding-right:10px") + "<td style=\"padding-right:10px\"><b>" + esc(n0.name) + "</b></td>" +
+        td(rowService(n0), "padding-right:10px") + td(rowServer(n0), "padding-right:10px") + td(n0.phrase) + "</tr>";
+      return "<p><b>" + esc(nhead(rows, ctx)) + "</b>" + (ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + oneRow + "</table>" +
+        (n0.vc ? "<p>vCenter says: " + esc(n0.vc) + "</p>" : "") +
+        "<p>Source: " + esc(ctx.src) + " · as of " + esc(ctx.asof || ctx.stamp) + "</p>" +
+        (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
+        '<p><a href="' + esc(link) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";
+    }
+    var mixed = !rows.every(function (n) { return n.st === "DOWN"; });
+    var thSt = "text-align:left;padding:4px 10px 4px 0;border-bottom:1px solid #8b95a3;font-weight:700";
+    var headRow = "<tr>" + th("Node", thSt) + th("Server", thSt) + th("Service", thSt) + th("Down since", thSt) + th("Down for", thSt) + "</tr>";
+    var bodyRows = rows.slice(0, TEXT_MAX).map(function (n) {
       var c = (NSEV[n.sev] || NSEV.stale).c;
-      return "<tr>" + td(n.st, "color:" + c + ";font-weight:700;padding-right:10px") + "<td style=\"padding-right:10px\"><b>" + esc(n.name) + "</b></td>" +
-        td(n.svc || "no group", "padding-right:10px") + td(n.ip || "no IP", "padding-right:10px") + td(n.phrase + (L.length > 1 && n.vc ? " · vCenter says: " + n.vc : "")) + "</tr>";
+      var tag = mixed && n.st && n.st !== "DOWN" ? '<span style="color:' + c + ';font-weight:700">[' + esc(n.st) + ']</span> ' : "";
+      var durStyle = "padding:3px 10px 3px 0;font-weight:700" + (n.sev === "crit" ? ";color:" + c : n.sev === "warn" ? ";color:#b87800" : "");
+      return "<tr><td style=\"padding:3px 10px 3px 0\">" + tag + "<b>" + esc(n.name) + "</b></td>" +
+        td(rowServer(n), "padding:3px 10px 3px 0") + td(rowService(n), "padding:3px 10px 3px 0") +
+        td(rowDownSince(n, ctx), "padding:3px 10px 3px 0") +
+        td(rowDownFor(n) + (n.vc ? " · vCenter says: " + n.vc : ""), durStyle) + "</tr>";
     }).join("");
-    var one = L.length === 1 ? L[0] : null;
-    return "<p><b>" + esc(nhead(L, ctx)) + "</b>" + (one && ctx.site ? " · " + esc(ctx.site) : "") + "</p><table>" + rows + "</table>" +
-      (one && one.vc ? "<p>vCenter says: " + esc(one.vc) + "</p>" : "") +
-      (one ? "<p>Source: " + esc(ctx.src) + " · as of " + esc(ctx.asof || ctx.stamp) + "</p>" : "") +
-      (L.length > TEXT_MAX ? "<p>+" + (L.length - TEXT_MAX) + " more on the wall</p>" : "") +
+    return "<p><b>" + esc(nhead(rows, ctx)) + "</b></p><table style=\"border-collapse:collapse\"><thead>" + headRow + "</thead><tbody>" + bodyRows + "</tbody></table>" +
+      (rows.length > TEXT_MAX ? "<p>+" + (rows.length - TEXT_MAX) + " more on the wall</p>" : "") +
       (ctx.stale ? "<p><i>Not current: " + esc(ctx.stale) + "</i></p>" : "") +
-      '<p><a href="' + esc(safeLink(ctx.link)) + '">Open on the wall</a> · ' + esc(ctx.src) + "</p>";
+      '<p>Wall: <a href="' + esc(link) + '">' + esc(linkTxt) + "</a> · " + esc(ctx.src) + "</p>";
   }
   function npicture(L, ctx) {
-    var cv = document.createElement("canvas"), x = cv.getContext("2d"), Wd = 1000, shown = L.slice(0, PIC_MAX), more = L.length - shown.length;
+    ctx = ctx || {};
+    var cv = document.createElement("canvas"), x = cv.getContext("2d");
     if (!x) return null;
-    var one = L.length === 1, Hh = one ? 330 : 150 + shown.length * 62 + (more ? 40 : 0);
+    var one = isSingleCard(L, ctx);
+    var rows = one ? L : sortShareRows(L);
+    var shown = rows.slice(0, PIC_MAX), more = rows.length - shown.length;
     var sans = "Figtree, 'Segoe UI', Arial, sans-serif", mono = "'Fira Code', Consolas, monospace";
-    cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
-    x.fillStyle = "#15181d"; x.fillRect(0, 0, Wd, Hh);
-    var worst = L.length === 1 ? L[0].sev : L.some(function (n) { return n.sev === "crit"; }) ? "crit" : L.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
-    x.fillStyle = NSEV[worst].c; x.fillRect(0, 0, 12, Hh);
-    x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
-    x.fillText(fit(x, one ? L[0].name : L.length + (L.every(function (n) { return !n.up && n.st !== "INFO"; }) ? " nodes not up" : " nodes"), 560), 36, 52);
-    x.font = "600 16px " + mono; x.fillStyle = "#9aa3ae"; x.textAlign = "right";
-    x.fillText(fit(x, (ctx.site ? ctx.site + " · " : "") + ctx.day + " " + ctx.stamp + " " + ctx.zone, 360), Wd - 30, 50);
-    x.textAlign = "left"; x.fillStyle = "#c9d0d8"; x.font = "500 18px " + sans;
-    x.fillText(fit(x, one ? (L[0].svc || "no group") + " · " + (L[0].ip || "no IP") : "from " + ctx.src + " · grouped by service" + (ctx.stale ? " · NOT CURRENT" : ""), Wd - 72), 36, 82);
+    var worst = one ? rows[0].sev : rows.some(function (n) { return n.sev === "crit"; }) ? "crit" : rows.some(function (n) { return n.sev === "warn"; }) ? "warn" : "stale";
     if (one) {
-      var n = L[0], s = NSEV[n.sev] || NSEV.stale;
+      var Wd = 1000, Hh = 330;
+      cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
+      x.fillStyle = "#15181d"; x.fillRect(0, 0, Wd, Hh);
+      x.fillStyle = (NSEV[worst] || NSEV.stale).c; x.fillRect(0, 0, 12, Hh);
+      x.fillStyle = "#f3f5f7"; x.font = "700 30px " + sans;
+      x.fillText(fit(x, rows[0].name, 560), 36, 52);
+      x.font = "600 16px " + mono; x.fillStyle = "#9aa3ae"; x.textAlign = "right";
+      x.fillText(fit(x, (ctx.site ? ctx.site + " · " : "") + [ctx.day, ctx.stamp, ctx.zone].filter(Boolean).join(" "), 360), Wd - 30, 50);
+      x.textAlign = "left"; x.fillStyle = "#c9d0d8"; x.font = "500 18px " + sans;
+      x.fillText(fit(x, rowService(rows[0]) + " · " + rowServer(rows[0]), Wd - 72), 36, 82);
+      var n = rows[0], s = NSEV[n.sev] || NSEV.stale;
       x.fillStyle = s.c; x.fillRect(36, 110, 6, 112);
       x.font = "700 15px " + mono; var bw = x.measureText(n.st).width + 20;
       x.fillRect(58, 112, bw, 26); x.fillStyle = s.ink; x.fillText(n.st, 68, 130);
@@ -1194,50 +1371,127 @@
       x.fillText(fit(x, n.said || "", Wd - 110), 58, 170);
       x.fillText(fit(x, n.vc ? "vCenter says: " + n.vc : "", Wd - 110), 58, 202);
       if (ctx.stale) { x.fillStyle = "#f3c46a"; x.font = "600 17px " + sans; x.fillText(fit(x, "NOT CURRENT: " + ctx.stale, Wd - 110), 58, 236); }
-    } else {
-      shown.forEach(function (n, i) {
-        var y = 118 + i * 62, s = NSEV[n.sev] || NSEV.stale;
-        x.fillStyle = "#1e232a"; x.fillRect(30, y - 26, Wd - 60, 56);
-        x.fillStyle = s.c; x.fillRect(42, y - 18, 100, 24);
-        x.fillStyle = s.ink; x.font = "700 13px " + mono; x.fillText(fit(x, n.st, 88), 50, y - 1);
-        x.fillStyle = "#f3f5f7"; x.font = "700 16px " + mono; x.fillText(fit(x, n.name, 205), 154, y);
-        x.font = "500 15px " + sans; x.fillStyle = "#c9d0d8"; x.fillText(fit(x, n.svc || "no group", 190), 370, y);
-        x.font = "500 14px " + mono; x.fillText(fit(x, n.ip || "no IP", 135), 570, y);
-        x.fillStyle = n.sev === "crit" ? "#ff8a8e" : n.sev === "warn" ? "#f3c46a" : "#c9d0d8"; x.fillText(fit(x, n.phrase, 270), 712, y);
-        if (n.vc) x.fillText(fit(x, "vCenter says: " + n.vc, Wd - 100), 42, y + 21);
-      });
-      if (more) { x.fillStyle = "#f3f5f7"; x.font = "600 17px " + sans; x.fillText("+" + more + " more - the full list on the wall", 42, 118 + shown.length * 62 + 4); }
+      x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono;
+      x.fillText(fit(x, "Source " + ctx.src + (ctx.asof ? " · as of " + ctx.asof : "") + (ctx.link ? " · Wall: " + ctx.link : " · Ops center wall"), Wd - 72), 36, Hh - 18);
+      return cv;
     }
-    x.fillStyle = "#9aa3ae"; x.font = "500 14px " + mono;
-    x.fillText(fit(x, "Source " + ctx.src + (one && ctx.asof ? " · as of " + ctx.asof : "") + " · Ops center wall", Wd - 72), 36, Hh - 18);
+    var mixed = !rows.every(function (n) { return n.st === "DOWN"; });
+    var Wd = 1120, compact = shown.length > 15, rowH = compact ? 26 : 30;
+    var headH = ctx.stale ? 104 : 84, colH = 26, moreH = more > 0 ? 30 : 0, footH = 34;
+    var Hh = headH + colH + shown.length * rowH + moreH + footH;
+    cv.width = Wd * 2; cv.height = Hh * 2; x.scale(2, 2);
+    x.fillStyle = "#141922"; x.fillRect(0, 0, Wd, Hh);
+    x.fillStyle = (NSEV[worst] || NSEV.stale).c; x.fillRect(0, 0, 8, Hh);
+    x.textAlign = "left";
+    x.fillStyle = "#96adc2"; x.font = "600 11px " + mono;
+    x.fillText(mixed ? "OPS MONITOR · NODE STATUS REPORT CARD" : "OPS MONITOR · DOWN NODES REPORT CARD", 28, 24);
+    x.textAlign = "right"; x.fillStyle = ctx.stale ? "#f3c46a" : "#96adc2";
+    x.fillText(fit(x, (ctx.src || "SolarWinds") + (ctx.stale ? " · NOT CURRENT" : ""), 420), Wd - 24, 24);
+    x.textAlign = "left";
+    x.fillStyle = "#f4f7fa"; x.font = "700 22px " + sans;
+    x.fillText(fit(x, nhead(rows, ctx), Wd - 56), 28, 55);
+    x.fillStyle = "#9ab0c4"; x.font = "500 11.5px " + mono;
+    x.fillText(fit(x, "Longest down first" + (more > 0 ? " · showing first " + shown.length + " of " + rows.length : " · " + rows.length + " total"), Wd - 56), 28, 74);
+    if (ctx.stale) {
+      x.fillStyle = "#f3c46a"; x.font = "600 12px " + sans;
+      x.fillText(fit(x, "NOT CURRENT: " + ctx.stale, Wd - 56), 28, 94);
+    }
+    var y = headH;
+    x.fillStyle = "#202836"; x.fillRect(24, y, Wd - 48, colH);
+    x.fillStyle = "#9eb5ca"; x.font = "700 11px " + mono;
+    x.fillText("NODE", 34, y + 17);
+    x.fillText("SERVER (IP / HOST)", 264, y + 17);
+    x.fillText("SERVICE", 584, y + 17);
+    x.fillText("DOWN SINCE", 798, y + 17);
+    x.textAlign = "right";
+    x.fillText("DOWN FOR", Wd - 32, y + 17);
+    x.textAlign = "left";
+    y += colH;
+    var fSize = compact ? 12 : 13, baseOff = compact ? 17 : 20;
+    shown.forEach(function (n, i) {
+      var s = NSEV[n.sev] || NSEV.stale;
+      x.fillStyle = i % 2 ? "#161d28" : "#1b2330";
+      x.fillRect(24, y, Wd - 48, rowH);
+      x.fillStyle = s.c; x.fillRect(24, y, 3, rowH);
+      x.fillStyle = "#263140"; x.fillRect(24, y + rowH - 1, Wd - 48, 1);
+      var nodeTxt = (mixed && n.st && n.st !== "DOWN" ? "[" + n.st + "] " : "") + (n.name || "unknown");
+      x.fillStyle = "#f4f7fa"; x.font = "700 " + fSize + "px " + mono;
+      x.fillText(fit(x, nodeTxt, 222), 34, y + baseOff);
+      x.fillStyle = "#d3e0ec"; x.font = "500 " + fSize + "px " + mono;
+      x.fillText(fit(x, rowServer(n), 310), 264, y + baseOff);
+      x.fillStyle = "#dce6f0"; x.font = "500 " + fSize + "px " + sans;
+      x.fillText(fit(x, rowService(n), 204), 584, y + baseOff);
+      x.fillStyle = "#c8d6e3"; x.font = "500 " + fSize + "px " + mono;
+      x.fillText(fit(x, rowDownSince(n, ctx), 166), 798, y + baseOff);
+      x.textAlign = "right";
+      x.fillStyle = n.sev === "crit" ? "#ff8f94" : n.sev === "warn" ? "#f3c46a" : "#c8d6e3";
+      x.font = "700 " + fSize + "px " + mono;
+      x.fillText(fit(x, rowDownFor(n), 118), Wd - 32, y + baseOff);
+      x.textAlign = "left";
+      y += rowH;
+    });
+    if (more > 0) {
+      x.fillStyle = "#202836"; x.fillRect(24, y, Wd - 48, moreH - 4);
+      x.fillStyle = "#f3c46a"; x.font = "700 12.5px " + mono;
+      x.fillText("+" + more + " more on the wall (showing " + shown.length + " longest down)", 34, y + 18);
+      y += moreH;
+    }
+    x.fillStyle = "#2b3748"; x.fillRect(24, Hh - footH, Wd - 48, 1);
+    x.fillStyle = "#9ab0c4"; x.font = "500 11.5px " + mono;
+    x.fillText(fit(x, "Wall: " + (ctx.link || "Ops center wall"), Wd - 56), 28, Hh - 12);
     return cv;
   }
   // the share panel for nodes, built node by node: the message as it pastes, the buttons, what happened, the picture
   function nodesPanel(L, ctx, extra, current) {
+    ctx = ctx || {};
+    var one = isSingleCard(L, ctx);
+    var rows = one ? L : sortShareRows(L);
+    var mixed = !rows.every(function (n) { return n.st === "DOWN"; });
     var say = shareElement("p", "shd", [""], {role: "status", "aria-live": "polite"});
     var tb = shareElement("table", "fl-msgt", null);
-    L.slice(0, TEXT_MAX).forEach(function (n) {
-      tb.appendChild(shareElement("tr", "", [shareElement("td", "s " + n.sev, [n.st]), shareElement("td", "", [shareElement("b", "", [n.name])]), shareElement("td", "", [n.svc || "no group"]),
-        shareElement("td", "", [n.ip || "no IP"]), shareElement("td", "", [n.phrase])]));
+    if (!one) {
+      tb.appendChild(shareElement("thead", "", [shareElement("tr", "", [
+        shareElement("th", "", ["Node"]), shareElement("th", "", ["Server"]), shareElement("th", "", ["Service"]),
+        shareElement("th", "", ["Down since"]), shareElement("th", "", ["Down for"])
+      ])]));
+    }
+    var tbody = shareElement("tbody", "", null);
+    rows.slice(0, TEXT_MAX).forEach(function (n) {
+      if (one) {
+        tbody.appendChild(shareElement("tr", "", [shareElement("td", "s " + n.sev, [n.st]), shareElement("td", "", [shareElement("b", "", [n.name])]), shareElement("td", "", [rowService(n)]),
+          shareElement("td", "", [rowServer(n)]), shareElement("td", "", [n.phrase])]));
+      } else {
+        var nodeCellKids = mixed && n.st && n.st !== "DOWN"
+          ? [shareElement("span", "s " + n.sev, ["[" + n.st + "] "]), shareElement("b", "", [n.name])]
+          : [shareElement("b", "", [n.name])];
+        tbody.appendChild(shareElement("tr", "", [
+          shareElement("td", "", nodeCellKids),
+          shareElement("td", "mono", [rowServer(n)]),
+          shareElement("td", "", [rowService(n)]),
+          shareElement("td", "mono", [rowDownSince(n, ctx)]),
+          shareElement("td", "s mono " + n.sev, [rowDownFor(n)])
+        ]));
+      }
     });
-    var msg = shareElement("div", "msg", [shareElement("p", "", [shareElement("b", "", [nhead(L, ctx)])]), tb,
-      L.length > TEXT_MAX ? shareElement("p", "", ["+" + (L.length - TEXT_MAX) + " more on the wall"]) : null,
+    tb.appendChild(tbody);
+    var msg = shareElement("div", "msg", [shareElement("p", "", [shareElement("b", "", [nhead(rows, ctx)])]), tb,
+      rows.length > TEXT_MAX ? shareElement("p", "", ["+" + (rows.length - TEXT_MAX) + " more on the wall"]) : null,
       ctx.stale ? shareElement("p", "", ["Not current: " + ctx.stale]) : null, shareElement("p", "", ["Wall: " + ctx.link])]);
-    var cv = npicture(L, ctx), picture;
+    var cv = npicture(rows, ctx), picture;
     if (cv) {
-      var img = shareElement("img", "shi", null, {alt: "The picture: " + nhead(L, ctx)});
+      var img = shareElement("img", "shi", null, {alt: "The picture: " + nhead(rows, ctx)});
       img.src = cv.toDataURL("image/png");
-      picture = shareElement("div", "", [shareElement("p", "lab", ["Picture - drawn from the wall's data, not a screen grab" + (L.length > PIC_MAX ? " (the first " + PIC_MAX + ")" : "")]), img]);
+      picture = shareElement("div", "", [shareElement("p", "lab", ["Picture - drawn from the wall's data, not a screen grab" + (rows.length > PIC_MAX ? " (the first " + PIC_MAX + ")" : "")]), img]);
       if (document.fonts && document.fonts.load) {
         Promise.all([document.fonts.load("700 30px Figtree"), document.fonts.load("600 16px 'Fira Code'")])
-          .then(function () { var updated = npicture(L, ctx); if (updated) img.src = updated.toDataURL("image/png"); }, function () { /* the system font stays */ });
+          .then(function () { var updated = npicture(rows, ctx); if (updated) img.src = updated.toDataURL("image/png"); }, function () { /* the system font stays */ });
       }
     }
     var content;
     var acts = actions({prepare: function () { content = current(); },
                         text: function () { return ntext.apply(null, content); }, html: function () { return nhtml.apply(null, content); },
                         canvas: cv && function () { return npicture.apply(null, content); },
-                        file: (L.length === 1 ? L[0].name : "nodes-not-up").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) + "-" + String(ctx.stamp || "").replace(/[^0-9]/g, "") + ".png",
+                        file: (one ? rows[0].name : "nodes-down").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) + "-" + String(ctx.stamp || "").replace(/[^0-9]/g, "") + ".png",
                         say: say, pic: "The picture on the right, as a PNG"});
     var panel = shareElement("div", "fl-share", [
       shareElement("div", "", [shareElement("p", "lab", ["Message - pastes formatted"]), msg, shareElement("div", "btns", acts.concat(extra || [])), say,

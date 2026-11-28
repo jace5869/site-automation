@@ -139,8 +139,10 @@
     panel.tabIndex = -1;
     return panel;
   }
-  // 1.140.0: per-DC Copy control (text / picture / both) and Copy all shown beside Expand all
+  // 1.140.0: per-DC Copy control (text / picture / both), row checkboxes, Copy selected / Copy all shown beside Expand all
   let dcFilterSev = "all", dcQuery = "", dcAllExpanded = false;
+  const dcSel = new Set();
+  let dcLastSelId = null;
   function dcToServer(a, m, d, why) {
     const sev = staleJob(a) ? "unknown" : d.now;
     const stLab = staleJob(a) ? "Not current" : (d.worst === "not polled" ? "Not reached" : (WORD[d.now] || d.now));
@@ -162,16 +164,57 @@
     const pc = window.SAPortalCopy && typeof window.SAPortalCopy.createSplitControl === "function" ? window.SAPortalCopy : null;
     const swRank = d => { const s = swFor(sws, d, m); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
     const dcs = m.dcs.slice().sort((x, y) => (RANK[x.now] - RANK[y.now]) || (swRank(x) - swRank(y)) || x.dc.localeCompare(y.dc));
+    const validIds = new Set(dcs.map(idOf));
+    for (const k of [...dcSel]) if (!validIds.has(k)) dcSel.delete(k);
     const copyBar = pc ? pc.createFeedbackBar() : null;
-    const entries = dcs.map(d => {
+    let syncSel = () => {};
+    let entries = [];
+    const shownEntries = () => {
+      const q = dcQuery.trim().toLowerCase();
+      return entries.filter(e => (dcFilterSev === "all" || e.srv.sev === dcFilterSev) && (!q || e.hay.includes(q)));
+    };
+    const selectedEntries = () => entries.filter(e => dcSel.has(e.id));
+    entries = dcs.map(d => {
+      const id = idOf(d);
       const s = swFor(sws, d, m);
       const why = [d.worst, d.stale_dsa ? "Two NTDS objects for " + d.dc.toUpperCase() + " - stale DSA, metadata cleanup" : ""].filter((x, i, xs) => x && xs.indexOf(x) === i).join("; ") ||
                   (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
       const srv = dcToServer(a, m, d, why);
       const sample = s && d.node_id != null && a.sw.age != null ? el("div", "muted", (a.sw.stale ? "last known · " : "") + ago(a.sw.age)) : null;
       const tr = el("tr", staleJob(a) ? "r-unknown" : d.now !== "ok" ? "r-" + d.now : "");
-      tr.dataset.dc = idOf(d);
+      tr.dataset.dc = id;
       tr.dataset.sev = srv.sev;
+      let cb = null;
+      if (pc) {
+        cb = pc.createSelBox ? pc.createSelBox(srv.host) : el("input", "srv-sel-cb");
+        cb.type = "checkbox";
+        cb.checked = dcSel.has(id);
+        tr.classList.toggle("srv-selected", cb.checked);
+        cb.addEventListener("click", ev => {
+          ev.stopPropagation();
+          if (ev.shiftKey && dcLastSelId && dcLastSelId !== id) {
+            const vis = shownEntries(), aI = vis.findIndex(x => x.id === dcLastSelId), bI = vis.findIndex(x => x.id === id);
+            if (aI >= 0 && bI >= 0) {
+              const lo = Math.min(aI, bI), hi = Math.max(aI, bI), on = !!cb.checked;
+              for (let k = lo; k <= hi; k++) {
+                if (on) dcSel.add(vis[k].id); else dcSel.delete(vis[k].id);
+                if (vis[k].cb) vis[k].cb.checked = on;
+                vis[k].tr.classList.toggle("srv-selected", on);
+              }
+            }
+          }
+          if (cb.checked) dcSel.add(id); else dcSel.delete(id);
+          dcLastSelId = id;
+          tr.classList.toggle("srv-selected", !!cb.checked);
+          syncSel();
+        });
+        cb.addEventListener("change", () => {
+          if (cb.checked) dcSel.add(id); else dcSel.delete(id);
+          tr.classList.toggle("srv-selected", !!cb.checked);
+          syncSel();
+        });
+        tr.append(el("td", "adp-sel-td", cb));
+      }
       const strip = el("span", "adp-trend");
       strip.setAttribute("role", "img");
       strip.setAttribute("aria-label", d.dc + ": the last " + n + " runs, " + d.trend.filter(x => x && x !== "ok").length + " not OK");
@@ -179,7 +222,7 @@
       const since = d.now !== "ok" ? "since " + hhmm(d.since_shown) + " · " + d.runs_since + (d.longer ? "+" : "") + (d.runs_since === 1 && !d.longer ? " run" : " runs")
                                     : d.runs_since >= n ? "OK all " + n + " runs" : "OK since " + hhmm(d.since_shown);
       const link = el("a", "", el("b", "", nameOf(m, d)));
-      link.href = "#ad-dc-" + encodeURIComponent(idOf(d));
+      link.href = "#ad-dc-" + encodeURIComponent(id);
       tr.append(el("td", "adp-dc", [link, why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "Site unknown"),
                 el("td", "nw", staleJob(a) ? chip("unknown", "?") : chip(d.now, d.worst === "not polled" ? "not polled" : undefined)), el("td", "nw", since), el("td", "", strip),
                 el("td", "nw", [s ? ((a.sw.stale || a.down) && d.node_id != null ? chip("unknown", "? · " + s[0]) : chip(s[1] || "unknown", s[0])) : el("span", "muted", a.sw.on ? "not matched" : "not read"), sample]),
@@ -204,18 +247,21 @@
       }
       const panel = dcPanel(a, d);
       if (dcAllExpanded) panel.classList.add("open");
-      return {d, srv, tr, panel, hay: (srv.host + " " + (d.site || "") + " " + srv.statusLabel + " " + why).toLowerCase()};
+      return {id, d, srv, tr, cb, panel, hay: (srv.host + " " + (d.site || "") + " " + srv.statusLabel + " " + why).toLowerCase()};
     });
-    const shownEntries = () => {
-      const q = dcQuery.trim().toLowerCase();
-      return entries.filter(e => (dcFilterSev === "all" || e.srv.sev === dcFilterSev) && (!q || e.hay.includes(q)));
-    };
     const tools = el("div", "adp-tools");
-    let copyAllSp = null;
+    let copyAllSp = null, selCnt = null, selClr = null;
+    syncSel = () => {
+      const nsel = selectedEntries().length, nsh = shownEntries().length;
+      if (selCnt) { selCnt.textContent = nsel + " selected"; selCnt.classList.toggle("has-sel", nsel > 0); }
+      if (selClr) selClr.hidden = nsel === 0;
+      if (copyAllSp && copyAllSp.setSelection) copyAllSp.setSelection(nsel, nsh, "DC");
+      else if (copyAllSp && copyAllSp.setCount) copyAllSp.setCount(nsel || nsh);
+    };
     const applyFilter = () => {
       const vis = new Set(shownEntries());
       entries.forEach(e => { e.tr.hidden = !vis.has(e); e.panel.classList.toggle("open", dcAllExpanded && vis.has(e)); });
-      if (copyAllSp && copyAllSp.setCount) copyAllSp.setCount(vis.size);
+      syncSel();
     };
     if (pc) {
       const pills = el("div", "adp-pills"); pills.setAttribute("role", "group"); pills.setAttribute("aria-label", "Filter DCs by severity");
@@ -233,15 +279,24 @@
       qIn.addEventListener("input", () => { dcQuery = qIn.value; applyFilter(); });
       const expBtn = el("button", "btn sm", dcAllExpanded ? "Collapse all" : "Expand all"); expBtn.type = "button";
       expBtn.addEventListener("click", () => { dcAllExpanded = !dcAllExpanded; expBtn.textContent = dcAllExpanded ? "Collapse all" : "Expand all"; applyFilter(); });
+      selCnt = pc.createSelCount ? pc.createSelCount() : el("span", "srv-sel-count", "0 selected");
+      selClr = pc.createSelClear ? pc.createSelClear(() => {
+        dcSel.clear(); dcLastSelId = null;
+        entries.forEach(e => { if (e.cb) e.cb.checked = false; e.tr.classList.remove("srv-selected"); });
+        syncSel();
+      }) : el("button", "btn sm srv-sel-clear", "Clear");
+      const selCue = pc.createSelCue ? pc.createSelCue() : el("span", "srv-sel-cue", "Tick rows or Space to select · Shift+click range");
       copyAllSp = pc.createSplitControl({
         cls: "pri adp-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: entries.length,
         title: "Copy every DC currently shown after filters (text + picture)",
-        ariaLabel: "Copy all shown DCs", toggleLabel: "Copy all shown options",
+        ariaLabel: "Copy all shown DCs", toggleLabel: "Copy all shown or selected options",
         menuTitle: "Copy all shown", menuTag: entries.length + " row" + (entries.length === 1 ? "" : "s"),
         subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
-        isEmpty: () => shownEntries().length === 0,
+        isEmpty: () => !(selectedEntries().length || shownEntries().length),
         onCopy: (mode, btn, finish) => {
-          const srvs = shownEntries().map(e => e.srv); if (!srvs.length) { finish(); return Promise.resolve(); }
+          const picked = selectedEntries();
+          const srvs = (picked.length ? picked : shownEntries()).map(e => e.srv);
+          if (!srvs.length) { finish(); return Promise.resolve(); }
           const cx = adCopyCtx(a, m), fmt = pc.formatAllShown(srvs, cx);
           const pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, cx);
           return pc.copyMode(mode, {
@@ -250,11 +305,11 @@
           });
         }
       });
-      tools.append(pills, qIn, el("span", "adp-tools-r", [expBtn, copyAllSp]));
+      tools.append(pills, qIn, el("span", "adp-tools-r", [expBtn, copyAllSp, selCnt, selClr, selCue]));
       applyFilter();
     }
     const cols = [["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]];
-    if (pc) cols.push(["Copy"]);
+    if (pc) { cols.unshift(["", "adp-sel-th"]); cols.push(["Copy"]); }
     const leg = el("p", "adp-leg", [["ok", "OK"], ["warning", "Warning"], ["critical", "Critical"], ["none", "No run"]].map(([k, t]) => el("span", "", [el("i", "k-" + k), t])));
     const kids = [pc ? tools : null, table(cols, entries.map(e => e.tr), "adp-dcs"), copyBar, leg, ...entries.map(e => e.panel)].filter(Boolean);
     const section = sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left", kids);

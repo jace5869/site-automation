@@ -711,4 +711,13 @@ html.moves main{transition:padding-right .3s cubic-bezier(.3,.7,.2,1)}
 .copy-bar[hidden]{display:none}
 .copy-bar .sg{flex:none;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:4px;font-weight:700;font-size:12px;line-height:1}
 .copy-bar.st-info{color:var(--accent)}.copy-bar.st-good{color:var(--ok)}.copy-bar.st-warn{color:var(--warning)}.copy-bar.st-bad{color:var(--critical)}
-@media print{.copy-split,.copy-menu,.copy-bar{display:none!important}}
+input.srv-sel-cb{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0;flex:none;vertical-align:middle}
+input.srv-sel-cb:focus-visible,.srv-sel-clear:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.srv-sel-count{font:650 12px/1 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.srv-sel-count.has-sel{color:var(--accent)}
+.srv-sel-clear[hidden]{display:none}
+.srv-sel-cue{font:500 11.5px/1.2 var(--mono);color:var(--muted);white-space:nowrap}
+tr.srv-selected>td,.wh-row-wrap.srv-selected .wh-row{background:var(--accent-soft)}
+.dtab-sel,.adp-sel-th,.adp-sel-td{width:1%;white-space:nowrap;text-align:center}
+body.kiosk .srv-sel-cue{display:none}
+@media print{.copy-split,.copy-menu,.copy-bar,input.srv-sel-cb,.srv-sel-count,.srv-sel-clear,.srv-sel-cue,.dtab-sel,.adp-sel-th,.adp-sel-td{display:none!important}}

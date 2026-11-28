@@ -398,22 +398,90 @@ class CopyPerServerTests(unittest.TestCase):
           const env = build50ServerEnv();
           vm.runInNewContext(reportSrc, env.ctx);
 
-          // 1. Copy all shown is placed beside Expand all / Collapse all in .srv-tools with badge count 50.
+          // 1. Copy all shown is placed beside Expand all / Collapse all in .srv-tools with badge count 50,
+          //    plus row checkboxes, '0 selected' count, hidden Clear button, and visible keyboard/click cue.
           const copyAll = env.tools.querySelector(".srv-copy-all");
           assert(copyAll, "Copy all shown control must exist in .srv-tools");
           const toolKids = env.tools.children;
           const expIdx = toolKids.indexOf(env.tools.querySelector(".srv-exp"));
           const allIdx = toolKids.indexOf(copyAll);
           assert(allIdx > expIdx && allIdx <= expIdx + 2, "Copy all shown must sit beside Expand/Collapse all");
+          assert.strictEqual(copyAll.querySelector(".copy-main .t").textContent, "Copy all shown");
           assert.strictEqual(copyAll.querySelector(".cnt").textContent, "50");
+          const selCount = env.tools.querySelector(".srv-sel-count");
+          const selClear = env.tools.querySelector(".srv-sel-clear");
+          const selCue = env.tools.querySelector(".srv-sel-cue");
+          assert(selCount && selCount.textContent === "0 selected", "Initial count must read 0 selected");
+          assert(selClear && selClear.hidden === true, "Clear button must be hidden when 0 selected");
+          assert(selCue && selCue.textContent.includes("Space") && selCue.textContent.includes("Shift+click"),
+            "Keyboard and click cue must be visible");
 
-          // Every server row got a per-row Copy control (50 rows), and colspan incremented 4 -> 5.
+          // Every server row got a checkbox (50) and a per-row Copy control (50), and colspan incremented 4 -> 5.
+          const rowBoxes = env.tbody.querySelectorAll("input.srv-sel-cb");
+          assert.strictEqual(rowBoxes.length, 50, "Every server row must have a checkbox");
           const rowSplits = env.tbody.querySelectorAll("td.srv-copy-td .copy-split");
           assert.strictEqual(rowSplits.length, 50);
           const firstXd = env.tbody.querySelector("tr.xr td.srv-xd");
           assert.strictEqual(firstXd.getAttribute("colspan"), "5");
 
-          // 2. Click Copy all shown (default = both): assert exact 50-server TEXT format + HTML + ~700px bounded PICTURE.
+          // 1b. Row selection behaviour: tick 3 rows -> '3 selected', Clear visible, button reads 'Copy selected'
+          //     and copies ONLY those 3 rows (text / picture / both, same format and caps); Clear restores 'Copy all shown'.
+          rowBoxes[0].checked = true; rowBoxes[0].dispatch("click");   // web01 (critical)
+          rowBoxes[9].checked = true; rowBoxes[9].dispatch("click");   // wrk01 (warning)
+          rowBoxes[25].checked = true; rowBoxes[25].dispatch("click"); // oknode01 (OK)
+          assert.strictEqual(selCount.textContent, "3 selected");
+          assert.strictEqual(selCount.classList.contains("has-sel"), true);
+          assert.strictEqual(selClear.hidden, false);
+          assert.strictEqual(copyAll.querySelector(".copy-main .t").textContent, "Copy selected");
+          assert.strictEqual(copyAll.querySelector(".cnt").textContent, "3");
+          assert.strictEqual(copyAll.querySelector(".copy-menu-tag").textContent, "3 selected");
+          assert(env.tbody.querySelector("#srv-0").classList.contains("srv-selected"));
+
+          // Copy selected (text mode)
+          copyAll.querySelector('.copy-opt[data-mode="text"]').dispatch("click");
+          await new Promise(r => setImmediate(r));
+          assert.strictEqual(env.writes.length, 1);
+          const selTextPlain = await env.writes[0]["text/plain"].text();
+          const selTextHtml = await env.writes[0]["text/html"].text();
+          assert(selTextPlain.includes("1 critical, 1 warning, 1 OK"), "Selected counts wrong: " + selTextPlain);
+          assert(selTextPlain.includes("web01.corp.example.mil"));
+          assert(selTextPlain.includes("wrk01.corp.example.mil"));
+          assert(selTextPlain.includes("1 server OK"));
+          assert(!selTextPlain.includes("oknode01.corp.example.mil"), "OK server must still be counted only");
+          assert(!selTextPlain.includes("db01.corp.example.mil"), "Unselected critical must not be copied");
+          assert(!selTextHtml.includes("<img"), "Copy selected text mode must not embed PNG");
+
+          // Copy selected (picture mode)
+          copyAll.querySelector('.copy-opt[data-mode="picture"]').dispatch("click");
+          await new Promise(r => setImmediate(r));
+          assert.strictEqual(env.writes.length, 2);
+          assert(env.writes[1]["image/png"], "Copy selected picture must write image/png");
+
+          // Copy selected (both mode - default click)
+          copyAll.querySelector(".copy-main").dispatch("click");
+          await new Promise(r => setImmediate(r));
+          assert.strictEqual(env.writes.length, 3);
+          const selBothHtml = await env.writes[2]["text/html"].text();
+          assert(selBothHtml.includes('<img width="700"'), "Copy selected both must embed PNG");
+          assert(selBothHtml.includes("web01.corp.example.mil") && !selBothHtml.includes("db01.corp.example.mil"));
+
+          // Shift+click range selection: row 0 -> Shift+click row 4 selects rows 0..4 (+ already ticked 9 and 25 = 7)
+          rowBoxes[0].checked = true; rowBoxes[0].dispatch("click");
+          rowBoxes[4].checked = true; rowBoxes[4].dispatch("click", { shiftKey: true });
+          assert.strictEqual(selCount.textContent, "7 selected");
+          assert.strictEqual(copyAll.querySelector(".cnt").textContent, "7");
+
+          // Clear button unticks all, hides itself, resets count to '0 selected', button back to 'Copy all shown' (50)
+          selClear.dispatch("click");
+          assert.strictEqual(selCount.textContent, "0 selected");
+          assert.strictEqual(selClear.hidden, true);
+          assert.strictEqual(copyAll.querySelector(".copy-main .t").textContent, "Copy all shown");
+          assert.strictEqual(copyAll.querySelector(".cnt").textContent, "50");
+          assert(!env.tbody.querySelector("#srv-0").classList.contains("srv-selected"));
+          env.writes.length = 0;
+          env.canvasLog.length = 0;
+
+          // 2. With nothing ticked, click Copy all shown (default = both): assert exact 50-server TEXT format + HTML + ~700px bounded PICTURE.
           copyAll.querySelector(".copy-main").dispatch("click");
           await new Promise(r => setImmediate(r));
           assert.strictEqual(env.writes.length, 1);
@@ -562,25 +630,45 @@ class CopyPerServerTests(unittest.TestCase):
           // 6. Double-run safety on saved page (simulate saved-after-run DOM reopened in fresh window)
           const savedEnv = build50ServerEnv();
           vm.runInNewContext(reportSrc, savedEnv.ctx);
-          // Simulate browser Save-As: keep mutated DOM, mark stale state, delete window.siteReport, re-run!
+          // Simulate browser Save-As: keep mutated DOM, mark stale state + duplicate checkbox/count, delete window.siteReport, re-run!
           const staleBtn = savedEnv.tools.querySelector(".srv-copy-all .copy-main");
           staleBtn.disabled = true; staleBtn.classList.add("st-good", "done");
+          staleBtn.querySelector(".t").textContent = "Copy selected";
           const dupBar = savedEnv.doc.createElement("div"); dupBar.className = "scopy-bar st-bad";
           savedEnv.sbody.appendChild(dupBar);
+          const dupCb = savedEnv.doc.createElement("input"); dupCb.className = "srv-sel-cb"; dupCb.type = "checkbox";
+          savedEnv.tbody.querySelector("td.srv-name").appendChild(dupCb);
+          const dupCnt = savedEnv.doc.createElement("span"); dupCnt.className = "srv-sel-count";
+          savedEnv.tools.appendChild(dupCnt);
           delete savedEnv.ctx.window.siteReport;
-          // Clear _splitBound / _srvCopyAllBound flags as a freshly parsed saved HTML document has no JS properties
+          // Clear JS expando flags as a freshly parsed saved HTML document has no JS properties
           const stripProps = n => {
             delete n._splitBound; delete n._srvCopyAllBound; delete n._copyBound; delete n._capApply;
+            delete n._selBound; delete n._selClrBound; delete n._srvSelUpdate; delete n._lastSelRow;
             (n.children || []).forEach(stripProps);
           };
           stripProps(savedEnv.doc.documentElement);
           vm.runInNewContext(reportSrc, savedEnv.ctx);
           assert.strictEqual(savedEnv.tbl.tHead.rows[0].querySelectorAll("th.srv-copy-th").length, 1);
           assert.strictEqual(savedEnv.tbody.querySelectorAll("td.srv-copy-td").length, 50);
+          assert.strictEqual(savedEnv.tbody.querySelectorAll("input.srv-sel-cb").length, 50, "Must deduplicate checkboxes on double-run");
           assert.strictEqual(savedEnv.tools.querySelectorAll(".srv-copy-all").length, 1);
+          assert.strictEqual(savedEnv.tools.querySelectorAll(".srv-sel-count").length, 1);
+          assert.strictEqual(savedEnv.tools.querySelectorAll(".srv-sel-clear").length, 1);
+          assert.strictEqual(savedEnv.tools.querySelectorAll(".srv-sel-cue").length, 1);
           assert.strictEqual(savedEnv.sbody.querySelectorAll(".scopy-bar").length, 1);
           assert.strictEqual(savedEnv.tbody.querySelector("tr.xr td.srv-xd").getAttribute("colspan"), "5");
           assert.strictEqual(savedEnv.tools.querySelector(".srv-copy-all .copy-main").disabled, false);
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
+          // Verify checkboxes still work cleanly after double-run!
+          const cbAfter = savedEnv.tbody.querySelector("input.srv-sel-cb");
+          cbAfter.checked = true; cbAfter.dispatch("change");
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-sel-count").textContent, "1 selected");
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy selected");
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-sel-clear").hidden, false);
+          savedEnv.tools.querySelector(".srv-sel-clear").dispatch("click");
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-sel-count").textContent, "0 selected");
+          assert.strictEqual(savedEnv.tools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
 
           // 7. Picture mode fallback when image/png unsupported -> Text only + why!
           const noPicEnv = build50ServerEnv({ noPic: true });
@@ -590,6 +678,70 @@ class CopyPerServerTests(unittest.TestCase):
           await new Promise(r => setImmediate(r));
           assert.strictEqual(firstRowSp.querySelector(".copy-main .t").textContent, "Text only");
           assert(noPicEnv.sbody.querySelector(".scopy-bar .st").textContent.includes("does not support picture copying"));
+
+          // 8. Certificate rollup ([data-cert-rollup]) and card/list server view (ul.srv-list) checkboxes,
+          //    'n selected', Copy selected / Copy all shown, Clear, and double-run safety!
+          const listEnv = build50ServerEnv();
+          const rollupSec = new Node("details", { class: "card sec srv-rollup-sec", "data-cert-rollup": "1" });
+          const rBody = new Node("div", { class: "body" });
+          const rTools = new Node("div", { class: "tools2 srv-tools" });
+          rBody.appendChild(rTools);
+          ["cert01.corp.example.mil", "cert02.corp.example.mil"].forEach((hn, i) => {
+            const it = new Node("button", { class: "srv-rollup-item", "data-host": hn, "data-sev": i ? "ok" : "critical" });
+            const st = new Node("span", { class: "srv-rollup-st" }); st.textContent = i ? "OK" : "Critical";
+            const sm = new Node("span", { class: "srv-rollup-sum" }); sm.textContent = i ? "Valid 180 d" : "Expired 2 d ago";
+            it.appendChild(st); it.appendChild(sm); rBody.appendChild(it);
+          });
+          rollupSec.appendChild(rBody); listEnv.doc.body.appendChild(rollupSec);
+
+          const ulSec = new Node("section", { class: "panel" });
+          const uTools = new Node("div", { class: "toolbar-right" });
+          const ul = new Node("ul", { class: "srv-list" });
+          ["node01.corp.example.mil", "node02.corp.example.mil"].forEach((hn, i) => {
+            const li = new Node("li", { class: "srv-row sev-" + (i ? "ok" : "critical"), "data-host": hn, "data-sev": i ? "ok" : "critical" });
+            const hd = new Node("div", { class: "srv-head" });
+            const nm = new Node("span", { class: "srv-name" }); nm.textContent = hn;
+            const sm = new Node("span", { class: "srv-summary" }); sm.textContent = i ? "All passed" : "Disk full";
+            hd.appendChild(nm); li.appendChild(hd); li.appendChild(sm); ul.appendChild(li);
+          });
+          ulSec.appendChild(uTools); ulSec.appendChild(ul); listEnv.doc.body.appendChild(ulSec);
+          vm.runInNewContext(reportSrc, listEnv.ctx);
+
+          // Check rollup selection + Copy selected / Copy all shown + Clear
+          const rCbs = rollupSec.querySelectorAll("input.srv-sel-cb");
+          assert.strictEqual(rCbs.length, 2);
+          assert.strictEqual(rTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
+          assert.strictEqual(rTools.querySelector(".srv-sel-count").textContent, "0 selected");
+          rCbs[0].checked = true; rCbs[0].dispatch("change");
+          assert.strictEqual(rTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy selected");
+          assert.strictEqual(rTools.querySelector(".srv-sel-count").textContent, "1 selected");
+          assert.strictEqual(rTools.querySelector(".srv-sel-clear").hidden, false);
+          rTools.querySelector(".srv-sel-clear").dispatch("click");
+          assert.strictEqual(rTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
+          assert.strictEqual(rTools.querySelector(".srv-sel-count").textContent, "0 selected");
+
+          // Check ul.srv-list selection + Copy selected / Copy all shown + Clear + double-run safety
+          const uCbs = ul.querySelectorAll("input.srv-sel-cb");
+          assert.strictEqual(uCbs.length, 2);
+          assert.strictEqual(uTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
+          uCbs[0].checked = true; uCbs[0].dispatch("change");
+          assert.strictEqual(uTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy selected");
+          assert.strictEqual(uTools.querySelector(".srv-sel-count").textContent, "1 selected");
+          uTools.querySelector(".srv-sel-clear").dispatch("click");
+          assert.strictEqual(uTools.querySelector(".srv-copy-all .copy-main .t").textContent, "Copy all shown");
+          // Double-run safety on both rollup and ul.srv-list
+          delete listEnv.ctx.window.siteReport;
+          const clearFlags = n => {
+            delete n._splitBound; delete n._srvCopyAllBound; delete n._rollupCopyBound; delete n._listCopyAllBound;
+            delete n._copyBound; delete n._capApply; delete n._selBound; delete n._selClrBound;
+            (n.children || []).forEach(clearFlags);
+          };
+          clearFlags(listEnv.doc.documentElement);
+          vm.runInNewContext(reportSrc, listEnv.ctx);
+          assert.strictEqual(rollupSec.querySelectorAll("input.srv-sel-cb").length, 2);
+          assert.strictEqual(rTools.querySelectorAll(".srv-sel-count").length, 1);
+          assert.strictEqual(ul.querySelectorAll("input.srv-sel-cb").length, 2);
+          assert.strictEqual(uTools.querySelectorAll(".srv-sel-count").length, 1);
         }
 
         runAll().catch(e => { console.error(e); process.exit(1); });
@@ -668,6 +820,71 @@ class CopyPerServerTests(unittest.TestCase):
         assert(one.plain.startsWith("[CRITICAL] web01.corp.example.mil (192.0.2.10)"));
         assert(one.plain.includes("What to do: Rotate /var/log"));
         assert(one.plain.endsWith("Full report: https://portal.corp.example.mil/portal/wall?area=monitor"));
+
+        // Verify SAPortalCopy selection helpers + split control label switching (Copy all shown <-> Copy selected)
+        assert.strictEqual(typeof pc.createSelCount, "function");
+        assert.strictEqual(typeof pc.createSelClear, "function");
+        assert.strictEqual(typeof pc.createSelCue, "function");
+        assert.strictEqual(typeof pc.createSelBox, "function");
+        const mkEl = (tag) => {
+          const n = {
+            tagName: tag.toUpperCase(), className: "", children: [], style: {}, attrs: {}, listeners: {},
+            hidden: false, disabled: false, textContent: "",
+            get firstChild() { return this.children[0] || null; },
+            classList: {
+              _s: new Set(),
+              add(...ks) { ks.forEach(k => this._s.add(k)); },
+              remove(...ks) { ks.forEach(k => this._s.delete(k)); },
+              contains(k) { return this._s.has(k); },
+              toggle(k, f) { if (f === undefined ? this._s.has(k) : !f) this._s.delete(k); else this._s.add(k); },
+            },
+            setAttribute(k, v) { this.attrs[k] = String(v); },
+            getAttribute(k) { return this.attrs[k] || null; },
+            appendChild(c) { this.children.push(c); return c; },
+            append(...xs) { xs.forEach(x => { if (typeof x === "string") this.textContent += x; else if (x) this.children.push(x); }); },
+            addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
+            querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+            querySelectorAll(sel) {
+              const out = [];
+              const cls = sel.startsWith(".") ? sel.slice(1) : "";
+              const walk = x => {
+                for (const c of (x.children || [])) {
+                  if (cls && String(c.className || "").split(/\s+/).includes(cls)) out.push(c);
+                  walk(c);
+                }
+              };
+              walk(this);
+              return out;
+            },
+          };
+          return n;
+        };
+        doc.createElement = mkEl;
+        let resetFn = null;
+        ctx.setTimeout = (fn) => { resetFn = fn; return 1; };
+        const split = pc.createSplitControl({
+          cls: "pri", scope: "all", baseLabel: "Copy all shown", withCount: true, count: 50,
+          onCopy: (m, b, done) => { split.classList.add("st-good"); done(); return Promise.resolve(); },
+        });
+        const lbl = split.querySelector(".t"), cnt = split.querySelector(".cnt"), mainBtn = split.querySelector(".copy-main");
+        assert.strictEqual(lbl.textContent, "Copy all shown");
+        assert.strictEqual(cnt.textContent, "50");
+        split.setSelection(4, 50, "server");
+        assert.strictEqual(lbl.textContent, "Copy selected");
+        assert.strictEqual(cnt.textContent, "4");
+        assert.strictEqual(mainBtn.disabled, false);
+        // Simulate clicking main button -> Copied -> 2.2s reset keeps 'Copy selected'
+        lbl.textContent = "Copied";
+        mainBtn.listeners.click[0]({ preventDefault() {}, stopPropagation() {} });
+        assert(resetFn, "Reset timer must be scheduled");
+        resetFn();
+        assert.strictEqual(lbl.textContent, "Copy selected", "Reset timer must restore Copy selected while rows are ticked");
+        // Clear selection -> switches back to 'Copy all shown'
+        split.setSelection(0, 50, "server");
+        assert.strictEqual(lbl.textContent, "Copy all shown");
+        assert.strictEqual(cnt.textContent, "50");
+        split.setSelection(0, 0, "server");
+        assert.strictEqual(mainBtn.disabled, true);
         """
         subprocess.run(
             ["node", "-e", driver,
@@ -683,6 +900,10 @@ class CopyPerServerTests(unittest.TestCase):
                 src = fh.read()
             self.assertIn("Copy all shown", src, fname)
             self.assertIn("createSplitControl", src, fname)
+            self.assertIn("setSelection", src, fname)
+            self.assertIn("srv-sel-cb", src, fname)
+            self.assertIn("selected", src, fname)
+            self.assertIn("Clear", src, fname)
             self.assertNotIn("innerHTML", src, fname)
         # AD page's raw command copy button (.adp-copy) stays raw command only
         with open(os.path.join(PORTAL_STATIC, "ad-page.js"), encoding="utf-8") as fh:

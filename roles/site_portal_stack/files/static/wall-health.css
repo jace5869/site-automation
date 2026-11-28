@@ -121,7 +121,8 @@ html.wh-board .wh-row{padding:11px 14px}
 .wh-list{display:flex;flex-direction:column;gap:6px}
 .wh-row-wrap{display:flex;align-items:center;gap:8px;min-width:0}
 .wh-row-wrap>.wh-row{flex:1;min-width:0}
-.wh-copy-all{margin-left:auto}
+.wh-sel-bar{margin-left:auto;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wh-copy-all{margin-left:0}
 .wh-row{
   display:grid;grid-template-columns:auto minmax(0,1fr) minmax(110px,170px) auto;
   gap:4px 10px;align-items:center;padding:8px 10px;

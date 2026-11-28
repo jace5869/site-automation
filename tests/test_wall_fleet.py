@@ -1888,14 +1888,17 @@ class ShareText(unittest.TestCase):
         return json.loads(out.stdout)
 
     def test_the_lines_the_user_asked_for(self):
-        L = [{"st": "DOWN", "sev": "crit", "name": "SITEADIRDCV01", "svc": "Active Directory", "ip": "192.0.2.12", "phrase": "down 21 min (since 05:21)"},
-             {"st": "WARN", "sev": "warn", "name": "SITEACERTV02", "svc": "Certificate Services", "ip": "", "phrase": "packet loss 8% (12 min, since 05:30)"}]
+        L = [{"st": "DOWN", "sev": "crit", "name": "SITEADIRDCV01", "svc": "Active Directory", "ip": "192.0.2.12",
+              "host": "sitea-esx01.corp.example.mil", "phrase": "down 21 min (since 05:21)", "downSince": "05:21", "downFor": "21 min", "downSec": 1260},
+             {"st": "WARN", "sev": "warn", "name": "SITEACERTV02", "svc": "Certificate Services", "ip": "",
+              "phrase": "packet loss 8% (12 min, since 05:30)", "downSince": "05:30", "downFor": "12 min", "downSec": 720}]
         c = {"site": "SITEA", "stamp": "05:42", "day": "26 Nov", "zone": "Berlin", "src": "SolarWinds every 60 s", "link": "https://portal.example.mil/portal/wall?area=monitor", "stale": ""}
         o = self.run_js(L, c)
-        self.assertEqual(o["line"][0], "DOWN  SITEADIRDCV01 - Active Directory - 192.0.2.12 - down 21 min (since 05:21)")
-        self.assertEqual(o["line"][1], "WARN  SITEACERTV02 - Certificate Services - no IP - packet loss 8% (12 min, since 05:30)")
-        self.assertTrue(o["text"].startswith("2 nodes not up (1 down) - SITEA - 05:42\nDOWN  SITEADIRDCV01"))
+        self.assertEqual(o["line"][0], "SITEADIRDCV01 | 192.0.2.12 / sitea-esx01.corp.example.mil | Active Directory | 05:21 | 21 min")
+        self.assertEqual(o["line"][1], "SITEACERTV02 | no IP | Certificate Services | 05:30 | 12 min")
+        self.assertTrue(o["text"].startswith("SITEA \u00b7 26 Nov 05:42 Berlin \u00b7 1 node down, 1 warning\n\nNode | Server | Service | Down since | Down for\nSITEADIRDCV01 | 192.0.2.12 / sitea-esx01.corp.example.mil | Active Directory | 05:21 | 21 min"))
         self.assertTrue(o["text"].endswith("\nWall: https://portal.example.mil/portal/wall?area=monitor"))
+        self.assertIn("<th>Node</th>", o["html"].replace(' style="text-align:left;padding:4px 10px 4px 0;border-bottom:1px solid #8b95a3;font-weight:700"', ""))
 
     def test_everything_escaped(self):
         bad = '<img src=x onerror="alert(1)">&\'"'
@@ -1908,10 +1911,253 @@ class ShareText(unittest.TestCase):
         self.assertNotIn('onerror="', h)
         self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;&quot;", h)
         self.assertIn('<a href="#">', h)                                     # http(s) links only (the page makes it from location.origin)
-        many = [dict(L[0], name="N%03d" % i) for i in range(250)]
+        many = [dict(L[0], name="N%03d" % i, ip="192.0.2.%d" % ((i % 200) + 1), svc="Databases", downSince="05:00", downFor="42 min", downSec=2520) for i in range(250)]
         o = self.run_js(many, dict(c, site="S"))
-        self.assertEqual(o["text"].count("\nDOWN  "), 200)
+        self.assertTrue(o["text"].startswith("S \u00b7 05:42 \u00b7 250 nodes down\n\nNode | Server | Service | Down since | Down for\n"))
+        self.assertEqual(o["text"].count(" | Databases | 05:00 | 42 min"), 200)
         self.assertIn("+50 more on the wall", o["text"])
+        self.assertNotIn("<script", o["html"])
+        self.assertIn('<a href="#">', o["html"])
+
+    def test_50_down_nodes_report_card_ordering_columns_none_ticked_and_picture(self):
+        """1.140.0: 50 down nodes (scrambled order), full report card header, all 5 columns,
+        longest down first, wall link last, none-ticked Share/Copy behaviour, and compact 50-row picture (+10 more > 40)."""
+        driver = r"""
+        const fs = require("fs"), vm = require("vm"), assert = require("assert");
+        const fleetSrc = fs.readFileSync(process.argv[1], "utf8");
+        const portalSrc = fs.readFileSync(process.argv[2], "utf8");
+        const painted = [];
+        const canvases = [];
+        const fakeCanvas = () => {
+          const texts = [];
+          const cv = {
+            width: 0, height: 0, style: {},
+            getContext: () => ({
+              scale() {}, fillRect() {}, strokeRect() {}, beginPath() {}, arc() {}, stroke() {}, fill() {}, setLineDash() {},
+              fillText(t) { texts.push(String(t)); },
+              measureText(t) { return { width: String(t).length * 7 }; },
+            }),
+            toDataURL() { canvases.push({ w: cv.width, h: cv.height, texts: texts.slice() }); return "data:image/png;base64,AA=="; },
+          };
+          painted.push(texts);
+          return cv;
+        };
+        function mkNode(tag) {
+          const n = {
+            tagName: String(tag || "div").toUpperCase(), className: "", children: [], style: {}, attrs: {}, listeners: {},
+            hidden: false, disabled: false, textContent: "",
+            classList: {
+              _s: new Set(),
+              add(...ks) { ks.forEach(k => this._s.add(k)); },
+              remove(...ks) { ks.forEach(k => this._s.delete(k)); },
+              contains(k) { return this._s.has(k); },
+              toggle(k, f) { if (f === undefined ? this._s.has(k) : !f) this._s.delete(k); else this._s.add(k); },
+            },
+            get firstChild() { return this.children[0] || null; },
+            get lastChild() { return this.children[this.children.length - 1] || null; },
+            setAttribute(k, v) { this.attrs[k] = String(v); },
+            getAttribute(k) { return this.attrs[k] || null; },
+            appendChild(c) { this.children.push(c); return c; },
+            append(...xs) { xs.forEach(x => { if (typeof x === "string") this.textContent += x; else if (x) this.children.push(x); }); },
+            removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); },
+            addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
+            querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+            querySelectorAll(sel) {
+              const out = [], cls = sel.startsWith(".") ? sel.slice(1) : "";
+              const walk = x => {
+                for (const c of (x.children || [])) {
+                  if (cls && String(c.className || "").split(/\s+/).includes(cls)) out.push(c);
+                  walk(c);
+                }
+              };
+              walk(this);
+              return out;
+            },
+            closest() { return null; },
+            focus() {},
+          };
+          return n;
+        }
+        const doc = {
+          hidden: false,
+          documentElement: { classList: { add() {}, toggle() {} } },
+          body: { dataset: {}, appendChild() {}, removeChild() {} },
+          createElement: tag => (tag === "canvas" ? fakeCanvas() : mkNode(tag)),
+          createTextNode: t => ({ nodeType: 3, textContent: String(t) }),
+          querySelector: () => null,
+          querySelectorAll: () => [],
+          getElementById: () => null,
+          addEventListener() {},
+          fonts: null,
+        };
+        const nowSec = 1795852800; // 2026-11-28 08:00:00 UTC
+        const win = { document: doc, isSecureContext: true, addEventListener() {}, removeEventListener() {}, setInterval() { return 0; } };
+        const ctx = {
+          window: win, document: doc, navigator: {}, location: { origin: "https://portal.corp.example.mil", href: "https://portal.corp.example.mil/portal/wall?area=monitor" },
+          setInterval() { return 0; }, setTimeout() { return 0; }, clearTimeout() {}, requestAnimationFrame() {},
+          performance: { now: () => 0 }, Blob, Promise, Uint8Array, Intl, Date, console, assert,
+        };
+        ctx.globalThis = ctx;
+        vm.createContext(ctx);
+        vm.runInContext(portalSrc, ctx);
+
+        // Build 50 down nodes with scrambled down-since times (from 5 min ago to 50*17=850 min ago) across services & ESXi hosts
+        const svcs = ["Active Directory", "Databases", "ServiceNow MID", "Certificate Services", "Network access", "Storage"];
+        const hosts = ["sitea-esx01.corp.example.mil", "sitea-esx02.corp.example.mil", "sitea-esx03.corp.example.mil", ""];
+        const groups = svcs.map((name, i) => [name, "g", "d", { state: "crit", label: "down", total: 10, up: 0, down: 10, warn: 0, valid_until: nowSec + 600 }]);
+        const rawNodes = [];
+        // Intentional non-monotonic order: rank 0..49 scrambled via (i * 19 + 7) % 50
+        for (let i = 0; i < 50; i++) {
+          const rank = (i * 19 + 7) % 50; // 0 = longest down (850 min), 49 = shortest down (17 min)
+          const downMin = (50 - rank) * 17; // rank 0 -> 850 min (14 h 10 min); rank 49 -> 17 min
+          const sinceSec = nowSec - downMin * 60;
+          const gi = rank % svcs.length;
+          const hi = rank % hosts.length;
+          const name = "SITEANODE" + String(rank + 1).padStart(2, "0"); // SITEANODE01 = longest down, SITEANODE50 = shortest
+          const ip = "192.0.2." + (10 + rank);
+          rawNodes.push([gi, name, ip, "d", null, 100, sinceSec, 1, "No reply", "", hi < 3 ? hi : -1, -1, "", String(1000 + rank), [], nowSec - 20, "Node status is Down.", -1, "down", nowSec + 600]);
+        }
+        const fleetAnswer = {
+          now: nowSec, boot: 1, seq: 1, seconds: 60, zone: "UTC", title: "Ops center", enclave: "SITEA",
+          group_by: "groups", late: 180, stale: 600,
+          feed: { state: "ok", asof: nowSec - 15, why: "" },
+          verdict: { state: "crit", label: "down", total: 50, up: 0, down: 50, warn: 0, valid_until: nowSec + 600 },
+          groups, hosts: hosts.slice(0, 3), models: [], vcs: [], vmw: {},
+          nodes: rawNodes, cmp: {}, counts: { d: 50, w: 0, u: 0, p: 0, m: 0, x: 0 }, incomplete: [], notes: [],
+        };
+        const api = {
+          h(t, c, kids, at) {
+            const e = mkNode(t); e.className = c || "";
+            if (at) for (const k in at) if (at[k] != null && at[k] !== false) e.setAttribute(k, at[k]);
+            (kids || []).forEach(k => { if (typeof k === "string") e.textContent += k; else if (k) e.appendChild(k); });
+            return e;
+          },
+          add(e, ks) { (ks || []).forEach(k => { if (k) e.appendChild(k); }); return e; },
+          W: () => ({ enclave: "SITEA", title: "Ops center", late: 180, stale: 600, feeds: {} }),
+          S: { area: "monitor" },
+          NOW: () => nowSec * 1000,
+          frozen: () => true,
+          feed: k => (k === "sw:fleet" ? { state: "ok" } : null),
+          feedFresh: () => "ok",
+          unreach: () => false,
+          hm: ms => new Date(ms).toISOString().slice(11, 16),
+          hms: ms => new Date(ms).toISOString().slice(11, 19),
+          when: ms => new Date(ms).toISOString().slice(11, 16),
+          dur: ms => {
+            const m = Math.max(0, Math.round(ms / 60000));
+            return m < 60 ? m + " min" : Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
+          },
+          ago: s => Math.round(s) + " s ago",
+          zoneName: () => "UTC",
+          styleName: () => "Strata",
+          word: (s, t) => mkNode("span"),
+          ROT: { on: false },
+          src: "/portal/api/wall",
+          qs: new URLSearchParams(""),
+          test: false,
+        };
+        ctx.api = api;
+        ctx.fleetAnswer = fleetAnswer;
+        ctx.canvases = canvases;
+        let captured = null;
+        vm.runInContext(fleetSrc.replace(/\}\)\(\);\s*$/, () => `
+          A = api; F = adapt(fleetAnswer);
+          build();
+          notUp();
+          // 1. None-ticked Copy control reads 'Copy all shown' (50); ticking 3 switches to 'Copy selected' (3); Clear restores 'Copy all shown' (50).
+          assert.strictEqual(P.copyAll.querySelector(".t").textContent, "Copy all shown");
+          assert.strictEqual(P.copyAll.querySelector(".cnt").textContent, "50");
+          assert.strictEqual(P.selc.textContent, "0 selected");
+          assert.strictEqual(P.clr.hidden, true);
+          SEL["1000"] = 1; SEL["1005"] = 1; SEL["1010"] = 1; notUp();
+          assert.strictEqual(P.copyAll.querySelector(".t").textContent, "Copy selected");
+          assert.strictEqual(P.copyAll.querySelector(".cnt").textContent, "3");
+          assert.strictEqual(P.selc.textContent, "3 selected");
+          assert.strictEqual(P.clr.hidden, false);
+          SEL = Object.create(null); notUp();
+          assert.strictEqual(P.copyAll.querySelector(".t").textContent, "Copy all shown");
+          assert.strictEqual(P.copyAll.querySelector(".cnt").textContent, "50");
+
+          // 2. None-ticked 'Share selected to Teams' shares ALL 50 down nodes, longest down first!
+          const origOpen = openCard;
+          let bulkRows = null, bulkCtx = null;
+          openCard = (L, kind) => {
+            L = L.slice().sort(nodeOrder);
+            bulkRows = L.map(share);
+            bulkCtx = ctx(L, kind);
+          };
+          B.listeners.click[0]({ target: P.shsel });
+          assert.strictEqual(bulkRows.length, 50, "None ticked must share all 50 down nodes");
+          assert.strictEqual(bulkRows[0].name, "SITEANODE01", "Longest down must be first");
+          assert.strictEqual(bulkRows[49].name, "SITEANODE50", "Shortest down must be last");
+          for (let i = 1; i < bulkRows.length; i++) {
+            assert(bulkRows[i - 1].since <= bulkRows[i].since, "Must be strictly sorted longest down first at " + i);
+          }
+
+          // 3. Select all down -> selected() also strictly longest down first!
+          B.listeners.click[0]({ target: P.selall });
+          const selList = selected();
+          assert.strictEqual(selList.length, 50);
+          assert.strictEqual(selList[0].name, "SITEANODE01");
+          assert.strictEqual(selList[49].name, "SITEANODE50");
+
+          // 4. Full report card text, HTML, and picture (both 50 rows and 40 rows)
+          const N = window.SAWallFleet.nodes;
+          // Deliberately pass scrambled rows to verify nodes.text/html/picture also enforce longest down first!
+          const scrambled = bulkRows.slice().reverse();
+          const txt = N.text(scrambled, bulkCtx);
+          const html = N.html(scrambled, bulkCtx);
+          const lines = txt.split("\\n");
+          assert.strictEqual(lines[0], "SITEA \\u00b7 28 Nov 08:00 UTC \\u00b7 50 nodes down", "Header mismatch: " + lines[0]);
+          assert.strictEqual(lines[2], "Node | Server | Service | Down since | Down for");
+          // First data row is SITEANODE01 (longest down: 14 h 10 min, since 17:50, IP / host)
+          assert.strictEqual(lines[3], "SITEANODE01 | 192.0.2.10 / sitea-esx01.corp.example.mil | Active Directory | 17:50 | 14 h 10 min", "Row 1 mismatch: " + lines[3]);
+          // 4th node (rank 3) has no ESXi host -> Server is IP only
+          assert.strictEqual(lines[6], "SITEANODE04 | 192.0.2.13 | Certificate Services | 18:41 | 13 h 19 min", "Row 4 mismatch: " + lines[6]);
+          // 50th node (shortest down: 17 min)
+          assert.strictEqual(lines[52], "SITEANODE50 | 192.0.2.59 / sitea-esx02.corp.example.mil | Databases | 07:43 | 17 min", "Row 50 mismatch: " + lines[52]);
+          // Wall link MUST be last
+          assert.strictEqual(lines[lines.length - 1], "Wall: https://portal.corp.example.mil/portal/wall?area=monitor");
+
+          // HTML table has all 5 headers, ordered rows, and Wall link last
+          assert(html.includes("<b>SITEA \\u00b7 28 Nov 08:00 UTC \\u00b7 50 nodes down</b>"));
+          for (const col of ["Node", "Server", "Service", "Down since", "Down for"]) assert(html.includes(">" + col + "</th>"));
+          assert(html.indexOf("SITEANODE01") < html.indexOf("SITEANODE02") && html.indexOf("SITEANODE02") < html.indexOf("SITEANODE50"));
+          assert(html.includes("192.0.2.10 / sitea-esx01.corp.example.mil"));
+          assert(html.includes('href="https://portal.corp.example.mil/portal/wall?area=monitor"'));
+
+          // Picture for 50 down nodes: compact rows, 40 shown, '+10 more' banner, wall link in footer, bounded height
+          canvases.length = 0;
+          const cv50 = N.picture(scrambled, bulkCtx);
+          cv50.toDataURL();
+          const p50 = canvases[0];
+          assert.strictEqual(p50.w, 1120 * 2, "Picture logical width should be 1120");
+          assert(p50.h / 2 <= 1300, "50-node picture logical height must stay compact & readable, got " + (p50.h / 2));
+          const p50Text = p50.texts.join("\\n");
+          assert(p50Text.includes("SITEA \\u00b7 28 Nov 08:00 UTC \\u00b7 50 nodes down"));
+          for (const ch of ["NODE", "SERVER (IP / HOST)", "SERVICE", "DOWN SINCE", "DOWN FOR"]) assert(p50Text.includes(ch), "Missing picture column " + ch);
+          assert(p50Text.includes("SITEANODE01"), "Longest down must be drawn");
+          assert(p50Text.includes("SITEANODE40"), "40th longest down must be drawn");
+          assert(!p50Text.includes("SITEANODE41"), "41st node must be behind +10 more");
+          assert(p50Text.includes("+10 more"), "Must show +10 more for 50 rows");
+          assert(p50Text.includes("Wall: https://portal.corp.example.mil/portal/wall?area=monitor"), "Picture must end with Wall link");
+          assert(p50Text.indexOf("SITEANODE01") < p50Text.indexOf("SITEANODE40"), "Picture must draw longest down first");
+
+          // Picture for 40 down nodes: NO '+n more' text!
+          canvases.length = 0;
+          const cv40 = N.picture(bulkRows.slice(0, 40), bulkCtx);
+          cv40.toDataURL();
+          const p40Text = canvases[0].texts.join("\\n");
+          assert(!p40Text.includes("+0 more") && !p40Text.includes("more on the wall"), "40 rows must NOT show +n more");
+          assert(p40Text.includes("SITEANODE40"));
+        })();`), ctx);
+        """
+        subprocess.run(
+            ["node", "-e", driver,
+             os.path.join(FILES, "static", "wall-fleet.js"),
+             os.path.join(FILES, "static", "portal.js")],
+            check=True,
+        )
 
 
 class Deploy(unittest.TestCase):

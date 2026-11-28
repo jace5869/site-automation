@@ -11,7 +11,8 @@
     domain: "all", bucket: "all", query: "", trend: "rtt",
     spotIdx: 0, spotPaused: false, spotTick: 0,
     pollLeft: 60, flipIdx: 0, timer: null, stage: null, api: null,
-    src: "/portal/api/wall/health", loading: false, failMsg: "", drawer: null
+    src: "/portal/api/wall/health", loading: false, failMsg: "", drawer: null,
+    sel: Object.create(null), lastSelKey: ""
   };
 
   function h(tag, cls, kids, attrs) {
@@ -355,7 +356,10 @@
     return {site: (doc && doc.enclave) || "", report: "Network & AD health", dateTime: d, url: typeof location !== "undefined" ? location.href : ""};
   }
 
-  function buildConditionRow(c, now, doc, bar) {
+  function condKey(c) {
+    return String(c.id || ((c.domain || "") + "|" + (c.bucket || "") + "|" + (c.obj || "") + "|" + (c.title || "")));
+  }
+  function buildConditionRow(c, now, doc, bar, selCtx) {
     var cls = "wh-row " + (c.last_known ? "stale" : c.sev);
     var row = h("button", cls, [], {type: "button"});
     row.addEventListener("click", function () { openDrawer("cond", c); });
@@ -387,6 +391,10 @@
     row.appendChild(h("span", "wh-age", [fmtDur(c.start, now)]));
     var pc = portalCopy();
     if (!pc) return row;
+    var key = condKey(c);
+    var cb = pc.createSelBox ? pc.createSelBox(c.obj || "condition") : h("input", "srv-sel-cb", [], {type: "checkbox", "aria-label": "Select " + (c.obj || "condition")});
+    cb.checked = !!ST.sel[key];
+    cb.setAttribute("data-sel-key", key);
     var sp = pc.createSplitControl({
       cls: "sm wh-row-copy", scope: "server", baseLabel: "Copy",
       title: "Copy " + (c.obj || "item") + " status and findings (text + picture)",
@@ -403,7 +411,29 @@
         });
       }
     });
-    return h("div", "wh-row-wrap", [row, sp]);
+    var wrap = h("div", "wh-row-wrap" + (cb.checked ? " srv-selected" : ""), [cb, row, sp]);
+    var syncOne = function (e) {
+      if (e && e.stopPropagation) e.stopPropagation();
+      if (e && e.shiftKey && selCtx && ST.lastSelKey && ST.lastSelKey !== key) {
+        var ks = selCtx.shownKeys(), a = ks.indexOf(ST.lastSelKey), b = ks.indexOf(key);
+        if (a >= 0 && b >= 0) {
+          var lo = Math.min(a, b), hi = Math.max(a, b), on = !!cb.checked;
+          for (var i = lo; i <= hi; i++) { if (on) ST.sel[ks[i]] = 1; else delete ST.sel[ks[i]]; }
+          selCtx.syncDom();
+        }
+      }
+      if (cb.checked) ST.sel[key] = 1; else delete ST.sel[key];
+      ST.lastSelKey = key;
+      wrap.classList.toggle("srv-selected", !!cb.checked);
+      if (selCtx) selCtx.sync();
+    };
+    cb.addEventListener("click", syncOne);
+    cb.addEventListener("change", function () {
+      if (cb.checked) ST.sel[key] = 1; else delete ST.sel[key];
+      wrap.classList.toggle("srv-selected", !!cb.checked);
+      if (selCtx) selCtx.sync();
+    });
+    return wrap;
   }
 
   function draw() {
@@ -560,19 +590,48 @@
       return true;
     });
 
+    var validKeys = Object.create(null);
+    conds.forEach(function (c) { validKeys[condKey(c)] = 1; });
+    Object.keys(ST.sel).forEach(function (k) { if (!validKeys[k]) delete ST.sel[k]; });
+
     var pc = portalCopy();
     var copyBar = pc ? pc.createFeedbackBar() : null;
+    var selectedConds = function () { return conds.filter(function (c) { return !!ST.sel[condKey(c)]; }); };
+    var selCnt = pc && pc.createSelCount ? pc.createSelCount() : null;
+    var selClr = pc && pc.createSelClear ? pc.createSelClear() : null;
+    var selCue = pc && pc.createSelCue ? pc.createSelCue() : null;
+    var copyAllBtn = null;
+    var selCtx = {
+      shownKeys: function () { return shown.map(condKey); },
+      syncDom: function () {
+        condCard.querySelectorAll(".wh-row-wrap").forEach(function (w) {
+          var cb = w.querySelector("input.srv-sel-cb");
+          if (!cb) return;
+          var on = !!ST.sel[cb.getAttribute("data-sel-key") || ""];
+          cb.checked = on;
+          w.classList.toggle("srv-selected", on);
+        });
+      },
+      sync: function () {
+        var nsel = selectedConds().length;
+        if (selCnt) { selCnt.textContent = nsel + " selected"; selCnt.classList.toggle("has-sel", nsel > 0); }
+        if (selClr) selClr.hidden = nsel === 0;
+        if (copyAllBtn && copyAllBtn.setSelection) copyAllBtn.setSelection(nsel, shown.length, "condition");
+      }
+    };
     if (pc) {
-      var copyAllBtn = pc.createSplitControl({
+      copyAllBtn = pc.createSplitControl({
         cls: "pri wh-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: shown.length,
         title: "Copy every condition currently shown after filters (text + picture)",
-        ariaLabel: "Copy all shown conditions", toggleLabel: "Copy all shown options",
+        ariaLabel: "Copy all shown conditions", toggleLabel: "Copy all shown or selected options",
         menuTitle: "Copy all shown", menuTag: shown.length + " row" + (shown.length === 1 ? "" : "s"),
         subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
-        isEmpty: function () { return !shown.length; },
+        isEmpty: function () { return !(selectedConds().length || shown.length); },
         onCopy: function (mode, btn, finish) {
-          if (!shown.length) { finish(); return Promise.resolve(); }
-          var srvs = shown.map(condToServer), cx = healthCopyCtx(doc);
+          var list = selectedConds();
+          if (!list.length) list = shown;
+          if (!list.length) { finish(); return Promise.resolve(); }
+          var srvs = list.map(condToServer), cx = healthCopyCtx(doc);
           var fmt = pc.formatAllShown(srvs, cx), pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, cx);
           return pc.copyMode(mode, {
             plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: "Network & AD health summary card", focusEl: btn,
@@ -581,7 +640,17 @@
           });
         }
       });
-      flt.appendChild(copyAllBtn);
+      if (selClr) {
+        selClr.addEventListener("click", function () {
+          ST.sel = Object.create(null);
+          ST.lastSelKey = "";
+          selCtx.syncDom();
+          selCtx.sync();
+        });
+      }
+      var selBar = h("div", "wh-sel-bar", [copyAllBtn, selCnt, selClr, selCue]);
+      flt.appendChild(selBar);
+      selCtx.sync();
     }
 
     if (!shown.length) {
@@ -597,7 +666,7 @@
         var sec = h("div", "wh-bkt");
         sec.appendChild(h("div", "wh-bh", [h("b", "", [bucketTitle(bk)]), h("span", "", ["(" + grp.length + ")"])]));
         var lst = h("div", "wh-list");
-        grp.forEach(function (c) { lst.appendChild(buildConditionRow(c, now, doc, copyBar)); });
+        grp.forEach(function (c) { lst.appendChild(buildConditionRow(c, now, doc, copyBar, selCtx)); });
         sec.appendChild(lst);
         condCard.appendChild(sec);
       });

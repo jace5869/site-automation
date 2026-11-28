@@ -1910,14 +1910,38 @@ function keyboard() {
         if (tg) tg.setAttribute("aria-expanded", "false");
       });
     },
+    createSelCount() {
+      const s = el("span", "srv-sel-count", "0 selected");
+      s.setAttribute("aria-live", "polite");
+      return s;
+    },
+    createSelClear(onClick) {
+      const b = el("button", "btn sm srv-sel-clear", "Clear");
+      b.type = "button";
+      b.hidden = true;
+      b.title = "Clear selected rows";
+      if (onClick) b.addEventListener("click", onClick);
+      return b;
+    },
+    createSelCue(text) {
+      return el("span", "srv-sel-cue", text || "Tick rows or Space to select \u00b7 Shift+click range");
+    },
+    createSelBox(label) {
+      const cb = el("input", "srv-sel-cb");
+      cb.type = "checkbox";
+      cb.setAttribute("aria-label", "Select " + (label || "server"));
+      cb.title = "Select " + (label || "server") + " (Space to toggle, Shift+click for range)";
+      return cb;
+    },
     createSplitControl(opts) {
       const baseLabel = opts.baseLabel || "Copy", baseTitle = opts.title || "Copy as text and picture";
+      let curLabel = baseLabel, curTitle = baseTitle;
       const sp = el("div", "copy-split" + (opts.cls ? " " + opts.cls : ""));
       if (opts.scope) sp.setAttribute("data-scope", opts.scope);
       const mainBtn = el("button", "copy-main");
-      mainBtn.type = "button"; mainBtn.title = baseTitle;
+      mainBtn.type = "button"; mainBtn.title = curTitle;
       if (opts.ariaLabel) mainBtn.setAttribute("aria-label", opts.ariaLabel);
-      const lbl = el("span", "t", baseLabel);
+      const lbl = el("span", "t", curLabel);
       mainBtn.append(lbl);
       let cntEl = null;
       if (opts.withCount) { cntEl = el("span", "cnt", String(opts.count || 0)); mainBtn.append(cntEl); }
@@ -1925,9 +1949,10 @@ function keyboard() {
       tog.type = "button"; tog.setAttribute("aria-haspopup", "menu"); tog.setAttribute("aria-expanded", "false");
       tog.setAttribute("aria-label", opts.toggleLabel || (baseLabel + " options"));
       const menu = el("div", "copy-menu"); menu.setAttribute("role", "menu");
+      const menuTitleEl = el("span", "", opts.menuTitle || baseLabel);
       const tagEl = el("span", "copy-menu-tag", opts.menuTag || "");
       menu.append(el("div", "copy-menu-head", null));
-      menu.firstChild.append(el("span", "", opts.menuTitle || baseLabel), tagEl);
+      menu.firstChild.append(menuTitleEl, tagEl);
       const subs = opts.subtitles || {};
       const entries = [
         ["both", "\u25cf", "Copy both", subs.both || "Text + inline PNG", true],
@@ -1954,12 +1979,21 @@ function keyboard() {
             resetTimer = setTimeout(() => {
               if (sp.classList.contains("st-good")) {
                 for (const k of STATE_CLS) { mainBtn.classList.remove(k); sp.classList.remove(k); }
-                lbl.textContent = baseLabel; mainBtn.title = baseTitle;
+                lbl.textContent = curLabel; mainBtn.title = curTitle;
               }
             }, 2200);
           }
         };
         return opts.onCopy(mode, mainBtn, finish);
+      };
+      const openMenu = (focusFirst) => {
+        copyHelp.closeMenus(sp);
+        sp.classList.add("open"); tog.setAttribute("aria-expanded", "true");
+        if (typeof sp.getBoundingClientRect === "function" && window.innerHeight) {
+          const r = sp.getBoundingClientRect();
+          if (r && r.bottom && window.innerHeight - r.bottom < 190) sp.classList.add("drop-up");
+        }
+        if (focusFirst) { const f = menu.querySelector(".copy-opt"); if (f && f.focus) f.focus(); }
       };
       mainBtn.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); run("both"); });
       tog.addEventListener("click", (ev) => {
@@ -1967,22 +2001,51 @@ function keyboard() {
         const was = sp.classList.contains("open");
         copyHelp.closeMenus(sp);
         if (was) { sp.classList.remove("open", "drop-up"); tog.setAttribute("aria-expanded", "false"); }
-        else {
-          sp.classList.add("open"); tog.setAttribute("aria-expanded", "true");
-          if (typeof sp.getBoundingClientRect === "function" && window.innerHeight) {
-            const r = sp.getBoundingClientRect();
-            if (r && r.bottom && window.innerHeight - r.bottom < 190) sp.classList.add("drop-up");
-          }
-        }
+        else openMenu(false);
+      });
+      tog.addEventListener("keydown", (ev) => {
+        if (ev.key === "ArrowDown" || ev.key === "Down") { ev.preventDefault(); ev.stopPropagation(); openMenu(true); }
+      });
+      menu.addEventListener("keydown", (ev) => {
+        const items = [...menu.querySelectorAll(".copy-opt")], idx = items.indexOf(document.activeElement);
+        if (ev.key === "ArrowDown" || ev.key === "Down") { ev.preventDefault(); const nx = items[(idx + 1 + items.length) % items.length]; if (nx && nx.focus) nx.focus(); }
+        else if (ev.key === "ArrowUp" || ev.key === "Up") { ev.preventDefault(); const pv = items[(idx - 1 + items.length) % items.length]; if (pv && pv.focus) pv.focus(); }
+        else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); copyHelp.closeMenus(); if (tog.focus) tog.focus(); }
       });
       menu.querySelectorAll(".copy-opt").forEach((opt) => {
         opt.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); run(opt.getAttribute("data-mode") || "both"); });
       });
-      sp.setCount = (n) => {
-        if (cntEl) cntEl.textContent = String(n);
-        tagEl.textContent = n + " row" + (n === 1 ? "" : "s");
-        if (!sp.classList.contains("st-info")) { mainBtn.disabled = n === 0; tog.disabled = n === 0; }
+      sp.setSelection = (selectedCount, shownCount, kindWord) => {
+        const kw = kindWord || "row", nsel = Math.max(0, selectedCount || 0), nsh = Math.max(0, shownCount || 0);
+        const nextLabel = nsel > 0 ? "Copy selected" : baseLabel;
+        const changed = curLabel !== nextLabel;
+        const copying = sp.classList.contains("st-info");
+        if (!copying && changed) {
+          if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+          for (const k of STATE_CLS) { mainBtn.classList.remove(k); sp.classList.remove(k); }
+        }
+        const keepFeedback = copying || (!changed && (sp.classList.contains("st-good") || sp.classList.contains("st-warn") || sp.classList.contains("st-bad")));
+        if (nsel > 0) {
+          curLabel = "Copy selected";
+          curTitle = "Copy " + nsel + " selected " + kw + (nsel === 1 ? "" : "s") + " (text + picture)";
+          if (!keepFeedback) { lbl.textContent = curLabel; mainBtn.title = curTitle; }
+          mainBtn.setAttribute("aria-label", "Copy selected " + kw + "s");
+          if (cntEl) cntEl.textContent = String(nsel);
+          menuTitleEl.textContent = "Copy selected";
+          tagEl.textContent = nsel + " selected";
+          if (!copying) { mainBtn.disabled = false; tog.disabled = false; }
+        } else {
+          curLabel = baseLabel;
+          curTitle = baseTitle;
+          if (!keepFeedback) { lbl.textContent = curLabel; mainBtn.title = curTitle; }
+          if (opts.ariaLabel) mainBtn.setAttribute("aria-label", opts.ariaLabel);
+          if (cntEl) cntEl.textContent = String(nsh);
+          menuTitleEl.textContent = opts.menuTitle || baseLabel;
+          tagEl.textContent = nsh + " row" + (nsh === 1 ? "" : "s");
+          if (!copying) { mainBtn.disabled = nsh === 0; tog.disabled = nsh === 0; }
+        }
       };
+      sp.setCount = (n) => { sp.setSelection(0, n); };
       if (opts.withCount) sp.setCount(opts.count || 0);
       return sp;
     }

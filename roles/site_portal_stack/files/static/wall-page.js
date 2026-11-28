@@ -779,14 +779,19 @@
           summary: "CPU " + pct(x.cpu) + "%, Mem " + pct(x.mem) + "%, " + x.nvms + " VMs", findings: fs, totalFindings: fs.length, cappedCount: 0};
       };
       var hostCtx = {site: (W && W.enclave) || "", report: "ESXi hosts · " + cl.n, dateTime: hms(NOW()) + " " + zoneName(), url: typeof location !== "undefined" ? location.href : ""};
+      var hostSel = Object.create(null), hostRows = [], lastHostRow = null;
       var ths = [h("th", "", ["Host"]), h("th", "", ["State"]), h("th", "n", ["CPU %"]), h("th", "n", ["Memory %"]), h("th", "n", ["VMs"])];
-      if (pc) ths.push(h("th", "", ["Copy"]));
+      if (pc) { ths.unshift(h("th", "dtab-sel", [h("span", "sr", ["Select"])])); ths.push(h("th", "", ["Copy"])); }
       var tb = h("table", "dtab", [h("thead", "", [h("tr", "", ths)])]), body = h("tbody");
+      var syncHostSel = function () {};
       hs.forEach(function (x) {
         var st = withFresh(x.st, x.feed);
         var cells = [h("td", "", [h("button", "lnk", [x.n], {type: "button", "data-d": "host:" + x.vc + "|" + x.n})]), h("td", "", [wordWd(st)]),
           h("td", "n", [pct(x.cpu)]), h("td", "n", [pct(x.mem)]), h("td", "n", [String(x.nvms)])];
+        var cb = null;
         if (pc) {
+          cb = pc.createSelBox ? pc.createSelBox(x.n) : h("input", "srv-sel-cb", null, {type: "checkbox", "aria-label": "Select " + x.n});
+          cells.unshift(h("td", "dtab-sel", [cb]));
           cells.push(h("td", "", [pc.createSplitControl({
             cls: "sm", scope: "server", baseLabel: "Copy", title: "Copy " + x.n + " status and findings (text + picture)",
             ariaLabel: "Copy " + x.n, toggleLabel: "Copy options for " + x.n,
@@ -802,19 +807,53 @@
             }
           })]));
         }
-        body.appendChild(h("tr", st, cells));
+        var tr = h("tr", st, cells);
+        if (cb) {
+          var rec = {x: x, tr: tr, cb: cb};
+          hostRows.push(rec);
+          cb.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            if (ev.shiftKey && lastHostRow && lastHostRow !== rec) {
+              var a = hostRows.indexOf(lastHostRow), b = hostRows.indexOf(rec);
+              if (a >= 0 && b >= 0) {
+                var lo = Math.min(a, b), hi = Math.max(a, b), on = !!cb.checked;
+                for (var k = lo; k <= hi; k++) {
+                  hostRows[k].cb.checked = on;
+                  if (on) hostSel[hostRows[k].x.n] = 1; else delete hostSel[hostRows[k].x.n];
+                  hostRows[k].tr.classList.toggle("srv-selected", on);
+                }
+              }
+            }
+            if (cb.checked) hostSel[x.n] = 1; else delete hostSel[x.n];
+            lastHostRow = rec;
+            tr.classList.toggle("srv-selected", !!cb.checked);
+            syncHostSel();
+          });
+          cb.addEventListener("change", function () {
+            if (cb.checked) hostSel[x.n] = 1; else delete hostSel[x.n];
+            tr.classList.toggle("srv-selected", !!cb.checked);
+            syncHostSel();
+          });
+        }
+        body.appendChild(tr);
       });
       tb.appendChild(body);
       var hostsBox = tb;
       if (pc && hs.length) {
+        var pickedHosts = function () { return hs.filter(function (x) { return !!hostSel[x.n]; }); };
+        var hostCnt = pc.createSelCount ? pc.createSelCount() : h("span", "srv-sel-count", ["0 selected"]);
+        var hostClr = pc.createSelClear ? pc.createSelClear() : h("button", "btn sm srv-sel-clear", ["Clear"], {type: "button", hidden: true});
+        var hostCue = pc.createSelCue ? pc.createSelCue() : h("span", "srv-sel-cue", ["Tick rows or Space to select · Shift+click range"]);
         var copyAllHosts = pc.createSplitControl({
           cls: "pri", scope: "all", baseLabel: "Copy all shown", withCount: true, count: hs.length,
           title: "Copy all shown ESXi hosts in " + cl.n + " (text + picture)", ariaLabel: "Copy all shown hosts",
-          toggleLabel: "Copy all shown options", menuTitle: "Copy all shown", menuTag: hs.length + " row" + (hs.length === 1 ? "" : "s"),
+          toggleLabel: "Copy all shown or selected options", menuTitle: "Copy all shown", menuTag: hs.length + " row" + (hs.length === 1 ? "" : "s"),
           subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
-          isEmpty: function () { return !hs.length; },
+          isEmpty: function () { return !(pickedHosts().length || hs.length); },
           onCopy: function (mode, btn, finish) {
-            var srvs = hs.map(hostToSrv), fmt = pc.formatAllShown(srvs, hostCtx);
+            var list = pickedHosts();
+            if (!list.length) list = hs;
+            var srvs = list.map(hostToSrv), fmt = pc.formatAllShown(srvs, hostCtx);
             var pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, hostCtx);
             return pc.copyMode(mode, {
               plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: cl.n + " hosts summary card", focusEl: btn,
@@ -822,7 +861,21 @@
             });
           }
         });
-        hostsBox = h("div", "", [h("div", "evh", [copyAllHosts]), tb, hostBar]);
+        syncHostSel = function () {
+          var nsel = pickedHosts().length;
+          hostCnt.textContent = nsel + " selected";
+          hostCnt.classList.toggle("has-sel", nsel > 0);
+          hostClr.hidden = nsel === 0;
+          if (copyAllHosts.setSelection) copyAllHosts.setSelection(nsel, hs.length, "host");
+        };
+        hostClr.addEventListener("click", function () {
+          hostSel = Object.create(null);
+          lastHostRow = null;
+          hostRows.forEach(function (r) { r.cb.checked = false; r.tr.classList.remove("srv-selected"); });
+          syncHostSel();
+        });
+        syncHostSel();
+        hostsBox = h("div", "", [h("div", "evh", [copyAllHosts, hostCnt, hostClr, hostCue]), tb, hostBar]);
       }
       var v = m === "cpu" ? cl.cpu : m === "mem" ? cl.mem : null;
       var st = m === "hosts" ? (cl.down.length ? withFresh("crit", cl.feed) : (cl.unknown || []).length ? "stale" : withFresh("ok", cl.feed)) : withFresh(level(v, 101, hp[0]), cl.feed);
