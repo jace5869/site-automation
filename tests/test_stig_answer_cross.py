@@ -28,6 +28,17 @@ def row(host, v="V-1", code="NF", act="NF", review=None, stig="RHEL 9 V2R10", es
     return r
 
 
+def cross_layouts(rows):
+    from server_view_filters import server_view
+    from test_server_view_reports import _render
+    cross = C.stig_answer_cross_report(C.stig_answer_cross_rules(rows))
+    servers = server_view({r["host"]: [] for r in rows})
+    doc = {"sections": [servers] + cross["sections"]}
+    for look in ("atlas", "brief", "ops"):
+        for options in ({}, {"report_servers_view": False}):
+            yield look, options, _render("report_%s.html.j2" % look, doc, **options)
+
+
 class Review(unittest.TestCase):
     def test_a_person_newer_than_the_scan_counts(self):
         r = sm("pass")
@@ -252,21 +263,14 @@ class WhoIsRight(unittest.TestCase):
         self.assertEqual(d[1]["who_more"], "2 more hosts: Evaluate-STIG only, nothing else to compare there.")
 
     def test_the_rendered_card_in_every_look(self):
-        import jinja2
         x = row("h1", code="NF", rep="h1", code_read="kernel.x = 1", ran=[{"cmd": "/usr/sbin/sysctl kernel.x", "rc": "0", "lines": 1, "out": "kernel.x = 0"}])
         x["act"] = {"verdict": "Open", "why": "It is 0.", "decides": "kernel.x = 0"}
-        det = C._detail(C.stig_answer_cross_rules([x])[0])
-        for look in ("atlas", "brief", "ops"):
-            with open(os.path.join(REPO, "roles", "site_email", "templates", "report_%s.html.j2" % look)) as f:
-                src = f.read()
-            a = src.index("{#- 1.88.0: the cross-check's opened rule")
-            b = src.index("{% endif %}\n", src.index("t.who_more", a)) + len("{% endif %}")
-            html = jinja2.Environment(autoescape=False).from_string(src[a:b]).render(t=det[1])
-            with self.subTest(look=look):
+        for look, options, html in cross_layouts([x]):
+            with self.subTest(look=look, options=options):
                 self.assertIn('<p class="wv w-look">', html)
                 self.assertIn('<span class="wdl" title="The line ACT named as deciding it">\u2192 kernel.x = 0</span>', html)
                 self.assertEqual(html.count('<div class="wc">'), 4)
-                self.assertIn(".wg{display:grid", src)
+                self.assertIn(".wg{display:grid", html)
 
 
 class CodexRound1880b(unittest.TestCase):
@@ -346,15 +350,12 @@ class CodexRound1880b(unittest.TestCase):
                 self.assertNotIn(d[1]["who"][1]["cols"][3]["word"], ("no review", "none"))
 
     def test_the_more_hosts_line_without_cards(self):
-        import jinja2
-        t = {"who": [], "who_more": "2 more hosts: Evaluate-STIG only, nothing else to compare there."}
-        for look in ("atlas", "brief", "ops"):
-            with open(os.path.join(REPO, "roles", "site_email", "templates", "report_%s.html.j2" % look)) as f:
-                src = f.read()
-            a = src.index("{#- 1.88.0: the cross-check's opened rule")
-            b = src.index("{% endif %}\n", src.index("t.who_more", a)) + len("{% endif %}")
-            with self.subTest(look=look):
-                self.assertIn('<p class="wmore">2 more hosts:', jinja2.Environment(autoescape=False).from_string(src[a:b]).render(t=t))
+        rows = [row(host, code="", act=None) for host in ("h1", "h2")]
+        for look, options, html in cross_layouts(rows):
+            with self.subTest(look=look, options=options):
+                self.assertNotIn('<div class="who">', html)
+                self.assertIn('<p class="wmore">2 more hosts: Evaluate-STIG only, nothing else to compare there.</p>', html)
+
 
 
 class NeverToStigManager(unittest.TestCase):

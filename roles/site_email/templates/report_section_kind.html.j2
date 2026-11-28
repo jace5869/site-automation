@@ -1,0 +1,9 @@
+{#- 1.139.0 (step 15): Shared section-kind dispatcher across all seven top-level report templates
+    (report, report_command, report_portal, report_glass, report_atlas, report_brief, report_ops).
+    Expects s (section dict) and optional _kind_web (true for web looks, false/unset for email looks). -#}
+{%- set _sk = s.kind | default('') -%}
+{%- if _sk == 'by_kind' -%}{%- include 'report_by_kind.html.j2' -%}
+{%- elif _sk == 'story' -%}{%- if _kind_web | default(false) -%}{% include 'report_story.html.j2' %}{%- else -%}{% include 'report_story_email.html.j2' %}{%- endif -%}
+{%- elif _sk == 'review_chart' -%}{% include 'report_outage.html.j2' %}
+{%- elif _sk == 'noc' -%}{% include 'report_outage_noc.html.j2' %}
+{%- endif -%}

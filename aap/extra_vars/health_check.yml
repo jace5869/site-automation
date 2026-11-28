@@ -86,6 +86,9 @@
 ## a certificate expiring within this many days -> warning (and amber in the certificate report)
 # check_certs_warn_days: 30
 
+## the certificate report shows these as Low (an early heads-up; not a finding)
+# check_certs_notice_days: 60
+
 ## within this many days (or expired) -> critical
 # check_certs_crit_days: 14
 
@@ -1106,6 +1109,16 @@
 ## snapshot
 # solarwinds_db_max_age: 20
 
+# ---- win_check_certs -----------------------------------------------------------------------------
+## a certificate expiring within this many days -> warning (amber in the certificate report)
+# win_check_certs_warn_days: 30
+
+## the certificate report shows these as Low (an early heads-up; not a finding)
+# win_check_certs_notice_days: 60
+
+## within this many days -> critical
+# win_check_certs_crit_days: 7
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
@@ -1571,6 +1584,9 @@
 # site_act_stage_dir: ""
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
 # site_fail_on: [critical, warning]

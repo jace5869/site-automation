@@ -432,6 +432,9 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## ---- Teams (1.86.0): the team view of the health reports on the report website ------------------
 ## Which findings belong to which team: team: [matchers], in order - group:<inventory group>,
 ## host:<pattern> (* and ?, any case; without a dot the short name too), inventory:<AAP inventory

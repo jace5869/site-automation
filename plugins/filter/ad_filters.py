@@ -211,11 +211,14 @@ class _Report(object):
     def __init__(self, opts):
         self.o = opts
         self.max = int(opts.get("max_rows") or 50)
-        self.sections, self.problems = [], []
+        self.sections, self.problems, self.low_problems = [], [], []
 
     def problem(self, domain, area, obj, severity, text):
         if severity in ("critical", "warning"):
             self.problems.append({"domain": domain, "area": area, "object": obj, "severity": severity, "text": text})
+        elif severity == "low":
+            # 1.139.0: keep low findings in a separate list so ad_server_view shows them (never amber) without affecting problems
+            self.low_problems.append({"domain": domain, "area": area, "object": obj, "severity": severity, "text": text})
 
     def table(self, title, about, columns, rows, none_text, notes=None, keep_order=False):
         """rows: [(cells, cell_statuses, row_status)]. Problems first (stable), capped at max_rows."""
@@ -1017,7 +1020,7 @@ def ad_report(dcs, domains, opts=None):
     dc_sum = [dict(ident.fields(x.get("data") or {}), **{"dc": x["_name"], "domain": "" if x["_domain"] == "?" else x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")}) for x in dcs]
     dc_sum = [dict(d, **ident.fields(ident.resolve(d, repl["dcs"]) or d)) for d in dc_sum]
     dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
-    return {"report": report, "problems": R.problems, "dcs": dc_sum, "domains": summaries,
+    return {"report": report, "problems": R.problems, "low_problems": R.low_problems, "dcs": dc_sum, "domains": summaries,
             "critical": len(crit), "warning": len(warn), "repl": repl}
 
 
@@ -1495,7 +1498,7 @@ def ad_reader_report(reader, opts=None):
     dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
     repl = _repl_reader(dcs, now, tsl, dom, r.get("known_dcs") or r.get("dcs_ad"), r.get("discovered"))
     _coverage_report(report, repl)
-    return {"report": report, "problems": R.problems, "dcs": dc_sum,
+    return {"report": report, "problems": R.problems, "low_problems": R.low_problems, "dcs": dc_sum,
             "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
             "critical": len(crit), "warning": len(warn), "repl": repl}
 

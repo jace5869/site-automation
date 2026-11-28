@@ -417,6 +417,9 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## due soon (Low) = late within this many days
 # patch_age_due_days: 7
 

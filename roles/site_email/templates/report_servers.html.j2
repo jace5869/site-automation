@@ -1,0 +1,207 @@
+{#- 1.139.0: Server-first, cert host-rollup, list-only, and chrome-only report section
+    (report_servers_view; plugins/filter/server_view_filters.py).
+    Matches reports-by-server-all.html in light and dark, 1280 and 800 px wide, across atlas, brief, ops and glass
+    using only existing look tokens (report_servers.css.j2). Reuses button.xb + tr.xr (defer-detail / unpack),
+    .code .copy, row_tags[i].data.sev (report_pop.js sevChips), .tw > table (fit1/fit), CSV export, and global search.
+    Rules: At a glance on top; criticals stand out; low never amber; capped host says 'and N more not listed';
+    Copy ONLY on read-only hint commands (fix is a 'What to do:' line with NO Copy button).
+    No-script fallback: Expand all / Collapse all stay hidden; tr.xr unhides and <details class="srv-det"> opens by hand. -#}
+{%- set _card_cls = 'card ' if hover_look | default('') in ['atlas', 'glass'] else '' %}
+{%- set _list_only = s.list_only | default(false) %}
+{%- set _chk_hdr = s.columns[5] if (_list_only and s.columns is defined and s.columns | length > 5) else (s.columns[8] if s.columns is defined and s.columns | length > 8 else 'Checked (UTC)') %}
+{%- if s.tiles | default([]) %}
+<div class="srv-glance"{% if s.chrome_view | default(false) %} id="s{{ si }}"{% endif %} aria-label="At a glance">
+<div class="srv-ghead"><span class="srv-gic" aria-hidden="true"><svg class="ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><h2 class="srv-gh">At a glance</h2>{% if s.kind_label | default('') %}<span class="srv-chrome-tag">{{ s.kind_label | e }}</span>{% endif %}</div>
+<div class="srv-tiles">
+{%- for t in s.tiles %}
+{%- set tst = t.status | default('ok') if t.status | default('ok') in words else 'info' %}
+{%- set tvv = ('' if t.value is none else t.value) | string %}
+{%- set thot = tst in ['critical', 'warning'] and tvv not in ['0', '', '-'] %}
+<article class="srv-tile st-{{ tst }}{{ ' srv-hot' if thot else '' }}">
+<div class="srv-thead"><span class="srv-ticon" aria-hidden="true">{{ icon(tst) }}</span><span class="srv-tlab">{{ t.label | e }}</span></div>
+<strong class="srv-metric">{{ tvv | e }}</strong>
+{%- if t.note | default('') %}<div class="srv-tnote">{{ t.note | e }}</div>{% endif %}
+{%- if t.mask | default([]) %}<div class="srv-meter" aria-hidden="true">{% for b in t.mask %}<i{% if b %} class="on"{% endif %}></i>{% endfor %}</div>{% endif %}
+</article>
+{%- endfor %}
+</div>
+{%- if s.tiles_kept | default([]) %}
+<div class="tiles pt-kept t{{ s.tiles_kept | length if s.tiles_kept | length <= 10 else 'x' }}">
+{%- for t in s.tiles_kept %}
+{%- set ts = t.status | default('') %}
+{%- set tvv = ('' if t.value is none else t.value) | string %}
+<div class="card tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and tvv not in ['0', ''] else '' }}"><div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div><div class="v">{{ tvv | e }}</div>{% if t.note | default('') %}<div class="n">{{ t.note | e }}</div>{% endif %}</div>
+{%- endfor %}
+</div>
+{%- endif %}
+</div>
+{%- endif %}
+{%- if s.chrome_view | default(false) %}
+<div class="{{ _card_cls }}srv-chrome-bar" data-chrome-bar hidden>
+<div class="tools2 srv-tools srv-chrome-tools">
+<input class="filter srv-chrome-q" type="search" placeholder="Search all sections on this page" aria-label="Search all sections"><span class="shown srv-chrome-shown"></span>
+<span class="sp"></span>
+<button class="btn srv-chrome-exp" type="button" title="Expand all sections"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10M3 13h10M5.5 7L8 4.5 10.5 7M5.5 9L8 11.5 10.5 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Expand all</span></button>
+<button class="btn srv-chrome-col" type="button" title="Collapse all sections"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10M3 13h10M5.5 5L8 7.5 10.5 5M5.5 11L8 8.5 10.5 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Collapse all</span></button>
+</div>
+{%- if s.statuses | default([]) | length > 1 %}
+<div class="srv-chrome-sev pt-sev" role="group" aria-label="Filter rows by severity">
+<button type="button" class="pt-sb" data-sev="" aria-pressed="true">All</button>
+{%- for k in ['critical', 'warning', 'low', 'info', 'unknown', 'ok'] if k in s.statuses %}
+<button type="button" class="pt-sb s-{{ k }}" data-sev="{{ k }}" aria-pressed="false">{{ chipword[k] }}</button>
+{%- endfor %}
+</div>
+{%- endif %}
+</div>
+{%- elif s.cert_rollup | default(false) %}
+<details class="{{ _card_cls }}sec srv-sec srv-rollup-sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }} data-cert-rollup>
+<summary><h2>{{ s.title | e }}<span class="count">{{ s.rollup_hosts | default([]) | length }}</span></h2>
+{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="body">
+{%- if s.rollup_hosts | default([]) %}
+{%- set r_statuses = s.rollup_hosts | map(attribute='status') | unique | list %}
+{%- if r_statuses | length > 1 %}
+<div class="srv-rollup-sev pt-sev" role="group" aria-label="Host status" hidden>
+<button type="button" class="pt-sb" data-sev="" aria-pressed="true">All</button>
+{%- for k in ['critical', 'warning', 'low', 'info', 'unknown', 'ok'] if k in r_statuses %}
+<button type="button" class="pt-sb s-{{ k }}" data-sev="{{ k }}" aria-pressed="false">{{ 'Not checked' if k == 'unknown' else chipword[k] }}</button>
+{%- endfor %}
+</div>
+{%- endif %}
+<div class="tools2 srv-tools">
+<input class="filter srv-rollup-q" type="search" hidden placeholder="Search {{ s.rollup_hosts | length }} host{{ '' if s.rollup_hosts | length == 1 else 's' }}" aria-label="Search hosts"><span class="shown srv-rollup-shown"></span>
+<span class="sp"></span>
+<button class="btn srv-rollup-clear" type="button" hidden>Clear host filter</button>
+</div>
+<div class="srv-rollup-list" role="list">
+{%- for rh in s.rollup_hosts %}
+{%- set rst = rh.status if rh.status in words else 'unknown' %}
+<button type="button" class="srv-rollup-item r-{{ rst }}" data-sev="{{ rst }}" data-host="{{ rh.host_key | e }}" aria-pressed="false" role="listitem">
+<span class="srv-host mono">{{ dw(rh.host, true) }}</span>
+<span class="srv-rollup-st">{{ chip(rst, rh.status_label) }}</span>
+<span class="srv-rollup-sum">{{ rh.summary | e }}</span>
+<span class="srv-rollup-act">Filter table &rarr;</span>
+</button>
+{%- endfor %}
+</div>
+<div class="srv-foot"><span>{{ s.summary_text | e }}</span><span>Soonest expiry first &darr;</span></div>
+{%- else %}
+<div class="none">No hosts in this certificate run.</div>
+{%- endif %}
+</div>
+</details>
+{%- else %}
+<details class="{{ _card_cls }}sec srv-sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
+<summary><h2>{{ s.title | e }}<span class="count">{{ s.servers | default(s.rows | default([])) | length }}</span></h2>
+{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="body">
+{%- if s.servers | default([]) %}
+{%- set statuses = s.servers | map(attribute='status') | unique | list %}
+{%- set has_changed = _list_only and (s.servers | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0) %}
+{%- if statuses | length > 1 or has_changed %}
+<div class="srv-severity pt-sev" role="group" aria-label="Severity" hidden>
+<button type="button" class="pt-sb" data-sev="" aria-pressed="true">All</button>
+{%- if _list_only %}
+{%- if 'unknown' in statuses %}<button type="button" class="pt-sb s-unknown" data-sev="unknown" aria-pressed="false">Not read / uncertain</button>{% endif %}
+{%- if has_changed %}<button type="button" class="pt-sb s-info" data-sev="" data-changed="1" aria-pressed="false">{{ s.changed_chip_label | default('Changed') | e }}</button>{% endif %}
+{%- if 'ok' in statuses %}<button type="button" class="pt-sb s-ok" data-sev="ok" aria-pressed="false">Read</button>{% endif %}
+{%- else %}
+{%- for k in ['critical', 'warning', 'low', 'info', 'unknown', 'ok'] if k in statuses %}
+<button type="button" class="pt-sb s-{{ k }}" data-sev="{{ k }}" aria-pressed="false">{{ 'Not reached' if k == 'unknown' else chipword[k] }}</button>
+{%- endfor %}
+{%- endif %}
+</div>
+{%- endif %}
+<div class="tools2 srv-tools">
+<input class="filter" type="search" hidden placeholder="Search {{ s.servers | length }} server{{ '' if s.servers | length == 1 else 's' }} or findings" aria-label="Search {{ s.title | e }}"><span class="shown"></span>
+<span class="sp"></span>
+<button class="btn srv-exp" type="button" hidden title="Expand all visible servers"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10M3 13h10M5.5 7L8 4.5 10.5 7M5.5 9L8 11.5 10.5 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Expand all</span></button>
+<button class="btn srv-col" type="button" hidden title="Collapse all servers"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10M3 13h10M5.5 5L8 7.5 10.5 5M5.5 11L8 8.5 10.5 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Collapse all</span></button>
+<button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
+</div>
+<div class="tw"><table class="xt srv-tbl{{ ' srv-list-only' if _list_only else '' }}">
+<thead><tr>
+<th class="k-x" scope="col"><span class="vh">Open</span></th>
+<th class="k-wrap" scope="col"><button type="button">Server<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-nw" scope="col"><button type="button">Status<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- if _list_only %}
+<th class="k-mid" scope="col"><button type="button">{{ s.meta_col_label | default('Details') | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-long" scope="col"><button type="button">{{ s.summary_col_label | default('Summary') | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- else %}
+<th class="k-num" scope="col" title="Critical"><button type="button">Crit<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-num" scope="col" title="Warning"><button type="button">Warn<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-num" scope="col" title="Low"><button type="button">Low<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-num" scope="col" title="Info"><button type="button">Info<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-long" scope="col"><button type="button">Worst finding<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- endif %}
+<th class="k-nw" scope="col"><button type="button">{{ _chk_hdr | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+</tr></thead>
+<tbody>
+{%- set _colspan = 6 if _list_only else 9 %}
+{%- for srv in s.servers %}
+{%- set ri = loop.index0 %}
+{%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
+{%- set tgd = tg.data | default({}) | safe_data %}
+{%- set rst = srv.status if srv.status in words else 'unknown' %}
+{%- set hide_nums = srv.missing or (srv.unchecked | default(false) and not srv.findings) %}
+<tr class="r-{{ rst }}"{% for k in tgd %} data-{{ k | e }}="{{ tgd[k] | e }}"{% endfor %}{% if tg.id | default('') %} id="{{ tg.id | e }}"{% endif %}>
+<td class="k-x"><button class="xb" type="button" aria-expanded="false" aria-label="Open {{ srv.host | e }}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
+<td class="k-wrap srv-name" data-l="Server" data-v="{{ srv.host | e }}"><span class="cv"><strong class="srv-host mono">{{ dw(srv.host, true) }}</strong>{% if srv.ip | default('') %}<span class="srv-ip mono">{{ nbw(srv.ip) }}</span>{% endif %}{% if not _list_only and srv.meta | default('') %}<span class="srv-ip">{{ srv.meta | e }}</span>{% endif %}{% if srv.checklists | default([]) %}<span class="cl-pills">{% for cl in srv.checklists %}<span class="cl-pill">{{ cl | e }}</span>{% endfor %}</span>{% endif %}</span></td>
+<td class="nw" data-l="Status" data-v="{{ srv.status_label | e }}">{{ chip(rst, srv.status_label) }}</td>
+{%- if _list_only %}
+<td class="k-mid srv-meta-col" data-l="{{ s.meta_col_label | default('Details') | e }}" data-v="{{ (srv.meta or '-') | e }}"><span class="cv">{{ (srv.meta or '-') | e }}</span></td>
+<td class="k-long srv-worst" data-l="{{ s.summary_col_label | default('Summary') | e }}" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.findings[0].title if not _list_only and srv.findings else srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
+{%- else %}
+<td class="k-num srv-cnt" data-l="Critical" data-v="{{ '-' if hide_nums else srv.counts.critical }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.critical %}<b class="c-critical">{{ srv.counts.critical }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
+<td class="k-num srv-cnt" data-l="Warning" data-v="{{ '-' if hide_nums else srv.counts.warning }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.warning %}<b class="c-warning">{{ srv.counts.warning }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
+<td class="k-num srv-cnt" data-l="Low" data-v="{{ '-' if hide_nums else srv.counts.low }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.low %}<b class="c-low">{{ srv.counts.low }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
+<td class="k-num srv-cnt" data-l="Info" data-v="{{ '-' if hide_nums else srv.counts.info }}">{% if hide_nums %}<span class="srv-zero">-</span>{% elif srv.counts.info %}<b class="c-info">{{ srv.counts.info }}</b>{% else %}<span class="srv-zero">0</span>{% endif %}</td>
+<td class="k-long srv-worst" data-l="Worst finding" data-v="{{ srv.worst | e }}"><span class="cv">{% if srv.missing %}<span class="srv-nc">Not checked:</span> {% endif %}{{ keep(srv.findings[0].title if not _list_only and srv.findings else srv.worst) }}{% if srv.capped_total | default(0) > 0 %}<br><span class="cap-pill">and {{ srv.capped_total }} more not listed</span>{% endif %}</span></td>
+{%- endif %}
+<td class="k-nw srv-time mono" data-l="{{ _chk_hdr | e }}" data-v="{{ (srv.checked or '-') | e }}">{% if srv.checked and srv.checked != '-' %}<time{% if srv.checked_iso %} datetime="{{ srv.checked_iso | e }}"{% endif %}>{{ keep(srv.checked) }}</time>{% else %}-{% endif %}</td>
+</tr>
+<!--defer-detail--><tr class="xr" hidden><td class="xd srv-xd" colspan="{{ _colspan }}"><details class="srv-det"><summary class="srv-det-s">Findings for {{ srv.host | e }}{% if srv.counts.total %} ({{ srv.counts.total }}){% endif %}</summary><div class="srv-detail">
+{%- if srv.checklist_breakdown | default([]) %}
+<div class="srv-cl-strip">{% for cb in srv.checklist_breakdown %}<span class="cl-box">{{ chip(cb.status if cb.status in words else 'ok', cb.name) }}<span>{% if not cb.scanned %}not scanned{% else %}{{ cb.drift }} drift · {{ cb.new }} new{% if cb.disagree %} · {{ cb.disagree }} disagree{% endif %}{% if cb.fixed_open %} · {{ cb.fixed_open }} fixed-open{% endif %}{% endif %}</span></span>{% endfor %}</div>
+{%- endif %}
+{# 1.139.0: Validate action destinations at render time, including stored reports. #}
+{%- set portal_base = report_portal_url | default(portal_path | default('/portal', true), true) %}
+{%- if srv.host_buttons | default([]) %}
+<div class="srv-host-acts">{% for b in srv.host_buttons %}{% set url = b.url | default('') | safe_ref(portal_base) %}{% if url %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endif %}{% endfor %}</div>
+{%- endif %}
+{%- if srv.missing %}
+<article class="srv-finding sf-unknown"><div class="srv-fhead">{{ chip('unknown', srv.status_label) }}<h3>Host did not report</h3></div><p class="srv-ev">{{ (srv.reason or 'Unreachable, or the job failed on this host before the checks ran. Health is unknown.') | e }}</p></article>
+{%- elif srv.unchecked | default(false) and not srv.findings %}
+<article class="srv-finding sf-unknown"><div class="srv-fhead">{{ chip('unknown', srv.status_label) }}<h3>Host was not checked</h3></div><p class="srv-ev">{{ (srv.reason or 'No checks ran on this host.') | e }}</p></article>
+{%- elif srv.findings %}
+{%- if srv.unchecked | default(false) %}<p class="srv-ev">Host check: {{ srv.reason | e }}</p>{% endif %}
+{%- for f in srv.findings %}
+{%- set fst = f.severity if f.severity in words else 'warning' %}
+<article class="srv-finding sf-{{ fst }}"><div class="srv-fhead">{{ chip(fst, f.severity_label) }}<h3>{{ f.title | e }}</h3>{% if f.check_label %}<span class="srv-fmeta">{{ f.check_label | e }}</span>{% endif %}</div>
+{%- if f.evidence %}<p class="srv-ev mono">{{ breakable(f.evidence) }}</p>{% endif %}
+{%- if f.since %}<div class="srv-since">Since {{ f.since | e }}</div>{% endif %}
+{%- if f.fix %}<p class="srv-fix"><b>What to do:</b> {{ f.fix | e }}</p>{% endif %}
+{%- if f.hint %}<div class="srv-hint-lbl">Check command (read-only hint)</div><div class="code"><pre><code>{{ f.hint | e }}</code></pre><button class="copy" type="button" hidden>Copy</button></div>{% endif %}
+{%- if f.buttons | default([]) %}<div class="srv-acts">{% for b in f.buttons %}{% set url = b.url | default('') | safe_ref(portal_base) %}{% if url %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endif %}{% endfor %}</div>{% endif %}
+</article>
+{%- endfor %}
+{%- else %}
+<p class="srv-ok">No findings recorded.{% if srv.checks %} Checks passed: {% for c in srv.checks %}{{ chip('ok', c) }} {% endfor %}{% endif %}</p>
+{%- endif %}
+{%- if srv.capped | default([]) %}
+<p class="srv-capped" role="note">{{ icon('warning') }}<span>Findings truncated: {{ srv.capped_text | e }}.</span></p>
+{%- endif %}
+</div></details></td></tr><!--/defer-detail-->
+{%- endfor %}
+</tbody>
+</table></div>
+{%- if s.note | default('') %}<p class="srv-note">{{ s.note | e }}</p>{% endif %}
+<div class="srv-foot"><span>{{ s.summary_text | e }}</span><span>{{ 'Not read / changed first' if _list_only else 'Worst first' }} &darr;</span></div>
+{%- else %}
+<div class="none">No servers in this run.</div>
+{%- endif %}
+</div>
+</details>
+{%- endif %}

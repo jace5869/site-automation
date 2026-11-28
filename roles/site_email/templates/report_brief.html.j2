@@ -29,72 +29,14 @@
 {%- set st = r.status | default('info') if r.status | default('info') in words else 'info' -%}
 {#- a verdict only where there is one to give: a report that only informs leads with its title -#}
 {%- set verdict = st in ['ok', 'warning', 'critical'] -%}
-{%- macro icon(k) -%}
-{%- if k == 'ok' -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-{%- elif k == 'warning' -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>
-{%- elif k == 'critical' -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-{%- elif k == 'low' -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.2 6.6L8 9.4l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-{%- elif k == 'info' -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>
-{%- else -%}
-<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>
-{%- endif -%}
-{%- endmacro -%}
-{%- macro copyicons() -%}
-<svg class="ic i1" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.8 3.2V3a1.6 1.6 0 00-1.6-1.6H3.4A1.6 1.6 0 001.8 3v5.8a1.6 1.6 0 001.6 1.6h.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ic i2" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-{%- endmacro -%}
-{#- 1.21.0: a date, a time or an IP address kept whole, at any width (2026-10-20, 18:14, 2026-10-20T18:14Z, 10/20/2026,
-    192.0.2.45, 192.0.2.0/24, 192.0.2.5:443; a version with 4 parts too); a value's other words as they are -#}
-{%- macro nbw(w) -%}
-{%- set c = w.strip('()[],;"\'') -%}
-{%- set ip = c.split('/')[0].split(':')[0] -%}
-{%- set dg = c.rstrip('%').rstrip('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ').replace(',', '').replace('.', '').lstrip('+-') -%}
-{%- if c and ((c[:4].isdigit() and c[4:5] == '-' and c[5:7].isdigit() and c[7:8] == '-')
-     or (c.count('/') == 2 and c.replace('/', '').isdigit())
-     or (c.count(':') in [1, 2] and c | length <= 12 and c.replace(':', '').replace('.', '').isdigit())
-     or (ip.count('.') == 3 and ip.replace('.', '').isdigit())
-     or (dg | length > 1 and dg.isdigit() and (c | length - dg | length) <= 4)) -%}
-<span class="nb">{{ w | e }}</span>
-{%- elif w | length > 12 -%}
-<span class="lw">{{ w | e }}</span>
-{%- elif w[:1] in ['[', '{'] or w in ['True', 'False'] -%}
-{#- 1.28.0: its first character as a character reference - on ansible-core 2.16 a macro's output of exactly True or
-    False, or one starting with [ or {, comes back a Python value (keep('True') a bool, keep('[1,2]') a list written
-    [1, 2]); the page shows the same text -#}
-{{ {'[': '&#91;', '{': '&#123;', 'T': '&#84;', 'F': '&#70;'}[w[:1]] }}{{ w[1:] | e }}
-{%- else -%}
-{{ w | e }}
-{%- endif -%}
-{%- endmacro -%}
-{%- macro keep(text) -%}
-{%- for ln in text.split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}{{ nbw(w) }}{%- endfor -%}{%- endfor -%}
-{%- endmacro -%}
-{#- 1.67.0: in a table with the portal's buttons (dots = True) a host name of more than 24 characters breaks after a
-    dot (a place for it, never inside a label); any other word as nbw -#}
-{%- macro dw(w, dots) -%}
-{%- if dots and w | length > 24 and '.' in w.strip('.') and w.split('.')[-1][:1].isalpha() -%}
-<span class="lw dw">{{ w.split('.') | map('e') | join('.<wbr>') }}</span>
-{%- else -%}
-{{ nbw(w) }}
-{%- endif -%}
-{%- endmacro -%}
-{#- a chip: up to 12 characters on one line (sh); a longer one wraps, at a width by its length (2 to 4 lines); a long
-    word of it breaks after a _ before anywhere else (ERROR_NO_LOGON_ / SERVERS, 1.24.0c) -#}
-{%- macro chip(k, text) -%}
-{%- set n = text | string | length -%}
-<span class="chip s-{{ k | e }} {{ 'sh' if n <= 12 else ('c2' if n <= 24 else ('c3' if n <= 40 else ('c4' if n <= 60 else 'c5'))) }}">{{ icon(k) }}<span>
-{%- for ln in (text | string).split('\n') -%}{{ '\n' if not loop.first else '' }}{%- for w in ln.split(' ') -%}{{ ' ' if not loop.first else '' }}
-{%- if w | length > 12 and '_' in w.strip('_') -%}<span class="lw">{{ w.split('_') | map('e') | join('_<wbr>') }}</span>{%- else -%}{{ nbw(w) }}{%- endif -%}
-{%- endfor -%}{%- endfor -%}</span></span>
-{%- endmacro -%}
-{#- a path, address or hash: escaped, with a place to break after each / and \ (no hyphen is added) -#}
-{%- macro breakable(text) -%}
-{%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
-{%- endmacro -%}
+{#- The website enables the server view by default. Standalone report documents describe their own sections. -#}
+{%- set server_features = report_servers_view | default(true) | string | lower in ['true', 'yes', 'on', '1'] -%}
+{%- set show_dashboard = r.dashboard | default({}) and server_features -%}
+{%- set has_servers = server_features and ((r.sections | default([]) | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0) or (r.sections | default([]) | selectattr('cert_rollup', 'defined') | selectattr('cert_rollup') | list | length > 0) or (r.sections | default([]) | selectattr('chrome_view', 'defined') | selectattr('chrome_view') | list | length > 0)) -%}
+{%- set _kind_web = true -%}
+{#- 1.139.0: shared macros extracted to report_macros.html.j2 (pure refactor) -#}
+{%- from 'report_macros.html.j2' import icon, copyicons, nbw, keep, dw, chip, breakable, xmini with context -%}
+{%- from 'report_macros.html.j2' import section_count with context -%}
 <!DOCTYPE html>
 {%- set _motion = 'off' if report_motion | default('auto') is sameas false else (report_motion | default('auto') | string | trim | lower) %}{# YAML: an unquoted off is false #}
 <html lang="en"{% if _motion in ['off', 'always'] %} class="motion-{{ _motion }}"{% endif %}>
@@ -568,7 +510,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}tr.r-low{box-shadow:inset 4px 0 0 var(--low)}
 }
 /* motion, only to say where to look: the header, then the figures, rise in once */
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes rise{from{transform:translateY(8px)}to{transform:none}}
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}
   .hero>*{animation:rise .5s var(--ease) both}.hero>:nth-child(2){animation-delay:.05s}.hero>:nth-child(3){animation-delay:.1s}.hero>:nth-child(n+4){animation-delay:.14s}
   .tile{animation:rise .5s var(--ease) both;animation-delay:.18s}.tile:nth-child(2){animation-delay:.24s}.tile:nth-child(3){animation-delay:.3s}.tile:nth-child(n+4){animation-delay:.36s}}
@@ -681,6 +623,12 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 .tile.tc{box-shadow:inset 0 3px 0 var(--cat)}
 @media (prefers-reduced-motion:reduce){.xb svg{transition:none}}
 @media (max-width:640px){tr.xr>td.xd{padding:4px 8px 12px}}
+{%- if has_servers %}
+{%- include 'report_servers.css.j2' %}
+{%- endif %}
+{%- if show_dashboard %}
+{%- include 'report_dash.css.j2' %}
+{%- endif +%}
 </style>
 <!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--><!-- 1.87.2: classic Outlook (Word) mis-measures negative em letter-spacing: none there -->
 </head>
@@ -697,7 +645,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- for s in secs %}
 {%- if s.rail | default(true) %}
 {%- set ss = s.status | default('') %}
-<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}{{ s.title | e }}{% if s.rows is defined and s.rows %} <span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+{%- set sc = section_count(s, has_servers) | int %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}{{ s.title | e }}{% if sc %} <span class="n">{{ sc }}</span>{% endif %}</a>
 {%- endif %}
 {%- endfor %}
 </nav>
@@ -724,12 +673,22 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- for s in secs %}
 {%- if s.rail | default(true) %}
 {%- set ss = s.status | default('') %}
-<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if s.rows is defined and s.rows %}<span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+{%- set sc = section_count(s, has_servers) | int %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if sc %}<span class="n">{{ sc }}</span>{% endif %}</a>
 {%- endif %}
 {%- endfor %}
 </nav>
 {%- endif %}
 <main class="main" id="top">
+{%- if has_servers and secs | length > 2 %}
+<div class="rail-mob" hidden><label for="rail-jump"><span class="lbl">Sections</span></label><select class="rail-sel" id="rail-jump" aria-label="Jump to section">
+<option value="top">Top</option>
+{%- for s in secs %}{% if s.rail | default(true) %}
+{%- set sc = section_count(s, has_servers) | int %}
+<option value="s{{ loop.index }}">{{ s.title | e }}{% if sc %} ({{ sc }}){% endif %}</option>
+{%- endif %}{% endfor %}
+</select></div>
+{%- endif +%}
 <header class="hero h-{{ st }}">
 <div class="crumb">
 {%- if job_name %}<span class="eyebrow">{{ job_name | e }}</span>{% endif %}
@@ -760,7 +719,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- include 'report_head_file.html.j2' %}
 </header>
 <!--site-report-files-->
-{%- if r.summary | default([]) and r.teams is not defined %}
+{%- if r.summary | default([]) and not show_dashboard and r.teams is not defined and not has_servers %}
 <div class="tiles">
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
@@ -779,7 +738,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {#- 1.67.0: the page's filter buttons (r.facets: the STIG scorecard's Platform and Collection) - site-report.js shows
     them and hides the rows and the collections that are not the choice; without the script they are not shown #}
 {%- set fx = r.facets | default({}, true) %}
-{%- if fx.platforms | default([]) or fx.collections | default([]) %}
+{%- if not show_dashboard and (fx.platforms | default([]) or fx.collections | default([])) %}
 <div class="facets" hidden role="group" aria-label="Choose the rows shown">
 {%- if fx.platforms | default([]) %}
 <span class="fl" id="fl-pf">{{ fx.pf_label | default('Platform', true) | e }}</span>
@@ -804,42 +763,23 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 </div>
 {%- endif %}
-{%- macro xmini(t) %}
-{%- if t.text | default('') %}<p class="xt0">{{ t.text | e }}</p>{% endif %}
-{%- if t.rows | default([]) %}
-<div class="tw"><table class="mini">
-<thead><tr>{% for c in t.columns %}<th class="{{ 'k-num' if t.kinds[loop.index0] | default('') in ['num', 'cat1', 'cat2', 'cat3'] else 'k-mid' }}" scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
-<tbody>
-{%- for row in t.rows %}
-{%- if loop.index == 101 %}<!--defer-mini {{ loop.length }}-->{% endif %}
-{%- set xl = (t.links[loop.index0] if t.links is defined and t.links | length > loop.index0 else '') | default('', true) %}{#- 1.69.2: a second link column (links2, at link2_col: a host's Collection opens the collection) #}{%- set xl2 = (t.links2[loop.index0] if t.links2 is defined and t.links2 | length > loop.index0 else '') | default('', true) %}
-{%- set xt = (t.link_titles[loop.index0] if t.link_titles is defined and t.link_titles | length > loop.index0 else '') | default('', true) %}{%- set xt2 = (t.link2_titles[loop.index0] if t.link2_titles is defined and t.link2_titles | length > loop.index0 else '') | default('', true) %}
-{%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
-<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set cu = xl if loop.first else (xl2 if loop.index0 == t.link2_col | default(1) else '') %}{% set ct = xt if loop.first else xt2 %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if cu %}<a class="hl" href="{{ cu | e }}" target="_blank" rel="noopener" title="{{ ct | e }}">{% endif %}{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}{% if cu %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>{% endif %}</td>{% endfor %}</tr>
-{%- endfor %}
-{%- if t.rows | length > 100 %}<!--/defer-mini-->{% endif %}
-</tbody>
-</table></div>
-{%- endif %}
-{%- if t.more | default('') %}<p class="xt0">{{ t.more | e }}</p>{% endif %}
-{#- 1.73.0: Copy copies the text's command lines only; a text with no command has no button - one muted line says so #}
-{%- if t.texts | default([]) %}<div class="rtx">{% for b in t.texts %}<div class="rtb"><h3 class="rth">{{ b.label | e }}</h3><div class="code{{ '' if b.cmd | default('') else ' nc' }}"><pre>{{ b.text | e }}</pre>{% if b.cmd | default('') %}{% if b.file | default('') %}<span class="rta"><button class="copy" type="button" hidden title="{{ b.title | e }}" data-copy="{{ b.cmd | e }}">{{ b.button | e }}</button><a class="dl" href="site-report-file:{{ b.file | urlencode }}" download>Download {{ b.file | e }}</a></span>{% else %}<button class="copy" type="button" hidden title="{{ b.title | e }}" data-copy="{{ b.cmd | e }}">{{ b.button | e }}</button>{% endif %}{% endif %}</div>{% if not b.cmd | default('') %}<p class="rtn">{{ b.note | default('No command in this text') | e }}</p>{% endif %}</div>{% endfor %}</div>{% endif %}
-{#- 1.88.0: the cross-check's opened rule - each host's verdict line, then the four sources side by side #}
-{%- if t.who | default([]) %}{% for c in t.who %}<div class="who"><p class="wh">{{ c.host | e }}</p><p class="wv w-{{ c.kind | e }}"><svg viewBox="0 0 16 16" aria-hidden="true">{% if c.kind == 'look' %}<path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/>{% elif c.kind == 'agree' %}<path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>{% else %}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>{% endif %}</svg><span>{{ c.line | e }}</span></p><div class="wg">{% for col in c.cols %}<div class="wc"><h4>{{ col.title | e }}{% if col.sub | default('') %} <small>({{ col.sub | e }})</small>{% endif %}</h4>{% if col.pre | default([]) %}<pre class="wp">{% for l in col.pre %}<span{% if l.mark %} class="wdl" title="The line ACT named as deciding it"{% endif %}>{{ l.t | e }}</span>{% endfor %}</pre>{% endif %}<p class="wr t-{{ col.tone | e }}">{{ col.word | e }}</p>{% if col.note | default('') %}<p class="wn">{{ col.note | e }}</p>{% endif %}</div>{% endfor %}</div></div>{% endfor %}{% endif %}{% if t.who_more | default('') %}<p class="wmore">{{ t.who_more | e }}</p>{% endif %}
-{%- endmacro %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
 {%- set si = loop.index %}
 {%- if s.team_view | default(false) and r.teams is defined %}
 {%- include 'report_teams.html.j2' %}
+{%- elif has_servers and (s.server_view | default(false) or s.cert_rollup | default(false) or s.chrome_view | default(false)) %}
+{%- include 'report_servers.html.j2' %}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
 <details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}{% if s.select_export is defined %} data-sel-export="{{ s.select_export | tojson | forceescape }}"{% endif %}>
 <summary><h2>{{ s.title | e }}{% if s.issue_count is defined %}<span class="count">{{ s.issue_count | int }}</span>{% endif %}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
-{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+{%- if ss in words and not (s.glance | default([]) and show_dashboard) %}{{ chip(ss, chipword[ss]) }}{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section as text and picture" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
+{#- 1.139.0: dashboard promoted from ops to atlas and brief too -#}
+{%- if s.glance | default([]) and show_dashboard %}{% include 'report_dash.html.j2' %}{% endif %}
 {%- if s.passed | default([]) %}
 {%- if s.passed_checks | default([]) %}
 <div class="passed-checks">Every check passed: {% for c in s.passed_checks %}{{ chip('ok', c) }} {% endfor %}</div>
@@ -895,10 +835,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {% include 'report_heat.html.j2' %}
 {%- endif %}
 {#- 1.66.0: an outage time line (the VM outage watch's review) -#}
-{%- if s.kind | default('') == 'by_kind' %}{%- include 'report_by_kind.html.j2' %}{%- endif %}
-{%- if s.kind | default('') == 'story' %}{% include 'report_story.html.j2' %}
-{%- elif s.kind | default('') == 'review_chart' %}{% include 'report_outage.html.j2' %}
-{%- elif s.kind | default('') == 'noc' %}{% include 'report_outage_noc.html.j2' %}{% endif %}
+{%- include 'report_section_kind.html.j2' %}
 {%- if s.outage is defined %}
 {% include 'report_watch_timeline.html.j2' %}
 {%- endif %}
@@ -972,7 +909,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 <button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
 </div>
-<div class="tw"><table{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}{% if s.cell_keys | default(false) %} data-keys="{{ s.cell_keys | tojson | forceescape }}"{% endif %}>
+<div class="tw"><table{% if s.cert_table | default(false) %} data-cert-table{% endif %}{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}{% if s.cell_keys | default(false) %} data-keys="{{ s.cell_keys | tojson | forceescape }}"{% endif %}>
 <thead><tr>
 {%- for c in s.columns %}
 {%- if kinds[loop.index0] == 'x' %}
@@ -1118,7 +1055,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </div>
 <script id="site-report-js">
 {% include 'site_report.js' %}
-{% include 'report_pop.js' %}
+{% include 'report_pop.js' %}{% if has_servers %}
+{% include 'report_servers.js' %}{% endif %}
 </script>
 </body>
 </html>

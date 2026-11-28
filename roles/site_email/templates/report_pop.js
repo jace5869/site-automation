@@ -3,7 +3,7 @@
    site-insights.js. No inline script, nothing from elsewhere (a strict Content-Security-Policy, offline), no HTML from
    strings; ASCII only. Every piece works on the markup the pages already have:
      count-up      a tile's number (.tile .v and the team view's): from 0 to its value, its format and unit kept
-     reveal        cards, tiles and sections fade and slide in as they scroll into view
+     reveal        cards and tiles slide in as they scroll into view
      draw-in       chart lines draw, bars grow (svg[role=img], svg.spark, the team view's charts)
      crosshair     a line chart (one line path, value labels on its grid): a line and a dot at the nearest point; its
                    value and week in a tip when the chart has no hover of its own
@@ -72,9 +72,11 @@
     all('svg[role=img],svg.spark,svg.pt-runs',t).forEach(drawIn)}
   function watch(){var i=0;all(REVEAL).forEach(function(t){
     if(t.getAttribute('data-pop-w'))return;t.setAttribute('data-pop-w','1');
-    var r=t.getBoundingClientRect(),seen=r.top<window.innerHeight&&r.bottom>0;
     if(!io||t.closest('[hidden]')){light(t);return}
-    t.style.setProperty('--pop-i',String(seen?(i++)%8:0));t.classList.add('pop-wait');io.observe(t)})}
+    io.observe(t);
+    if(t.matches('.sec'))return;  /* observe its charts without moving the whole section */
+    var r=t.getBoundingClientRect(),seen=r.top<window.innerHeight&&r.bottom>0;
+    t.style.setProperty('--pop-i',String(seen?(i++)%8:0));t.classList.add('pop-wait')})}
 
   /* rows and parts that become visible fade in - never the hover tip (site_report.js #site-tip, role tooltip): its place is
      its transform, which the fade's own transform took over, so for its first .38 s each time it showed it sat at the

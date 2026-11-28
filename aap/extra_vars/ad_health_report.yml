@@ -692,6 +692,9 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## ---- Linux or Windows (set by the playbook; do not set) -----------------------------------------
 ## Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles
 ## win_check_<name>.

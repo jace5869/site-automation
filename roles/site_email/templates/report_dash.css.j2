@@ -29,7 +29,7 @@
 .cdot{width:9px;height:9px;border-radius:50%;flex:none}
 .cdot.k1,.sw.k1,.dbb i.k1,.dwt i.k1{background:var(--cat1)}.cdot.k2,.sw.k2,.dbb i.k2,.dwt i.k2{background:var(--cat2)}
 .cdot.k3,.sw.k3,.dbb i.k3,.dwt i.k3{background:var(--cat3)}
-.dbig{font-family:var(--display);font-size:clamp(1.7rem,1.2rem + 1.1vw,2.3rem);font-weight:650;line-height:1.05;letter-spacing:-.02em;
+.dbig{font-family:var(--display{% if hover_look == 'brief' %},inherit{% endif %});font-size:clamp(1.7rem,1.2rem + 1.1vw,{{ "2.125rem" if hover_look == "brief" else "2.3rem" }});font-weight:650;line-height:1.05;letter-spacing:-.02em;
   color:var(--ink);font-variant-numeric:tabular-nums}
 .dbig.kc1{color:var(--critical)}.dbig.kc2{color:var(--warning)}
 .dbig.ds-critical{color:var(--critical)}.dbig.ds-warning{color:var(--warning)}.dbig.ds-ok{color:var(--ok)}
@@ -110,7 +110,7 @@
 /* 1000 px and under: one panel a row */
 @media (max-width:1000px){.dgrid{grid-template-columns:minmax(0,1fr)}.dgrid .dp{grid-column:1 / -1}
   .dtiles .dt{min-width:104px;padding:12px 13px}.dtiles .dcora{min-width:214px}.ring{width:54px;height:54px}}
-@media (max-width:560px){.dtiles .dt{min-width:40%}.dtiles .dcora{min-width:100%}.dbar{align-items:stretch}.dinfo{justify-content:flex-start;margin-left:0}}
+@media (max-width:560px){.dtiles .dt{min-width:40%}.dtiles .dcora{min-width:100%}.dbar{align-items:stretch}.dinfo{justify-content:flex-start;margin-left:0}{% if hover_look != 'ops' or has_servers %}.dp{overflow-x:auto}.dwt{width:36px;margin-left:4px}.dtl th,.dtl td,.dtt th,.dtt td{padding:5px 4px;font-size:12px}.dfl .fsel,.dfl .fhost{width:100%}{% endif %}}
 @media print{.dash .facets.dfx,.dtip{display:none!important}}
 /* the header card above a dashboard: the verdict on one line under its status, the numbers are in the tiles */
 .hero.dash-hero .hgrid{padding:14px clamp(16px,2vw,26px);display:block}

@@ -323,13 +323,12 @@ The next run of each report draws its page in the ops look (the index on the nex
 `report_web_theme: atlas` goes back. Checked at 1280 and 800 px wide, light and dark; no phone layout of its own (a
 phone gets the page as at 800 px, its tables as in atlas).
 
-### The dashboard: the first screen (1.71.0, the ops look)
+### The dashboard: the first screen (1.71.0; all web looks since 1.139.0)
 
-In the ops look, a report can open with a dashboard: everything at a glance on the first screen, the full detail one
+A report can open with a dashboard in `atlas`, `brief` and `ops`: everything at a glance on the first screen, the full detail one
 click down. The STIG scorecard is the first report with one. The dashboard is the report's **At a glance** section:
 its heading, its place in the rail and its link stay, and its short lines stay under the dashboard. The tile row and
-Start here give way to it, and the header card is one line (its status and the verdict). Atlas and brief, the emails
-and the workbook do not change.
+Start here give way to it. The emails and the workbook do not change.
 
 The STIG scorecard's dashboard, at 1280 px:
 
@@ -430,6 +429,29 @@ team its own part. The email does not change.
 
 The ticket insights' pages have their own teams: the assignment groups. Chips over *At a glance* link to each group's
 page, and the one last chosen is offered as *Your team* on the other pages.
+
+## Server-first view (1.139.0)
+
+**On by default on the report website (`atlas`, `brief`, `ops`, and `glass`).** Report pages lead with *At a glance* tiles on top and a server-first layout (or host rollup / chrome-only wrapper where the report is not server-keyed). Emails and Excel workbooks do not change.
+
+To restore the byte-identical pre-1.139.0 layout in `playbooks/group_vars/all.yml` (or on one template's Variables):
+
+```yaml
+report_servers_view: false               # true (default since 1.139.0 step 16)
+```
+
+The default lives in `roles/site_findings/defaults/main.yml` and `roles/site_email/defaults/main.yml`.
+
+**What each report family shows when enabled:**
+
+- **Health checks, STIG drift, fapolicyd, Active Directory, and STIG Manager health**:
+  - **At a glance** tiles strictly on top (above SolarWinds `first: true` sections and *Start here*), with hot critical/warning highlights and per-server coverage meters. When zero hosts report, tiles show *N not checked* with no zero counts.
+  - **Servers**, worst first: server name (with IP, checklist pills on multi-checklist STIG hosts, or DC label), status chip (icon and word - never colour alone), counts for *Crit*, *Warn*, *Low* and *Info* (`low` keeps its own column and never turns a host amber; not-reached/unchecked hosts stay `unknown`), worst finding, and checked time (in `report_time_zone`, or UTC when unset).
+  - **Click any server row** to open its findings in place: severity chip, summary, evidence, *What to do* prose (`fix`, NEVER given a Copy button), read-only check command (`hint`, with the Copy button), and Site portal action buttons. Capped hosts show an *and N more not listed* pill and detail note. STIG hosts open to per-rule `drift`/`new`/`disagree`/`fixed_open` cards with DISA check commands and fix text. AD folds DC-scoped findings (including `low`) under their lower-case inventory host and puts non-DC objects into *Domain & forest objects*.
+- **Software inventory and SolarWinds (`sw_inventory`, `solarwinds_report`)**: list-only server view (no severity count columns; *Read* / *Not read* / *Not certain* / *Changed* chips). Skipped hosts note *N left out on purpose*; uncertain SolarWinds matches show *Not certain* (`unknown`, never green) and are kept out of matched counts.
+- **Certificates (`cert_report`, `win_cert_report`, `net_certs`, `vmware_cert_report`)**: host rollup on top (*N certificates, worst D days*); clicking a host filters the certificate table below.
+- **ONTAP, Cisco UCS, and Network map**: chrome only — native cluster/volume/SVM, domain/chassis/blade/fault, and site/node/WAN link tables and maps stay untouched, wrapped with *At a glance* tiles on top, unified search, severity chips, Expand/Collapse all, and sidebar counts/select.
+- **Controls & no-script fallback**: search filter, severity chips, **Expand all / Collapse all**, **CSV**, sidebar section counts, and a narrow-screen jump `<select>` (`<= 900 px`). With scripts blocked, every server's findings remain openable by hand (`<details>`).
 
 ## Motion (1.86.0)
 

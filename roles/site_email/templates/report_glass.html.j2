@@ -56,6 +56,10 @@
 {%- endfor -%}
 {%- set rhead = r | report_head -%}
 {%- set preview = ([rhead.counts_text, rhead.scope_text] + flagged) | select | join(' · ') -%}
+{%- set server_features = report_servers_view | default(true) | string | lower in ['true', 'yes', 'on', '1'] -%}
+{%- set web_sections = (_page_report | default(r)).sections | default([]) -%}
+{%- set has_servers = web and server_features and ((web_sections | selectattr('server_view', 'defined') | selectattr('server_view') | list | length > 0) or (web_sections | selectattr('cert_rollup', 'defined') | selectattr('cert_rollup') | list | length > 0) or (web_sections | selectattr('chrome_view', 'defined') | selectattr('chrome_view') | list | length > 0)) -%}
+{%- if has_servers -%}{%- include 'report_glass_web.html.j2' -%}{%- else -%}
 {%- macro svg(kind, color, size) -%}
 {#- web copy only: line icons, 24 x 24 #}
 <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="{{ color }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block;">
@@ -331,10 +335,7 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- endif %}
 </tr></table>
 {%- if s.cards is defined %}{{ s.cards | report_cards_html(ink, muted, accent) }}{% endif %}
-{%- if s.kind | default('') == 'story' %}{% include 'report_story_email.html.j2' %}
-{%- elif s.kind | default('') == 'noc' %}{% include 'report_outage_noc.html.j2' %}
-{%- elif s.kind | default('') == 'review_chart' %}{% include 'report_outage.html.j2' %}
-{%- elif s.kind | default('') == 'by_kind' %}{% include 'report_by_kind.html.j2' %}{% endif %}
+{%- include 'report_section_kind.html.j2' %}
 {%- if s.kind | default('') == 'raw_events' %}<details><summary>Show every event</summary>{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
@@ -421,4 +422,4 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 </td></tr>
 </table>
 </body>
-</html>
+</html>{%- endif -%}

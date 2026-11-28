@@ -6,7 +6,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 _BAD = re.compile(r"[\s\x00-\x1f\x7f<>\"'`\\]")
 
@@ -28,7 +28,12 @@ def safe_link(url):
     return u
 
 
-def safe_ref(url):
+def _origin(parts):
+    default_port = 443 if parts.scheme == "https" else 80
+    return parts.scheme, parts.hostname, parts.port if parts.port is not None else default_port
+
+
+def safe_ref(url, portal_base=None):
     """-> the address for a link other producers bring (STIG Manager, the portal): http or https or a plain relative one, no user or
     password, no spaces or markup characters; javascript:, data: and any other scheme give ''. (An incident link asks safe_link.)"""
     u = str(url or "").strip()
@@ -43,6 +48,19 @@ def safe_ref(url):
         return ""
     if parts.scheme and not parts.hostname:
         return ""
+    # 1.139.0: Server action buttons must stay within the configured portal.
+    if portal_base is not None:
+        base = urlsplit(safe_ref(portal_base))
+        if parts.scheme and _origin(parts) != _origin(base):
+            return ""
+        root = base.path.rstrip("/") or ("" if base.hostname else "/portal")
+        path = parts.path if parts.path.startswith("/") else "/" + parts.path
+        if not parts.path or (path != root and not path.startswith(root + "/")):
+            return ""
+        if ".." in unquote(path).split("/") or re.search(r"%2f|%5c|%25", path, re.I):
+            return ""
+        if not parts.scheme:
+            return "/" + u.lstrip("/")
     return u
 
 

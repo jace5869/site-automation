@@ -104,6 +104,16 @@ stigman_health_api: https://stigman.yoursite.mil/api
 ## job "Linux - auditd tuning" raises it). auditd's backlog_limit below this: a warning
 # check_containers_console_backlog_min: 8192
 
+# ---- check_certs ---------------------------------------------------------------------------------
+## a certificate expiring within this many days -> warning (and amber in the certificate report)
+# check_certs_warn_days: 30
+
+## the certificate report shows these as Low (an early heads-up; not a finding)
+# check_certs_notice_days: 60
+
+## within this many days (or expired) -> critical
+# check_certs_crit_days: 14
+
 # ---- check_mariadb -------------------------------------------------------------------------------
 ## Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts,
 ## mariadb or mysql, or any host that names a container below (or turns discovery on). Set this
@@ -130,6 +140,17 @@ stigman_health_api: https://stigman.yoursite.mil/api
 
 ## auto, true or false: find database containers by their image (see above)
 # check_mariadb_container_discover: auto
+
+# ---- check_stig ----------------------------------------------------------------------------------
+## ---- Findings
+## ------------------------------------------------------------------------------------------------
+## the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
+# check_stig_severity: {high: critical, medium: warning, low: warning}
+
+## a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed,
+## so nothing moved that the job saw): none = listed in the report only; low = a Low finding
+## (listed, never fails the job); warning or critical = a finding
+# check_stig_disagree_severity: none
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy
@@ -163,6 +184,16 @@ stigman_health_api: https://stigman.yoursite.mil/api
 ## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
 ## either way (web01 = web01.example.mil); * and ?; any case
 # site_exclude_hosts: []
+
+# ---- win_check_certs -----------------------------------------------------------------------------
+## a certificate expiring within this many days -> warning (amber in the certificate report)
+# win_check_certs_warn_days: 30
+
+## the certificate report shows these as Low (an early heads-up; not a finding)
+# win_check_certs_notice_days: 60
+
+## within this many days -> critical
+# win_check_certs_crit_days: 7
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
@@ -523,6 +554,9 @@ stigman_health_api: https://stigman.yoursite.mil/api
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
 # site_fail_on: [critical, warning]

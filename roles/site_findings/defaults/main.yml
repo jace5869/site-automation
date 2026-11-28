@@ -67,6 +67,9 @@ patch_age_history_runs: 50               # how many earlier runs to read (at mos
 report_teams: {}
 report_team_other: Unassigned            # the team of a host no team matches - always shown, with its count
 
+# Group website reports by server (1.139.0). Set false for the previous layout.
+report_servers_view: true
+
 # ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
 # Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report website (the atlas and brief
 # looks), the renew list in the email, a Timeline sheet in the workbook. The levels are each report's own days. Changes no finding.

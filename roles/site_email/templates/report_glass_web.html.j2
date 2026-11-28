@@ -1,0 +1,37 @@
+{#- Glass uses the full web renderer so maps, history, actions and row expanders work in this look. -#}
+{%- set glass_web = true -%}
+{%- set glight %}
+  --ink:#0f2236;--muted:#4a5d71;--label:#3d5166;
+  --accent:#0e6e74;--accent-ink:#ffffff;--accent-soft:rgba(14,110,116,.13);
+  --bg:#dde8f0;--bg2:#d3e9e4;
+  --card:rgba(255,255,255,.68);--card-solid:#f8fbfd;--card-strong:rgba(255,255,255,.92);--th:#f2f6fa;
+  --edge:rgba(255,255,255,.88);--line:#e3eaf1;--zebra:rgba(240,246,251,.55);--hover:rgba(14,110,116,.07);
+  --code:#eef4f8;--bar:rgba(244,250,253,.82);
+  --shadow:0 10px 30px rgba(15,34,54,.10);
+  --ok:#0d7149;--ok-bg:#e2f6ec;--ok-bd:#b7e4cd;
+  --warning:#9a5300;--warning-bg:#fff1dc;--warning-bd:#f4d29c;
+  --critical:#b42318;--critical-bg:#fde8e8;--critical-bd:#f5bfbf;
+  --info:#1d4ed8;--info-bg:#e5eefe;--info-bd:#bcd0fa;
+  --low:#88358e;--low-bg:#f6e9f6;--low-bd:#e6c6e8;--low-row:#fbf3fb;
+  --unknown:#4a5868;--unknown-bg:#eef2f6;--unknown-bd:#d4dce5;
+  --critical-row:#fdeeee;--warning-row:#fff6e8;
+  color-scheme:light;
+{%- endset %}
+{%- set gdark %}
+  --ink:#e8f1f6;--muted:#9db2c2;--label:#bfd0dd;
+  --accent:#4cd2d8;--accent-ink:#052226;--accent-soft:rgba(76,210,216,.15);
+  --bg:#0b1b26;--bg2:#0c2224;
+  --card:rgba(16,32,46,.68);--card-solid:#122536;--card-strong:rgba(13,26,38,.90);--th:#172d40;
+  --edge:rgba(180,220,235,.18);--line:rgba(180,220,235,.12);--zebra:rgba(255,255,255,.025);--hover:rgba(76,210,216,.10);
+  --code:#0b1824;--bar:rgba(11,26,38,.82);
+  --shadow:0 12px 34px rgba(0,0,0,.40);
+  --ok:#54d89e;--ok-bg:rgba(84,216,158,.14);--ok-bd:rgba(84,216,158,.36);
+  --warning:#f4ba58;--warning-bg:rgba(244,186,88,.14);--warning-bd:rgba(244,186,88,.38);
+  --critical:#ff8c86;--critical-bg:rgba(255,140,134,.16);--critical-bd:rgba(255,140,134,.44);
+  --info:#8ab8ff;--info-bg:rgba(138,184,255,.14);--info-bd:rgba(138,184,255,.36);
+  --low:#d084e0;--low-bg:rgba(208,132,224,.15);--low-bd:rgba(208,132,224,.38);--low-row:rgba(208,132,224,.07);
+  --unknown:#a7b6c4;--unknown-bg:rgba(167,182,196,.13);--unknown-bd:rgba(167,182,196,.30);
+  --critical-row:rgba(255,140,134,.10);--warning-row:rgba(244,186,88,.07);
+  color-scheme:dark;
+{%- endset %}
+{%- include 'report_atlas.html.j2' -%}

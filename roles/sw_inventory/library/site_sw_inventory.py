@@ -871,12 +871,21 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
             for k in ("where", "error", "fix", "why", "dest"):
                 x[k] = scrub(x.get(k, ""), secrets)
     res["not_read"], res["first_seen"] = bad, first
+    # 1.139.0: track hosts left out on purpose (skipped) and compact per-host details for sw_inventory_server_view
+    skipped_hosts = [str(h.get("host") or "") for h in (p.get("hosts") or []) if str(h.get("host") or "") and h.get("skipped")]
+    hosts_detail = [{"host": h["host"], "os": h.get("os", ""), "kernel": h.get("kernel", ""),
+                     "read_at": h.get("read_at", ""), "packages": len(h["packages"]),
+                     "repo_note": h.get("repo_note", "")} for h in ok]
     view = {"hosts": [{"host": h["host"], "packages": len(h["packages"])} for h in ok], "not_read": bad,
             "outputs": res["outputs"], "changes_by_host": chg, "first_seen": first, "read_at": p["read_at"],
             "repo_notes": [h["host"] for h in ok if h["repo_note"]], "baseline": base_from, "state_damaged": damaged,
+            "skipped_hosts": skipped_hosts,
             "shares": sorted([x for x in res["outputs"] if x.get("dest")], key=lambda x: [d["name"] for d in dests].index(x["name"]))
             if multi else []}
     res["report"] = sw.report_doc(view, {"top": p["top"]})
+    res["server_view_input"] = {"hosts": hosts_detail, "not_read": bad, "skipped": skipped_hosts,
+                                "changes_by_host": chg, "first_seen": first, "read_at": p["read_at"],
+                                "baseline": base_from, "state_damaged": damaged}
     notes = []
     work = p["work_dir"]
     try:                                        # the workbook's sheets: written whole, or none (never a half file)
@@ -934,6 +943,8 @@ def finish(p, check, res, said, dest_said, now, outputs, ok, bad, want, file_out
     if secrets:                                 # the words only: every state, status and path left as it is
         res["lines"] = scrub(res["lines"], secrets)
         res["report"] = scrub_report(res["report"], secrets)
+        if res.get("server_view_input"):
+            res["server_view_input"] = scrub(res["server_view_input"], secrets)
     res["hosts_read"], res["hosts_not_read"] = len(ok), len(bad)
     res["packages"] = sum(len(h["packages"]) for h in ok)
     res["hosts_changed"] = len([h for h in chg if chg[h]])

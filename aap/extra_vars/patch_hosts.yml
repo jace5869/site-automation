@@ -558,6 +558,9 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## Group website reports by server (1.139.0). Set false for the previous layout.
+# report_servers_view: true
+
 ## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
 ## in the health checks, the certificate report and renewal, database health, the service watch and
 ## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still

@@ -17,7 +17,12 @@
   ansible.builtin.include_role:
     name: site_email
   vars:
-    _report: "{{ _ontap_doc | combine({'footer': (_ontap_doc.footer ~ ' ' if _ontap_doc.footer is defined else '') ~ 'Read-only: GET requests to the ONTAP REST API.'}) }}"
+    _ontap_footer: "{{ (_ontap_doc.footer ~ ' ' if _ontap_doc.footer is defined else '') ~ 'Read-only: GET requests to the ONTAP REST API.' }}"
+    _report: "{{ _ontap_doc | combine({'footer': _ontap_footer}) }}"
+    # 1.139.0: chrome-only web wrapper (native cluster/volume/SVM keys preserved)
+    _report_web: >-
+      {{ (_ontap_doc | combine({'footer': _ontap_footer}) | chrome_report_view({'kind_label': 'Storage · native cluster & volume view'}))
+         if report_servers_view | default(true) | bool else {} }}
     _report_xlsx: "{{ _ontap_xlsx | default([]) }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
