@@ -1472,5 +1472,224 @@ class Gate1352(unittest.TestCase):
         self.check_unmatched_approval(99, nameless=True)
 
 
+# 1.140.0: Admin Appearance - live default portal look without redeploy
+class DefaultLook1400(Admin):
+    def look_form(self, page):
+        return inputs(page)
+
+    def test_appearance_tab_renders_all_looks_under_strict_csp(self):
+        code, page, headers = self.http("/admin?tab=appearance")
+        self.assertEqual(code, 200)
+        self.assertIn("script-src 'self'", headers)
+        self.assertIn("style-src 'self'", headers)
+        self.assertNotRegex(page, r'<script(?![^>]* src=)| style="| on(?:click|load)="')
+        self.assertIn("Default portal look", page)
+        self.assertIn('id="look-current">Metro Atlas</strong>', page)
+        self.assertIn("&#10003; Live", page)
+        self.assertIn("From deploy (portal_look)", page)
+        self.assertIn("Browser preference wins.", page)
+        self.assertIn('id="look-undo" name="op" value="undo-default-look" disabled', page)
+        for key in sp.rules.SKIN_KEYS:
+            self.assertIn('data-look-key="%s"' % key, page)
+            self.assertIn('data-preview-skin="%s"' % key, page)
+
+    def test_set_default_look_live_persists_and_audits(self):
+        code, page, _ = self.http("/admin?tab=appearance")
+        self.assertEqual(code, 200)
+        f = self.look_form(page)
+        code, _, headers = self.http("/admin", form={
+            "portal-token": f["portal-token"],
+            "look_revision": f["look_revision"],
+            "op": "default-look",
+            "look": "strata",
+        })
+        self.assertEqual(code, 303)
+        self.assertIn("Location: /portal/admin?tab=appearance&look_saved=applied", headers)
+        self.assertEqual(self.cfg.skin, "strata")
+
+        # Immediately reflected on portal home and admin without restart/redeploy.
+        code, home, _ = self.http("/", "DEFAULT")
+        self.assertEqual(code, 200)
+        self.assertIn('data-skin="strata" data-skin-default="strata"', home)
+        self.assertIn('<option value="strata"', home)
+
+        code, ap, _ = self.http("/admin?tab=appearance&look_saved=applied")
+        self.assertEqual(code, 200)
+        self.assertIn('data-skin="strata" data-skin-default="strata"', ap)
+        self.assertIn('id="look-current">Strata Console</strong>', ap)
+        self.assertIn("Strata Console applied as the site default.", ap)
+        self.assertIn(ADMIN + " \u00b7 ", ap)
+        self.assertIn("UTC</span>", ap)
+        self.assertIn('title="Restore Metro Atlas"', ap)
+
+        # Audited in Admin Activity tab.
+        code, act, _ = self.http("/admin?tab=activity&event=Look+changed")
+        self.assertEqual(code, 200)
+        self.assertIn("Look changed", act)
+        self.assertIn("Default portal look", act)
+        self.assertIn("Metro Atlas -&gt; Strata Console", act)
+        self.assertIn(ADMIN, act)
+
+        # Persists across a fresh LookStore instance (simulating restart).
+        fresh = access.LookStore(self.cfg.data, self.portal.log, "metro-atlas", sp.rules.SKIN_KEYS, sp.DEFAULT_SKIN)
+        self.assertEqual(fresh.current(), "strata")
+        self.assertEqual(fresh.read()[0]["changed_by"], ADMIN)
+        self.assertEqual(fresh.read()[0]["previous"], "metro-atlas")
+
+    def test_undo_restores_previous_and_disables_undo(self):
+        f = self.look_form(self.http("/admin?tab=appearance")[1])
+        self.assertEqual(self.http("/admin", form={
+            "portal-token": f["portal-token"], "look_revision": f["look_revision"],
+            "op": "default-look", "look": "relay",
+        })[0], 303)
+        self.assertEqual(self.cfg.skin, "relay")
+
+        f2 = self.look_form(self.http("/admin?tab=appearance")[1])
+        code, _, headers = self.http("/admin", form={
+            "portal-token": f2["portal-token"], "look_revision": f2["look_revision"],
+            "op": "undo-default-look",
+        })
+        self.assertEqual(code, 303)
+        self.assertIn("Location: /portal/admin?tab=appearance&look_saved=restored", headers)
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+
+        ap = self.http("/admin?tab=appearance&look_saved=restored")[1]
+        self.assertIn("Metro Atlas restored as the site default.", ap)
+        self.assertIn('id="look-undo" name="op" value="undo-default-look" disabled', ap)
+
+        act = self.http("/admin?tab=activity&event=Look+changed")[1]
+        self.assertIn("Restored Metro Atlas (was Relay Panel)", act)
+
+        # Second undo is refused cleanly.
+        f3 = self.look_form(ap)
+        code, body, _ = self.http("/admin", form={
+            "portal-token": f3["portal-token"], "look_revision": f3["look_revision"],
+            "op": "undo-default-look",
+        })
+        self.assertEqual(code, 400)
+        self.assertIn("No previous default look to restore.", body)
+
+    def test_admin_only_csrf_origin_and_revision_enforced(self):
+        f = self.look_form(self.http("/admin?tab=appearance")[1])
+        # Non-admin ("DEFAULT" and APPROVE are not in portal_admins or portal_admin_groups) denied on GET and POST.
+        for non_admin in ("DEFAULT", APPROVE):
+            self.assertEqual(self.http("/admin?tab=appearance", non_admin)[0], 403)
+            self.assertEqual(self.http("/admin", non_admin, form={
+                "portal-token": self.portal.token(non_admin), "look_revision": f["look_revision"],
+                "op": "default-look", "look": "metro",
+            })[0], 403)
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+        # Bad or missing CSRF token denied.
+        self.assertEqual(self.http("/admin", form={
+            "portal-token": "wrong", "look_revision": f["look_revision"],
+            "op": "default-look", "look": "metro",
+        }, csrf=False)[0], 403)
+        self.assertEqual(self.http("/admin", form={
+            "look_revision": f["look_revision"],
+            "op": "default-look", "look": "metro",
+        }, csrf=False)[0], 403)
+        # Cross-origin POST denied.
+        self.assertEqual(self.http("/admin", form={
+            "portal-token": f["portal-token"], "look_revision": f["look_revision"],
+            "op": "default-look", "look": "metro",
+        }, origin="https://evil.example.mil")[0], 403)
+        # Stale revision rejected with 400.
+        self.assertEqual(self.http("/admin", form={
+            "portal-token": f["portal-token"], "look_revision": "stale-rev",
+            "op": "default-look", "look": "metro",
+        })[0], 400)
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+
+    def test_works_while_aap_is_unavailable(self):
+        self.api.unavailable = True
+        self.portal.admin_catalog.read(force=True)
+        f = self.look_form(self.http("/admin?tab=appearance")[1])
+        code, _, _ = self.http("/admin", form={
+            "portal-token": f["portal-token"], "look_revision": f["look_revision"],
+            "op": "default-look", "look": "atlas-night",
+        })
+        self.assertEqual(code, 303)
+        self.assertEqual(self.cfg.skin, "atlas-night")
+
+    def test_unknown_look_rejected_and_corrupt_storage_falls_back_to_default(self):
+        f = self.look_form(self.http("/admin?tab=appearance")[1])
+        code, body, _ = self.http("/admin", form={
+            "portal-token": f["portal-token"], "look_revision": f["look_revision"],
+            "op": "default-look", "look": "unknown-look",
+        })
+        self.assertEqual(code, 400)
+        self.assertIn("Unknown portal look.", body)
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+
+        # Unknown look in portal-look.json falls back safely to default and surfaces a warning.
+        look_file = Path(self.cfg.data) / "portal-look.json"
+        look_file.write_text(json.dumps({"schema_version": 1, "look": "no-such-look", "previous": "also-bad", "saves": 2}))
+        self.cfg.look_store.stamp = object()
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+        ap = self.http("/admin?tab=appearance")[1]
+        self.assertIn("Stored default look could not be used", ap)
+        self.assertIn('data-skin="metro-atlas" data-skin-default="metro-atlas"', ap)
+
+        # Corrupt JSON falls back safely to default.
+        look_file.write_text("{not json")
+        self.cfg.look_store.stamp = object()
+        self.assertEqual(self.cfg.skin, "metro-atlas")
+
+        # Valid look with unknown previous keeps the valid look and disables undo.
+        look_file.write_text(json.dumps({"schema_version": 1, "look": "relay", "previous": "bogus", "saves": 3}))
+        self.cfg.look_store.stamp = object()
+        self.assertEqual(self.cfg.skin, "relay")
+        self.assertIsNone(self.cfg.look_store.read()[0]["previous"])
+
+    def test_browser_pick_still_wins_over_live_default(self):
+        import subprocess
+        static_dir = Path(sp.__file__).resolve().parent / "static"
+        script = r"""
+        const vm = require("vm"), fs = require("fs"), assert = require("assert");
+        const code = fs.readFileSync(process.argv[1], "utf8");
+        function run(serverDefault, savedPick, search) {
+          const attrs = {"data-skin": serverDefault, "data-skin-default": serverDefault};
+          const store = new Map();
+          if (savedPick !== null) store.set("site-portal-look", savedPick);
+          const warnings = [];
+          const root = {
+            getAttribute: k => attrs[k] ?? null,
+            setAttribute: (k, v) => { attrs[k] = String(v); },
+            classList: { toggle() {}, contains() { return false; } }
+          };
+          const ctx = {
+            document: { documentElement: root, addEventListener() {} },
+            window: {},
+            location: { search: search || "" },
+            localStorage: { getItem: k => store.get(k) ?? null, removeItem: k => store.delete(k), setItem: (k, v) => store.set(k, v) },
+            console: { warn: (...a) => warnings.push(a) },
+            URLSearchParams
+          };
+          vm.runInNewContext(code, ctx);
+          return { skin: attrs["data-skin"], store, warnings };
+        }
+        // 1. Visitor with no saved pick gets the live server default ("strata").
+        assert.strictEqual(run("strata", null, "").skin, "strata");
+        // 2. Visitor with their own browser pick ("relay") keeps "relay" even after site default changed to "strata".
+        assert.strictEqual(run("strata", "relay", "").skin, "relay");
+        // 3. ?look= wins over both.
+        assert.strictEqual(run("strata", "relay", "?look=atlas-clean").skin, "atlas-clean");
+        // 4. Unknown browser pick clears storage, warns, and uses server default ("strata").
+        const bad = run("strata", "no-such-look", "");
+        assert.strictEqual(bad.skin, "strata");
+        assert.strictEqual(bad.store.has("site-portal-look"), false);
+        assert.strictEqual(bad.warnings.length, 1);
+        // 5. Unknown ?look= warns and uses server default.
+        const badQ = run("strata", "relay", "?look=bogus");
+        assert.strictEqual(badQ.skin, "strata");
+        assert.strictEqual(badQ.warnings.length, 1);
+        """
+        subprocess.run(["node", "-e", script, str(static_dir / "portal-theme.js")], check=True)
+
+
+for _n in [n for n in vars(Admin) if n.startswith("test_")]:
+    setattr(DefaultLook1400, _n, None)
+
+
 if __name__ == "__main__":
     unittest.main()

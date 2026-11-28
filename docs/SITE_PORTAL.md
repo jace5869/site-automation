@@ -1897,9 +1897,12 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 ## The look
 
 In 1.136.1 the portal and classic wall share the same **Look** picker. Both start with `portal_look` (default
-`metro-atlas`). A viewer's choice is kept in their browser and applies on both pages. Removed or unknown saved
-looks fall back to the configured default. An unavailable configured look produces a warning and uses
-`metro-atlas` for `portal_look` or `atlas` for `report_web_theme`. A link can carry `?look=metro` for that page only.
+`metro-atlas`). From 1.140.0, portal admins can also change the site's default look live in **Admin -> Appearance**
+(`/portal/admin?tab=appearance`) without redeploying: it shows a live preview of all ten looks, stores the chosen
+default in the portal data volume (`portal-look.json`) over a CSRF-protected admin-only POST, records who changed it
+and when (shown on the Appearance banner and in **Admin -> Activity**), and supports one-step **Undo**. A viewer's own
+browser choice (`Look` picker or `?look=KEY`) still takes priority over the site default. Removed or unknown saved,
+stored, or configured looks fall back to the default (`metro-atlas` for `portal_look`, `atlas` for `report_web_theme`).
 
 Each look has its own shape, on the real data of the page:
 

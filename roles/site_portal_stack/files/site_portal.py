@@ -592,11 +592,12 @@ class Config(object):
         if self.look not in LOOKS + ("standard", "command", "portal", "glass"):
             logging.getLogger(__name__).warning("report_web_theme %r is unavailable. Using atlas.", self.look)
         self.look = self.look if self.look in LOOKS else "atlas"
-        # 1.136.1: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
+        # 1.136.1 / 1.140.0: portal_look - the look every viewer starts with; admins may override it live (portal-look.json)
         requested_skin = str(g("PORTAL_LOOK", DEFAULT_SKIN)).strip().lower()
-        self.skin = rules.site_portal_skin(requested_skin)
-        if self.skin != requested_skin:
-            logging.getLogger(__name__).warning("portal_look %r is unavailable. Using %s.", requested_skin, self.skin)
+        self.configured_skin = rules.site_portal_skin(requested_skin)
+        self.look_store = None
+        if self.configured_skin != requested_skin:
+            logging.getLogger(__name__).warning("portal_look %r is unavailable. Using %s.", requested_skin, self.configured_skin)
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
         try:
@@ -804,6 +805,14 @@ class Config(object):
         sp = "/" + raw_sp.strip("/")
         self.stigman_path = ((sp.rstrip("/") + "/") if re.match(r"^/[A-Za-z0-9_./-]*\Z", sp) and not raw_sp.startswith("//")
                              and "//" not in sp and ".." not in sp else "/")
+
+    @property
+    def skin(self):
+        return self.look_store.current() if self.look_store is not None else self.configured_skin
+
+    @skin.setter
+    def skin(self, value):
+        self.configured_skin = rules.site_portal_skin(value)
 
     def admin_allowed(self, cn):
         # 1.133.0 (Neon): only the admin lists - both empty: nobody (never the run + approve lists)
@@ -3055,6 +3064,9 @@ class Portal(object):
 
         cfg.access = portal_access.Store(cfg.data, self.log, groups_changed, controller=cfg.aap_url)
         cfg.access.read()
+        # 1.140.0: server-side live default portal look (persisted in portal-look.json, audited in portal.log)
+        cfg.look_store = portal_access.LookStore(cfg.data, self.log, getattr(cfg, "configured_skin", DEFAULT_SKIN), rules.SKIN_KEYS, DEFAULT_SKIN)
+        cfg.look_store.read()
         self.admin_catalog = cfg.admin_catalog = portal_admin.Catalog(self.aap, cfg)
         cfg.access_rows = lambda: access_rows(cfg)
         if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
@@ -7781,8 +7793,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
             return False
 
         def _admin_page(self, cn, body):
-            head = ('<link rel="stylesheet" href="%sstatic/admin.css"><script defer src="%sstatic/admin.js"></script>' %
-                    (esc(cfg.path), esc(cfg.path)))
+            head = ('<link rel="stylesheet" href="%sstatic/admin.css?v=%s"><script defer src="%sstatic/admin.js?v=%s"></script>' %
+                    (esc(cfg.path), static_version("admin.css"), esc(cfg.path), static_version("admin.js")))
             return self._send(200, shell(cfg, "Admin", body, cn, portal.token(cn), page="admin", head=head), "text/html; charset=utf-8")
 
         def _deny(self, why, api):
@@ -8189,8 +8201,13 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     return self._send(200, body, "text/plain; charset=utf-8", [("Content-Disposition", 'attachment; filename="%s"' % filename)])
                 if code == 303:
                     location = cfg.path + "admin"
-                    if form.get("op") == ["save"]:
+                    op = (form.get("op") or [""])[-1]
+                    if op == "save":
                         location += "#" + form["id"][-1]
+                    elif op == "default-look":
+                        location += "?tab=appearance&look_saved=applied"
+                    elif op == "undo-default-look":
+                        location += "?tab=appearance&look_saved=restored"
                     return self._send(303, b"", "text/plain", [("Location", location)])
                 return self._admin_page(cn, body)
             except ValueError as exc:

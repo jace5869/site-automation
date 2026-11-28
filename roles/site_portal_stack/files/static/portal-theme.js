@@ -7,16 +7,21 @@
     var t = localStorage.getItem("site-report-theme");
     if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
   } catch (e) { /* no storage: Auto */ }
-  // 1.136.1: the look (portal_look; html[data-skin], static/portal-looks.css). ?look=KEY shows that look on this page only (as the wall's
-  // ?style=); a pick in the bar's Look list is kept in this browser (site-portal-look). Removed or unknown names use the configured default.
+  // 1.136.1 / 1.140.0: the look (portal_look or live admin default; html[data-skin], static/portal-looks.css).
+  // ?look=KEY shows that look on this page only; a pick in the bar's Look list is kept in this browser (site-portal-look)
+  // and wins over the site default. Removed or unknown names fall back to the default.
   var LOOKS = ["metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite", "strata", "metro", "relay", "atlas"];
+  var def = root.getAttribute("data-skin-default");
+  if (LOOKS.indexOf(def) < 0) def = "metro-atlas";
+  if (LOOKS.indexOf(root.getAttribute("data-skin")) < 0) root.setAttribute("data-skin", def);
   var lk = null, picked = null;
   try { lk = new URLSearchParams(location.search).get("look"); } catch (e) { lk = null; }
   try { picked = localStorage.getItem("site-portal-look"); } catch (e) { picked = null; }
   if (LOOKS.indexOf(lk) >= 0) root.setAttribute("data-skin", lk);
   else if (!lk && LOOKS.indexOf(picked) >= 0) root.setAttribute("data-skin", picked);
   else if (lk || picked) {
-    console.warn("Portal look %s is unavailable. Using %s.", lk || picked, root.getAttribute("data-skin-default"));
+    console.warn("Portal look %s is unavailable. Using %s.", lk || picked, def);
+    if (root.getAttribute("data-skin") !== def) root.setAttribute("data-skin", def);
     if (!lk) {
       try { localStorage.removeItem("site-portal-look"); } catch (e) { /* storage is optional */ }
     }

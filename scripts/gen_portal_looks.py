@@ -137,6 +137,7 @@ def look_tokens():
     parts = []
     for key, _name, sans, display, mono, radius, dark, light in LOOKS:
         sel = ':root[data-skin="%s"]' % key
+        prev = '[data-preview-skin="%s"]' % key
         fonts = '--sans:"%s",%s;--display:"%s",%s;--mono:"%s",%s;--r:%s' % (sans, SYS_SANS, display, SYS_SANS, mono, SYS_MONO, radius)
         L, D = tokens(light, False), tokens(dark, True)
         parts.append("\n".join((
@@ -144,7 +145,13 @@ def look_tokens():
             "@media (prefers-color-scheme:dark){%s}" % block(sel + ':not([data-theme="light"])', D, fonts),
             block(sel + '[data-theme="dark"]', D, fonts),
             block(sel + ":has(#theme-light:checked)", L, fonts),
-            block(sel + ":has(#theme-dark:checked)", D, fonts))))
+            block(sel + ":has(#theme-dark:checked)", D, fonts),
+            # 1.140.0: Admin Appearance preview swatches and live stage tokens (no inline style).
+            block(prev, L, fonts),
+            "@media (prefers-color-scheme:dark){%s}" % block(':root:not([data-theme="light"]) ' + prev, D, fonts),
+            block(':root[data-theme="dark"] ' + prev, D, fonts),
+            block(':root:has(#theme-light:checked) ' + prev, L, fonts),
+            block(':root:has(#theme-dark:checked) ' + prev, D, fonts))))
     return "\n".join(parts)
 
 

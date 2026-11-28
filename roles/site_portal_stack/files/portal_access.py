@@ -344,3 +344,133 @@ class Store:
     @staticmethod
     def revision(doc, error):
         return digest([doc, error])
+
+
+# 1.140.0: live site-wide default portal look stored in the portal data volume (portal-look.json).
+class LookStore:
+    """Durable, admin-managed default portal look with one-step undo and audit logging."""
+    def __init__(self, folder, log, fallback_skin, valid_skins, default_skin="metro-atlas"):
+        self.path = os.path.join(folder, "portal-look.json")
+        self.lock = threading.RLock()
+        self.log = log
+        self.valid_skins = tuple(valid_skins)
+        self.default_skin = default_skin if default_skin in self.valid_skins else self.valid_skins[0]
+        self.fallback = fallback_skin if fallback_skin in self.valid_skins else self.default_skin
+        self.stamp = object()
+        self.state = self._default_state()
+        self.warning = ""
+
+    def _default_state(self):
+        return {"schema_version": 1, "look": self.fallback, "previous": None,
+                "changed_by": "", "changed_at": "", "saves": 0}
+
+    def read(self, for_write=False):
+        with self.lock:
+            stamp, audit = object(), None
+            try:
+                st = os.lstat(self.path)
+                if not stat.S_ISREG(st.st_mode):
+                    raise ValueError("expected a regular portal-look file")
+                stamp = (st.st_ino, st.st_ctime_ns, st.st_size)
+                if stamp == self.stamp:
+                    return self.state, self.warning
+                with open(self.path, "rb") as f:
+                    raw = f.read(64 * 1024 + 1)
+                if len(raw) > 64 * 1024:
+                    raise ValueError("portal-look.json is too large")
+                doc = json.loads(raw, object_pairs_hook=unique)
+                if not isinstance(doc, dict):
+                    raise ValueError("invalid portal-look.json")
+                audit = doc.pop("last_change", None)
+                if doc.get("schema_version") != 1:
+                    raise ValueError("unsupported portal-look schema")
+                look = doc.get("look")
+                if not isinstance(look, str) or look not in self.valid_skins:
+                    raise ValueError("unknown portal look %r" % (look,))
+                prev = doc.get("previous")
+                if prev is not None and (not isinstance(prev, str) or prev not in self.valid_skins):
+                    prev = None
+                changed_by = doc.get("changed_by") if isinstance(doc.get("changed_by"), str) else ""
+                changed_at = doc.get("changed_at") if isinstance(doc.get("changed_at"), str) else ""
+                saves = doc.get("saves") if type(doc.get("saves")) is int and 0 <= doc.get("saves") < 2 ** 53 else 0
+                state = {"schema_version": 1, "look": look, "previous": prev,
+                         "changed_by": changed_by[:256], "changed_at": changed_at[:64], "saves": saves}
+                warning = ""
+            except FileNotFoundError:
+                stamp, state, warning = None, self._default_state(), ""
+            except (OSError, ValueError, RecursionError) as exc:
+                state = self._default_state()
+                warning = "Stored default look could not be used (%s). Using %s." % (exc, self.fallback)
+            if not warning and isinstance(audit, dict) and audit.get("event") == "look_changed" and label(audit.get("id")):
+                try:
+                    recent = self.log.read("look_changed", limit=1)
+                    if not recent or recent[-1].get("id") != audit["id"]:
+                        self.log.add(audit)
+                except OSError:
+                    if for_write:
+                        raise
+                    stamp = object()
+            self.state, self.warning, self.stamp = state, warning, stamp
+            return self.state, self.warning
+
+    def current(self):
+        return self.read()[0]["look"]
+
+    def set_look(self, look, revision, cn, at):
+        with self.lock:
+            old, warning = self.read(for_write=True)
+            if revision != self.revision(old, warning):
+                raise ValueError("Default look changed since this page was opened. Reload and review the current setting.")
+            if not isinstance(look, str) or look not in self.valid_skins:
+                raise ValueError("Unknown portal look.")
+            if old["look"] == look and not warning:
+                return old
+            new = {"schema_version": 1, "look": look, "previous": old["look"],
+                   "changed_by": str(cn or "")[:256], "changed_at": str(at or "")[:64],
+                   "saves": int(old.get("saves") or 0) + 1}
+            audit = {"event": "look_changed", "id": os.urandom(16).hex(), "user": str(cn or ""),
+                     "at": str(at or ""), "before": old["look"], "after": look, "undo": False}
+            self._write(new, audit)
+            return self.state
+
+    def undo(self, revision, cn, at):
+        with self.lock:
+            old, warning = self.read(for_write=True)
+            if revision != self.revision(old, warning):
+                raise ValueError("Default look changed since this page was opened. Reload and review the current setting.")
+            prev = old.get("previous")
+            if not isinstance(prev, str) or prev not in self.valid_skins:
+                raise ValueError("No previous default look to restore.")
+            new = {"schema_version": 1, "look": prev, "previous": None,
+                   "changed_by": str(cn or "")[:256], "changed_at": str(at or "")[:64],
+                   "saves": int(old.get("saves") or 0) + 1}
+            audit = {"event": "look_changed", "id": os.urandom(16).hex(), "user": str(cn or ""),
+                     "at": str(at or ""), "before": old["look"], "after": prev, "undo": True}
+            self._write(new, audit)
+            return self.state
+
+    def _write(self, new, audit):
+        folder = os.path.dirname(self.path)
+        os.makedirs(folder, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".portal-look-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(dict(new, last_change=audit), f, separators=(",", ":"))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+            directory = os.open(folder, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            self.log.add(audit)
+            self.stamp = object()
+            self.read()
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    @staticmethod
+    def revision(state, warning):
+        return digest([state, warning])

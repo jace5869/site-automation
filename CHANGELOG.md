@@ -2,6 +2,8 @@
 
 ## 1.140.0 — 2026-11-28
 
+- **Report pages' Copy both with embedded picture** (`roles/site_email/templates/site_report.js`, `report_atlas.html.j2`, `report_brief.html.j2`, `report_ops.html.j2`, shared helpers in `roles/site_portal_stack/files/static/wall-fleet.js`): each web report section's **Copy both** button copies both text and an embedded PNG snapshot (`data:image/png;base64,...`) in the `text/html` clipboard alongside `text/plain`, with clear four-state feedback (**Copying…**, **Copied**, **Text only** with why, and **Copy failed** with why). Safe when `site_report.js` runs twice on a saved page; email report templates are unchanged.
+- **Admin live default portal look** (`/portal/admin?tab=appearance`, `portal_access.LookStore`, `portal_admin.py`, `site_portal.py`, `static/admin.css`, `static/admin.js`, `static/portal-theme.js`, `scripts/gen_portal_looks.py`): portal admins can preview all ten looks and set or undo the site's default portal look live without a redeploy. Stored atomically in the portal data volume (`portal-look.json`), restricted to portal admins with same-origin + CSRF token protection, audited with who/when in the Appearance banner and Admin **Activity** tab, and falls back to the default on any unknown look while keeping each visitor's own browser look preference in priority.
 - Unavailable report and portal looks use their defaults and log a warning.
 - Portal deployment warns when nobody is configured as an admin or runner.
 - SMB inventory explains the user@REALM and negotiate settings for FIPS hosts.

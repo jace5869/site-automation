@@ -295,6 +295,19 @@ ul.passed .ic{width:17px;height:17px}
 .tile:hover .tcopy,.tcopy:focus-visible{opacity:1}
 .tcopy:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
 .copy.done,.tcopy.done{color:var(--ok);border-color:var(--ok-bd);opacity:1}
+.scopy:disabled{opacity:.6;cursor:default}
+.scopy.st-info{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.scopy.st-good{color:var(--ok);border-color:var(--ok-bd);background:var(--ok-bg)}
+.scopy.st-warn{color:var(--warning);border-color:var(--warning-bd);background:var(--warning-bg)}
+.scopy.st-bad{color:var(--critical);border-color:var(--critical-bd);background:var(--critical-bg)}
+.scopy-bar{margin:14px -20px -2px;padding:10px 20px;border-top:1px solid var(--edge);display:flex;align-items:center;gap:9px;font-size:13.5px;line-height:1.45;color:var(--muted)}
+.scopy-bar[hidden]{display:none}
+.scopy-bar .sg{flex:none;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:5px;font-weight:700;font-size:13px;line-height:1}
+.scopy-bar.st-info{color:var(--accent)}
+.scopy-bar.st-good{color:var(--ok)}
+.scopy-bar.st-warn{color:var(--warning)}
+.scopy-bar.st-bad{color:var(--critical)}
+@media print{.scopy-bar{display:none!important}}
 .tcopy .i2,.scopy .i2,.ccopy .i2,.done .i1{display:none}.done .i2{display:block}
 .copy[hidden],.tcopy[hidden],.btn[hidden]{display:none}
 @media (hover:none){.tcopy{opacity:.8}}
@@ -759,7 +772,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <details class="card sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}{% if s.select_export is defined %} data-sel-export="{{ s.select_export | tojson | forceescape }}"{% endif %}>
 <summary><h2>{{ s.title | e }}{% if s.issue_count is defined %}<span class="count">{{ s.issue_count | int }}</span>{% endif %}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
-<button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
+<button class="copy scopy" type="button" hidden title="Copy this section as text and picture" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy both</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.passed | default([]) %}

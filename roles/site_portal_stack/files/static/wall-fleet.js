@@ -827,14 +827,120 @@
     (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
+  // 1.140.0: shared clipboard helpers (reused by wall actions and report pages' Copy both)
+  var copyHelp = {
+    canRichHtml: function () {
+      return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext
+        && (!window.ClipboardItem.supports || window.ClipboardItem.supports("text/html")));
+    },
+    isBlocked: function (e) {
+      return !!(e && (e.name === "NotAllowedError" || e.name === "SecurityError"));
+    },
+    isUnsupported: function (e) {
+      return !!(e && (e.name === "NotSupportedError" || e.name === "DataError" || e.name === "TypeError"));
+    },
+    pngDataUrl: function (cv) {
+      if (!cv || typeof cv.toDataURL !== "function") return "";
+      try {
+        var u = cv.toDataURL("image/png");
+        return typeof u === "string" && u.indexOf("data:image/png;base64,") === 0 ? u : "";
+      } catch (e) { return ""; }
+    },
+    embedPictureHtml: function (html, dataUrl, alt) {
+      var body = html || "";
+      if (!dataUrl || dataUrl.indexOf("data:image/png;base64,") !== 0) return body;
+      return body + '<p><img width="640" style="max-width:100%;height:auto" alt="' + esc(alt || "Snapshot") + '" src="' + dataUrl + '"></p>';
+    },
+    copyTextFallback: function (plain, focusEl) {
+      var text = String(plain == null ? "" : plain);
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext !== false) {
+        return navigator.clipboard.writeText(text).catch(function (e) {
+          if (copyHelp.isBlocked(e)) throw e;
+          return copyHelp._execCopy(text, focusEl);
+        });
+      }
+      return copyHelp._execCopy(text, focusEl);
+    },
+    _execCopy: function (text, focusEl) {
+      return new Promise(function (res, rej) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        try {
+          if (typeof document.execCommand === "function" && document.execCommand("copy")) res();
+          else rej(new Error("The browser blocked text copying."));
+        } catch (e) {
+          rej(e);
+        } finally {
+          if (area.parentNode) area.parentNode.removeChild(area);
+          if (focusEl && typeof focusEl.focus === "function") focusEl.focus();
+        }
+      });
+    },
+    copyBothRich: function (opts) {
+      var notify = opts.onState || function () {};
+      var done = opts.onDone || function () {};
+      var plain = String(opts.plain == null ? "" : opts.plain);
+      var dataUrl = opts.dataUrl || "";
+      var html = copyHelp.embedPictureHtml(opts.html || "", dataUrl, opts.alt);
+      var failMsg = function (e) {
+        if (copyHelp.isBlocked(e)) return "Clipboard access denied. Allow clipboard access and retry.";
+        return (e && e.message) ? String(e.message) : "Clipboard write failed. Try copying again.";
+      };
+      var fallbackText = function (why) {
+        return copyHelp.copyTextFallback(plain, opts.focusEl).then(function () {
+          notify("warn", "Text only", "Text copied. " + why);
+        }, function (e) {
+          notify("bad", "Copy failed", failMsg(e));
+        }).then(done, done);
+      };
+      notify("info", "Copying\u2026", "Writing text and picture\u2026");
+      var canRich = copyHelp.canRichHtml();
+      if (!canRich || !dataUrl) {
+        var why = window.isSecureContext === false
+          ? "Rich HTML and picture copying needs HTTPS."
+          : !canRich ? "This browser does not support picture copying."
+          : "Picture could not be drawn here.";
+        return fallbackText(why);
+      }
+      var items = {"text/plain": new Blob([plain], {type: "text/plain"}), "text/html": new Blob([html], {type: "text/html"})};
+      if (opts.extraItems) {
+        for (var k in opts.extraItems) if (Object.prototype.hasOwnProperty.call(opts.extraItems, k)) items[k] = opts.extraItems[k];
+      }
+      try {
+        // Call clipboard.write synchronously inside the user gesture turn.
+        return navigator.clipboard.write([new ClipboardItem(items)]).then(function () {
+          notify("good", "Copied", "Copied text and picture. Ready to paste.");
+          done();
+        }, function (e) {
+          if (copyHelp.isUnsupported(e)) return fallbackText("This browser does not support picture copying.");
+          notify("bad", "Copy failed", failMsg(e));
+          done();
+        });
+      } catch (e) {
+        if (copyHelp.isUnsupported(e)) return fallbackText("This browser does not support picture copying.");
+        notify("bad", "Copy failed", failMsg(e));
+        done();
+        return Promise.resolve();
+      }
+    }
+  };
   // Monitor share controls: Copy text (text/plain
   // and text/html), Copy picture (PNG), Copy both, Save picture - each says in words what happened. o: {text(), html(), canvas(),
   // file, say (the status element), pic (the picture button's title)} -> [copyText, copyPic, copyBoth, save]
   function actions(o) {
     var say = o.say;
-    var blob = function () { return new Promise(function (res, rej) { o.canvas().toBlob(function (bl) { if (bl) res(bl); else rej(new Error("no picture")); }, "image/png"); }); };
-    var can = function () { return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext); };
-    var blocked = function (e) { return e && (e.name === "NotAllowedError" || e.name === "SecurityError"); };
+    var blob = function (cv) {
+      return new Promise(function (res, rej) {
+        (cv || o.canvas()).toBlob(function (bl) { if (bl) res(bl); else rej(new Error("no picture")); }, "image/png");
+      });
+    };
+    var can = copyHelp.canRichHtml;
+    var blocked = copyHelp.isBlocked;
     var b = function (t, cls, fn, title) {
       var x = shareElement("button", cls || "", [t], {type: "button", title: title});
       x.addEventListener("click", function () { if (o.prepare) o.prepare(); fn(); });
@@ -865,7 +971,9 @@
     }, o.pic || "The picture, as a PNG");
     var copyBoth = b("Copy both", "", function () {
       if (!can()) { say.textContent = "This browser keeps the clipboard closed here - select the message and press Ctrl+C, then use Save picture."; return; }
-      write({"text/plain": new Blob([o.text()], {type: "text/plain"}), "text/html": new Blob([o.html()], {type: "text/html"}), "image/png": blob()},
+      var cv = o.canvas();
+      var html = copyHelp.embedPictureHtml(o.html(), copyHelp.pngDataUrl(cv), o.pic || "Ops monitor snapshot");
+      write({"text/plain": new Blob([o.text()], {type: "text/plain"}), "text/html": new Blob([html], {type: "text/html"}), "image/png": blob(cv)},
         "Copied together - press Ctrl+V in Teams. If only the text arrives, press Copy picture and Ctrl+V again (Teams picks one form of a paste).",
         function (e) { return blocked(e) ? "The browser blocked the clipboard - select the message and press Ctrl+C, then use Save picture." : "This browser takes one form at a time - use Copy text, paste, then Copy picture."; });
     }, "The message and the picture on the clipboard together (Teams may paste only one of them)");
@@ -1022,5 +1130,5 @@
             ["rect", {x: 3, y: 9.5, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 9.5, width: 5, height: 5, rx: 1}], ["circle", {cx: 18.5, cy: 12, r: 3}],
             ["rect", {x: 3, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 9.5, y: 16, width: 5, height: 5, rx: 1}], ["rect", {x: 16, y: 16, width: 5, height: 5, rx: 1}]];
   window.SAWallFleet = {icon: monitorIcon, tile: fleetTile, groupChart: groupChart, render: render, fitted: fitted, failed: function () { return !!FAIL; },
-    nodes: {line: nline, text: ntext, html: nhtml, picture: npicture, panel: nodesPanel}, _adapt: adapt};
+    copy: copyHelp, nodes: {line: nline, text: ntext, html: nhtml, picture: npicture, panel: nodesPanel}, _adapt: adapt};
 })();

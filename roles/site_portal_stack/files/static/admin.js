@@ -113,3 +113,40 @@ if (file) {
     if (file.files.length) document.querySelector("textarea[name=document]").value = await file.files[0].text();
   });
 }
+
+// 1.140.0: Admin Appearance - live default portal look preview picker (progressive enhancement over the POST form).
+const lookApp = document.querySelector(".look-app");
+if (lookApp) {
+  const current = lookApp.dataset.currentLook || "";
+  const portalName = lookApp.dataset.portalName || "the portal";
+  const cards = Array.from(lookApp.querySelectorAll(".look-card"));
+  const stage = document.querySelector("#look-stage");
+  const previewName = document.querySelector("#look-preview-name");
+  const message = document.querySelector("#look-message");
+  const lookValue = document.querySelector("#look-value");
+  const applyBtn = document.querySelector("#look-apply");
+  let selected = current;
+
+  function selectLook(key) {
+    const card = cards.find(b => b.dataset.lookKey === key);
+    if (!card) return;
+    selected = key;
+    for (const b of cards) {
+      b.setAttribute("aria-pressed", String(b.dataset.lookKey === selected));
+    }
+    if (stage) stage.setAttribute("data-preview-skin", selected);
+    if (previewName) previewName.textContent = card.dataset.lookName || selected;
+    if (lookValue) lookValue.value = selected;
+    if (applyBtn) applyBtn.disabled = selected === current;
+    if (message) {
+      message.textContent = selected === current
+        ? "This is the current site default."
+        : "Apply " + (card.dataset.lookName || selected) + " as the default for " + portalName + ".";
+    }
+  }
+
+  for (const card of cards) {
+    card.addEventListener("click", () => selectLook(card.dataset.lookKey));
+  }
+  if (applyBtn) applyBtn.disabled = selected === current;
+}

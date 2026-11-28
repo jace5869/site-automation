@@ -4222,7 +4222,7 @@ class Look(unittest.TestCase):
         for want, given in (("ops", "ops"), ("brief", "BRIEF"), ("atlas", "atlas"), ("atlas", ""), ("atlas", "command"), ("atlas", "x\"><b>")):
             cfg = sp.Config({"PORTAL_THEME": given})
             self.assertEqual(cfg.look, want, given)
-            self.assertIn('<html lang="en" data-look="%s" data-skin="strata" data-skin-default="strata">' % want, sp.shell(cfg, "T", "<p>x</p>"))   # 1.135.0: the look on top
+            self.assertIn('<html lang="en" data-look="%s" data-skin="%s" data-skin-default="%s">' % (want, sp.DEFAULT_SKIN, sp.DEFAULT_SKIN), sp.shell(cfg, "T", "<p>x</p>"))   # 1.135.0 / 1.140.0: the look on top
         self.assertEqual(sp.Config({}).look, "atlas")                                   # report_web_theme's default
 
     def test_portal_css_is_made_from_the_report_palettes(self):
@@ -5334,7 +5334,7 @@ class Motion1783(unittest.TestCase):
         self.assertEqual(self.cfg().motion, "auto")
         for v, want in (("always", "always"), ("OFF", "off"), (" Auto ", "auto"), ("sometimes", "auto"), ("", "auto")):
             self.assertEqual(self.cfg(PORTAL_MOTION=v).motion, want, v)
-        sk = ' data-skin="strata" data-skin-default="strata"'                                     # 1.135.0: portal_look
+        sk = ' data-skin="%s" data-skin-default="%s"' % (sp.DEFAULT_SKIN, sp.DEFAULT_SKIN)         # 1.135.0 / 1.140.0: portal_look
         for mode, html_ in (("auto", '<html lang="en" data-look="atlas"%s>' % sk), ("always", '<html lang="en" data-look="atlas"%s class="motion-always">' % sk),
                             ("off", '<html lang="en" data-look="atlas"%s class="motion-off">' % sk)):
             self.assertIn(html_, sp.shell(self.cfg(PORTAL_MOTION=mode), "T", "<p>x</p>"), mode)

@@ -157,8 +157,200 @@
     if(html&&c&&c.write&&window.ClipboardItem){try{c.write([new ClipboardItem({'text/plain':new Blob([plain],{type:'text/plain'}),
       'text/html':new Blob([html],{type:'text/html'})})]).then(ok,txt)}catch(e){txt()}}
     else txt()}
-  function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  function esc(t){return String(t===undefined||t===null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   function one(el){return (el?el.textContent:'').replace(/\s+/g,' ').trim()}
+  /* 1.140.0: Copy both on report sections (text + embedded PNG in HTML clipboard, 4 states: copying, copied, text only + why,
+     failed + why). Reuses wall-fleet.js copy helpers when loaded in the portal shell; keeps the same pure-ASCII fallback for
+     standalone and saved report pages. */
+  var copyHelp=(window.SAWallFleet&&window.SAWallFleet.copy)||null;
+  if(!copyHelp){
+    copyHelp={
+      canRichHtml:function(){
+        return !!(navigator.clipboard&&navigator.clipboard.write&&window.ClipboardItem&&window.isSecureContext!==false
+          &&(!window.ClipboardItem.supports||window.ClipboardItem.supports('text/html')))},
+      isBlocked:function(e){return !!(e&&(e.name==='NotAllowedError'||e.name==='SecurityError'))},
+      isUnsupported:function(e){return !!(e&&(e.name==='NotSupportedError'||e.name==='DataError'||e.name==='TypeError'))},
+      pngDataUrl:function(cv){
+        if(!cv||typeof cv.toDataURL!=='function')return '';
+        try{var u=cv.toDataURL('image/png');return typeof u==='string'&&u.indexOf('data:image/png;base64,')===0?u:''}catch(e){return ''}},
+      embedPictureHtml:function(html,dataUrl,alt){
+        var b=html||'';if(!dataUrl||dataUrl.indexOf('data:image/png;base64,')!==0)return b;
+        return b+'<p><img width="640" style="max-width:100%;height:auto" alt="'+esc(alt||'Report snapshot')+'" src="'+dataUrl+'"></p>'},
+      _execCopy:function(text,focusEl){
+        return new Promise(function(res,rej){
+          var a=document.createElement('textarea');a.value=text;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
+          document.body.appendChild(a);a.select();
+          try{if(typeof document.execCommand==='function'&&document.execCommand('copy'))res();else rej(new Error('The browser blocked text copying.'))}
+          catch(e){rej(e)}
+          finally{if(a.parentNode)a.parentNode.removeChild(a);if(focusEl&&typeof focusEl.focus==='function')focusEl.focus()}})},
+      copyTextFallback:function(plain,focusEl){
+        var text=String(plain===undefined||plain===null?'':plain);
+        if(navigator.clipboard&&navigator.clipboard.writeText&&window.isSecureContext!==false){
+          return navigator.clipboard.writeText(text).then(function(){},function(e){
+            if(copyHelp.isBlocked(e))throw e;return copyHelp._execCopy(text,focusEl)})}
+        return copyHelp._execCopy(text,focusEl)},
+      copyBothRich:function(opts){
+        var notify=opts.onState||function(){},done=opts.onDone||function(){};
+        var plain=String(opts.plain===undefined||opts.plain===null?'':opts.plain);
+        var dataUrl=opts.dataUrl||'',html=copyHelp.embedPictureHtml(opts.html||'',dataUrl,opts.alt);
+        var failMsg=function(e){if(copyHelp.isBlocked(e))return 'Clipboard access denied. Allow clipboard access and retry.';
+          return e&&e.message?String(e.message):'Clipboard write failed. Try copying again.'};
+        var fallbackText=function(why){
+          return copyHelp.copyTextFallback(plain,opts.focusEl).then(function(){
+            notify('warn','Text only','Text copied. '+why)},function(e){notify('bad','Copy failed',failMsg(e))}).then(done,done)};
+        notify('info','Copying\u2026','Writing text and picture\u2026');
+        var canRich=copyHelp.canRichHtml();
+        if(!canRich||!dataUrl){
+          var why=window.isSecureContext===false?'Rich HTML and picture copying needs HTTPS.'
+            :!canRich?'This browser does not support picture copying.':'Picture could not be drawn here.';
+          return fallbackText(why)}
+        var items={'text/plain':new Blob([plain],{type:'text/plain'}),'text/html':new Blob([html],{type:'text/html'})};
+        try{
+          return navigator.clipboard.write([new ClipboardItem(items)]).then(function(){
+            notify('good','Copied','Copied text and picture. Ready to paste.');done()},function(e){
+            if(copyHelp.isUnsupported(e))return fallbackText('This browser does not support picture copying.');
+            notify('bad','Copy failed',failMsg(e));done()})}
+        catch(e){
+          if(copyHelp.isUnsupported(e))return fallbackText('This browser does not support picture copying.');
+          notify('bad','Copy failed',failMsg(e));done();return Promise.resolve()}}};
+  }
+  function picFit(ctx,s,maxW){s=String(s||'');if(!s)return '';
+    if(ctx.measureText(s).width<=maxW)return s;
+    var lo=0,hi=s.length;while(lo<hi){var m=(lo+hi+1)>>1;if(ctx.measureText(s.slice(0,m)+'\u2026').width<=maxW)lo=m;else hi=m-1}
+    return lo>0?s.slice(0,lo)+'\u2026':'\u2026'}
+  function secHeading(sec){var h=sec&&sec.querySelector('summary h2'),f=h&&h.firstChild;
+    return (f&&f.nodeType===3?f.textContent:(h?h.textContent:'')).replace(/\s+/g,' ').trim()||'Report section'}
+  /* 1.140.0: draw a crisp 2x PNG snapshot of a report section (or reuse an existing section canvas) for Copy both */
+  function sectionPicture(sec,plain){
+    try{
+      var body=sec&&sec.querySelector('.body');if(!body)return '';
+      var existing=body.querySelector('canvas');
+      if(existing&&existing.width>0&&existing.height>0){var u0=copyHelp.pngDataUrl(existing);if(u0)return u0}
+      var cv=document.createElement('canvas'),ctx=cv&&cv.getContext?cv.getContext('2d'):null;if(!ctx)return '';
+      var title=secHeading(sec),pageTitle=one(document.querySelector('h1'))||document.title||'Operations report';
+      var meta=one(document.querySelector('.hero .meta,.meta,.sub,.when'))||'';
+      var badgeEl=sec.querySelector('summary .chip,summary .stc'),badgeTxt=one(badgeEl),sev='info';
+      if(badgeEl){var bc=badgeEl.className||'';
+        if(/\b(s-critical|c-critical)\b/.test(bc))sev='critical';
+        else if(/\b(s-warning|c-warning)\b/.test(bc))sev='warning';
+        else if(/\b(s-ok|c-ok)\b/.test(bc))sev='ok'}
+      var SEV={ok:['#8ee0bd','\u2713'],warning:['#ebc994','\u25b3'],critical:['#ff9ca8','!'],info:['#85d8df','\u25a3']}[sev];
+      var tb=body.querySelector('.tw table'),spark=body.querySelector('svg.spark[data-points]'),
+          cards=[].filter.call(body.querySelectorAll('.cards .todo'),function(x){return !x.hidden}),
+          lines=[].filter.call(body.querySelectorAll('ul.lines>li,ul.passed>li'),function(x){return !x.hidden});
+      var mode='text',tView=null,pts=[],rowItems=[];
+      if(spark){try{pts=JSON.parse(spark.getAttribute('data-points')||'[]').map(function(p){return typeof p==='number'?p:+(p&&p.v!==undefined?p.v:p&&p[1])}).filter(function(v){return !isNaN(v)})}catch(e){pts=[]}}
+      if(tb){tView=view(tb,one);if(tView[0].length||tView[1].length)mode='table'}
+      else if(pts.length>=2)mode='spark';
+      else if(cards.length){mode='cards';rowItems=cards.slice(0,6).map(function(a){return [one(a.querySelector('.row1')),one(a.querySelector('h3')),one(a.querySelector('.subj'))||one(a.querySelector('.next'))]})}
+      else if(lines.length){mode='lines';rowItems=lines.slice(0,9).map(one).filter(Boolean)}
+      else{rowItems=String(plain||'').split(/\r?\n/).map(function(l){return l.replace(/\s+/g,' ').trim()}).filter(Boolean).slice(0,8)}
+      var W=750,H=260;
+      if(mode==='table'){H=146+Math.min(tView[1].length,8)*26+(tView[1].length>8?24:0)}
+      else if(mode==='cards'){H=118+rowItems.length*38+(cards.length>rowItems.length?24:0)}
+      else if(mode==='lines'){H=118+rowItems.length*24+(lines.length>rowItems.length?24:0)}
+      else if(mode==='text'){H=Math.max(210,124+rowItems.length*22)}
+      cv.width=W*2;cv.height=H*2;ctx.scale(2,2);
+      var grad=ctx.createLinearGradient(0,0,W,H);grad.addColorStop(0,'#14283e');grad.addColorStop(1,'#1b3950');
+      ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+      ctx.fillStyle=SEV[0];ctx.fillRect(0,0,6,H);
+      var sans='Manrope,"Segoe UI",system-ui,Arial,sans-serif',mono='"IBM Plex Mono",Consolas,monospace';
+      ctx.fillStyle='#b3cce1';ctx.font='600 11px '+mono;
+      ctx.fillText(picFit(ctx,pageTitle.toUpperCase(),460),24,26);
+      if(meta){ctx.textAlign='right';ctx.fillStyle='#aec6d8';ctx.fillText(picFit(ctx,meta,230),W-22,26);ctx.textAlign='left'}
+      ctx.fillStyle='#ffffff';ctx.font='700 22px '+sans;
+      ctx.fillText(picFit(ctx,title,badgeTxt?500:W-48),24,56);
+      if(badgeTxt){ctx.font='700 12px '+sans;var bt=SEV[1]+'  '+badgeTxt,bw=Math.min(200,ctx.measureText(bt).width+20);
+        ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(W-22-bw,36,bw,24);
+        ctx.strokeStyle=SEV[0];ctx.strokeRect(W-22-bw+0.5,36.5,bw-1,23);
+        ctx.fillStyle=SEV[0];ctx.fillText(picFit(ctx,bt,bw-12),W-22-bw+10,52)}
+      ctx.fillStyle='#3c5669';ctx.fillRect(24,70,W-48,1);
+      if(mode==='table'){
+        var cols=tView[0].slice(0,5),rows=tView[1].slice(0,8),nc=Math.max(1,cols.length),cw=(W-48)/nc;
+        ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(24,82,W-48,26);
+        ctx.fillStyle='#b3cce1';ctx.font='700 11px '+mono;
+        cols.forEach(function(h,i){ctx.fillText(picFit(ctx,h.toUpperCase(),cw-12),30+i*cw,99)});
+        ctx.font='500 12px '+sans;
+        rows.forEach(function(r,ri){var ry=108+ri*26;
+          if(ri%2){ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(24,ry,W-48,26)}
+          ctx.fillStyle='#3c5669';ctx.fillRect(24,ry+25,W-48,0.5);
+          cols.forEach(function(_,i){ctx.fillStyle=i===0?'#ffffff':'#d0e1ec';
+            ctx.fillText(picFit(ctx,r[i]||'',cw-12),30+i*cw,ry+17)})});
+        if(tView[1].length>rows.length){ctx.fillStyle='#aec6d8';ctx.font='600 11px '+mono;
+          ctx.fillText('+'+(tView[1].length-rows.length)+' more rows in report',24,108+rows.length*26+16)}
+      }else if(mode==='spark'){
+        var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),span=mx-mn||1;
+        var left=210,right=W-44,top=92,base=210;
+        ctx.fillStyle='#ffffff';ctx.font='700 38px '+sans;ctx.fillText(String(pts[pts.length-1]),24,136);
+        ctx.fillStyle='#c4d4e0';ctx.font='500 12px '+sans;ctx.fillText('Latest sample',24,158);
+        ctx.fillStyle='#d0e1ec';ctx.font='500 12px '+mono;ctx.fillText('Min '+mn+'  Max '+mx,24,182);
+        for(var gi=0;gi<=3;gi++){var gy=base-(base-top)*gi/3;ctx.beginPath();ctx.moveTo(left,gy);ctx.lineTo(right,gy);
+          ctx.strokeStyle='#3c5669';ctx.lineWidth=1;ctx.stroke()}
+        ctx.beginPath();
+        pts.forEach(function(v,i){var px=left+(right-left)*i/(pts.length-1),py=base-(v-mn)*(base-top)/span;
+          if(i)ctx.lineTo(px,py);else ctx.moveTo(px,py)});
+        ctx.strokeStyle='#85d8df';ctx.lineWidth=2.5;ctx.stroke();
+        var lx=right,ly=base-(pts[pts.length-1]-mn)*(base-top)/span;
+        ctx.beginPath();ctx.arc(lx,ly,4,0,Math.PI*2);ctx.fillStyle='#befaff';ctx.fill()
+      }else if(mode==='cards'){
+        rowItems.forEach(function(it,ri){var ry=84+ri*38;
+          ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(24,ry,W-48,32);
+          ctx.fillStyle='#85d8df';ctx.fillRect(24,ry,4,32);
+          ctx.fillStyle='#ffffff';ctx.font='700 12.5px '+sans;ctx.fillText(picFit(ctx,it[1]||it[0],W-70),36,ry+14);
+          ctx.fillStyle='#c4d4e0';ctx.font='500 11px '+sans;ctx.fillText(picFit(ctx,it[2]||it[0],W-70),36,ry+27)});
+        if(cards.length>rowItems.length){ctx.fillStyle='#aec6d8';ctx.font='600 11px '+mono;
+          ctx.fillText('+'+(cards.length-rowItems.length)+' more items in report',24,84+rowItems.length*38+14)}
+      }else if(mode==='lines'){
+        ctx.font='500 13px '+sans;
+        rowItems.forEach(function(it,ri){var ry=98+ri*24;
+          ctx.fillStyle='#85d8df';ctx.fillText('\u2022',26,ry);
+          ctx.fillStyle='#e5eff7';ctx.fillText(picFit(ctx,it,W-66),40,ry)});
+        if(lines.length>rowItems.length){ctx.fillStyle='#aec6d8';ctx.font='600 11px '+mono;
+          ctx.fillText('+'+(lines.length-rowItems.length)+' more items in report',24,98+rowItems.length*24+8)}
+      }else{
+        ctx.font='500 13px '+sans;ctx.fillStyle='#e5eff7';
+        rowItems.forEach(function(it,ri){ctx.fillText(picFit(ctx,it,W-48),24,100+ri*22)})
+      }
+      ctx.fillStyle='#aec6d8';ctx.font='500 11px '+mono;
+      ctx.fillText(picFit(ctx,pageTitle+(meta?'  /  '+meta:''),W-48),24,H-14);
+      return copyHelp.pngDataUrl(cv);
+    }catch(e){return ''}
+  }
+  function copyBarOf(sec){
+    var body=sec&&sec.querySelector('.body');if(!body)return null;
+    var existing=all('.scopy-bar',body);
+    if(existing.length>1)existing.slice(1).forEach(function(x){if(x.parentNode)x.parentNode.removeChild(x)});
+    if(existing.length)return existing[0];
+    var bar=document.createElement('div');bar.className='scopy-bar';bar.setAttribute('role','status');bar.setAttribute('aria-live','polite');bar.hidden=true;
+    var g=document.createElement('span');g.className='sg';g.setAttribute('aria-hidden','true');
+    var tx=document.createElement('span');tx.className='st';
+    bar.appendChild(g);bar.appendChild(tx);body.appendChild(bar);return bar}
+  var STATE_GLYPH={info:'\u25f7',good:'\u2713',warn:'T',bad:'!'};
+  var STATE_CLS=['done','st-info','st-good','st-warn','st-bad'];
+  function setCopyState(btn,bar,state,label,msg){
+    STATE_CLS.forEach(function(k){btn.classList.remove(k)});
+    if(state)btn.classList.add('st-'+state);
+    if(state==='good')btn.classList.add('done');
+    var t=btn.querySelector('.t');if(t)t.textContent=label;
+    if(msg)btn.title=msg;
+    if(bar){
+      ['st-info','st-good','st-warn','st-bad'].forEach(function(k){bar.classList.remove(k)});
+      if(state)bar.classList.add('st-'+state);
+      var g=bar.querySelector('.sg'),tx=bar.querySelector('.st');
+      if(g)g.textContent=STATE_GLYPH[state]||'';
+      if(tx)tx.textContent=msg||'';
+      bar.hidden=!msg}}
+  function copyBothSection(btn){
+    var sec=btn&&btn.closest('details'),body=sec&&sec.querySelector('.body');if(!body)return Promise.resolve();
+    var bar=copyBarOf(sec),g=grab(body),title=secHeading(sec),dataUrl=sectionPicture(sec,g[0]);
+    btn.disabled=true;
+    return copyHelp.copyBothRich({
+      plain:g[0],html:g[1],dataUrl:dataUrl,alt:title+' snapshot',focusEl:btn,
+      onState:function(st,lab,msg){setCopyState(btn,bar,st,lab,msg)},
+      onDone:function(){btn.disabled=false}})}
+  window.siteReport.copyHelp=copyHelp;
+  window.siteReport.sectionPicture=sectionPicture;
+  window.siteReport.copyBoth=copyBothSection;
   /* a cell's value for a file: its whole value (data-v) where the page shows less, its lines kept */
   function val(el){var v=el?el.getAttribute('data-v'):'';return (v!==null&&v!==''?v:(el?el.textContent:'')).replace(/[ \t\r\f\v]+/g,' ').replace(/ ?\n ?/g,'\n').trim()}
   function head(th){var b=th.querySelector('button'),f=b&&b.firstChild,u=b&&b.querySelector('.hsub');
@@ -177,7 +369,7 @@
       P.push([hd].concat(rs).map(function(r){return r.join('\t')}).join('\n'));
       H.push('<table style="border-collapse:collapse">'+tr(hd,'th')+rs.map(function(r){return tr(r,'td')}).join('')+'</table>')}
     [].forEach.call(body.children,function(el){
-      if(el.classList.contains('tools2')||el.hidden)return;
+      if(el.classList.contains('tools2')||el.classList.contains('scopy-bar')||el.hidden)return;
       if(el.tagName==='UL'){var li=[].filter.call(el.children,function(x){return !x.hidden}).map(one).filter(Boolean);
         P.push(li.map(function(x){return '- '+x}).join('\n'));H.push('<ul>'+li.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul>');return}
       if(el.classList.contains('tw')){table(el.querySelector('table'));return}
@@ -244,8 +436,15 @@
       var b=a.querySelector('.ah.bad'),g=a.querySelector('.ah.good'),k=a.querySelector('.ahn'),v=a.querySelector('.ahv');
       if(k)k.textContent=n;if(v)v.textContent=n===1?'needs':'need';if(b)b.hidden=false;if(g)g.hidden=true;
       all('label[for="t'+a.getAttribute('data-tab')+'"] [hidden]').forEach(function(d){d.hidden=false})})}
-  all('.scopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){
-    e.preventDefault();e.stopPropagation();var g=grab(c.closest('details').querySelector('.body'));put(c,g[0],g[1])})});
+  all('.scopy').forEach(function(c){
+    if(c._copyBound)return;c._copyBound=true;
+    c.hidden=false;c.disabled=false;
+    STATE_CLS.forEach(function(k){c.classList.remove(k)});
+    var t=c.querySelector('.t');if(t)t.textContent='Copy both';
+    c.title='Copy this section as text and picture';
+    var sec=c.closest('details'),bar=sec&&copyBarOf(sec);
+    if(bar)bar.hidden=true;
+    c.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();copyBothSection(c)})});
   /* CSV: the table as shown, for Excel - a byte order mark (its accents read right), every value in quotes, and a value
      that Excel would take for a formula (= + - @ at its start, not a number) made text with a ' before it */
   function csvf(v){if(/^[=+\-@\t\r]/.test(v)&&!/^[-+]?[\d.,]+%?$/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'}
@@ -685,7 +884,7 @@
       return (f&&f.nodeType===3?f.textContent:(h?h.textContent:'')).toLowerCase()};
     var mark=function(q){if(!HL)return;CSS.highlights['delete']('site-find');if(!q)return;var h=new Highlight(),n=0;
       secs.forEach(function(d){if(d.hidden||n>=3000)return;var w=document.createTreeWalker(d.querySelector('.body')||d,NodeFilter.SHOW_TEXT,null),t;
-        while(n<3000&&(t=w.nextNode())){var pe=t.parentNode;if(pe.closest('[hidden],button,svg,script,summary,.tools2'))continue;
+        while(n<3000&&(t=w.nextNode())){var pe=t.parentNode;if(pe.closest('[hidden],button,svg,script,summary,.tools2,.scopy-bar'))continue;
           var s=t.nodeValue.toLowerCase(),i=s.indexOf(q);
           while(i>=0&&n<3000){var r=document.createRange();r.setStart(t,i);r.setEnd(t,i+q.length);h.add(r);n++;i=s.indexOf(q,i+q.length)}}});
       CSS.highlights.set('site-find',h)};

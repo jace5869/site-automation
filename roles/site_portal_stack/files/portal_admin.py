@@ -8,7 +8,114 @@ import time
 from urllib.parse import urlencode
 
 import portal_access as access
-from site_portal_filters import templating
+from site_portal_filters import DEFAULT_SKIN, SKINS, templating
+
+# 1.140.0: short captions for the Admin Appearance look picker cards (matches mock/admin-default-look.html)
+LOOK_SUBTITLES = {
+    "metro-atlas": "Modular grid",
+    "metro-calm": "Muted tiles",
+    "metro-wall": "Large figures",
+    "atlas-clean": "Clean surfaces",
+    "atlas-night": "Deep contrast",
+    "contour-lite": "Fine contours",
+    "strata": "Layered panels",
+    "metro": "Color tiles",
+    "relay": "Status lamps",
+    "atlas": "Rounded tiles",
+}
+LOOK_NAMES = {k: title for k, title, _cue in SKINS}
+
+
+def look_time_utc(iso):
+    if not iso:
+        return ""
+    try:
+        t = time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S")
+        return time.strftime("%d %b %Y, %H:%M UTC", t)
+    except ValueError:
+        return str(iso)
+
+
+def appearance_tab(cfg, token, query):
+    """1.140.0: Admin section to set the site's default portal look live without redeploy."""
+    store = getattr(cfg, "look_store", None)
+    if store is not None:
+        state, warning = store.read()
+        rev = store.revision(state, warning)
+    else:
+        cur = getattr(cfg, "skin", DEFAULT_SKIN)
+        state = {"look": cur, "previous": None, "changed_by": "", "changed_at": "", "saves": 0}
+        warning = ""
+        rev = access.LookStore.revision(state, warning)
+    current = state["look"] if state.get("look") in LOOK_NAMES else DEFAULT_SKIN
+    previous = state.get("previous") if state.get("previous") in LOOK_NAMES else None
+    cur_name = LOOK_NAMES[current]
+    prev_name = LOOK_NAMES[previous] if previous else ""
+    portal_title = getattr(cfg, "title", "Site Portal") or "Site Portal"
+    wall_title = getattr(cfg, "wall_title", "Ops center") or "Ops center"
+    who, at = state.get("changed_by") or "", state.get("changed_at") or ""
+    audit_text = ("%s \u00b7 %s" % (who, look_time_utc(at))) if (who and at) else "From deploy (portal_look)"
+    saved = query.get("look_saved", "")
+    if saved == "applied":
+        msg = "%s applied as the site default." % cur_name
+    elif saved == "restored":
+        msg = "%s restored as the site default." % cur_name
+    else:
+        msg = "This is the current site default."
+    cards = []
+    options = []
+    for key, title, _cue in SKINS:
+        detail = LOOK_SUBTITLES.get(key, "")
+        sub = "\u2713 Current default" if key == current else detail
+        pressed = "true" if key == current else "false"
+        cards.append(
+            '<button type="button" class="look-card" data-look-key="%s" data-look-name="%s" data-look-detail="%s" aria-pressed="%s">'
+            '<span aria-hidden="true" class="look-mini" data-preview-skin="%s"><i></i><i></i><i></i></span>'
+            '<span><strong>%s</strong><small>%s</small></span></button>'
+            % (e(key), e(title), e(detail), pressed, e(key), e(title), e(sub)))
+        options.append('<option value="%s"%s>%s</option>' % (e(key), " selected" if key == current else "", e(title)))
+    form_fields = hidden("portal-token", token) + hidden("look_revision", rev)
+    undo_attrs = (' title="Restore %s"' % e(prev_name)) if previous else ' disabled title="Apply a change to enable undo"'
+    warn_html = '<p class="note warn" role="alert">%s</p>' % e(warning) if warning else ""
+    return (
+        '<div class="look-app" data-current-look="%s" data-portal-name="%s">%s'
+        '<div class="look-intro"><p class="look-kicker">Admin / Appearance</p>'
+        '<h2>Default portal look</h2>'
+        '<p class="look-desc">Choose the look visitors see when they open the %s portal.</p></div>'
+        '<section class="card look-current" aria-label="Current site default">'
+        '<span class="look-symbol" aria-hidden="true">&#9638;</span>'
+        '<div class="look-cur-body"><div class="look-micro">Current site default</div><strong id="look-current">%s</strong></div>'
+        '<span class="look-badge">&#10003; Live</span>'
+        '<div class="look-stamp"><div class="look-micro">Last changed</div><span id="look-audit" class="look-sub">%s</span></div>'
+        '</section>'
+        '<div class="look-workspace">'
+        '<section class="look-col"><h3>Portal looks</h3>'
+        '<div class="look-picker" id="look-picker" role="group" aria-label="Choose a look to preview">%s</div></section>'
+        '<section class="look-preview"><h3>Live preview</h3>'
+        '<div class="card look-preview-card">'
+        '<div class="look-preview-head"><strong id="look-preview-name">%s</strong><span class="look-micro">Portal home</span></div>'
+        '<div id="look-stage" class="look-stage" data-preview-skin="%s">'
+        '<div class="look-screen"><div class="look-screenbar"><span>&#9638; &nbsp; %s</span><span>%s</span></div>'
+        '<div class="look-screenbody"><h4>%s</h4><div class="look-tiles">'
+        '<div class="look-tile"><span>Network</span><b>18 ms</b><small>&#10003; Within limit</small></div>'
+        '<div class="look-tile"><span>Storage</span><b>82%%</b><small>&#9651; Warning</small></div>'
+        '</div></div></div></div>'
+        '<div class="look-apply"><p id="look-message" role="status" aria-live="polite">%s</p>'
+        '<form method="post" class="look-form" id="look-form">%s'
+        '<input type="hidden" name="look" id="look-value" value="%s">'
+        '<div class="look-buttons">'
+        '<button class="pri" type="submit" id="look-apply" name="op" value="default-look" disabled>Apply default</button>'
+        '<button type="submit" id="look-undo" name="op" value="undo-default-look"%s>Undo</button>'
+        '</div>'
+        '<noscript><div class="look-noscript"><label>Default look <select name="look">%s</select></label>'
+        '<button class="pri" type="submit" name="op" value="default-look">Save default</button></div></noscript>'
+        '</form></div></div>'
+        '<p class="look-notice"><strong>Browser preference wins.</strong> A visitor&#8217;s saved look takes priority over the site default. '
+        'Applying a new default takes effect immediately, without a redeploy.</p>'
+        '</section></div></div>'
+        % (e(current), e(portal_title), warn_html, e(portal_title), e(cur_name), e(audit_text),
+           "".join(cards), e(cur_name), e(current), e(portal_title), e(portal_title), e(wall_title),
+           e(msg), form_fields, e(current), undo_attrs, "".join(options)))
 
 
 def e(value):
@@ -383,7 +490,7 @@ def changed_templates(rec):
 
 def activity_tab(log, query):
     labels = {"launch": "Launched", "placement": "Launched", "placement_refused": "Refused", "refused": "Refused",
-              "access_changed": "Access changed", "export": "Exported"}
+              "access_changed": "Access changed", "look_changed": "Look changed", "export": "Exported"}
     rows = []
     term = query.get("q", "")
     for rec in reversed(log.read(limit=5000)):
@@ -397,6 +504,11 @@ def activity_tab(log, query):
             continue
         detail = rec.get("why") or rec.get("file") or ""
         target = rec.get("action") or rec.get("path") or rec.get("approval") or ""
+        if event == "look_changed":
+            target = "Default portal look"
+            before = LOOK_NAMES.get(rec.get("before"), rec.get("before") or "")
+            after = LOOK_NAMES.get(rec.get("after"), rec.get("after") or "")
+            detail = ("Restored %s (was %s)" % (after, before)) if rec.get("undo") else ("%s -> %s" % (before, after))
         if rec.get("job_id") or rec.get("workflow_job") or rec.get("job"):
             detail = "Job %s" % (rec.get("job_id") or rec.get("workflow_job") or rec["job"])
         items = changed_templates(rec) if event == "access_changed" else [(target, detail)]
@@ -406,7 +518,7 @@ def activity_tab(log, query):
                 rows.append("<tr>%s</tr>" % "".join("<td>%s</td>" % e(c) for c in cells))
     filters = '<form class="filters2">%s<select name="event" aria-label="Event"><option value="">All events</option>%s</select>' % (
         hidden("tab", "activity"), "".join('<option%s>%s</option>' % (" selected" if query.get("event") == v else "", v)
-                                         for v in ("Launched", "Approved", "Denied", "Refused", "Access changed", "Exported")))
+                                         for v in ("Launched", "Approved", "Denied", "Refused", "Access changed", "Look changed", "Exported")))
     return filters + '<input type="search" name="q" aria-label="Search activity" value="%s"><button>Search</button></form>' % e(term) + table(
         ["Time (UTC)", "Who", "Event", "Template", "Detail"], "".join(rows)) + ("" if rows else '<p class="empty">No matching activity.</p>')
 
@@ -434,7 +546,8 @@ def render(portal, cn, query, metadata):
     roles, groups, suggestions, ad_at = directory(cfg, entries)
     fields = hidden("portal-token", portal.token(cn)) + hidden("revision", cfg.access.revision(doc, warning))
     tab = query.get("tab", "access")
-    tabs = (("conn", "connect", "Ansible connection"), ("access", "admin", "Template access"), ("groups", "users", "Groups"), ("activity", "report", "Activity"))
+    tabs = (("conn", "connect", "Ansible connection"), ("access", "admin", "Template access"), ("groups", "users", "Groups"),
+            ("appearance", "setup", "Appearance"), ("activity", "report", "Activity"))
     count = {"access": len(rows), "groups": len(roles)}
     nav = "".join('<a href="?tab=%s"%s>%s%s%s</a>' % (k, ' aria-current="page"' if k == tab else "", glyph(icon), label,
                   ' <span class="count">%d</span>' % count[k] if k in count else "") for k, icon, label in tabs)
@@ -475,6 +588,8 @@ def render(portal, cn, query, metadata):
                             for k, why in sorted(stale.items())[:50])))
     if tab == "groups":
         body = groups_tab(roles, groups, ad_at)
+    elif tab == "appearance":
+        body = appearance_tab(cfg, portal.token(cn), query)
     elif tab == "activity":
         body = activity_tab(portal.log, query)
     elif tab == "conn":
@@ -514,6 +629,17 @@ def submit(portal, cn, form, now):
         return (form.get(name) or [""])[-1]
 
     cfg, op = portal.cfg, get("op")
+    # 1.140.0: live site default portal look works independently of AAP availability.
+    if op in ("default-look", "undo-default-look"):
+        look_store = getattr(cfg, "look_store", None)
+        if look_store is None:
+            raise ValueError("Default look storage is not available.")
+        rev = get("look_revision")
+        if op == "default-look":
+            look_store.set_look(get("look").strip().lower(), rev, cn, now)
+        else:
+            look_store.undo(rev, cn, now)
+        return 303, "", ""
     store = cfg.access
     doc, warning = store.read()
     old = doc["portal_template_access"]
