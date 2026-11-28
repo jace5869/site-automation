@@ -421,6 +421,24 @@ class ChromeOnlyGlassAndDispatcherTests(unittest.TestCase):
         self.assertNotIn("srv-glance", email_html)
         self.assertNotIn("site-report-js", email_html)
 
+    def test_server_sections_visible_before_scripts_or_animations_run(self):
+        report = sf.findings_report(
+            {"srv01.corp.example.mil": [{"check": "disk", "severity": "critical", "summary": "/var full"}]},
+            "SITEA health", servers={"enabled": True},
+        )
+        for look in ("atlas", "brief", "ops", "glass"):
+            with self.subTest(look=look):
+                html = _render("report_%s.html.j2" % look, report)
+                for section_id in ("s1", "s2"):  # Servers and Start here
+                    tag = re.search(r'<details\b[^>]* id="%s"[^>]*>' % section_id, html).group()
+                    classes = re.search(r'class="([^"]*)"', tag).group(1).split()
+                    self.assertTrue({"vh", "pop-wait", "pop-show"}.isdisjoint(classes))
+                    self.assertNotRegex(tag, r"\shidden\b")
+                # Chrome may paint the initial frame even after the observer fires.
+                for selector in (".pop-move .pop-wait", "@keyframes rise{from"):
+                    for style in re.findall(re.escape(selector) + r"\{([^}]*)}", html):
+                        self.assertNotRegex(style, r"opacity\s*:|visibility\s*:|display\s*:\s*none")
+
     def test_off_mode_is_byte_identical_across_all_four_web_looks(self):
         rep_plain = sf.findings_report(
             {"srv01.corp.example.mil": [{"check": "disk", "id": "d1", "severity": "warning", "summary": "/var 85%"}]},

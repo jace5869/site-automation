@@ -4,9 +4,9 @@
 :root{--pop-ink:var(--ink,var(--fg));--pop-muted:var(--muted);--pop-edge:var(--edge,var(--line));--pop-card:var(--card,var(--surface));
   --pop-ok:var(--ok,var(--good));--pop-warn:var(--warning,var(--warn));--pop-crit:var(--critical,var(--crit));--pop-low:var(--low,var(--muted));
   --pop-acc:var(--accent);--pop-on-acc:var(--accent-ink,var(--on-accent,#fff));--pop-ease:cubic-bezier(.3,.7,.2,1)}
-/* reveal: what is below the fold waits, then comes in (once) */
-.pop-move .pop-wait{opacity:0;transform:translateY(14px)}
-.pop-move .pop-wait.pop-in{opacity:1;transform:none;transition:opacity .55s var(--pop-ease) calc(var(--pop-i,0) * 45ms),transform .55s var(--pop-ease) calc(var(--pop-i,0) * 45ms)}
+/* Keep cards readable while the scroll observer waits for its first callback. */
+.pop-move .pop-wait{transform:translateY(14px)}
+.pop-move .pop-wait.pop-in{transform:none;transition:transform .55s var(--pop-ease) calc(var(--pop-i,0) * 45ms)}
 /* hover lift on tiles and cards */
 .pop-move .card.tile,.pop-move .tiles>.tile,.pop-move .pt-card,.pop-move .cz{transition:transform .18s var(--pop-ease),box-shadow .18s var(--pop-ease)}
 @media (hover:hover){.pop-move .card.tile:hover,.pop-move .tiles>.tile:hover,.pop-move .pt-tile:hover,.pop-move .cz:hover{transform:translateY(-3px);box-shadow:0 10px 26px -12px rgba(0,0,0,.35)}}
@@ -134,7 +134,7 @@ tr.pt-fold>td{text-align:center;padding:8px!important}
 .pt-kept{margin:14px 0 0}
 @media (max-width:1100px){.pt-grid{grid-template-columns:1fr 1fr}.pt-grid>.pt-todo{grid-column:1/3}}
 @media (max-width:900px){.pt-tiles{grid-template-columns:1fr 1fr}.pt-grid{grid-template-columns:1fr}.pt-grid>.pt-todo{grid-column:auto}}
-@media print{.pop-move .pop-wait{opacity:1!important;transform:none!important}.pop-mini,.pt-fold,.pt-sev,.pop-team-bar{display:none!important}
+@media print{.pop-move .pop-wait{transform:none!important}.pop-mini,.pt-fold,.pt-sev,.pop-team-bar{display:none!important}
   .pop-team-view{display:none!important}.pop-team-view[data-team=""]{display:block!important}tr.pt-other,tr[data-team][hidden]{display:table-row!important}.pop *{animation:none!important;transition:none!important}}
 /* still (report_motion: off - on <html> from the server, before any script - or reduced motion): nothing moves and
    nothing waits to come in - an element whose rise animation is delayed shows at once (1.86.0 review) */

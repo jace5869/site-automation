@@ -458,7 +458,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}tr.r-low{box-shadow:inset 4px 0 0 var(--low)}
 }
 /* motion, only to say where to look: the header, then the figures, rise in once */
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes rise{from{transform:translateY(8px)}to{transform:none}}
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}
   .hero>*{animation:rise .5s var(--ease) both}.hero>:nth-child(2){animation-delay:.05s}.hero>:nth-child(3){animation-delay:.1s}.hero>:nth-child(n+4){animation-delay:.14s}
   .tile{animation:rise .5s var(--ease) both;animation-delay:.18s}.tile:nth-child(2){animation-delay:.24s}.tile:nth-child(3){animation-delay:.3s}.tile:nth-child(n+4){animation-delay:.36s}}
