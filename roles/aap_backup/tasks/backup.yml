@@ -1,0 +1,109 @@
+---
+# 1.142.0: AAP - backup (Phase 1): preflight with coded stops (SA-AAPBK-01..06), containerized AAP 2.7 installer
+# backup as non-root ansible (become only when needed), exact build/release + verified SHA-256 manifest, optional
+# simple retention and optional weekly Berlin schedule (both off by default). AAP only (no MariaDB).
+
+- name: AAP backup | resolve installation owner account
+  ansible.builtin.import_tasks: account.yml
+
+- name: AAP backup | record other active AAP jobs via API (optional, read-only)
+  site_aap_backup_schedule:
+    action: pre_check
+    self_job_id: "{{ awx_job_id | default('') | string }}"
+    ca_path: "{{ aap_backup_ca_path }}"
+    timeout: "{{ aap_backup_api_timeout }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  when: aap_backup_pre_check_running_jobs | bool
+  register: _aapbk_pre_jobs
+
+- name: AAP backup | preflight, run containerized installer backup and verify SHA-256 manifest
+  site_aap_backup:
+    action: backup
+    backup_path: "{{ aap_backup_path }}"
+    expected_mount: "{{ aap_backup_expected_mount }}"
+    expected_source: "{{ aap_backup_expected_source }}"
+    expected_fstypes: "{{ aap_backup_expected_fstypes }}"
+    allow_root_fs: "{{ aap_backup_allow_root_fs }}"
+    estimate_gb: "{{ aap_backup_estimate_gb }}"
+    margin_pct: "{{ aap_backup_margin_pct }}"
+    installer_dir: "{{ aap_installer_dir }}"
+    installer_inventory: "{{ aap_installer_inventory }}"
+    installer_playbook: "{{ aap_installer_playbook }}"
+    ansible_playbook_bin: "{{ aap_installer_ansible_playbook_bin }}"
+    installer_extra_args: "{{ aap_installer_extra_args }}"
+    installer_become: "{{ aap_installer_become }}"
+    timeout_seconds: "{{ aap_backup_timeout_seconds }}"
+    version_file: "{{ aap_backup_version_file }}"
+    version_override: "{{ aap_backup_version_override }}"
+    mountinfo_path: "{{ aap_backup_mountinfo_path }}"
+    podman_bin: "{{ aap_backup_podman_bin }}"
+    pre_running_jobs: "{{ _aapbk_pre_jobs.running_jobs | default([]) }}"
+  become: "{{ _aapbk_need_become | bool }}"
+  become_user: "{{ aap_backup_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ _aapbk_uid }}"
+  register: _aapbk_run
+
+- name: AAP backup | show backup result summary
+  ansible.builtin.debug:
+    msg:
+      - "{{ _aapbk_run.msg }}"
+      - "Host: {{ inventory_hostname }} (as {{ aap_backup_user }}, become={{ _aapbk_need_become }})"
+      - "Exact AAP build/release: {{ (_aapbk_run.version | default(_aapbk_run.preflight.version | default({}))).exact_version | default('unknown') }}"
+      - "Backup directory: {{ _aapbk_run.backup_dir | default('(check mode - not written)') }}"
+      - "Manifest SHA-256 (SHA256SUMS): {{ _aapbk_run.sha256sums_sha256 | default('(check mode)') }}"
+
+- name: AAP backup | apply optional simple retention (off by default)
+  site_aap_backup:
+    action: retention
+    backup_path: "{{ aap_backup_path }}"
+    retention_enabled: "{{ aap_backup_retention_enabled }}"
+    retention_keep: "{{ aap_backup_retention_keep }}"
+    retention_keep_days: "{{ aap_backup_retention_keep_days }}"
+    retention_quarantine_days: "{{ aap_backup_retention_quarantine_days }}"
+    protect_backup_id: "{{ _aapbk_run.backup_id | default('') }}"
+  become: "{{ _aapbk_need_become | bool }}"
+  become_user: "{{ aap_backup_user }}"
+  when: aap_backup_retention_enabled | bool
+  register: _aapbk_retention
+
+- name: AAP backup | show retention summary
+  ansible.builtin.debug:
+    msg: "{{ _aapbk_retention.msg }}"
+  when: aap_backup_retention_enabled | bool
+
+- name: AAP backup | reconcile optional weekly Berlin schedule in AAP (off by default)
+  site_aap_backup_schedule:
+    action: schedule
+    enabled: "{{ aap_backup_schedule_enabled }}"
+    schedule_name: "{{ aap_backup_schedule_name }}"
+    schedule_when: "{{ aap_backup_schedule_when }}"
+    schedule_timezone: "{{ aap_backup_schedule_timezone }}"
+    template_name: "{{ aap_backup_schedule_template }}"
+    organization: "{{ aap_backup_schedule_organization }}"
+    ca_path: "{{ aap_backup_ca_path }}"
+    timeout: "{{ aap_backup_api_timeout }}"
+  delegate_to: localhost
+  become: false
+  when: aap_backup_schedule_enabled | bool
+  register: _aapbk_schedule
+
+- name: AAP backup | show schedule summary
+  ansible.builtin.debug:
+    msg: "{{ _aapbk_schedule.msg }}"
+  when: aap_backup_schedule_enabled | bool
+
+- name: AAP backup | publish backup artifact for downstream jobs
+  ansible.builtin.set_stats:
+    data:
+      aap_backup_last:
+        backup_id: "{{ _aapbk_run.backup_id | default('') }}"
+        backup_dir: "{{ _aapbk_run.backup_dir | default('') }}"
+        exact_version: "{{ (_aapbk_run.version | default(_aapbk_run.preflight.version | default({}))).exact_version | default('') }}"
+        payload_bytes: "{{ _aapbk_run.payload_bytes | default(0) | int }}"
+        file_count: "{{ _aapbk_run.file_count | default(0) | int }}"
+        sha256sums_sha256: "{{ _aapbk_run.sha256sums_sha256 | default('') }}"
+        check_mode: "{{ ansible_check_mode | bool }}"
+  when: _aapbk_run is defined

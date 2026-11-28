@@ -1,0 +1,87 @@
+---
+# 1.142.0: AAP - bundle for air-gap (Phase 1): verifies a completed AAP backup manifest and assembles one
+# self-contained carry-over bundle (backup + installer inventory + SAME installer + exported custom EE images +
+# collections + restore runbook PDF) with one SHA256SUMS manifest, BUNDLE-INDEX.txt, archive checksum and sizes.
+
+- name: AAP air-gap bundle | resolve installation owner account
+  ansible.builtin.import_tasks: account.yml
+
+- name: AAP air-gap bundle | check for repository restore runbook PDF on controller
+  ansible.builtin.stat:
+    path: "{{ role_path }}/../../guides/Site-Automation-AAP-Backup-Restore-Guide.pdf"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  when:
+    - aap_backup_bundle_include_runbook | bool
+    - (aap_backup_bundle_runbook_path | trim) | length == 0
+  register: _aapbk_repo_pdf
+
+- name: AAP air-gap bundle | read repository restore runbook PDF on controller
+  ansible.builtin.slurp:
+    src: "{{ role_path }}/../../guides/Site-Automation-AAP-Backup-Restore-Guide.pdf"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  no_log: true
+  when:
+    - aap_backup_bundle_include_runbook | bool
+    - (aap_backup_bundle_runbook_path | trim) | length == 0
+    - _aapbk_repo_pdf.stat.exists | default(false)
+    - not ansible_check_mode
+  register: _aapbk_repo_pdf_slurp
+
+- name: AAP air-gap bundle | build and verify carry-over bundle
+  site_aap_backup:
+    action: bundle
+    backup_path: "{{ aap_backup_path }}"
+    expected_mount: "{{ aap_backup_expected_mount }}"
+    expected_source: "{{ aap_backup_expected_source }}"
+    expected_fstypes: "{{ aap_backup_expected_fstypes }}"
+    allow_root_fs: "{{ aap_backup_allow_root_fs }}"
+    mountinfo_path: "{{ aap_backup_mountinfo_path }}"
+    installer_dir: "{{ aap_installer_dir }}"
+    installer_inventory: "{{ aap_installer_inventory }}"
+    ansible_playbook_bin: "{{ aap_installer_ansible_playbook_bin }}"
+    version_file: "{{ aap_backup_version_file }}"
+    version_override: "{{ aap_backup_version_override }}"
+    podman_bin: "{{ aap_backup_podman_bin }}"
+    bundle_id: "{{ aap_backup_bundle_id }}"
+    installer_bundle: "{{ aap_backup_installer_bundle }}"
+    installer_bundle_search_dirs: "{{ aap_backup_installer_bundle_search_dirs }}"
+    bundle_extra_files: "{{ aap_backup_bundle_extra_files }}"
+    ee_images: "{{ aap_backup_ee_images }}"
+    ee_auto_discover: "{{ aap_backup_ee_auto_discover }}"
+    ee_image_patterns: "{{ aap_backup_ee_image_patterns }}"
+    ee_exclude_patterns: "{{ aap_backup_ee_exclude_patterns }}"
+    ee_require_at_least_one: "{{ aap_backup_ee_require_at_least_one }}"
+    collections_dirs: "{{ aap_backup_collections_dirs }}"
+    collections_auto_discover: "{{ aap_backup_collections_auto_discover }}"
+    bundle_include_runbook: "{{ aap_backup_bundle_include_runbook }}"
+    bundle_runbook_path: "{{ aap_backup_bundle_runbook_path | trim }}"
+    bundle_runbook_b64: "{{ _aapbk_repo_pdf_slurp.content | default('') }}"
+    bundle_runbook_name: "Site-Automation-AAP-Backup-Restore-Guide.pdf"
+    bundle_archive: "{{ aap_backup_bundle_archive }}"
+    bundle_keep_dir: "{{ aap_backup_bundle_keep_dir }}"
+    bundle_overhead_pct: "{{ aap_backup_bundle_overhead_pct }}"
+  become: "{{ _aapbk_need_become | bool }}"
+  become_user: "{{ aap_backup_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ _aapbk_uid }}"
+  register: _aapbk_bundle
+
+- name: AAP air-gap bundle | show bundle contents, checksums and total size
+  ansible.builtin.debug:
+    msg: "{{ _aapbk_bundle.summary_lines | default([_aapbk_bundle.msg]) }}"
+
+- name: AAP air-gap bundle | publish bundle artifact
+  ansible.builtin.set_stats:
+    data:
+      aap_backup_bundle:
+        bundle_id: "{{ _aapbk_bundle.bundle_id | default('') }}"
+        source_backup_id: "{{ _aapbk_bundle.source_backup_id | default('') }}"
+        archive_path: "{{ _aapbk_bundle.archive_path | default('') }}"
+        archive_sha256: "{{ _aapbk_bundle.archive_sha256 | default('') }}"
+        total_bytes: "{{ _aapbk_bundle.total_bytes | default(_aapbk_bundle.estimated_bytes | default(0)) | int }}"
+        file_count: "{{ _aapbk_bundle.file_count | default(0) | int }}"
+        check_mode: "{{ ansible_check_mode | bool }}"

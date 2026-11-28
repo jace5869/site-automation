@@ -1,0 +1,31 @@
+---
+# 1.142.0: AAP - list backup targets (Phase 1): read-only mount scan on the AAP host listing free space and marking
+# mounts at or above the required backup estimate. NEVER ranks, picks or configures a destination.
+
+- name: AAP backup targets | resolve installation owner account
+  ansible.builtin.import_tasks: account.yml
+
+- name: AAP backup targets | scan mounted filesystems (read-only; never picks)
+  site_aap_backup:
+    action: list_targets
+    backup_path: "{{ aap_backup_path }}"
+    estimate_gb: "{{ aap_backup_estimate_gb }}"
+    margin_pct: "{{ aap_backup_margin_pct }}"
+    mountinfo_path: "{{ aap_backup_mountinfo_path }}"
+  become: "{{ _aapbk_need_become | bool }}"
+  become_user: "{{ aap_backup_user }}"
+  check_mode: false
+  register: _aapbk_targets
+
+- name: AAP backup targets | print mount table and free space
+  ansible.builtin.debug:
+    msg: "{{ _aapbk_targets.report_lines }}"
+
+- name: AAP backup targets | publish target scan artifact (selected is always null)
+  ansible.builtin.set_stats:
+    data:
+      aap_backup_targets:
+        selected: null
+        required: "{{ _aapbk_targets.required }}"
+        qualifying_count: "{{ _aapbk_targets.qualifying_count }}"
+        targets: "{{ _aapbk_targets.targets }}"

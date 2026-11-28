@@ -3519,6 +3519,70 @@ job_templates:
       produces: HTML and JSON reports on the AAP host (aap_health_report_dir); emailed and on the report website when set.
       supports: Run constraint=Changes target hosts (only its report files on the AAP host; nothing restarted); writes the
         report email/website when set
+  - name: AAP - backup
+    playbook: playbooks/aap_backup.yml
+    credentials: [machine]
+    optional_credentials: [aap]
+    ask_limit: true
+    ask_variables: true
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/aap_backup.yml
+    area: Admin
+    skip_areas: [Linux, Admin]
+    ask_job_type: true
+    allow_simultaneous: false
+    description:
+      does: Preflights and wraps the AAP 2.7 containerized installer backup on the AAP host with coded stops (SA-AAPBK-nn)
+        and a verified SHA-256 manifest.
+      targets: The AAP host (group aap_hosts) over SSH as ansible (sudo where needed; Machine credential); optional AAP API
+        credential for weekly schedule.
+      produces: A verified dated backup, exact build/release manifest.json and SHA256SUMS under aap_backup_path; optional
+        retention and weekly Berlin schedule.
+      supports: Run constraint=Changes target hosts (writes backup and manifest under aap_backup_path; optional retention/AAP
+        schedule); never extends LVM.
+  - name: AAP - list backup targets
+    playbook: playbooks/aap_backup_targets.yml
+    credentials: [machine]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: true
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/aap_backup_targets.yml
+    area: Admin
+    skip_areas: [Linux, Admin]
+    description:
+      does: Scans mounted filesystems on the AAP host, prints free space and marks mounts at or above the backup size estimate;
+        never picks a destination.
+      targets: The AAP host (group aap_hosts) over SSH as ansible (sudo where needed; Machine credential); reads mount table
+        and statvfs only.
+      produces: A mount and free-space table in job output and artifact aap_backup_targets marking mounts >= estimate for
+        a one-time human choice.
+      supports: Run constraint=Read-only on target hosts (writes nothing, never selects or configures aap_backup_path, never
+        changes storage).
+  - name: AAP - bundle for air-gap
+    playbook: playbooks/aap_backup_bundle.yml
+    credentials: [machine]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: true
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/aap_backup_bundle.yml
+    area: Admin
+    skip_areas: [Linux, Admin]
+    ask_job_type: true
+    allow_simultaneous: false
+    description:
+      does: Packages a verified AAP backup, installer inventory, matching installer, custom EE images, collections and restore
+        PDF into one air-gap bundle.
+      targets: The AAP host (group aap_hosts) over SSH as ansible (sudo where needed; Machine credential); reads backup, installer
+        dir and podman storage.
+      produces: One verified air-gap bundle archive with BUNDLE-INDEX.txt, single SHA256SUMS, bundle-manifest.json, archive
+        .sha256 and total size breakdown.
+      supports: Run constraint=Changes target hosts (writes bundle and checksums under aap_backup_path/bundles); Check = dry
+        run; stops on any mismatch.
   - name: AAP - template variables audit
     playbook: playbooks/aap_template_audit.yml
     credentials: [aap]

@@ -100,6 +100,10 @@ LAUNCH_DOCS = {
     "NetApp - expand a volume": {"ask_job_type": True, "allow_simultaneous": False},
     # 1.132.0: docs/LINUX_SW_INVENTORY.md - nightly with a Limit; one run at a time (two would write the same files and runs)
     "Linux - software inventory": {"ask_limit": True, "ask_job_type": True, "allow_simultaneous": False},
+    # 1.142.0: docs/AAP_BACKUP.md - serialized AAP 2.7 containerized backup & air-gap bundle, plus read-only target mount scan
+    "AAP - backup": {"ask_job_type": True, "ask_variables": True, "allow_simultaneous": False},
+    "AAP - list backup targets": {"ask_variables": True},
+    "AAP - bundle for air-gap": {"ask_job_type": True, "ask_variables": True, "allow_simultaneous": False},
     # docs/WINDOWS.md, Schedule a restart: Check = the plan; the site portal launches them (its Hosts box = the Limit)
     # one run at a time: two could both find a SolarWinds node without an unmanage window and both write (Concurrent jobs off)
     "Windows - schedule a restart": {"ask_job_type": True, "portal": True, "allow_simultaneous": False},

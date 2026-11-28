@@ -126,3 +126,24 @@
 # Leave both empty (commented out) for no Contact line.
 # aap_templates_description_owner: "SITEA operations team"
 # aap_templates_description_contact: "SITEA automation team, automation@corp.example.mil"
+
+# ---- AAP backup and air-gap bundle (1.142.0; playbooks/aap_backup*.yml, docs/AAP_BACKUP.md) -----
+# AAP platform only (single containerized AAP 2.7 host, as non-root ansible; no MariaDB, no Site portal).
+# Run "AAP - list backup targets" first to inspect mounts and free space (never picks), then uncomment:
+# aap_backup_path: /mnt/ansible_backup
+# aap_backup_expected_mount: /mnt/ansible_backup    # refuses unmounted shares exposing a local folder on /
+# aap_backup_expected_source: "192.0.2.50:/exports/aap_backup"
+# aap_backup_estimate_gb: 50                        # conservative first-run estimate (GiB) before latest.json exists
+# aap_backup_margin_pct: 25                         # required free space = baseline + 25% headroom (never extends LVM)
+# aap_installer_dir: /home/ansible/ansible-automation-platform-containerized-setup
+# aap_installer_inventory: inventory                # empty = auto-finds inventory or inventory-growth in aap_installer_dir
+# aap_backup_installer_bundle: ""                   # optional path to original setup-bundle .tar.gz for air-gap bundle
+# aap_backup_ee_images: []                          # explicit custom EE images to podman-save (in addition to auto-discovery)
+# aap_backup_collections_dirs: []                   # extra collection .tar.gz or ansible_collections/ folders to carry
+# Optional simple retention and weekly Berlin schedule (both OFF by default):
+# aap_backup_retention_enabled: false
+# aap_backup_retention_keep: 4                      # minimum newest verified backups always kept
+# aap_backup_retention_keep_days: 0                 # 0 = count-based only
+# aap_backup_schedule_enabled: false
+# aap_backup_schedule_when: "weekly Sun 02:00"
+# aap_backup_schedule_timezone: "Europe/Berlin"

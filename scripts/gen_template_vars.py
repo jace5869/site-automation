@@ -96,6 +96,21 @@ TEMPLATES = {
 # aap_health_focus_inventories: [8]                # these inventories always reported (db and api)
 # aap_url: https://aap01.yoursite.mil              # when the gateway refuses https://localhost
 """),
+    "aap_backup.yml": ("AAP - backup", "Machine (with sudo); Red Hat Ansible Automation Platform (optional: weekly schedule and job check)", "", """\
+## Serialized (Concurrent jobs off). Runs on the single AAP host (group aap_hosts, or target/Limit) as non-root ansible.
+## Put aap_backup_path and aap_installer_dir in playbooks/group_vars/all.yml; run Check first to verify preflight.
+# target: aap01.corp.example.mil
+"""),
+    "aap_backup_targets.yml": ("AAP - list backup targets", "Machine (with sudo)", "", """\
+## Read-only on the AAP host (group aap_hosts, or target/Limit): scans mounts, prints free space, marks mounts >= estimate.
+## Never selects or writes a destination; pick one mount and set aap_backup_path in playbooks/group_vars/all.yml.
+# target: aap01.corp.example.mil
+"""),
+    "aap_backup_bundle.yml": ("AAP - bundle for air-gap", "Machine (with sudo)", "", """\
+## Serialized (Concurrent jobs off). Runs on the AAP host (group aap_hosts, or target/Limit) as non-root ansible.
+## Verifies a completed backup manifest and packages backup + inventory + SAME installer + custom EEs + collections + PDF.
+# target: aap01.corp.example.mil
+"""),
     "aap_workflow_gates.yml": ("AAP - add workflow gates", "Red Hat Ansible Automation Platform (Admin on the workflows)", "", """\
 ## Step 103: the gate into the workflows you built by hand (docs/WORKFLOWS_AND_SCHEDULES.md, "The gate"). Run it with
 ## Check first. The gate template, made only if AAP has none: its project and inventory

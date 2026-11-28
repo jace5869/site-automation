@@ -1,0 +1,29 @@
+---
+# 1.142.0: Resolve the login account and the non-root AAP installation owner (aap_backup_user, default ansible).
+- name: AAP backup | inspect login user and installation owner ({{ aap_backup_user }})
+  ansible.builtin.shell:
+    cmd: |
+      echo "ME=$(id -un)"
+      LINE=$(getent passwd {{ aap_backup_user | quote }} || true)
+      echo "PASSWD=$LINE"
+  changed_when: false
+  check_mode: false
+  register: _aapbk_acct_raw
+
+- name: AAP backup | parse account identity
+  ansible.builtin.set_fact:
+    _aapbk_me: "{{ (_aapbk_acct_raw.stdout_lines | select('match', '^ME=') | first | default('ME='))[3:] | trim }}"
+    _aapbk_passwd: "{{ (_aapbk_acct_raw.stdout_lines | select('match', '^PASSWD=') | first | default('PASSWD='))[7:] | trim }}"
+
+- name: AAP backup | stop if aap_backup_user does not exist on target host
+  ansible.builtin.fail:
+    msg: >-
+      STOP [SA-AAPBK-04]: Non-root AAP installation owner '{{ aap_backup_user }}' does not exist on this host.
+      Set aap_backup_user to the account that owns the containerized AAP 2.7 installation.
+  when: _aapbk_passwd | length == 0
+
+- name: AAP backup | record uid, home and whether become is needed
+  ansible.builtin.set_fact:
+    _aapbk_uid: "{{ (_aapbk_passwd.split(':') + ['', '', ''])[2] }}"
+    _aapbk_home: "{{ (_aapbk_passwd.split(':') + ['', '', '', '', '', ''])[5] }}"
+    _aapbk_need_become: "{{ _aapbk_me != aap_backup_user }}"

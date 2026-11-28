@@ -1,0 +1,27 @@
+---
+# AAP - BACKUP (1.142.0, Phase 1): preflight with coded stops (SA-AAPBK-01..06), wraps the AAP 2.7 containerized
+# installer backup on the single AAP host as the non-root ansible account (with become only where needed), records
+# the exact AAP build/release and verified relative-path SHA-256 manifest, and optionally applies simple retention
+# and a weekly Europe/Berlin schedule (both off by default). AAP only (no MariaDB; Site portal deploys separately).
+# docs/AAP_BACKUP.md
+#
+# As an AAP job template: group aap_hosts (or Limit = the AAP host), Machine credential (with sudo if logging in as
+# another account); optional Red Hat Ansible Automation Platform credential for pre-backup job snapshot and weekly
+# schedule. Concurrent jobs: OFF. Check mode: runs preflight, retention preview and schedule preview with zero writes.
+#
+# Directly on the AAP host (works even if AAP UI is down):
+#   ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: AAP - backup (1.142.0)
+  hosts: "{{ target | default('aap_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: false
+  vars:
+    ansible_pipelining: true
+  tasks:
+    - name: AAP backup
+      ansible.builtin.import_role:
+        name: aap_backup
+        tasks_from: backup.yml

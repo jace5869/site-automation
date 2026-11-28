@@ -1,0 +1,16 @@
+---
+# 1.142.0: AAP 2.7 containerized backup, target discovery, air-gap bundling, retention and optional weekly schedule.
+galaxy_info:
+  role_name: aap_backup
+  author: site-automation
+  description: >-
+    Backup, mount discovery, air-gap bundling, simple retention and optional weekly Berlin schedule for
+    containerized AAP 2.7 (single AAP host, non-root ansible user with become where needed; AAP only, no MariaDB).
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+dependencies: []

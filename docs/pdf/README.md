@@ -14,6 +14,7 @@ spaces.
 | [Site-Automation-How-It-Fits-Together.pdf](../../guides/Site-Automation-How-It-Fits-Together.pdf) | **Read with the setup guide.** How the pieces fit: code, inventory, credentials, surveys; how a setting travels from its YAML default to a host; groups (a host in several); updating the repository at work safely. Appendix: your settings files | `docs/HOW_IT_FITS_TOGETHER.md`, `playbooks/group_vars/` |
 | [Site-Automation-Report-Share-Guide.pdf](../../guides/Site-Automation-Report-Share-Guide.pdf) | **The reports on a file share (SMB).** Every report job's page written straight onto a Windows file share, no mount: the folder and its permissions, the service account, the execution environment, the network path, the credential, the settings, a test, your reports page, and what each message means | `docs/REPORT_SHARE.md` |
 | [Site-Automation-AAP-Keycloak-Guide.pdf](../../guides/Site-Automation-AAP-Keycloak-Guide.pdf) | **AAP with Keycloak (CAC) login.** Containerized AAP behind STIG Manager's nginx with a Keycloak realm of its own, Active Directory users, login maps, tests, rollback and air-gapped setup | `docs/AAP_KEYCLOAK.md` |
+| [Site-Automation-AAP-Backup-Restore-Guide.pdf](../../guides/Site-Automation-AAP-Backup-Restore-Guide.pdf) | **AAP 2.7 air-gap restore runbook (1.142.0).** Printable offline operator procedure for the classified side: verify carry-over bundle checksums, install matching AAP 2.7 installer on a different hostname, restore, load custom EEs and collections, add the class-side execution node, sync `site-automation`, run setup jobs, and deploy Site portal on the separate STIG Manager host | `docs/AAP_BACKUP_RESTORE_RUNBOOK.md` |
 | [Service-Watch-Demo-AAP-ACT.pdf](../../guides/Service-Watch-Demo-AAP-ACT.pdf) | The service-watch demo: stop `nginx`/`stigman`, ACT finds the root cause, approve the fix | `docs/SERVICE_WATCH_DEMO.md` |
 | [ACT-Automated-Triage-Guide.pdf](../../guides/ACT-Automated-Triage-Guide.pdf) | What ACT is, how it works, setup, examples, AAP integration (ACT version: see the PDF's first page) | ACT-Linux docs |
 | [ACT-AAP-2.7-Runbook.pdf](../../guides/ACT-AAP-2.7-Runbook.pdf) | ACT's own playbooks on AAP 2.7, step by step | ACT-Linux `docs/AAP_2.7_RUNBOOK.md` |
@@ -45,6 +46,7 @@ for b in "ops_guide Site-Automation-Ops-Runbooks-Guide" "how_it_fits Site-Automa
          "service_watch Service-Watch-Demo-AAP-ACT" "settings_reference Site-Automation-Settings-Reference" \
          "vm_deploy_guide Site-Automation-VM-Deploy-Guide" "ee_guide Site-Automation-EE-Guide" \
          "report_share Site-Automation-Report-Share-Guide" "aap_keycloak Site-Automation-AAP-Keycloak-Guide" \
+         "aap_backup_restore Site-Automation-AAP-Backup-Restore-Guide" \
          "guide ACT-Automated-Triage-Guide" "runbook ACT-AAP-2.7-Runbook" \
          "5ws ACT-5Ws-Leadership-Brief" "5ws_act ACT-5Ws-Standalone-Brief"; do
   set -- $b; python3 build_$1.py
@@ -79,6 +81,7 @@ python3 build_vm_deploy_guide.py
 python3 build_ee_guide.py
 python3 build_report_share.py
 python3 build_aap_keycloak.py
+python3 build_aap_backup_restore.py
 python3 build_guide.py
 ACT_LINUX_DIR=/opt/ACT python3 build_runbook.py
 python3 build_5ws.py

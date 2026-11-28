@@ -247,6 +247,9 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | AAP - move templates to another inventory | `playbooks/aap_inventory_move.yml` | Setup (Check first): job templates, workflows, nodes and schedules from one inventory to another | [SETUP_AAP.md](SETUP_AAP.md#move-templates-to-another-inventory) |
 | AAP - set up credentials | `playbooks/aap_credentials_setup.yml` | Setup (Check first): rename credentials, attach them to job templates | [SETUP_AAP.md](SETUP_AAP.md#rename-and-attach-credentials) |
 | AAP - health check | `playbooks/aap_health_check.yml` | Report | [AAP_HEALTH_CHECK.md](AAP_HEALTH_CHECK.md#set-it-up-in-aap) |
+| AAP - backup | `playbooks/aap_backup.yml` | On demand or weekly (Check first); serialized | [AAP_BACKUP.md](AAP_BACKUP.md#step-3-run-aap---backup) |
+| AAP - list backup targets | `playbooks/aap_backup_targets.yml` | Setup or test (read-only; never picks) | [AAP_BACKUP.md](AAP_BACKUP.md#step-1-list-backup-targets) |
+| AAP - bundle for air-gap | `playbooks/aap_backup_bundle.yml` | On demand (Check first); serialized | [AAP_BACKUP.md](AAP_BACKUP.md#step-4-assemble-the-air-gap-bundle) |
 | AAP - template variables audit | `playbooks/aap_template_audit.yml` | Report | [TEMPLATE_AUDIT.md](TEMPLATE_AUDIT.md#set-it-up-in-aap) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |
 

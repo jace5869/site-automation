@@ -1,0 +1,23 @@
+---
+# AAP - BUNDLE FOR AIR-GAP (1.142.0, Phase 1): verifies a completed AAP backup manifest and assembles one
+# self-contained carry-over bundle containing the verified backup, original installer inventory, the EXACT SAME
+# containerized installer, exported custom EE images, carried collections and the printable restore runbook PDF,
+# with one SHA256SUMS manifest, BUNDLE-INDEX.txt, archive checksum and full size breakdown. AAP only (no MariaDB).
+# docs/AAP_BACKUP.md
+#
+# As an AAP job template: group aap_hosts (or Limit = the AAP host), Machine credential (with sudo if logging in as
+# another account). Concurrent jobs: OFF. Check mode: verifies the backup and reports what would be bundled.
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: AAP - bundle for air-gap (1.142.0)
+  hosts: "{{ target | default('aap_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: false
+  vars:
+    ansible_pipelining: true
+  tasks:
+    - name: AAP bundle for air-gap
+      ansible.builtin.import_role:
+        name: aap_backup
+        tasks_from: bundle.yml

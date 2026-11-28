@@ -13,8 +13,11 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Job template | Playbook | File |
 |---|---|---|
 | AAP - add workflow gates | `playbooks/aap_workflow_gates.yml` | [aap_workflow_gates.yml](aap_workflow_gates.yml) |
+| AAP - backup | `playbooks/aap_backup.yml` | [aap_backup.yml](aap_backup.yml) |
+| AAP - bundle for air-gap | `playbooks/aap_backup_bundle.yml` | [aap_backup_bundle.yml](aap_backup_bundle.yml) |
 | AAP - health check | `playbooks/aap_health_check.yml` | [aap_health_check.yml](aap_health_check.yml) |
 | AAP - incident document surveys | `playbooks/incident_docs_survey.yml` | [incident_docs_survey.yml](incident_docs_survey.yml) |
+| AAP - list backup targets | `playbooks/aap_backup_targets.yml` | [aap_backup_targets.yml](aap_backup_targets.yml) |
 | AAP - move templates to another inventory | `playbooks/aap_inventory_move.yml` | [aap_inventory_move.yml](aap_inventory_move.yml) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | [aap_email_question.yml](aap_email_question.yml) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |

@@ -1,0 +1,4 @@
+---
+# 1.142.0: Default entry point for roles/aap_backup (runs the AAP backup workflow).
+- name: AAP backup | run backup
+  ansible.builtin.import_tasks: backup.yml

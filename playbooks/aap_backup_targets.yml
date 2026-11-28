@@ -1,0 +1,22 @@
+---
+# AAP - LIST BACKUP TARGETS (1.142.0, Phase 1): strictly read-only mount scan on the AAP host. Prints every real
+# mounted filesystem, its total and available space, and marks mounts >= the required backup size estimate (baseline
+# + margin). NEVER ranks, selects or configures a destination: the operator chooses one and sets aap_backup_path in
+# playbooks/group_vars/all.yml. docs/AAP_BACKUP.md
+#
+# As an AAP job template: group aap_hosts (or Limit = the AAP host), Machine credential (with sudo if logging in as
+# another account).
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: AAP - list backup targets (1.142.0)
+  hosts: "{{ target | default('aap_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: false
+  vars:
+    ansible_pipelining: true
+  tasks:
+    - name: AAP list backup targets
+      ansible.builtin.import_role:
+        name: aap_backup
+        tasks_from: targets.yml
