@@ -213,6 +213,14 @@ def why_smb(what, e, auth, port, secret=""):
     return "SA-SWI-29", line, "see the error; docs/LINUX_SW_INVENTORY.md, When something fails"
 
 
+def fips_enabled():
+    try:
+        with open("/proc/sys/crypto/fips_enabled") as flag:
+            return flag.read().strip() == "1"
+    except OSError:
+        return False
+
+
 class SmbFolder(object):
     """A folder on a Windows file share (smbprotocol; no mount). The login: user / password (a sw_inventory_shares
     entry's own), each empty = SMB_SHARE_USERNAME / _PASSWORD (the "Windows file share" credential), else
@@ -234,6 +242,9 @@ class SmbFolder(object):
         if auth not in ("negotiate", "ntlm", "kerberos"):
             raise Fail("SA-SWI-20", "the share's auth is not negotiate, kerberos or ntlm",
                        "sw_inventory_share_auth (or the entry's auth): negotiate")
+        if "\\" in user and fips_enabled():
+            raise Fail("SA-SWI-24", r"the share login uses DOMAIN\user on a FIPS host",
+                       "write the share user as user@REALM and set sw_inventory_share_auth (or the entry's auth) to negotiate")
         if not user and auth != "kerberos":
             raise Fail("SA-SWI-27", "no login for the share %s" % self.root,
                        'attach the "Windows file share" credential (user@YOURDOMAIN.MIL and its password) to the template')

@@ -390,6 +390,19 @@ class Module(ModuleBase):
         self.assertEqual(busy["n"], 1)
         self.assertIn(unc + "\\shield\\rhel-db01.txt", fake.files)
 
+    def test_fips_domain_login_gives_fix_before_smb_login(self):
+        fake = FakeSmb()
+        path = next(iter(fake.folders))
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}), unittest.mock.patch.object(mod, "fips_enabled", return_value=True):
+            with self.assertRaises(mod.Fail) as fail:
+                mod.SmbFolder(path, user=r"SITEA\user")
+            self.assertIn("FIPS", fail.exception.what)
+            self.assertIn("user@REALM", fail.exception.fix)
+            self.assertIn("negotiate", fail.exception.fix)
+            self.assertFalse(fake.calls)
+            mod.SmbFolder(path, user="user@CORP.EXAMPLE.MIL").close()
+            self.assertEqual(fake.calls[0][-1], "negotiate")
+
     def test_a_failed_share_leaves_the_rest(self):
         unc = "\\\\fs01.corp.example.mil\\it\\inventory"
         for fake, code, fix in ((FakeSmb(fail_login="STATUS_LOGON_FAILURE"), "SA-SWI-21", "user name or password is wrong"),

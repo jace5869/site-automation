@@ -129,7 +129,7 @@
     msg: >-
       report_web_theme is {{ report_web_theme }}: the website page has the tables but not the map - the map needs
       report_web_theme atlas (the default), brief or ops. The email never has it.
-  when: report_web_dest | default('') | length > 0 and report_web_theme | default('atlas') | string | lower not in ['atlas', 'brief', 'ops']
+  when: report_web_dest | default('') | length > 0 and report_web_theme | default('atlas') | report_web_look not in ['atlas', 'brief', 'ops']
 
 - name: Network map | the first nodes and links as SolarWinds gave them (netmap_raw)
   ansible.builtin.debug:

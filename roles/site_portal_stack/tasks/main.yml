@@ -274,16 +274,25 @@
   ansible.builtin.set_fact:
     _portal_motion: "{{ 'off' if portal_motion is sameas false else (portal_motion | string | lower) }}"
 
-# 1.135.0: the look and the wall's default style - a word from the list, else the deploy stops and says so
-- name: Settings | portal_look and portal_wall_style are known names
+- name: Settings | warn when a look is unavailable
+  ansible.builtin.debug:
+    msg: "WARNING: {{ item.setting }} '{{ item.requested }}' is unavailable. Using {{ item.look }}."
+  loop:
+    - setting: portal_look
+      requested: "{{ portal_look | default('metro-atlas') | string | trim | lower }}"
+      look: "{{ portal_look | default('metro-atlas') | site_portal_skin }}"
+    - setting: report_web_theme
+      requested: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
+      look: "{{ report_web_theme | default('atlas') | report_web_look }}"
+  when: item.requested != item.look
+  loop_control:
+    label: "{{ item.setting }}"
+
+- name: Settings | portal_wall_style is a known name
   ansible.builtin.assert:
     that:
-      - (portal_look | default('metro-atlas') | string | lower | trim) in ['metro-atlas', 'metro-calm', 'metro-wall', 'atlas-clean', 'atlas-night', 'contour-lite', 'strata', 'metro', 'relay', 'atlas']
       - (portal_wall_style | default('cockpit') | string | lower | trim) in ['lights', 'cockpit', 'map', 'strata', 'relay', 'metro']
-    fail_msg: >-
-      portal_look is {{ portal_look | default('metro-atlas') }} and portal_wall_style is {{ portal_wall_style | default('cockpit') }};
-      portal_look must be metro-atlas, metro-calm, metro-wall, atlas-clean, atlas-night, contour-lite, strata, metro, relay or atlas, and portal_wall_style lights, cockpit, map, strata,
-      relay or metro - nothing was changed
+    fail_msg: "portal_wall_style must be lights, cockpit, map, strata, relay or metro."
     quiet: true
 
 - name: Settings | portal_motion is auto, always or off (checked)
@@ -324,6 +333,17 @@
     - {setting: portal_approve_groups, entries: "{{ portal_approve_groups }}"}
   loop_control:
     label: "{{ item.setting }}"
+
+- name: Settings | check whether anyone is configured to administer or run portal actions
+  ansible.builtin.set_fact:
+    _portal_access_warning: >-
+      {{ '' if portal_admins or portal_admin_groups or portal_runners or portal_run_groups else
+         'WARNING: No portal admin or runner is configured. Set portal_admins or portal_admin_groups for admins, or portal_runners or portal_run_groups for runners.' }}
+
+- name: Settings | warn about missing portal access
+  ansible.builtin.debug:
+    msg: "{{ _portal_access_warning }}"
+  when: _portal_access_warning | length > 0
 
 - name: Settings | the AD groups and domain controllers
   ansible.builtin.set_fact:
@@ -1186,7 +1206,7 @@
       PORTAL_WORKFLOW_AREAS: "{{ _portal_workflow_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
       PORTAL_ACTIONS_OPS_CENTER: "{{ portal_actions_ops_center | default('line') | string | lower | trim }}"  # 1.136.1
-      PORTAL_LOOK: "{{ portal_look | default('metro-atlas') | string | lower | trim }}"                 # 1.135.0
+      PORTAL_LOOK: "{{ portal_look | default('metro-atlas') | site_portal_skin }}"                 # 1.135.0
       PORTAL_SEASON: "{{ _portal_season }}"
       PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
       PORTAL_SEASON_LIGHTS: "{{ '1' if report_theme_season_lights | default(true) | bool else '0' }}"
@@ -1202,7 +1222,7 @@
       PORTAL_INVENTORIES_MAX: "{{ portal_inventories_max }}"
       PORTAL_WINDOWS_HOSTS_FROM: "{{ portal_windows_hosts_from | default({}, true) | to_json }}"          # 1.129.0
       PORTAL_LIMIT_MAX_PLAYBOOKS: "{{ portal_limit_max_playbooks | default({}, true) | to_json }}"        # 1.129.0
-      PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
+      PORTAL_THEME: "{{ report_web_theme | default('atlas') | report_web_look }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
       PORTAL_VM_DEPLOY_PLACEMENT_TEMPLATE: "{{ portal_vm_deploy_placement_template }}"
@@ -1701,7 +1721,7 @@
          + (['The logo: ' ~ ('on (' ~ _portal_logo_dest ~ ')' if _logo == 'on' else (_logo | default('not shown', true)))] if _portal_logo_dest | length > 0 else [])
          + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
               | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.'])
-         + [_wall_line] + ([_card_line] if _portal_ldap_on | bool else []) }}
+         + ([_portal_access_warning] if _portal_access_warning else []) + [_wall_line] + ([_card_line] if _portal_ldap_on | bool else []) }}
     _acts: "{{ _portal_aap.actions | default({}) }}"
     # 1.133.0 (Codex #7, #8): where a card's account is looked up, and what the bind account must be able to read
     _card_line: >-

@@ -1183,6 +1183,10 @@ class Collector(object):
             was = st["state"]
             st.update(state="ok", why="", at=done, next_try=None, snap=snap, fail_since=None)
             if s.kind == "vcenter":
+                # The first VM page can be a whole poll older than its completion time.
+                st["fleet_read_at"] = now
+                if getattr(s, "vcenter_omitted", False):
+                    st["vcenter_omitted"] = True
                 self._keep(s.key, snap, done)
         if getattr(self, "_tools_dirty", False):
             self._tools_dirty = False
@@ -1298,10 +1302,12 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
     vc = cfg.get("vcenter") if isinstance(cfg.get("vcenter"), dict) else {}
     if str(vc.get("user") or "").strip() and vc.get("password"):
         endpoints = {}
+        omitted = False
         for h in _hosts(vc.get("hosts")):
             try:
                 endpoints.setdefault(_endpoint(h), h)
             except (ValueError, TypeError) as e:
+                omitted = True
                 log({"event": "wall", "source": "vcenter", "state": "left out", "why": short(e)})
         # 1.131.1 (Codex #1): never one dropped by its name before it was read - a short name may be another vCenter (the
         # DNS search domain decides); duplicates are merged at run time only, by instanceUuid AND the same inventory
@@ -1312,6 +1318,7 @@ def sources_from_config(cfg, timeout=30, cafile=None, log=None):
             except Exception as e:  # pylint: disable=broad-except  - e.g. a TLS bundle that cannot be read
                 log({"event": "wall", "source": "vcenter", "state": "not configured correctly", "why": short(e)})
                 src = BrokenSource("vcenter", entry, e)
+            src.vcenter_omitted = omitted
             out.append(src)
     on = cfg.get("ontap") if isinstance(cfg.get("ontap"), dict) else {}
     if str(on.get("user") or "").strip() and on.get("password"):

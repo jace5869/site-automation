@@ -121,9 +121,9 @@
     _web_win: >-
       {{ (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) and report_web_host | default('') | string | trim | length > 0
          and not report_web_copy | default(false) | bool }}
-    _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
+    _web_theme: "{{ report_web_theme | default('atlas') | report_web_look }}"
     _web_report: >-
-      {{ (_report_web if _report_web | default({}, true) and _report is defined and report_web_theme | default('atlas') | string | trim | lower in ['atlas', 'brief', 'ops']
+      {{ (_report_web if _report_web | default({}, true) and _report is defined and report_web_theme | default('atlas') | report_web_look in ['atlas', 'brief', 'ops']
           else _report if _report is defined else
           {'title': _report_subject | default('Report'), 'status': 'info',
            'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]}) | report_act_off(_act_off | bool)
@@ -165,12 +165,10 @@
     quiet: true
   when: _email_to | length > 0 and _email_html | bool
 
-- name: Email | report_web_theme is atlas, brief, ops, standard, command, portal or glass
-  ansible.builtin.assert:
-    that: _web_theme in ['atlas', 'brief', 'ops', 'standard', 'command', 'portal', 'glass']
-    fail_msg: "report_web_theme must be atlas, brief, ops, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
-    quiet: true
-  when: _web_on | bool
+- name: Email | warn when the configured report look is unavailable
+  ansible.builtin.debug:
+    msg: "WARNING: report_web_theme '{{ report_web_theme }}' is unavailable. Using atlas."
+  when: _web_on | bool and (report_web_theme | default('atlas') | string | trim | lower) != _web_theme
 
 - name: Email | report_theme_season is none, christmas or auto, report_theme_season_style 16bit or 8bit
   ansible.builtin.assert:

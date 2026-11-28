@@ -1273,7 +1273,9 @@ on the portal's data volume through a restart).
 
 - The server computes one verdict per node. SolarWinds Status must be an integer. Unrecognized codes, strings,
   fractions, booleans and missing values give an unknown verdict. Each page of nodes carries its own arrival time.
-- SolarWinds alone determines status. A down node stays down even when vCenter reports it powered off or suspended.
+- A current SolarWinds-down node can show **Powered off (vCenter, as of HH:MM)** when every vCenter inventory
+  is current and a unique exact FQDN or unicast IP identifies one powered-off VM. Conflicting or duplicate names
+  and addresses block the override. The time shown in the verdict is UTC. It expires at the earliest contributing source deadline.
   An unmanaged node counts as off. A verdict expires at page arrival plus LATE or LastSync plus
   `portal_wall_monitor_poll_stale_minutes` (default 15 minutes), whichever comes first. A missing LastSync or one
   more than 120 seconds after page arrival is unusable for that read. A failed SolarWinds feed greys the board.
@@ -1284,7 +1286,7 @@ on the portal's data volume through a restart).
 - Each service uses the earliest member deadline and counts every listed member, including missing members beyond
   the display limit. Any unknown member makes the service stale. All up or off with at least one up is OK.
   Group membership expires 15 minutes plus two monitor read intervals after it was read. Expired membership makes
-  the services stale and blocks recovery. All off means *no monitored nodes*. The area applies the same rule to SolarWinds nodes only. The wall overview,
+  the services stale and blocks recovery. A service containing only powered-off VMs shows *powered off*. The area applies the same rule to SolarWinds nodes only. The wall overview,
   dialogs and node shares age the server verdict on their own clocks between refreshes.
 - A missing group member counts as unknown in each of its services and prevents recovery. An unknown status, a row without
   a NodeID, or a monitored node without a reliable poll time also makes the read incomplete.
@@ -1896,7 +1898,8 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 
 In 1.136.1 the portal and classic wall share the same **Look** picker. Both start with `portal_look` (default
 `metro-atlas`). A viewer's choice is kept in their browser and applies on both pages. Removed or unknown saved
-looks fall back to the configured default. A link can carry `?look=metro` for that page only.
+looks fall back to the configured default. An unavailable configured look produces a warning and uses
+`metro-atlas` for `portal_look` or `atlas` for `report_web_theme`. A link can carry `?look=metro` for that page only.
 
 Each look has its own shape, on the real data of the page:
 

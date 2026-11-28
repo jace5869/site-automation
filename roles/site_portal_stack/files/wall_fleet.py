@@ -12,7 +12,7 @@ SolarWinds watches, up or down, grouped by service, compared with what vCenter s
 
 The rules, one place for all of them:
   - status from SolarWinds (Orion's own status codes; unmanaged grey); a node in no group: "Workloads (no group)";
-  - vCenter inventory is information only. Unique FQDN or IP matches supply a dated note.
+  - 1.140.0: a unique, current powered-off VM may explain a SolarWinds down verdict.
   - a stale source (the wall's LATE / STALE) is grey on the page, never green; a read cut short is not whole: never green."""
 from collections import Counter
 import fnmatch
@@ -31,8 +31,8 @@ try:
 except ImportError:                        # pragma: no cover - the portal image has it
     site_swis = None
 
-UP, WARN, DOWN, UNMANAGED, UNKNOWN = "u", "w", "d", "m", "x"
-VERDICTS = {UP: "up", WARN: "warn", DOWN: "down", UNMANAGED: "off", UNKNOWN: "unk"}
+UP, WARN, DOWN, OFF, UNMANAGED, UNKNOWN = "u", "w", "d", "p", "m", "x"
+VERDICTS = {UP: "up", WARN: "warn", DOWN: "down", OFF: "off", UNMANAGED: "off", UNKNOWN: "unk"}
 NO_GROUP = "Workloads (no group)"
 VC_ONLY = "vCenter only"
 GROUPS_EVERY = 900                         # the groups change seldom: read again every 15 min (and at the first read)
@@ -464,20 +464,34 @@ def _vm_code(v):
 
 def _generic(name):
     """a guest host name that says nothing (a fresh install's): never a match key"""
-    return _full(name).split(".", 1)[0] in ("", "localhost", "localhost-live")
+    return str(name or "").strip().casefold().split(".", 1)[0] in ("", "localhost", "localhost-live")
 
 
-def vcenter_vms(view, now, late=LATE_S):
+def vcenter_vms(view, now, late=LATE_S, owners=None):
     """the collector's view -> (vms, vcenters): each VM {vc, current, name, host, power, heartbeat, tools, ip[], guest, id};
     vcenters [[name, current, at, state]]. current: that vCenter's last read worked and is younger than LATE."""
     vms, vcs = [], []
     for k, s in sorted(((view or {}).get("sources") or {}).items()):
         if not isinstance(s, dict) or s.get("kind") != "vcenter":
             continue
-        at = _num(s.get("at"))
-        cur = s.get("state") == "ok" and at is not None and now < at + late
+        at = _num(s.get("fleet_read_at", s.get("at")))
+        inventory = s.get("snap")
+        rows = inventory.get("vms") if isinstance(inventory, dict) else None
+        whole = isinstance(rows, list) and all(isinstance(v, dict) for v in rows)
+        if whole:
+            for v in rows:
+                if "_read_at" in v:
+                    read_at = _num(v["_read_at"])
+                    if read_at is None or not 0 < read_at <= now:
+                        whole = False
+                        break
+                    if at is not None:
+                        at = min(at, read_at)
+        cur = whole and not s.get("vcenter_omitted") and s.get("state") == "ok" and at is not None and 0 < at <= now < at + late
         vcs.append([_txt(s.get("name") or k, 120), bool(cur), at, _txt(s.get("state") or "never")])
-        for v in ((s.get("snap") or {}).get("vms") or []):
+        for v in rows if isinstance(rows, list) else []:
+            if owners is not None and isinstance(v, dict):
+                owners.update(_identity(v.get("name"), v.get("guest"), v.get("ip"))[0])
             if not isinstance(v, dict) or v.get("template") is True or v.get("vcls") is True:
                 continue                        # a template, a vCLS agent: never a workload
             ips = v.get("ip")
@@ -488,7 +502,7 @@ def vcenter_vms(view, now, late=LATE_S):
             if _generic(fields["guest"]):
                 fields["guest"] = None
             fields.update(vc=len(vcs) - 1, current=bool(cur),
-                          ip=[_txt(ip) for ip in (ips if isinstance(ips, list) else [ips]) if isinstance(ip, str)])
+                          ip=[_txt(ip, None) for ip in (ips if isinstance(ips, list) else [ips]) if isinstance(ip, str)])
             vms.append(fields)
     return vms, vcs
 
@@ -510,7 +524,34 @@ def _ip(v):
     except ValueError:
         return ""
     addr = getattr(addr, "ipv4_mapped", None) or addr
-    return "" if addr.is_unspecified or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved else str(addr)
+    if (addr.is_unspecified or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved
+            or (addr.version == 4 and addr.packed[0] == 0)):
+        return ""
+    return str(addr)
+
+
+def _identity(name, alias, ip):
+    # A short name can disqualify a namesake, but cannot establish identity.
+    names = {s.strip().removesuffix(".").lower() for s in (name, alias) if isinstance(s, str) and s.strip()}
+    names = {s for s in names if s.split(".")[0] not in ("localhost", "localhost-live")}
+    fqdns = {s for s in names if s and _full(s) == s}
+    ips = set(filter(None, map(_ip, ip if isinstance(ip, list) else [ip])))
+    return names | ips, fqdns, ips
+
+
+def override_match(node, vm, solar_owners, vm_owners):
+    node_keys, node_names, node_ips = _identity(node["name"], node["dns"], node["ip"])
+    vm_keys, vm_names, vm_ips = _identity(vm["name"], vm["guest"], vm["ip"])
+    if len(node_names) > 1 or len(vm_names) > 1 or (node_names and vm_names and node_names != vm_names):
+        return False
+    if node_ips and vm_ips and node_ips.isdisjoint(vm_ips):
+        return False
+    if not (node_names & vm_names or node_ips & vm_ips):
+        return False
+    for key in node_keys | vm_keys:
+        if solar_owners[key] != (1 if key in node_keys else 0) or vm_owners[key] != (1 if key in vm_keys else 0):
+            return False
+    return True
 
 
 def match(nodes, vms):
@@ -610,7 +651,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
             continue
         by_id[nid] = {"id": nid, "name": _txt(r.get("Caption") or r.get("DNS"), None),
-                      "at": _num(r.get("_read_at", at)), "dns": _txt(r.get("DNS"), None), "ip": _txt(r.get("IPAddress")), "c": UNKNOWN if r.get("_duplicate") else c, "rt": rt, "loss": loss,
+                      "at": _num(r.get("_read_at", at)), "dns": _txt(r.get("DNS"), None), "ip": _txt(r.get("IPAddress"), None), "c": UNKNOWN if r.get("_duplicate") else c, "rt": rt, "loss": loss,
                       "desc": desc[:MAX_TEXT], "vendor": _txt(r.get("Vendor"), 60), "model": _txt(r.get("MachineType"), 60),
                       "polled": epoch(r.get("LastSync")) if lastsync else None, "cp": {_txt(r.get("cp_group"), None)} if prop else set()}
         by_id[nid]["cp"].update(r.get("_claimed_groups", ()))
@@ -671,7 +712,11 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     fallback_status = worst_status(swst[k] for k in (used | ambiguous_names) - gi_of.keys() if k in swst)
     groups.append([NO_GROUP, "n", fallback_status])
     # ---- vCenter
-    vms, vcs = vcenter_vms(view, now, late)
+    vm_owners = Counter()
+    vms, vcs = vcenter_vms(view, now, late, vm_owners)
+    solar_owners = Counter()
+    for n in nodes if vms else []:
+        solar_owners.update(_identity(n["name"], n["dns"], n["ip"])[0])
     out["vcs"] = [[v[0], v[2], v[3]] for v in vcs]
     # "not found in vCenter" only when every vCenter's read is current (else a VM may just be unread there)
     out["cmp"]["vc_read"] = bool(vcs) and all(v[1] for v in vcs)
@@ -683,6 +728,14 @@ def model(snap, view, o, now, since=None, late=LATE_S):
     poll_stale = out["poll_stale"]
     pairs, used_vm = match(nodes, vms) if vms else ({}, set())
     identities_complete = not nodes_cut and not odd and not missing and all(v[2] is not None for v in vcs)
+    override_until = None
+    sources = (view or {}).get("sources") or {}
+    # A collapsed endpoint no longer gets an independent read. A cloned vCenter can share the UUID and moIds.
+    collapsed = any(s.get("aliases") for s in sources.values() if isinstance(s, dict) and s.get("kind") == "vcenter")
+    if (identities_complete and out["cmp"]["vc_read"] and not collapsed and len(rows) == len(nodes)
+            and nodes and not any(r.get("_duplicate") for r in rows)
+            and all(n["at"] is not None and 0 < n["at"] <= now < n["at"] + sw_late for n in nodes)):
+        override_until = min(min(v[2] + late for v in vcs), min(n["at"] + sw_late for n in nodes))
     rx = o["vm_match"]
     codes = {}
     built = []
@@ -727,6 +780,11 @@ def model(snap, view, o, now, since=None, late=LATE_S):
         until = None
         if page_current and c != UNKNOWN and "o" not in flags and not (structural_gap and c == UP):
             until = min(page_until, n["polled"] + poll_stale)
+        if (until is not None and c == DOWN and override_until is not None and vi is not None
+                and vcode == "o" and override_match(n, vms[vi], solar_owners, vm_owners)):
+            c = OFF
+            until = min(until, override_until)
+            why = "Powered off (vCenter, as of %s)" % time.strftime("%H:%M", time.gmtime(vcs[vci][2]))
         verdict = VERDICTS[c] if until is not None else "unk"
         said = n["desc"] if verdict not in ("up", "unk") else ""
         words = re.findall(r"\b(up|down|warning|unmanaged|unknown)\b", said.lower())
@@ -776,7 +834,7 @@ def model(snap, view, o, now, since=None, late=LATE_S):
             row[6], row[7] = round(s[0]), 1 if s[1] else 0
     built.sort(key=lambda r: (r[0], r[1].casefold()))
     out["groups"], out["nodes"] = groups, built
-    cnt = dict((k, 0) for k in (UP, WARN, DOWN, UNMANAGED, UNKNOWN))
+    cnt = dict((k, 0) for k in (UP, WARN, DOWN, OFF, UNMANAGED, UNKNOWN))
     per = [[] for g in groups]
     solar = []
     for r in built:
@@ -837,11 +895,11 @@ def rollup(rows, missing, incomplete, empty_until, container_status=""):
     elif container_status == WARN or counts["warn"]:
         state = "warn"
     else:
-        state = "ok" if rows and counts["up"] == len(rows) else "off"
-    label = {"crit": "down", "warn": "warning", "ok": "up", "off": "no monitored nodes",
+        state = "ok" if rows and counts["up"] and counts["up"] + counts["off"] == len(rows) else "off"
+    label = {"crit": "down", "warn": "warning", "ok": "up", "off": "powered off" if counts["off"] else "no monitored nodes",
              "stale": "unknown" if container_status == UNKNOWN and until is not None else "not current"}[state]
     return dict(state=state, label=label, total=len(rows) + missing, up=counts["up"], down=counts["down"],
-                warn=counts["warn"], valid_until=until)
+                warn=counts["warn"], valid_until=until, powered_off=counts["off"])
 
 
 def conds(fm, now):
@@ -979,7 +1037,7 @@ class Board:
         if self.reader is None:
             return None
         snap = self.reader.snapshot()
-        vcs = tuple(sorted((k, s.get("at"), s.get("state")) for k, s in ((view or {}).get("sources") or {}).items()
+        vcs = tuple(sorted((k, s.get("at"), s.get("fleet_read_at"), bool(s.get("aliases")), s.get("state")) for k, s in ((view or {}).get("sources") or {}).items()
                            if isinstance(s, dict) and s.get("kind") == "vcenter"))
         key = (snap.get("at"), snap.get("state"), snap.get("reads"), snap.get("why"),
                snap.get("groups_why"), snap.get("groups_at"), snap.get("groups_tried"), vcs)

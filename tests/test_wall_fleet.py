@@ -544,7 +544,7 @@ class Payload(unittest.TestCase):
             self.assertTrue(-1 <= r[10] < len(fm["hosts"]))
             if r[3] == "u":
                 self.assertEqual((r[8], r[16]), ("", ""))                # nothing said of an up node but its numbers
-        self.assertEqual(fm["counts"]["d"], 13)                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
+        self.assertEqual((fm["counts"]["d"], fm["counts"]["p"]), (4, 9))                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
         xss = [r for r in fm["nodes"] if "onerror" in r[1]]
         self.assertEqual(len(xss), 1)                                  # data as it came: the page and the share escape it
 
@@ -657,7 +657,7 @@ class LiveSwql(unittest.TestCase):
             self.assertEqual(len(sn["nodes"]), len(fx["nodes"]))
             now = time.time()
             fm = wf.model(sn, fd.view(now, fx), o, now)
-            self.assertEqual(fm["counts"]["d"], 13)                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
+            self.assertEqual((fm["counts"]["d"], fm["counts"]["p"]), (4, 9))                          # SolarWinds' nodes (the vCenter-only VM is the VMware area's)
             self.assertIn("Active Directory", [g[0] for g in fm["groups"]])
         before = sum(1 for r in sn["nodes"] if r["Status"] == 2)
         f.set_state({"down": [2002]})                                    # SITEADIRDCV02 goes down live
@@ -1114,6 +1114,67 @@ class Gate4(unittest.TestCase):
 
 
 
+    @unittest.skipUnless(shutil.which("node"), "no node")
+    def test_overview_expires_verdict_in_transit_and_rejects_old_answers(self):
+        wall_js = r"""
+        const fs = require("fs"), vm = require("vm"), assert = require("assert");
+        const code = fs.readFileSync(process.argv[1], "utf8");
+        const head = code.split("  function overallState")[0];
+        const tail = code.slice(code.indexOf("  function load(first)"), code.indexOf("  // the test harness only"));
+        let clock = 1700000000000, fetchImpl;
+        const root = {getAttribute(k) { return k === "data-src" ? "/api/wall" : ""; }, setAttribute() {}, querySelector() { return null; }, appendChild() {}, firstChild: null};
+        const env = {
+          document: {getElementById: () => root, createElement: () => ({setAttribute() {}, appendChild() {}}), createTextNode: String},
+          location: {search: ""}, window: {SAWallFleet: {render() {}, failed() {return false;}}, scrollY: 0, scrollTo() {}}, URLSearchParams, console: {error() {}}, assert,
+          frame() {}, render() {}, openFeedback() {}, openDetail() {},
+          fetch: (...a) => fetchImpl(...a),
+          Date: class extends Date { constructor(...a) { super(...(a.length ? a : [clock])); } static now() { return clock; } },
+          advance(ms) { clock += ms; }, getClock: () => clock,
+          setFetch(fn) { fetchImpl = fn; },
+          fail(e) { process.stderr.write(String(e && e.stack || e) + "\n"); process.exit(1); }
+        };
+        vm.createContext(env);
+        vm.runInContext(head + tail + `
+          const mkWall = (now, st, until) => ({
+            now, late: 180, stale: 600, zone: "UTC", conds: [],
+            feeds: {"sw:fleet": {name: "SolarWinds", asof: now, state: st === "stale" ? "error" : "ok"}},
+            areas: [{id: "monitor", name: "Ops monitor", built: true, on: true, complete: st !== "stale", feeds: ["sw:fleet"]}],
+            fleet: {state: st, valid_until: until, total: 1, up: st === "ok" ? 1 : 0, down: st === "crit" ? 1 : 0, warn: 0}
+          });
+          (async () => {
+            const t0 = getClock() / 1000;
+            let hdrs;
+            setFetch(async (_, o) => { hdrs = o.headers; return {status: 200, ok: true, headers: {get: () => "v1"}, json: async () => mkWall(t0, "ok", t0 + 180)}; });
+            await load(true);
+            assert.equal(areaState("monitor"), "ok");
+            setFetch(async (_, o) => { hdrs = o.headers; return {status: 200, ok: true, headers: {get: () => "v2"}, json: async () => { throw Error("truncated"); }}; });
+            await load(false);
+            assert.equal(areaState("monitor"), "stale");
+            assert.equal(ETAG, "");
+            setFetch(async (_, o) => { hdrs = o.headers; return {status: 304}; });
+            await load(false);
+            assert(!("If-None-Match" in hdrs));
+            assert.equal(areaState("monitor"), "stale");
+            let resolveOld;
+            setFetch(() => new Promise(r => { resolveOld = r; }));
+            const pOld = load(false);
+            advance(10000);
+            setFetch(async () => ({status: 200, ok: true, headers: {get: () => "v3"}, json: async () => mkWall(t0 + 10, "crit", t0 + 190)}));
+            await load(false);
+            assert.equal(areaState("monitor"), "crit");
+            resolveOld({status: 200, ok: true, headers: {get: () => "v1"}, json: async () => mkWall(t0, "ok", t0 + 180)});
+            await pOld;
+            assert.equal(areaState("monitor"), "crit");
+            const tSent = getClock() / 1000;
+            setFetch(async () => { advance(200000); return {status: 200, ok: true, headers: {get: () => "v4"}, json: async () => mkWall(tSent, "ok", tSent + 180)}; });
+            await load(false);
+            assert.equal(SKEW, 0);
+            assert.equal(areaState("monitor"), "stale");
+          })().catch(fail);
+        })();`, env);
+        """
+        subprocess.run(["node", "-e", wall_js, os.path.join(FILES, "static", "wall-page.js")], check=True)
+
     def test_gate4_5_copy_and_save_recompute_at_click(self):
         Gate3.expiring(self)
         self.js(self.model(), """
@@ -1219,6 +1280,75 @@ class Gate4(unittest.TestCase):
             area, _ = StaleNeverGreen().area(fm, self.now)
             self.assertEqual((area["state"], area["up"], area["valid_until"]), ("crit", 1, self.now + 150))
 
+    def test_gate4_12_slow_vcenter_poll_does_not_refresh_old_page(self):
+        import wall_live as wl
+        clock = [float(self.now)]
+        class SlowVc(object):
+            kind = "vcenter"
+            name = "vc01.corp.example.mil"
+            key = "vcenter:vc01.corp.example.mil"
+            def poll(self2):
+                page1 = clock[0]
+                v1 = dict(vm("db.corp.example.mil", power="poweredOff", hb=None), _read_at=page1)
+                clock[0] += 240.0
+                v2 = dict(vm("app.corp.example.mil", power="poweredOn", hb="green"), _read_at=clock[0])
+                return {"hosts": [], "clusters": [], "datastores": [], "vms": [v1, v2]}
+            def close(self2):
+                pass
+        col = wl.Collector([SlowVc()], seconds=60, clock=lambda: clock[0])
+        col.cycle()
+        v = col.view()
+        self.assertEqual(v["sources"]["vcenter:vc01.corp.example.mil"]["fleet_read_at"], float(self.now))
+        self.rows[1].update(Status=2, IPAddress="192.0.2.11")
+        fm = wf.model(snap(self.rows, self.groups, clock[0], age=0), v, OPTS, clock[0])
+        self.assertEqual((by_name(fm)["DB"][18], fm["cmp"]["vc_read"]), ("down", False))
+
+    def test_current_unique_override_and_expiry(self):
+        self.rows[1].update(Status=2, IPAddress="192.0.2.11")
+        guest = vm("db.corp.example.mil", power="poweredOff")
+        vc = view([guest], self.now)
+        other = view([], self.now, age=179, name="vc02.corp.example.mil")["sources"]
+        vc["sources"].update(other)
+        fm = self.model(vc)
+        db = by_name(fm)["DB"]
+        self.assertEqual(db[18:], ["off", self.now + 1])
+        self.assertRegex(db[8], r"^Powered off \(vCenter, as of \d\d:\d\d\)$")
+        self.assertEqual((fm["verdict"]["state"], fm["verdict"]["valid_until"]), ("ok", self.now + 1))
+        self.js(fm, """
+            const n = F.by["2"]; assert.equal(shown(n), "off"); assert(share(n).phrase.startsWith("Powered off (vCenter, as of "));
+            api.feed = k => k.startsWith("vc:") ? {} : null; api.feedFresh = () => "stale";
+            assert.equal(shown(n), "unk"); assert.equal(gState(F.groups[n.g]).st, "stale");
+            api.feed = () => null;
+            advance(1); assert.equal(shown(n), "unk"); assert.equal(share(n).st, "UNKNOWN");
+        """)
+        for bad in (dict(at=None), dict(at=self.now-180), dict(state="error"), dict(snap={}),
+                    dict(snap={"vms": [guest]})):
+            other_row = next(iter(other.values()))
+            backup = dict(other_row)
+            other_row.update(bad)
+            self.assertEqual(by_name(self.model(vc))["DB"][18], "down", bad)
+            other_row.update(backup)
+        self.rows[0]["_read_at"] = self.now - 240
+        self.assertEqual(by_name(self.model(vc))["DB"][18], "down")
+        del self.rows[0]["_read_at"]
+        other_row["aliases"] = ["vc03.corp.example.mil"]
+        self.assertEqual(by_name(self.model(vc))["DB"][18], "down")
+        del other_row["aliases"]
+        other_row["vcenter_omitted"] = True
+        self.assertEqual(by_name(self.model(vc))["DB"][18], "down")
+        del other_row["vcenter_omitted"]
+        guest["_read_at"] = self.now - 240
+        self.assertEqual(by_name(self.model(vc))["DB"][18], "down")
+        del guest["_read_at"]
+        self.rows[0]["IPAddress"] = "192.0.2.11"
+        self.assertEqual(by_name(self.model(vc))["DB"][18], "down")
+        self.rows[0]["IPAddress"] = "192.0.2.10"
+        for name, ip, verdict in (("DB", "", "down"), ("DB", "192.0.2.11", "off"),
+                                  ("other.corp.example.mil", "192.0.2.11", "down"),
+                                  ("db.corp.example.mil", "192.0.2.99", "down")):
+            inventory = view([vm(name, ip=ip, power="poweredOff")], self.now)
+            self.assertEqual(by_name(self.model(inventory))["DB"][18], verdict)
+
     def test_gate4_13_vcenter_inventory_only(self):
         fm = self.model(view([vm("extra", hb="green", tools="guestToolsNotRunning")], self.now))
         self.assertEqual(fm["verdict"]["total"], 2)
@@ -1247,11 +1377,30 @@ class Gate4(unittest.TestCase):
         self.assertEqual(by_name(self.model(vc))["APP"][9], "")
 
     def test_gate4_15_non_unicast_ips_never_match(self):
-        for addr in ("::", "0.0.0.0", "fe80::1", "127.0.0.1", str(__import__("ipaddress").IPv4Address(0xE0000001)), "::1", "169.254.1.2"):
+        self.rows[0]["Status"] = 2
+        for addr in ("::", "0.0.0.0", "0.1.2.3", "::ffff:127.0.0.1", "fe80::1", "127.0.0.1", str(__import__("ipaddress").IPv4Address(0xE0000001)), "::1", "169.254.1.2"):
             self.rows[0]["IPAddress"] = addr
-            fm = self.model(view([vm("other", ip=addr)], self.now))
+            fm = self.model(view([vm("other", ip=addr, power="poweredOff")], self.now))
+            self.assertEqual(by_name(fm)["APP"][18], "down", addr)
             self.assertEqual(by_name(fm)["APP"][9], "", addr)
 
+
+    @unittest.skipUnless(shutil.which("node"), "no node")
+    def test_gate4_16_storage_keeps_current_metric_after_area_expires(self):
+        script = r"""
+        const fs = require("fs"), assert = require("assert");
+        const document = {getElementById: () => ({getAttribute() {}})}, window = {fetch() {}};
+        const code = fs.readFileSync(process.argv[1], "utf8").split('  sec.addEventListener("click"')[0];
+        eval(code + `
+          const t = Date.now() / 1000;
+          D0 = {now: t - 5, areas: [{id: "storage", state: "ok", big: "70 %",
+                unit: "used · aggr2", metric: {asof: t-5, state: "ok"}, ok_until: t - 1}]};
+          D = JSON.parse(JSON.stringify(D0)); aged();
+          const a = D.areas[0];
+          assert.deepEqual([a.state, a.big, a.unit, a.metric.state], ["stale", "70 %", "used · aggr2", "ok"]);
+        })();`);
+        """
+        subprocess.run(["node", "-e", script, os.path.join(FILES, "static", "portal-looks.js")], check=True)
 
     def test_gate4_17_settings_only_when_enabled(self):
         from unittest.mock import patch

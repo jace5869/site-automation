@@ -803,6 +803,27 @@ def site_portal_logo_check(path):
     return ""
 
 
+DEFAULT_SKIN = "metro-atlas"
+SKINS = (
+    ("metro-atlas", "Metro Atlas", "Hybrid: Atlas typography & calm surfaces with Metro modular tile grid & subtle live motion"),
+    ("metro-calm", "Metro Calm", "Muted Metro tiles with colour only on status edges & badges - easy on the eyes for all-day use"),
+    ("metro-wall", "Metro Wall", "Room-screen Metro with oversized numbers, high contrast, and trimmed text"),
+    ("atlas-clean", "Atlas Clean", "Atlas paper/ink typography & lines, no map - areas shown as plain status tiles with counts"),
+    ("atlas-night", "Atlas Night", "Soft low-glare dark Atlas (no pure black, no neon) tuned for evening shifts"),
+    ("contour-lite", "Contour Lite", "Faint Atlas contour lines in the header band only - plain surfaces everywhere else"),
+    ("strata", "Strata Console", "Console tiles with lamp modules and a spotlight stage stepping through areas worst first"),
+    ("metro", "Metro Live Tiles", "Flat colour tiles that turn over to their worst items on a timer"),
+    ("relay", "Relay Panel", "Annunciator plates with lamps and a colour edge per area"),
+    ("atlas", "Contour Atlas", "Rounded Atlas surfaces with plain status tiles and counts"),
+)
+SKIN_KEYS = tuple(k for k, _, _ in SKINS)
+
+
+def site_portal_skin(value):
+    name = str(value).strip().lower()
+    return name if name in SKIN_KEYS else DEFAULT_SKIN
+
+
 def site_portal_titles(titles):
     """1.78.1c, for the deploy and the service: portal_titles {"AAP template name": "Portal card title"} -> {'titles': {casefolded AAP name: title},
     'problems': [...]}. A name or title that is not text, an empty one, or a title over 80 characters is a problem, said with the setting's name;
@@ -907,5 +928,5 @@ def site_portal_wall_summary(w):
 
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_wall_summary": site_portal_wall_summary, "site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_skin": site_portal_skin, "site_portal_wall_summary": site_portal_wall_summary, "site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

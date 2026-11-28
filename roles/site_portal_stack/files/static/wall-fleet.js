@@ -70,7 +70,7 @@
   async function load(first) {
     if (BUSY) return;
     BUSY = true;
-    var timeout;
+    var timeout, requested = performance.now();
     try {
       var opts = {headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store"};
       if (typeof AbortController === "function") {
@@ -92,6 +92,7 @@
       if (!Number.isFinite(a.now)) throw new Error("missing fleet time");
       if (!accept(a)) return;
       F = adapt(a);
+      F.receipt = requested;  // Time in transit counts against the server's deadlines.
       FAIL = ""; LOADED_AT = performance.now();
       Object.keys(SEL).forEach(function (k) { if (!F.by[k]) delete SEL[k]; });
       if (A && A.S.area === "monitor") { refresh(); firstOpen(); }
@@ -140,8 +141,12 @@
   }
   // what a node is drawn as: up (green, only when its source is current), down, warn, off (hollow grey), unk (grey),
   // lastdown / lastwarn (its source not current: grey, "last known")
+  function inventoriesCurrent() {
+    return F.vcs.every(function (v, i) { return vcFreshI(i) === "ok"; });
+  }
   function shown(n) {
     if (n.vconly) return "info";
+    if (n.c === "p" && !inventoriesCurrent()) return "unk";
     if (n.verdict !== "unk" && swFresh() === "ok" && current(n.until)) return n.verdict;
     if (n.c === "d") return "lastdown";
     if (n.c === "w") return "lastwarn";
@@ -149,14 +154,14 @@
   }
   var RANK = {down: 0, warn: 1, lastdown: 2, lastwarn: 3, unk: 4, off: 5, up: 6};
   function statusWord(n, s) {
-    if (s === "off") return n.c === "m" ? "UNMANAGED" : "OFF";
+    if (s === "off") return n.c === "m" ? "UNMANAGED" : "POWERED OFF";
     return {info: "INFO", up: "UP", unk: "UNKNOWN", down: "DOWN", warn: "WARN", lastdown: "LAST KNOWN DOWN", lastwarn: "LAST KNOWN WARN"}[s];
   }
   function sevOf(s) { return s === "down" ? "crit" : s === "warn" ? "warn" : s === "up" ? "ok" : s === "off" ? "off" : "stale"; }
   // a group's state from every member (a node in two groups counts in both), kept until the data or a source's freshness changes
   function gState(g) {
     if (g.kind === "v") return {st: "info", label: "information only", up: 0, down: 0, warn: 0, n: coverageCurrent() ? g.verdict.total : "–"};
-    var v = g.verdict, usable = swFresh() === "ok" && current(v.valid_until);
+    var v = g.verdict, usable = swFresh() === "ok" && current(v.valid_until) && (!v.powered_off || inventoriesCurrent());
     return {st: usable ? v.state : "stale", label: usable ? v.label : "not current",
             up: usable ? v.up : 0, down: usable ? v.down : 0, warn: usable ? v.warn : 0, n: v.total || 0};
   }
@@ -334,7 +339,7 @@
       p("c" + (c.down ? " on" : ""), c.down ? "crit" : "off", c.down + " down", "nodes down now (SolarWinds)"),
       p("w" + (c.warn ? " on" : ""), c.warn ? "warn" : "off", c.warn + " warning", "packet loss or slow answers"),
       p("o", c.up ? "ok" : "off", c.up.toLocaleString("en") + " up", "up, from a current read"),
-      p("g", "off", c.off + " unmanaged", "unmanaged in SolarWinds"),
+      p("g", "off", c.off + " off", "powered off or unmanaged"),
       c.unk || last ? p("s", "stale", (c.unk + last).toLocaleString("en") + " no current data", "grey: no current read - never green" + (last ? " · " + last + " of them last known not up (in the Not up list)" : "")) : null]);
   }
   function add(e, kids) { return A.add(e, kids); }
@@ -389,7 +394,7 @@
       var cn = counts();
       P.evs.appendChild(h("p", "wx-empty", [swFresh() !== "ok" || F.incomplete.length ? "No current, whole read - nothing can be said up or down here." :
         cn.unk ? "Nothing down or warning in the current read - " + cn.unk + " without current data (grey)." :
-        !cn.up ? "No monitored nodes." : "Every node SolarWinds watches is up or unmanaged."]));
+        !cn.up && cn.off ? "All monitored nodes are off." : !cn.up ? "No monitored nodes." : "Every monitored node is up, powered off or unmanaged."]));
       P.more.hidden = true;
       P.evs.__n = 0;
       return;
@@ -452,7 +457,7 @@
     show.forEach(function (n) {
       var s = shown(n);
       P.chips.appendChild(h("div", "chip " + s, [h("i"), h("b", "", [n.name]),
-        h("span", "", [s === "lastdown" || s === "lastwarn" ? phrase(n) : s === "down" ? "down" : s === "off" ? (n.c === "m" ? "unmanaged" : "off") : n.c === "w" ? (n.loss ? n.loss + "% loss" : n.rt != null ? n.rt + " ms" : "warn") : s === "info" ? "info" : s === "unk" ? "?" : n.rt != null ? n.rt + " ms" : "up"])],
+        h("span", "", [s === "lastdown" || s === "lastwarn" ? phrase(n) : s === "down" ? "down" : s === "off" ? (n.c === "m" ? "unmanaged" : phrase(n)) : n.c === "w" ? (n.loss ? n.loss + "% loss" : n.rt != null ? n.rt + " ms" : "warn") : s === "info" ? "info" : s === "unk" ? "?" : n.rt != null ? n.rt + " ms" : "up"])],
         {"data-k": n.key, tabindex: "0", role: "button", title: n.name + ": click for its card"}));
     });
     var rest = ns.slice(show.length), allUp = rest.every(function (n) { return shown(n) === "up"; });
@@ -475,8 +480,8 @@
   function footer() {
     clear(P.ft);
     var k = function (cls, t) { return h("span", "k", [h("i", cls), t]); };
-    add(P.ft, [k("up", "up"), k("warn", "warning (loss or slow)"), k("down", "down"), k("off", "unmanaged"), k("unk", "no current data"),
-      h("span", "rule", ["SolarWinds every " + F.seconds + " s · vCenter inventory is information only"]),
+    add(P.ft, [k("up", "up"), k("warn", "warning (loss or slow)"), k("down", "down"), k("off", "powered off or unmanaged"), k("unk", "no current data"),
+      h("span", "rule", ["SolarWinds every " + F.seconds + " s · current vCenter power can explain a down node"]),
       h("span", "rot rotcue", [A.ROT.on ? "Rotating " + (A.ROT.mode === "styles" ? "styles" : "areas") + " every " + A.ROT.every + " s" : "Rotation off"])]);
   }
 
@@ -625,7 +630,7 @@
     return [
       ["Service", (g.kind === "n" ? "no group (Workloads)" : g.name || "-") + (also.length ? " · also in " + also.join(", ") : "")],
       ["IP", n.ip || "none known", "mono"],
-      ["Status", statusWord(n, s).toLowerCase() + (n.why ? " · " + n.why : ""), sevOf(s)],
+      ["Status", statusWord(n, s).toLowerCase() + (n.why && (n.c !== "p" || s === "off") ? " · " + n.why : ""), sevOf(s)],
       n.vconly ? null : ["Since", n.since ? hm(n.since) + (n.exact ? "" : " or earlier") + " (" + A.dur(NOW() - n.since) + (n.exact ? "" : "+") + ")" : n.c === "u" ? "-" : "not known yet (seen at the first read)"],
       n.vconly ? null : ["Response / loss", (n.c === "d" ? "no reply" : n.rt != null ? n.rt + " ms" : "-") + " · " + (n.loss != null ? n.loss + "% loss" : "loss not read"), "mono"],
       n.vm ? ["vCenter says:", vmText(n)] : null,
@@ -998,7 +1003,7 @@
     if (st === "stale") n = {crit: 0, warn: 0};
     return {id: "monitor", word: st === "off" && f.state === "off" ? f.label : sevWord(st), st: st, n: n, m: null, big: st !== "stale" && tot ? up.toLocaleString("en") + "/" + tot.toLocaleString("en") : "–", unit: st === "stale" ? "no current data" : tot ? "nodes up" : "no value read",
             sub: st === "stale" ? "" : st === "off" ? f.label : n.crit + n.warn ? api.nowList("monitor").filter(function (i) { return i.type === "cond"; }).slice(0, 1).map(function (i) { return i.t; })[0] || "" :
-              tot ? (+c.d || 0) + " down · " + (+c.m || 0) + " unmanaged · " + (f.groups || 0) + " groups" : ""};
+              tot ? (+c.d || 0) + " down · " + (+c.p || 0) + " powered off · " + (+c.m || 0) + " unmanaged · " + (f.groups || 0) + " groups" : ""};
   }
 
   function groupChart(api, a, box) {

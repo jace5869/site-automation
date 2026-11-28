@@ -130,20 +130,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 LOOKS = ("atlas", "brief", "ops")            # the report website's looks made for a browser (report_web_theme)
 # 1.136.1: the portal's looks (portal_look; a viewer's own pick kept per browser) - html[data-skin], static/portal-looks.css on top
 # of the report palette above (html[data-look]). Each entry is (key, label, one-line cue for the option title). The order is the picker's.
-DEFAULT_SKIN = "metro-atlas"
-SKINS = (
-    ("metro-atlas", "Metro Atlas", "Hybrid: Atlas typography & calm surfaces with Metro modular tile grid & subtle live motion"),
-    ("metro-calm", "Metro Calm", "Muted Metro tiles with colour only on status edges & badges - easy on the eyes for all-day use"),
-    ("metro-wall", "Metro Wall", "Room-screen Metro with oversized numbers, high contrast, and trimmed text"),
-    ("atlas-clean", "Atlas Clean", "Atlas paper/ink typography & lines, no map - areas shown as plain status tiles with counts"),
-    ("atlas-night", "Atlas Night", "Soft low-glare dark Atlas (no pure black, no neon) tuned for evening shifts"),
-    ("contour-lite", "Contour Lite", "Faint Atlas contour lines in the header band only - plain surfaces everywhere else"),
-    ("strata", "Strata Console", "Console tiles with lamp modules and a spotlight stage stepping through areas worst first"),
-    ("metro", "Metro Live Tiles", "Flat colour tiles that turn over to their worst items on a timer"),
-    ("relay", "Relay Panel", "Annunciator plates with lamps and a colour edge per area"),
-    ("atlas", "Contour Atlas", "Rounded Atlas surfaces with plain status tiles and counts"),
-)
-SKIN_KEYS = tuple(k for k, _, _ in SKINS)
+DEFAULT_SKIN, SKINS, SKIN_KEYS = rules.DEFAULT_SKIN, rules.SKINS, rules.SKIN_KEYS
 ACTIONS_OPS_MODES = ("line", "off", "full")
 CONTOUR_SVG = (
     '<div class="appbar-contour" aria-hidden="true" hidden><svg viewBox="0 0 520 96" preserveAspectRatio="xMaxYMid slice">'
@@ -601,11 +588,15 @@ class Config(object):
         self.limit_max_playbooks = playbook_caps(g("PORTAL_LIMIT_MAX_PLAYBOOKS", "{}"))
         self.approval_required = names(g("PORTAL_APPROVAL_REQUIRED", "[]"))
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
-        self.look = g("PORTAL_THEME", "atlas").strip().lower()
+        self.look = str(g("PORTAL_THEME", "atlas")).strip().lower()
+        if self.look not in LOOKS + ("standard", "command", "portal", "glass"):
+            logging.getLogger(__name__).warning("report_web_theme %r is unavailable. Using atlas.", self.look)
         self.look = self.look if self.look in LOOKS else "atlas"
         # 1.136.1: portal_look - the look every viewer starts with (a viewer may pick another; kept in their browser)
-        self.skin = str(g("PORTAL_LOOK", DEFAULT_SKIN)).strip().lower()
-        self.skin = self.skin if self.skin in SKIN_KEYS else DEFAULT_SKIN
+        requested_skin = str(g("PORTAL_LOOK", DEFAULT_SKIN)).strip().lower()
+        self.skin = rules.site_portal_skin(requested_skin)
+        if self.skin != requested_skin:
+            logging.getLogger(__name__).warning("portal_look %r is unavailable. Using %s.", requested_skin, self.skin)
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
         try:

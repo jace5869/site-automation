@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.140.0 — 2026-11-28
+
+- Unavailable report and portal looks use their defaults and log a warning.
+- Portal deployment warns when nobody is configured as an admin or runner.
+- SMB inventory explains the user@REALM and negotiate settings for FIPS hosts.
+- Ops monitor can show a SolarWinds-down VM as powered off while all vCenter inventories are current and uniquely identify it.
+
 ## 1.138.0 — 2026-11-28
 
 - **Network & AD health wall area** (`/portal/wall?area=health`, `/portal/api/wall/health`, `wall_health.py`, `static/wall-health.js`, `static/wall-health.css`): live read-only Network and Active Directory health area on the ops wall with a 1920 Board mode, matching all ten portal looks in light and dark at 800, 1280, and 1920 px. Reads live from SolarWinds SWIS (`SELECT` only: `Orion.Nodes`, optional `Orion.Volumes`, `Orion.NPM.Interfaces`, topology, and groups) and the report database's AD health runs (`AdDb.read_wall`, reusing the two-check DC confirmation and read-only transaction pattern). Shows only important wall conditions (**Down**, **Full**, **Sustained errors**) while suppressing short blips, unmanaged nodes, and leaf devices behind a down parent into the Suppressed drawer; includes 4 KPI sparklines, Spotlight strip, 4 h limit-banded trends, DC-to-DC AD replication matrix, monitored estate node squares, 4 h timeline, and slide-over drill-down drawer with Teams summary copy. Missing, failed, or stale feeds always display grey *Not read* / *Not current* with why, never green.

@@ -14,7 +14,7 @@
   var TEST = root.getAttribute("data-test") === "1";
   var FREEZE = TEST && QS.get("freeze") === "1";
   var MIN = 60000;
-  var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false;
+  var W = null, SKEW = 0, BY = {}, ETAG = "", LOADED = false, requestSequence = 0;
   // the portal itself not answering (a restart, the network): after FAILS_MAX failed reads every source counts as not current
   var FAILS = 0, FAILS_MAX = 1, UNREACH = false, UNREACH_SINCE = 0, LASTF = "";
   function NOW() { return FREEZE && W ? W.now * 1000 : Date.now() + SKEW; }
@@ -1645,20 +1645,25 @@
     var ev = +QS.get("every"); if (ev === 30 || ev === 60 || ev === 120) ROT.every = ev; ROT.left = ROT.every;
   })();
   function load(first) {
-    var hd = {Accept: "application/json"};
+    var request = ++requestSequence, sent = Date.now(), tag, hd = {Accept: "application/json"};
     if (ETAG && !first) hd["If-None-Match"] = ETAG;
     return fetch(SRC, {headers: hd, credentials: "same-origin", cache: "no-store"}).then(function (res) {
-      if (res.status === 304) return null;
+      if (res.status === 304) {
+        if (!hd["If-None-Match"] || !W) throw new Error("unexpected HTTP 304");
+        return null;
+      }
       if (!res.ok) throw new Error("HTTP " + res.status);
-      ETAG = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
+      tag = (res.headers && res.headers.get && res.headers.get("ETag")) || "";
       return res.json();
     }).then(function (a) {
+      if (request !== requestSequence) return;
       FAILS = 0;
       if (UNREACH) { UNREACH = false; if (!a && W) { render(); return; } }
       if (!a) return;
       var keepScroll = window.scrollY;
-      if (a.now && !FREEZE) SKEW = a.now * 1000 - Date.now();
+      if (a.now && !FREEZE) SKEW = a.now * 1000 - sent;
       W = adapt(a);
+      ETAG = tag;
       setZone(W.zone || "UTC");
       if (!LOADED) {
         LOADED = true;
@@ -1671,6 +1676,8 @@
       window.scrollTo(0, keepScroll);
       root.setAttribute("data-ready", "1");
     }).catch(function (e) {
+      if (request !== requestSequence) return;
+      ETAG = "";
       if (!LOADED) { clear(root); root.appendChild(h("p", "note warn", ["The wall could not be read: " + e.message + ". It tries again in 30 s."])); }
       else {
         try { console.error("wall: " + (e && e.stack || e)); } catch (x) { /* no console */ }

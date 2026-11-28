@@ -31,7 +31,7 @@
                {'asked': true, 'ran': _ea_ran | default(false) | bool, 'reason': _ea_reason | default(''),
                 'model': _ea_model | default(''), 'input': _vm_w_act_in,
                 'web': report_web_dest | default('', true) | string | trim | length > 0
-                       and report_web_theme | default('atlas', true) | string | trim | lower in ['atlas', 'brief', 'ops']})}) }}
+                       and report_web_theme | default('atlas', true) | report_web_look in ['atlas', 'brief', 'ops']})}) }}
   rescue:
     - name: VMware | ACT could not be asked (the review goes on without its suggestions)
       ansible.builtin.set_fact:

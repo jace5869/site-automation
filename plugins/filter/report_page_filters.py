@@ -15,6 +15,11 @@ SCRIPT = re.compile(r'<script id="site-report-js"(?: data-file="[A-Za-z0-9_.-]+\
 FILE = re.compile(r"^[A-Za-z0-9_.-]+\.js$")
 
 
+def report_web_look(value):
+    look = str(value).strip().lower()
+    return look if look in ("atlas", "brief", "ops", "standard", "command", "portal", "glass") else "atlas"
+
+
 def report_page_extend(page, extra=None):
     """page (HTML) with extra = {marker, html, css, script, script_file, motion} put in; {} or no html: page as it is."""
     x = extra or {}
@@ -108,4 +113,4 @@ def report_page_piece(kept, root):
 
 class FilterModule(object):
     def filters(self):
-        return {"report_page_extend": report_page_extend, "report_page_piece": report_page_piece}
+        return {"report_web_look": report_web_look, "report_page_extend": report_page_extend, "report_page_piece": report_page_piece}

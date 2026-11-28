@@ -559,6 +559,7 @@ class Faults(unittest.TestCase):
             "ontap": {"user": "u", "password": "p", "clusters": ["192.0.2.10:bad", "https://192.0.2.11"]}}, log=logs.append)
         self.assertEqual([x.key for x in out], ["vcenter:vc03.corp.example.mil", "vcenter:2001:db8::1", "vcenter:vc08.corp.example.mil:8443",
                                                "ontap:192.0.2.11"])
+        self.assertTrue(out[0].vcenter_omitted)
         self.assertEqual(out[0].port, 443)
         self.assertEqual(len(logs), 5)
         self.assertTrue(all(x["state"] == "left out" for x in logs))

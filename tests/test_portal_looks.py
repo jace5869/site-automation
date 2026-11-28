@@ -43,6 +43,61 @@ class Settings(unittest.TestCase):
         self.assertEqual(sp.SKIN_KEYS, ("metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite",
                                         "strata", "metro", "relay", "atlas"))
 
+    def test_unavailable_look_warns_once_and_uses_default(self):
+        for key, attr, default in (("PORTAL_LOOK", "skin", sp.DEFAULT_SKIN), ("PORTAL_THEME", "look", "atlas")):
+            for name in ("chroma", "press", "tower", "unknown"):
+                with self.assertLogs(sp.__name__, level="WARNING") as log:
+                    self.assertEqual(getattr(self.cfg(**{key: name}), attr), default)
+                self.assertEqual(len(log.records), 1)
+                self.assertIn(default, log.output[0])
+
+    @unittest.skipUnless(shutil.which("node"), "no node")
+    def test_removed_browser_look_warns_once(self):
+        script = r"""
+        const vm = require("vm"), fs = require("fs"), assert = require("assert");
+        const warnings = [], saved = new Map([["site-portal-look", "chroma"]]);
+        const root = {getAttribute: () => "metro-atlas", setAttribute: () => assert.fail("unexpected override"),
+                      classList: {toggle() {}, contains() {return false;}}};
+        const context = {document: {documentElement: root, addEventListener() {}}, window: {}, location: {search: ""},
+                         localStorage: {getItem: k => saved.get(k), removeItem: k => saved.delete(k)},
+                         console: {warn: (...args) => warnings.push(args)}, URLSearchParams};
+        const script = fs.readFileSync(process.argv[1], "utf8");
+        vm.runInNewContext(script, context); vm.runInNewContext(script, context);
+        assert.deepEqual(warnings.map(w => w.slice(1)), [["chroma", "metro-atlas"]]);
+        """
+        subprocess.run(["node", "-e", script, os.path.join(STATIC, "portal-theme.js")], check=True)
+
+    def test_report_look_in_publish_and_copy(self):
+        import yaml
+        from jinja2 import Environment
+        from report_page_filters import report_web_look
+        env = Environment()
+        env.filters.update(report_web_look=report_web_look, bool=bool)
+        for file in ("main.yml", "copy.yml"):
+            tasks = yaml.safe_load(read(ROOT, "roles", "site_email", "tasks", file))
+            setting = next(t["ansible.builtin.set_fact"]["_web_theme"] for t in tasks
+                           if "_web_theme" in t.get("ansible.builtin.set_fact", {}))
+            warning, = [t for t in tasks if "warn when the configured report look" in t["name"]]
+            for name in ("chroma", "press", "tower", "unknown", " Glass ", "ops", "standard"):
+                look = env.from_string(setting).render(report_web_theme=name)
+                invalid = name in ("chroma", "press", "tower", "unknown")
+                self.assertEqual(look, "atlas" if invalid else name.strip().lower())
+                self.assertEqual(env.compile_expression(warning["when"])(_web_on=True, report_web_theme=name, _web_theme=look), invalid)
+
+    def test_deploy_access_warning(self):
+        import yaml
+        from jinja2 import Environment
+        tasks = yaml.safe_load(read(ROLE, "tasks", "main.yml"))
+        fact = next(t["ansible.builtin.set_fact"]["_portal_access_warning"] for t in tasks
+                    if "_portal_access_warning" in t.get("ansible.builtin.set_fact", {}))
+        grants = dict.fromkeys(("portal_admins", "portal_admin_groups", "portal_runners", "portal_run_groups"), [])
+        render = Environment().from_string(fact).render
+        self.assertIn("Set portal_admins", render(grants))
+        for key in grants:
+            self.assertEqual(render(dict(grants, **{key: ["SITEA"]})), "")
+        self.assertTrue(any(t.get("ansible.builtin.debug", {}).get("msg") == "{{ _portal_access_warning }}" for t in tasks))
+        self.assertIn("_portal_access_warning", tasks[-1]["vars"]["_head"])
+
     def test_portal_wall_style(self):
         self.assertEqual(self.cfg().wall_style, "cockpit")                                        # unchanged for current users
         for v, want in (("strata", "strata"), ("RELAY", "relay"), ("metro", "metro"), ("map", "map"), ("lights", "lights"), ("tv", "cockpit"), ("", "cockpit")):
@@ -91,8 +146,6 @@ class Settings(unittest.TestCase):
 
     def test_the_deploy_checks_both_settings(self):
         y = read(ROLE, "tasks", "main.yml")
-        m = re.search(r"portal_look \| default\('metro-atlas'\) \| string \| lower \| trim\) in \[(.*?)\]", y)
-        self.assertEqual(tuple(re.findall(r"'([a-z-]+)'", m.group(1))), sp.SKIN_KEYS)
         m = re.search(r"portal_wall_style \| default\('cockpit'\) \| string \| lower \| trim\) in \[(.*?)\]", y)
         self.assertEqual(tuple(re.findall(r"'([a-z]+)'", m.group(1))), sp.WALL_STYLES)
         self.assertIn('PORTAL_LOOK: "{{ portal_look', y)

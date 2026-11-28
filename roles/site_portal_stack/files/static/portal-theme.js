@@ -8,13 +8,19 @@
     if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
   } catch (e) { /* no storage: Auto */ }
   // 1.136.1: the look (portal_look; html[data-skin], static/portal-looks.css). ?look=KEY shows that look on this page only (as the wall's
-  // ?style=); a pick in the bar's Look list is kept in this browser (site-portal-look). Removed or unknown names fall back to portal_look silently.
+  // ?style=); a pick in the bar's Look list is kept in this browser (site-portal-look). Removed or unknown names use the configured default.
   var LOOKS = ["metro-atlas", "metro-calm", "metro-wall", "atlas-clean", "atlas-night", "contour-lite", "strata", "metro", "relay", "atlas"];
   var lk = null, picked = null;
   try { lk = new URLSearchParams(location.search).get("look"); } catch (e) { lk = null; }
   try { picked = localStorage.getItem("site-portal-look"); } catch (e) { picked = null; }
   if (LOOKS.indexOf(lk) >= 0) root.setAttribute("data-skin", lk);
-  else if (LOOKS.indexOf(picked) >= 0) root.setAttribute("data-skin", picked);
+  else if (!lk && LOOKS.indexOf(picked) >= 0) root.setAttribute("data-skin", picked);
+  else if (lk || picked) {
+    console.warn("Portal look %s is unavailable. Using %s.", lk || picked, root.getAttribute("data-skin-default"));
+    if (!lk) {
+      try { localStorage.removeItem("site-portal-look"); } catch (e) { /* storage is optional */ }
+    }
+  }
   // 1.87.0: motion, decided before the page is drawn (so nothing shows and then jumps to its start): portal_motion always (html.motion-always) moves,
   // off (html.motion-off) never, auto moves unless the system asks for less - and follows that setting when it changes. portal.css: html.moves.
   var cl = root.classList;
