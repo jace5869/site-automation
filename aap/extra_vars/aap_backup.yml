@@ -15,7 +15,8 @@
 # ==================================================================================================
 ---
 ## Serialized (Concurrent jobs off). Runs on the single AAP host (group aap_hosts, or target/Limit) as non-root ansible.
-## Put aap_backup_path and aap_installer_dir in playbooks/group_vars/all.yml; run Check first to verify preflight.
+## Put aap_backup_path and aap_installer_dir in playbooks/group_vars/all.yml; on self-hosted AAP, default refuse runs
+## preflight and prints the exact CLI command (SA-AAPBK-17) without stopping AAP. Run the printed CLI on the AAP host.
 # target: aap01.corp.example.mil
 
 # ---- aap_backup ----------------------------------------------------------------------------------
@@ -78,9 +79,10 @@
 ## AAPBK-07.
 # aap_backup_timeout_seconds: 7200
 
-## Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'detach' (via
-## systemd-run --user) or 'refuse' (stop with SA-AAPBK-17 and exact CLI).
-# aap_backup_self_hosted_mode: "detach"
+## Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'refuse' (default:
+## preflight then stop with SA-AAPBK-17 and exact CLI + restart/verify commands; never stops AAP) or
+## 'detach' (opt-in, test before use: systemd-run --user).
+# aap_backup_self_hosted_mode: "refuse"
 
 ## Polling interval in seconds while waiting for a detached systemd-run --user installer backup
 ## status file.

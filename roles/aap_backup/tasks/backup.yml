@@ -21,6 +21,7 @@
 - name: AAP backup | preflight, run containerized installer backup and verify SHA-256 manifest
   site_aap_backup:
     action: backup
+    backup_user: "{{ aap_backup_user }}"
     backup_path: "{{ aap_backup_path }}"
     expected_mount: "{{ aap_backup_expected_mount }}"
     expected_source: "{{ aap_backup_expected_source }}"
@@ -55,13 +56,18 @@
 
 - name: AAP backup | show backup result summary
   ansible.builtin.debug:
-    msg:
-      - "{{ _aapbk_run.msg }}"
-      - "Host: {{ inventory_hostname }} (as {{ aap_backup_user }}, become={{ _aapbk_need_become }}, detached={{ _aapbk_run.detached | default(false) }})"
-      - "{{ (_aapbk_run.aap_service_state | default({})).summary | default('AAP state: unknown') }}"
-      - "Exact AAP build/release: {{ (_aapbk_run.version | default(_aapbk_run.preflight.version | default({}))).exact_version | default('unknown') }}"
-      - "Backup directory: {{ _aapbk_run.backup_dir | default('(check mode - not written)') }}"
-      - "Manifest SHA-256 (SHA256SUMS): {{ _aapbk_run.sha256sums_sha256 | default('(check mode)') }}"
+    msg: >-
+      {{
+        [
+          _aapbk_run.msg,
+          'Host: ' ~ inventory_hostname ~ ' (as ' ~ aap_backup_user ~ ', become=' ~ (_aapbk_need_become | string) ~ ', detached=' ~ ((_aapbk_run.detached | default(false)) | string) ~ ')',
+          (_aapbk_run.aap_service_state | default({})).summary | default('AAP state: unknown'),
+          'Exact AAP build/release: ' ~ ((_aapbk_run.version | default(_aapbk_run.preflight.version | default({}))).exact_version | default('unknown')),
+          'Backup directory: ' ~ (_aapbk_run.backup_dir | default('(check mode - not written)')),
+          'Manifest SHA-256 (SHA256SUMS): ' ~ (_aapbk_run.sha256sums_sha256 | default('(check mode)')),
+        ]
+        + (['Manual CLI command (as ' ~ aap_backup_user ~ '): ' ~ _aapbk_run.cli_command] if (_aapbk_run.cli_command | default('')) else [])
+      }}
 
 - name: AAP backup | apply optional simple retention (off by default)
   site_aap_backup:

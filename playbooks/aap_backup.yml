@@ -7,9 +7,11 @@
 #
 # As an AAP job template: group aap_hosts (or Limit = the AAP host), Machine credential (with sudo if logging in as
 # another account); optional Red Hat Ansible Automation Platform credential for pre-backup job snapshot and weekly
-# schedule. Concurrent jobs: OFF. Check mode: runs preflight, retention preview and schedule preview with zero writes.
+# schedule. Concurrent jobs: OFF. On a self-hosted AAP host, aap_backup_self_hosted_mode defaults to 'refuse': the job
+# runs preflight checks, never stops AAP services, and stops with SA-AAPBK-17 printing the exact CLI + restart/verify
+# commands to run directly on the AAP host as ansible. Check mode runs preflight with zero writes.
 #
-# Directly on the AAP host (works even if AAP UI is down):
+# Normal way on a single-host AAP server (as the ansible user):
 #   ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
   ansible.builtin.import_playbook: site_exclude.yml

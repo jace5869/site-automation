@@ -98,7 +98,8 @@ TEMPLATES = {
 """),
     "aap_backup.yml": ("AAP - backup", "Machine (with sudo); Red Hat Ansible Automation Platform (optional: weekly schedule and job check)", "", """\
 ## Serialized (Concurrent jobs off). Runs on the single AAP host (group aap_hosts, or target/Limit) as non-root ansible.
-## Put aap_backup_path and aap_installer_dir in playbooks/group_vars/all.yml; run Check first to verify preflight.
+## Put aap_backup_path and aap_installer_dir in playbooks/group_vars/all.yml; on self-hosted AAP, default refuse runs
+## preflight and prints the exact CLI command (SA-AAPBK-17) without stopping AAP. Run the printed CLI on the AAP host.
 # target: aap01.corp.example.mil
 """),
     "aap_backup_targets.yml": ("AAP - list backup targets", "Machine (with sudo)", "", """\

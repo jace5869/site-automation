@@ -36,7 +36,7 @@ File: `roles/aap_backup/defaults/main.yml`
 | `aap_installer_extra_args` | `[]` | Extra command-line arguments passed to the containerized installer backup playbook (e.g. [--vault-password-file, /home/ansible/.vault_pass]; no_log in module). |
 | `aap_installer_become` | `false` | Pass --become to the containerized installer backup invocation when the installer inventory requires privilege escalation. |
 | `aap_backup_timeout_seconds` | `7200` | Maximum seconds to wait for the containerized installer backup command before timing out with SA-AAPBK-07. |
-| `aap_backup_self_hosted_mode` | `"detach"` | Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'detach' (via systemd-run --user) or 'refuse' (stop with SA-AAPBK-17 and exact CLI). |
+| `aap_backup_self_hosted_mode` | `"refuse"` | Self-hosted AAP job mode: 'refuse' (default: preflight then SA-AAPBK-17 with CLI + verify/restart commands; never stops AAP) or 'detach' (opt-in, test before use: systemd-run --user). |
 | `aap_backup_detach_poll_seconds` | `5` | Polling interval in seconds while waiting for a detached systemd-run --user installer backup status file. |
 | `aap_backup_systemd_run_bin` | `"systemd-run"` | Path or command name for systemd-run on the AAP host used to detach self-hosted in-AAP backups as aap_backup_user. |
 | `aap_backup_systemctl_bin` | `"systemctl"` | Path or command name for systemctl on the AAP host used to inspect and restart stopped AAP user services in finally. |

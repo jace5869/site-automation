@@ -50,8 +50,8 @@ aap_installer_become: false
 # Maximum seconds to wait for the containerized installer backup command before timing out with SA-AAPBK-07.
 aap_backup_timeout_seconds: 7200
 
-# Behavior when AAP - backup runs inside an AAP job targeting the same AAP host: 'detach' (via systemd-run --user) or 'refuse' (stop with SA-AAPBK-17 and exact CLI).
-aap_backup_self_hosted_mode: "detach"
+# Self-hosted AAP job mode: 'refuse' (default: preflight then SA-AAPBK-17 with CLI + verify/restart commands; never stops AAP) or 'detach' (opt-in, test before use: systemd-run --user).
+aap_backup_self_hosted_mode: "refuse"
 
 # Polling interval in seconds while waiting for a detached systemd-run --user installer backup status file.
 aap_backup_detach_poll_seconds: 5

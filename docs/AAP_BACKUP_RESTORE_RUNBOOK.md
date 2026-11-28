@@ -10,10 +10,14 @@ source host, `aap-class01.classified.example.mil` for the new class-side AAP hos
 `aap-exec01.classified.example.mil` for the new class-side execution node, and
 `stigman01.classified.example.mil` for the separate STIG Manager host running the Site portal).
 
-> **Scope note:** This backup and restore covers **AAP only** (controller, gateway, hub, EDA,
-> internal AAP PostgreSQL, custom EEs, and collections). MariaDB belongs to ServiceNow and is not
-> part of this restore. The **Site portal** runs on the separate STIG Manager host and is deployed
-> there in Step 8 after AAP is online.
+> **Scope & backup-mode note:** This backup and restore covers **AAP only** (controller, gateway,
+> hub, EDA, internal AAP PostgreSQL, custom EEs, and collections). MariaDB belongs to ServiceNow
+> and is not part of this restore. The **Site portal** runs on the separate STIG Manager host and
+> is deployed there in Step 8 after AAP is online. When taking backups on a single-host AAP server,
+> the **AAP - backup** job runs preflight checks and prints the exact CLI command (`SA-AAPBK-17`,
+> default `self_hosted_mode: refuse`, never stopping AAP from inside an AAP job); run the printed
+> CLI directly on the AAP host as `ansible`, then use **AAP - bundle for air-gap** to assemble the
+> verified carry-over archive.
 
 ## Before you begin: bundle layout and stop codes
 
@@ -480,9 +484,16 @@ Complete every acceptance check before re-enabling scheduled jobs:
 3. **Site portal:** confirm `https://stigman01.classified.example.mil/portal/` shows the restored
    AAP templates/actions with no unclass links.
 4. **Release workloads:** re-enable approved class-side schedules one group at a time.
-5. **Class-side backup protection:** configure `aap_backup_path` on the class side, run one manual
-   **AAP - backup** to confirm ongoing protection, and optionally enable the weekly Berlin schedule
-   (`aap_backup_schedule_enabled: true`) and simple retention (`aap_backup_retention_enabled: true`).
+5. **Class-side backup protection:** configure `aap_backup_path` on the class side, run
+   **AAP - backup** (Check or Run) to verify preflight and print the exact CLI command (on a
+   self-hosted AAP host, `aap_backup_self_hosted_mode` defaults to `"refuse"`, stops with
+   `SA-AAPBK-17` without stopping AAP services, and prints the CLI + verify/restart commands), then
+   run the printed CLI directly on `aap-class01` as `ansible`
+   (`ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml`) and
+   verify services with `systemctl --user list-units` and `podman ps`. Use **AAP - bundle for
+   air-gap** in AAP to verify and package bundles; optionally enable retention
+   (`aap_backup_retention_enabled: true`). Opt-in `aap_backup_self_hosted_mode: "detach"` is
+   **test before use** only in a maintenance window.
 6. **Clean up staging:** once signed off, securely remove `/mnt/aap_stage/restore` (including
    `payload-mapped`) and remove `/home/ansible/.vault_pass` if site policy forbids keeping the vault
    password file on disk (keep the verified archive on protected archival media per site policy).

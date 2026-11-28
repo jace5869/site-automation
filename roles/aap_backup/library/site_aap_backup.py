@@ -27,7 +27,7 @@ short_description: Preflight, backup, target scan, retention and air-gap bundle 
 description:
   - Performs Phase 1 AAP 2.7 containerized backup operations with coded stops (SA-AAPBK-01 through SA-AAPBK-17).
   - Never extends LVM or modifies host storage; reports exact shortfalls so an administrator can extend LVs or quotas.
-  - Self-hosted in-AAP runs detach via systemd-run --user (or refuse with SA-AAPBK-17 and exact CLI) and always restart stopped services in finally.
+  - Self-hosted in-AAP runs default to 'refuse' (preflight then coded SA-AAPBK-17 with exact CLI + restart/verify commands; never stops AAP services). Opt-in 'detach' (test before use) runs lock/backup/restart/harden/manifest/publish inside a SIGHUP-immune systemd-run --user unit.
   - Runs under umask 077 (dirs 0700, files 0600) and requires an exact-build offline bundle installer with bundle/ images for air-gap bundles.
   - list_targets is strictly read-only and never picks or configures a backup destination.
 options:
@@ -36,6 +36,10 @@ options:
     type: str
     required: true
     choices: [preflight, list_targets, backup, retention, bundle]
+  backup_user:
+    description: Non-root AAP installation owner account printed in manual CLI instructions (default ansible).
+    type: str
+    default: ansible
   backup_path:
     description: Absolute path to the mounted backup destination (e.g. /mnt/ansible_backup).
     type: str
@@ -95,10 +99,10 @@ options:
     type: int
     default: 7200
   self_hosted_mode:
-    description: Behavior when launched from an AAP job targeting the same AAP host (detach via systemd-run --user, or refuse with SA-AAPBK-17 and exact CLI).
+    description: Behavior when launched from an AAP job targeting the same AAP host (refuse by default with SA-AAPBK-17 and exact CLI + restart/verify commands, or opt-in detach via systemd-run --user [test before use]).
     type: str
-    default: detach
-    choices: [detach, refuse]
+    default: refuse
+    choices: [refuse, detach]
   detach_poll_seconds:
     description: Polling interval in seconds while waiting for a detached systemd-run --user backup unit.
     type: float
@@ -256,12 +260,15 @@ import datetime
 import errno
 import fcntl
 import fnmatch
+import getpass
 import hashlib
+import ipaddress
 import json
 import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -389,6 +396,25 @@ def _umask_077():
         yield
     finally:
         os.umask(old)
+
+
+@contextlib.contextmanager
+def _ignore_sighup():
+    if not hasattr(signal, "SIGHUP"):
+        yield
+        return
+    try:
+        prev = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    except (ValueError, OSError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            signal.signal(signal.SIGHUP, prev)
+        except (ValueError, OSError):
+            pass
 
 
 def _ensure_dir_0700(path):
@@ -878,9 +904,12 @@ def _extract_bundle_version_from_name(name):
     m = re.search(r"containerized-setup(?:-bundle)?-([0-9]+\.[0-9]+(?:[-.][0-9]+)*)", base)
     if m:
         return m.group(1)
-    m2 = re.search(r"aap-([0-9]+\.[0-9]+(?:[-.][0-9]+)*)", base)
+    m2 = re.search(r"(?:^|-)bundle-([0-9]+\.[0-9]+(?:[-.][0-9]+)*)", base)
     if m2:
         return m2.group(1)
+    m3 = re.search(r"aap-([0-9]+\.[0-9]+(?:[-.][0-9]+)*)", base)
+    if m3:
+        return m3.group(1)
     return ""
 
 
@@ -985,15 +1014,19 @@ def detect_aap_version(installer_dir, version_file="", version_override="", inst
 
     m_rel = re.match(r"^([0-9]+\.[0-9]+)", primary)
     aap_release = m_rel.group(1) if m_rel else primary
-    parts = [primary]
-    if installer_collection_version and installer_collection_version not in primary:
+    parts = []
+    if installer_build:
+        parts.append(installer_build)
+    if installer_collection_version and (not installer_build or installer_collection_version not in installer_build):
         parts.append("collection %s" % installer_collection_version)
-    if container_version and container_version not in primary:
+    if container_version and (not installer_build or container_version not in installer_build):
         parts.append("container %s" % container_version)
+    if not parts:
+        parts.append(primary)
 
     return {
         "aap_release": aap_release,
-        "installer_build": installer_build or primary,
+        "installer_build": installer_build,
         "installer_collection_version": installer_collection_version,
         "container_version": container_version,
         "exact_version": " | ".join(parts),
@@ -1579,22 +1612,174 @@ def _ensure_services_running(pre_services, podman_bin="podman", systemctl_bin="s
     return state, post
 
 
+def _normalize_ip(raw):
+    val = str(raw or "").strip()
+    if not val:
+        return ""
+    if val.startswith("[") and val.endswith("]"):
+        val = val[1:-1]
+    if "%" in val:
+        val = val.split("%", 1)[0]
+    try:
+        ip_obj = ipaddress.ip_address(val)
+        if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+            ip_obj = ip_obj.ipv4_mapped
+        return str(ip_obj)
+    except ValueError:
+        return ""
+
+
+def _is_loopback_ip(ip_str):
+    norm = _normalize_ip(ip_str)
+    if not norm:
+        return False
+    try:
+        return ipaddress.ip_address(norm).is_loopback
+    except ValueError:
+        return False
+
+
 def _extract_host_from_url(value):
     raw = str(value or "").strip()
     if not raw:
         return ""
     if "://" in raw and urlparse is not None:
         try:
-            return (urlparse(raw).hostname or "").strip().lower()
+            h = (urlparse(raw).hostname or "").strip().lower().rstrip(".")
+            if h:
+                return h
         except Exception:
             pass
     cleaned = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", raw)
-    cleaned = cleaned.split("/", 1)[0].split(":", 1)[0]
-    return cleaned.strip().lower()
+    cleaned = cleaned.split("/", 1)[0]
+    if "@" in cleaned:
+        cleaned = cleaned.rsplit("@", 1)[1]
+    if cleaned.startswith("["):
+        end = cleaned.find("]")
+        if end > 0:
+            return cleaned[1:end].strip().lower()
+    if _normalize_ip(cleaned):
+        return cleaned.strip().lower()
+    cleaned = cleaned.split(":", 1)[0]
+    return cleaned.strip().lower().rstrip(".")
 
 
-def _is_self_hosted_aap_run(awx_job_id, controller_host=""):
-    """Return True when launched from an AAP job (awx_job_id set) targeting this same AAP host."""
+def _collect_local_ips(ip_bin=None, fib_trie_path="/proc/net/fib_trie", if_inet6_path="/proc/net/if_inet6"):
+    """Collect ALL local NIC IPv4 and IPv6 addresses (stdlib-only, zero network calls)."""
+    ips = set(("127.0.0.1", "::1"))
+
+    def _add(raw):
+        norm = _normalize_ip(raw)
+        if norm:
+            ips.add(norm)
+
+    # 1. ip -o addr show (covers all local NICs, secondary IPs, VIPs, bridges)
+    exe = _resolve_exe(ip_bin) if ip_bin else (_resolve_exe("ip") or _resolve_exe("/usr/sbin/ip") or _resolve_exe("/sbin/ip"))
+    if exe:
+        try:
+            p = subprocess.run(
+                [exe, "-o", "addr", "show"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=10,
+            )
+            if p.returncode == 0:
+                for ln in p.stdout.splitlines():
+                    m = re.search(r"\binet6?\s+([^\s/]+)", ln)
+                    if m:
+                        _add(m.group(1))
+        except Exception:
+            pass
+
+    # 2. Kernel /proc/net/fib_trie (pure-Python local IPv4 addresses even if ip is absent)
+    try:
+        with open(fib_trie_path, "r", encoding="utf-8", errors="replace") as fh:
+            prev_ip = ""
+            for ln in fh:
+                m_ip = re.search(r"\|--\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s*$", ln)
+                if m_ip:
+                    prev_ip = m_ip.group(1)
+                    continue
+                if prev_ip and "/32 host LOCAL" in ln:
+                    _add(prev_ip)
+                prev_ip = ""
+    except OSError:
+        pass
+
+    # 3. Kernel /proc/net/if_inet6 (pure-Python local IPv6 addresses even if ip is absent)
+    try:
+        with open(if_inet6_path, "r", encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                cols = ln.split()
+                if cols and len(cols[0]) == 32:
+                    try:
+                        _add(str(ipaddress.IPv6Address(int(cols[0], 16))))
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+
+    # 4. Local hostname / FQDN / node resolution via NSS
+    for fn in (socket.gethostname, socket.getfqdn, platform.node):
+        try:
+            name = (fn() or "").strip()
+            if not name:
+                continue
+            for ai in socket.getaddrinfo(name, None):
+                _add(ai[4][0])
+        except Exception:
+            pass
+
+    return ips
+
+
+def _collect_local_names(local_ips=None, hosts_path="/etc/hosts"):
+    """Collect local hostnames, FQDNs, localhost aliases, and /etc/hosts aliases mapped to local NIC IPs."""
+    names = set((
+        "localhost", "localhost.localdomain",
+        "localhost4", "localhost4.localdomain4",
+        "localhost6", "localhost6.localdomain6",
+        "ip6-localhost", "ip6-loopback",
+    ))
+
+    def _add_name(raw):
+        v = str(raw or "").strip().lower().rstrip(".")
+        if not v or _normalize_ip(v):
+            return
+        names.add(v)
+        if "." in v:
+            short = v.split(".", 1)[0]
+            if short and not _normalize_ip(short):
+                names.add(short)
+
+    for fn in (socket.gethostname, socket.getfqdn, platform.node):
+        try:
+            _add_name(fn())
+        except Exception:
+            pass
+
+    ips = set(local_ips or ())
+    try:
+        with open(hosts_path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                cols = line.split()
+                if len(cols) < 2:
+                    continue
+                ip_norm = _normalize_ip(cols[0])
+                if ip_norm and (ip_norm in ips or _is_loopback_ip(ip_norm)):
+                    for alias in cols[1:]:
+                        _add_name(alias)
+    except OSError:
+        pass
+
+    return names
+
+
+def _is_self_hosted_aap_run(awx_job_id, controller_host="", local_ips_fn=None, local_names_fn=None, resolve_fn=None):
+    """Return True when launched from an AAP job (awx_job_id set) targeting this same AAP host.
+    Matches ALL local NIC IPv4/IPv6 addresses, hostnames, FQDNs, /etc/hosts aliases, and localhost aliases.
+    """
     if not str(awx_job_id or "").strip():
         return False
     chost = _extract_host_from_url(controller_host)
@@ -1602,56 +1787,383 @@ def _is_self_hosted_aap_run(awx_job_id, controller_host=""):
         # Single-host AAP Phase 1: when launched from AAP without an explicit remote CONTROLLER_HOST,
         # conservatively treat as self-hosted so we never kill our own job mid-backup.
         return True
-    local_names = set(("localhost", "127.0.0.1", "::1"))
-    for fn in (socket.gethostname, socket.getfqdn):
-        try:
-            v = (fn() or "").strip().lower()
-            if v:
-                local_names.add(v)
-                local_names.add(v.split(".", 1)[0])
-        except Exception:
-            pass
-    if chost in local_names or chost.split(".", 1)[0] in local_names:
-        return True
-    try:
-        local_ips = set(ai[4][0] for ai in socket.getaddrinfo(socket.gethostname(), None))
-        remote_ips = set(ai[4][0] for ai in socket.getaddrinfo(chost, None))
-        if local_ips & remote_ips:
+
+    local_ips = set(local_ips_fn() if local_ips_fn is not None else _collect_local_ips())
+    local_ips_norm = set(filter(None, (_normalize_ip(x) for x in local_ips)))
+
+    chost_ip = _normalize_ip(chost)
+    if chost_ip:
+        if _is_loopback_ip(chost_ip) or chost_ip in local_ips_norm:
             return True
+        return False
+
+    local_names = set(
+        str(n or "").strip().lower().rstrip(".")
+        for n in (local_names_fn(local_ips_norm) if local_names_fn is not None else _collect_local_names(local_ips_norm))
+        if str(n or "").strip()
+    )
+    if chost in local_names:
+        return True
+    if "." in chost:
+        short = chost.split(".", 1)[0]
+        if short in local_names and not any(n.startswith(short + ".") and n != chost for n in local_names):
+            return True
+
+    try:
+        if resolve_fn is not None:
+            remote_raw = resolve_fn(chost)
+        else:
+            remote_raw = [ai[4][0] for ai in socket.getaddrinfo(chost, None)]
+        for raw_ip in remote_raw or ():
+            rip = _normalize_ip(raw_ip)
+            if rip and (_is_loopback_ip(rip) or rip in local_ips_norm):
+                return True
     except Exception:
         pass
     return False
 
 
+def _build_manual_cli_guidance(backup_user, pre_services=None, pre=None):
+    user = str(backup_user or "").strip() or "ansible"
+    pre_s = pre_services or {"containers": [], "systemd_units": []}
+    active_units = sorted(
+        [u["unit"] for u in (pre_s.get("systemd_units") or []) if u.get("active") == "active"],
+        key=_service_sort_key,
+    )
+    up_conts = sorted(
+        [c["name"] for c in (pre_s.get("containers") or []) if str(c.get("status") or "").lower().startswith("up")],
+        key=_service_sort_key,
+    )
+    restart_cmds = []
+    if active_units:
+        restart_cmds.append("systemctl --user start " + " ".join(active_units))
+    else:
+        restart_cmds.append(
+            "systemctl --user start postgresql.service redis.service receptor.service "
+            "automation-gateway.service automation-hub-api.service automation-controller-web.service"
+        )
+    if up_conts:
+        restart_cmds.append("podman start " + " ".join(up_conts))
+    host_hint = ((pre or {}).get("version") or {}).get("hostname") or "localhost"
+    verify_cmds = [
+        "systemctl --user list-units 'automation*' 'postgresql*' 'redis*' 'receptor*'",
+        "podman ps -a --format 'table {{.Names}}\\t{{.Status}}'",
+        "curl -sk https://%s/api/gateway/v1/ping/" % host_hint,
+    ]
+    return {
+        "cli_user": user,
+        "cli_command": CLI_BACKUP_CMD,
+        "cli_full": "sudo -iu %s  # then from ~/site-automation: %s" % (user, CLI_BACKUP_CMD),
+        "restart_commands": restart_cmds,
+        "verify_commands": verify_cmds,
+    }
+
+
 _DETACHED_RUNNER_SRC = r'''#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Detached AAP backup runner (1.142.0): runs installer backup in a transient systemd --user unit
-and ALWAYS restarts any pre_services stopped during backup in finally, writing status JSON (0600)."""
+"""Detached AAP backup runner (1.142.0): runs completely independently inside a transient
+systemd --user unit. Ignores SIGHUP, owns .aap-backup.lock, runs the installer backup,
+restarts any stopped pre_services in finally, hardens 0700/0600 perms, writes and verifies
+SHA256SUMS + manifest.json, atomically publishes backups/<id> + backups/latest.json (or
+quarantines staging on failure), and writes a 0600 status JSON."""
 import datetime
+import errno
+import fcntl
+import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import uuid
 
 os.umask(0o077)
+GIB = 1024 ** 3
+
+
+class RunnerStop(Exception):
+    def __init__(self, code, message):
+        super(RunnerStop, self).__init__("STOP [%s]: %s" % (code, message))
+        self.code = code
+        self.message = message
 
 
 def iso_utc():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def write_status(path, doc):
+def fmt_gib(n):
+    return round(int(n or 0) / float(GIB), 2)
+
+
+def sha256_file(path, chunk_size=1048576):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            buf = fh.read(chunk_size)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+def ensure_dir_0700(path):
+    norm = os.path.normpath(path)
+    missing = []
+    cur = norm
+    while cur and not os.path.exists(cur):
+        missing.append(cur)
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    for d in reversed(missing):
+        os.mkdir(d, 0o700)
+        os.chmod(d, 0o700)
+    if os.path.isdir(norm) and not os.path.islink(norm):
+        try:
+            os.chmod(norm, 0o700)
+        except OSError:
+            pass
+
+
+def copy_file_0600(src, dst):
+    parent = os.path.dirname(dst)
+    if parent and not os.path.isdir(parent):
+        ensure_dir_0700(parent)
+    fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as dst_fh:
+            with open(src, "rb") as src_fh:
+                shutil.copyfileobj(src_fh, dst_fh, length=1048576)
+            dst_fh.flush()
+            os.fsync(dst_fh.fileno())
+        os.chmod(dst, 0o600)
+    except Exception:
+        try:
+            os.unlink(dst)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_write_text(path, text, mode=0o600):
+    parent = os.path.dirname(path)
+    if parent and not os.path.isdir(parent):
+        ensure_dir_0700(parent)
     tmp = "%s.tmp.%d.%s" % (path, os.getpid(), uuid.uuid4().hex[:8])
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_status(path, doc):
+    atomic_write_text(path, json.dumps(doc, indent=2, sort_keys=True) + "\n", mode=0o600)
+
+
+def harden_tree_perms(root_dir):
+    if os.path.islink(root_dir):
+        return
+    if os.path.isdir(root_dir):
+        try:
+            os.chmod(root_dir, 0o700)
+        except OSError:
+            pass
+        for cur, dirs, files in os.walk(root_dir, followlinks=False):
+            kept = []
+            for d in dirs:
+                dp = os.path.join(cur, d)
+                if os.path.islink(dp):
+                    continue
+                try:
+                    os.chmod(dp, 0o700)
+                except OSError:
+                    pass
+                kept.append(d)
+            dirs[:] = kept
+            for fn in files:
+                fp = os.path.join(cur, fn)
+                if os.path.islink(fp):
+                    continue
+                try:
+                    os.chmod(fp, 0o600)
+                except OSError:
+                    pass
+
+
+def acquire_lock(backup_path, action_name, unit_name=""):
+    lock_path = os.path.join(backup_path, ".aap-backup.lock")
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        raise RunnerStop("SA-AAPBK-02", "Could not open backup lock file %s: %s" % (lock_path, exc))
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (IOError, OSError) as exc:
+        holder = ""
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            holder = os.read(fd, 512).decode("utf-8", errors="replace").strip()
+        except OSError:
+            pass
+        os.close(fd)
+        if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+            raise RunnerStop(
+                "SA-AAPBK-06",
+                "Another AAP backup or bundle operation holds lock %s (%s)." % (lock_path, holder or "active lock"),
+            )
+        raise RunnerStop("SA-AAPBK-06", "Could not acquire lock %s: %s" % (lock_path, exc))
+    try:
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, ("pid=%d action=%s unit=%s started=%s\n" % (os.getpid(), action_name, unit_name, iso_utc())).encode("utf-8"))
+        os.fsync(fd)
+    except OSError:
+        pass
+    return fd
+
+
+def release_lock(fd):
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def assert_no_symlink_path(root_dir, rel_posix, stop_code="SA-AAPBK-09"):
+    if os.path.islink(root_dir):
+        raise RunnerStop(stop_code, "Refusing symlinked root directory %s." % root_dir)
+    if not rel_posix or rel_posix.startswith("/") or "\\" in rel_posix:
+        raise RunnerStop(stop_code, "Unsafe relative path %r under %s." % (rel_posix, root_dir))
+    parts = rel_posix.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        raise RunnerStop(stop_code, "Unsafe relative path %r under %s." % (rel_posix, root_dir))
+    root_real = os.path.realpath(root_dir)
+    cur = root_dir
+    for part in parts:
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            raise RunnerStop(stop_code, "Refusing symlink entry %r under %s." % (rel_posix, root_dir))
+    target_real = os.path.realpath(cur)
+    if not (target_real == root_real or target_real.startswith(root_real + os.sep)):
+        raise RunnerStop(stop_code, "Path %r escapes root directory %s." % (rel_posix, root_dir))
+    return cur
+
+
+def walk_relative_files(root_dir, exclude_names=(), stop_code="SA-AAPBK-09"):
+    if os.path.islink(root_dir):
+        raise RunnerStop(stop_code, "Refusing symlinked directory %s." % root_dir)
+    excl = set(exclude_names or ())
+    found = []
+    for cur, dirs, files in os.walk(root_dir, followlinks=False):
+        dirs.sort()
+        kept = []
+        for d in dirs:
+            dp = os.path.join(cur, d)
+            if os.path.islink(dp):
+                raise RunnerStop(stop_code, "Refusing symlinked directory %s under %s." % (dp, root_dir))
+            kept.append(d)
+        dirs[:] = kept
+        for fn in sorted(files):
+            abs_p = os.path.join(cur, fn)
+            rel = os.path.relpath(abs_p, root_dir).replace(os.sep, "/")
+            if os.path.islink(abs_p):
+                if rel not in excl:
+                    raise RunnerStop(stop_code, "Refusing symlink file %s under %s." % (rel, root_dir))
+                continue
+            if rel in excl:
+                continue
+            found.append((rel, abs_p))
+    found.sort(key=lambda x: x[0])
+    return found
+
+
+def write_sha256sums(root_dir, rel_files, sums_name="SHA256SUMS"):
+    entries = []
+    total_bytes = 0
+    lines = []
+    for rel, abs_p in rel_files:
+        sz = os.path.getsize(abs_p)
+        digest = sha256_file(abs_p)
+        total_bytes += sz
+        entries.append({"path": rel, "size_bytes": sz, "sha256": digest})
+        lines.append("%s  %s" % (digest, rel))
+    sums_path = os.path.join(root_dir, sums_name)
+    atomic_write_text(sums_path, ("\n".join(lines) + "\n") if lines else "", mode=0o600)
+    return sums_path, entries, total_bytes
+
+
+def verify_sha256sums(root_dir, sums_name="SHA256SUMS", stop_code="SA-AAPBK-09"):
+    if os.path.islink(root_dir):
+        raise RunnerStop(stop_code, "Refusing symlinked directory %s during verification." % root_dir)
+    sums_path = os.path.join(root_dir, sums_name)
+    if os.path.islink(sums_path) or not os.path.isfile(sums_path):
+        raise RunnerStop(stop_code, "Manifest file %s is missing or symlinked." % sums_path)
+    with open(sums_path, "r", encoding="utf-8") as fh:
+        lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+    if not lines:
+        raise RunnerStop(stop_code, "Manifest %s is empty." % sums_path)
+    verified = 0
+    for idx, line in enumerate(lines, 1):
+        m = re.match(r"^([0-9a-fA-F]{64})  (.+)$", line)
+        if not m:
+            raise RunnerStop(stop_code, "Malformed line %d in %s." % (idx, sums_path))
+        want_hash, rel = m.group(1).lower(), m.group(2)
+        target = assert_no_symlink_path(root_dir, rel, stop_code)
+        if not os.path.isfile(target):
+            raise RunnerStop(stop_code, "Missing file listed in %s: %s" % (sums_path, rel))
+        got_hash = sha256_file(target)
+        if got_hash != want_hash:
+            raise RunnerStop(stop_code, "SHA-256 mismatch for %s (expected %s, got %s)." % (rel, want_hash, got_hash))
+        verified += 1
+    return verified
+
+
+def quarantine_staging(backup_path, staging_dir, run_id, code, reason, extra_log_file=""):
+    qroot = os.path.join(backup_path, "quarantine")
+    try:
+        ensure_dir_0700(qroot)
+        qdest = os.path.join(qroot, run_id)
+        if os.path.exists(qdest):
+            qdest = "%s-%s" % (qdest, uuid.uuid4().hex[:6])
+        if os.path.isdir(staging_dir) and not os.path.islink(staging_dir):
+            shutil.move(staging_dir, qdest)
+        else:
+            ensure_dir_0700(qdest)
+        if extra_log_file and os.path.isfile(extra_log_file) and not os.path.islink(extra_log_file):
+            try:
+                copy_file_0600(extra_log_file, os.path.join(qdest, "installer.log"))
+            except OSError:
+                pass
+        atomic_write_text(
+            os.path.join(qdest, "ERROR.txt"),
+            "code=%s\ntime=%s\nreason=%s\n" % (code, iso_utc(), reason),
+            mode=0o600,
+        )
+        harden_tree_perms(qdest)
+        return qdest
+    except Exception:
+        return ""
 
 
 def resolve_exe(bin_name):
@@ -1781,6 +2293,9 @@ def ensure_running(pre, podman_bin, systemctl_bin):
 
 
 def main():
+    os.umask(0o077)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     cfg_path = sys.argv[1]
     with open(cfg_path, "r", encoding="utf-8") as fh:
         cfg = json.load(fh)
@@ -1788,60 +2303,243 @@ def main():
         os.unlink(cfg_path)
     except OSError:
         pass
+
+    backup_path = cfg["backup_path"]
+    backup_id = cfg["backup_id"]
+    staging_dir = cfg["staging_dir"]
+    payload_dir = cfg["payload_dir"]
+    backups_root = cfg["backups_root"]
     status_file = cfg["status_file"]
     log_file = cfg["log_file"]
-    write_status(status_file, {
-        "state": "running",
-        "pid": os.getpid(),
-        "unit": cfg.get("unit", ""),
-        "started_utc": iso_utc(),
-    })
-    state = "error"
-    rc = 1
-    err = ""
+    unit = cfg.get("unit", "")
+    podman_bin = cfg.get("podman_bin", "podman")
+    systemctl_bin = cfg.get("systemctl_bin", "systemctl")
+
+    lock_fd = None
     try:
-        fd = os.open(log_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as lfh:
-            proc = subprocess.run(
-                cfg["cmd"],
-                cwd=cfg["cwd"],
-                stdout=lfh,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                timeout=int(cfg.get("timeout_seconds", 7200)),
-            )
-        rc = int(proc.returncode)
-        state = "ok" if rc == 0 else "failed"
-    except subprocess.TimeoutExpired as exc:
-        state = "timeout"
-        rc = 124
-        err = str(exc)
-    except Exception as exc:
-        state = "error"
-        rc = 127
-        err = str(exc)
-    finally:
-        aap_state, post_svcs = ensure_running(cfg.get("pre_services"), cfg.get("podman_bin", "podman"), cfg.get("systemctl_bin", "systemctl"))
-        tail = []
         try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as lfh:
-                tail = lfh.read().strip().splitlines()[-20:]
-        except OSError:
-            pass
-        try:
-            os.chmod(log_file, 0o600)
-        except OSError:
-            pass
+            lock_fd = acquire_lock(backup_path, "backup-detached", unit)
+        except RunnerStop as exc:
+            try:
+                if os.path.isdir(staging_dir):
+                    shutil.rmtree(staging_dir)
+            except OSError:
+                pass
+            write_status(status_file, {
+                "state": "lock_busy",
+                "stop_code": exc.code,
+                "rc": 1,
+                "error": exc.message,
+                "unit": unit,
+                "aap_service_state": {
+                    "status": "untouched",
+                    "summary": "AAP state: untouched (installer backup was not started; lock busy).",
+                },
+                "finished_utc": iso_utc(),
+            })
+            return
+
         write_status(status_file, {
-            "state": state,
-            "rc": rc,
-            "error": err,
-            "tail": tail,
-            "unit": cfg.get("unit", ""),
-            "post_services": post_svcs,
-            "aap_service_state": aap_state,
-            "finished_utc": iso_utc(),
+            "state": "running",
+            "pid": os.getpid(),
+            "unit": unit,
+            "started_utc": iso_utc(),
         })
+
+        state = "error"
+        rc = 1
+        err = ""
+        tail = []
+        aap_state = {"status": "unknown", "summary": "AAP state: unknown."}
+        post_svcs = {"containers": [], "systemd_units": []}
+        try:
+            fd = os.open(log_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as lfh:
+                proc = subprocess.run(
+                    cfg["cmd"],
+                    cwd=cfg["cwd"],
+                    stdout=lfh,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    timeout=int(cfg.get("timeout_seconds", 7200)),
+                )
+            rc = int(proc.returncode)
+            state = "ok" if rc == 0 else "failed"
+        except subprocess.TimeoutExpired as exc:
+            state = "timeout"
+            rc = 124
+            err = str(exc)
+        except Exception as exc:
+            state = "error"
+            rc = 127
+            err = str(exc)
+        finally:
+            aap_state, post_svcs = ensure_running(cfg.get("pre_services"), podman_bin, systemctl_bin)
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="replace") as lfh:
+                    tail = lfh.read().strip().splitlines()[-20:]
+            except OSError:
+                pass
+            try:
+                if os.path.exists(log_file):
+                    os.chmod(log_file, 0o600)
+            except OSError:
+                pass
+
+        if state != "ok":
+            if state == "timeout":
+                reason = "installer backup timed out after %ss" % cfg.get("timeout_seconds", 7200)
+            elif state == "error":
+                reason = err or "failed to run containerized installer backup"
+            else:
+                reason = "installer exited rc=%d: %s" % (rc, " | ".join(tail[-5:]))
+            qdir = quarantine_staging(backup_path, staging_dir, backup_id, "SA-AAPBK-07",
+                                      "%s; %s" % (reason, aap_state["summary"]), log_file)
+            try:
+                if os.path.exists(log_file):
+                    os.unlink(log_file)
+            except OSError:
+                pass
+            write_status(status_file, {
+                "state": state,
+                "stop_code": "SA-AAPBK-07",
+                "rc": rc,
+                "error": err or reason,
+                "tail": tail,
+                "quarantine_dir": qdir,
+                "unit": unit,
+                "post_services": post_svcs,
+                "aap_service_state": aap_state,
+                "finished_utc": iso_utc(),
+            })
+            return
+
+        try:
+            if os.path.exists(log_file):
+                os.unlink(log_file)
+        except OSError:
+            pass
+
+        # Harden 0700/0600 perms, write & verify SHA256SUMS + manifest.json, atomically publish inside detached runner
+        try:
+            harden_tree_perms(staging_dir)
+            payload_files = walk_relative_files(staging_dir, exclude_names=("SHA256SUMS", "manifest.json"),
+                                                stop_code="SA-AAPBK-09")
+            payload_files = [(rel, ap) for rel, ap in payload_files if rel.startswith("payload/")]
+            if not payload_files:
+                raise RunnerStop("SA-AAPBK-08", "Installer exited 0 but wrote no backup payload files under %s." % payload_dir)
+            non_empty = [ap for _, ap in payload_files if os.path.getsize(ap) > 0]
+            if not non_empty:
+                raise RunnerStop("SA-AAPBK-08", "Installer backup produced only empty (0-byte) files.")
+
+            sums_path, file_entries, payload_bytes = write_sha256sums(staging_dir, payload_files, "SHA256SUMS")
+            verified_count = verify_sha256sums(staging_dir, "SHA256SUMS", stop_code="SA-AAPBK-09")
+            if verified_count != len(payload_files):
+                raise RunnerStop("SA-AAPBK-09", "Verified file count (%d) != payload file count (%d)." % (verified_count, len(payload_files)))
+
+            finished_utc = iso_utc()
+            duration_s = max(0, int(time.time() - float(cfg.get("started_epoch") or time.time())))
+            sums_sha256 = sha256_file(sums_path)
+            ver = cfg.get("version") or {}
+            manifest = {
+                "schema_version": 1,
+                "site_automation_version": cfg.get("sa_version", "1.142.0"),
+                "backup_id": backup_id,
+                "started_utc": cfg.get("started_utc", finished_utc),
+                "finished_utc": finished_utc,
+                "duration_seconds": duration_s,
+                "detached": True,
+                "detached_unit": unit,
+                "aap": ver,
+                "installer": cfg.get("installer_meta") or {},
+                "mount": cfg.get("mount") or {},
+                "payload_dir": "payload",
+                "file_count": len(file_entries),
+                "payload_bytes": payload_bytes,
+                "payload_gib": fmt_gib(payload_bytes),
+                "sha256sums_file": "SHA256SUMS",
+                "sha256sums_sha256": sums_sha256,
+                "files": file_entries,
+                "pre_running_jobs": cfg.get("pre_running_jobs") or [],
+                "pre_services": cfg.get("pre_services") or {},
+                "post_services": post_svcs,
+                "aap_service_state": aap_state,
+                "mariadb_included": False,
+                "portal_included": False,
+            }
+            atomic_write_text(
+                os.path.join(staging_dir, "manifest.json"),
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                mode=0o600,
+            )
+            harden_tree_perms(staging_dir)
+
+            ensure_dir_0700(backups_root)
+            final_dir = os.path.join(backups_root, backup_id)
+            os.rename(staging_dir, final_dir)
+            os.chmod(final_dir, 0o700)
+            latest_doc = {
+                "backup_id": backup_id,
+                "path": final_dir,
+                "finished_utc": finished_utc,
+                "payload_bytes": payload_bytes,
+                "file_count": len(file_entries),
+                "exact_version": ver.get("exact_version", ""),
+                "aap_release": ver.get("aap_release", ""),
+                "installer_build": ver.get("installer_build", ""),
+                "sha256sums_sha256": sums_sha256,
+            }
+            atomic_write_text(
+                os.path.join(backups_root, "latest.json"),
+                json.dumps(latest_doc, indent=2, sort_keys=True) + "\n",
+                mode=0o600,
+            )
+            write_status(status_file, {
+                "state": "ok",
+                "rc": 0,
+                "unit": unit,
+                "backup_id": backup_id,
+                "backup_dir": final_dir,
+                "manifest_path": os.path.join(final_dir, "manifest.json"),
+                "sha256sums_path": os.path.join(final_dir, "SHA256SUMS"),
+                "sha256sums_sha256": sums_sha256,
+                "file_count": len(file_entries),
+                "payload_bytes": payload_bytes,
+                "payload_gib": fmt_gib(payload_bytes),
+                "post_services": post_svcs,
+                "aap_service_state": aap_state,
+                "finished_utc": finished_utc,
+            })
+        except RunnerStop as exc:
+            qdir = quarantine_staging(backup_path, staging_dir, backup_id, exc.code,
+                                      "%s; %s" % (exc.message, aap_state["summary"]))
+            write_status(status_file, {
+                "state": "failed",
+                "stop_code": exc.code,
+                "rc": 1,
+                "error": exc.message,
+                "quarantine_dir": qdir,
+                "unit": unit,
+                "post_services": post_svcs,
+                "aap_service_state": aap_state,
+                "finished_utc": iso_utc(),
+            })
+        except Exception as exc:
+            qdir = quarantine_staging(backup_path, staging_dir, backup_id, "SA-AAPBK-09",
+                                      "%s; %s" % (exc, aap_state["summary"]))
+            write_status(status_file, {
+                "state": "failed",
+                "stop_code": "SA-AAPBK-09",
+                "rc": 1,
+                "error": "Manifest generation/verification/publish failed: %s" % exc,
+                "quarantine_dir": qdir,
+                "unit": unit,
+                "post_services": post_svcs,
+                "aap_service_state": aap_state,
+                "finished_utc": iso_utc(),
+            })
+    finally:
+        release_lock(lock_fd)
         try:
             os.unlink(os.path.abspath(__file__))
         except OSError:
@@ -1854,19 +2552,31 @@ if __name__ == "__main__":
 
 
 def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podman_bin, systemctl_bin,
-                                  systemd_run_bin, poll_seconds, staging_root, backup_id):
-    """Detach the installer backup into a systemd --user transient unit and poll a 0600 status file."""
+                                  systemd_run_bin, poll_seconds, staging_root, backup_id,
+                                  backup_path, staging_dir, payload_dir, backups_root,
+                                  started_utc, started_epoch, pre, installer_meta, pre_running_jobs,
+                                  backup_user="ansible"):
+    """Detach the entire backup lifecycle (lock, SIGHUP-ignore, installer, service restart,
+    0700/0600 hardening, SHA256SUMS + manifest, atomic publish / quarantine) into a systemd --user unit."""
+    guidance = _build_manual_cli_guidance(backup_user, pre_services, pre)
+    untouched = {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started; no AAP services were stopped)."}
     sdrun = _resolve_exe(systemd_run_bin)
     if not sdrun:
         raise StopError(
             "SA-AAPBK-17",
             "Refusing synchronous backup inside a self-hosted AAP job: '%s' was not found to detach the installer backup. "
-            "Run directly on the AAP host as ansible: %s  AAP state: untouched (installer backup was not started)." % (
-                systemd_run_bin, CLI_BACKUP_CMD
+            "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
+                systemd_run_bin, guidance["cli_user"], guidance["cli_command"],
+                " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
+                untouched["summary"],
             ),
             details={
-                "cli_command": CLI_BACKUP_CMD,
-                "aap_service_state": {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started)."},
+                "cli_user": guidance["cli_user"],
+                "cli_command": guidance["cli_command"],
+                "cli_full": guidance["cli_full"],
+                "restart_commands": guidance["restart_commands"],
+                "verify_commands": guidance["verify_commands"],
+                "aap_service_state": untouched,
             },
         )
     unit_name = "sa-aap-backup-%s" % safe_filename(backup_id)
@@ -1877,10 +2587,22 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
 
     cfg_doc = {
         "unit": unit_name,
+        "backup_path": backup_path,
+        "backup_id": backup_id,
+        "staging_dir": staging_dir,
+        "payload_dir": payload_dir,
+        "backups_root": backups_root,
+        "started_utc": started_utc,
+        "started_epoch": started_epoch,
+        "sa_version": SA_VERSION,
         "cmd": cmd,
         "cwd": cwd,
         "timeout_seconds": int(timeout_seconds),
         "pre_services": pre_services,
+        "pre_running_jobs": pre_running_jobs or [],
+        "version": (pre or {}).get("version") or {},
+        "mount": (pre or {}).get("mount") or {},
+        "installer_meta": installer_meta or {},
         "podman_bin": podman_bin,
         "systemctl_bin": systemctl_bin,
         "status_file": status_file,
@@ -1912,12 +2634,18 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
         raise StopError(
             "SA-AAPBK-17",
             "Failed to launch detached systemd-run --user unit for self-hosted AAP backup (%s). "
-            "Run directly on the AAP host as ansible: %s  AAP state: untouched (installer backup was not started)." % (
-                exc, CLI_BACKUP_CMD
+            "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
+                exc, guidance["cli_user"], guidance["cli_command"],
+                " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
+                untouched["summary"],
             ),
             details={
-                "cli_command": CLI_BACKUP_CMD,
-                "aap_service_state": {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started)."},
+                "cli_user": guidance["cli_user"],
+                "cli_command": guidance["cli_command"],
+                "cli_full": guidance["cli_full"],
+                "restart_commands": guidance["restart_commands"],
+                "verify_commands": guidance["verify_commands"],
+                "aap_service_state": untouched,
             },
         )
     if launch.returncode != 0:
@@ -1930,28 +2658,35 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
         err_msg = ((launch.stderr or "") + " " + (launch.stdout or "")).strip()
         raise StopError(
             "SA-AAPBK-17",
-            "systemd-run --user refused detached launch (rc=%d: %s). Enable linger for ansible or run directly on the AAP host as ansible: %s  "
-            "AAP state: untouched (installer backup was not started)." % (
-                launch.returncode, err_msg, CLI_BACKUP_CMD
+            "systemd-run --user refused detached launch (rc=%d: %s). Enable linger for %s or run directly on the AAP host as %s: %s  "
+            "Verify: %s  Restart: %s  %s" % (
+                launch.returncode, err_msg, guidance["cli_user"], guidance["cli_user"], guidance["cli_command"],
+                " && ".join(guidance["verify_commands"]), " ; ".join(guidance["restart_commands"]),
+                untouched["summary"],
             ),
             details={
                 "rc": launch.returncode,
-                "cli_command": CLI_BACKUP_CMD,
-                "aap_service_state": {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started)."},
+                "cli_user": guidance["cli_user"],
+                "cli_command": guidance["cli_command"],
+                "cli_full": guidance["cli_full"],
+                "restart_commands": guidance["restart_commands"],
+                "verify_commands": guidance["verify_commands"],
+                "aap_service_state": untouched,
             },
         )
 
-    poll = max(0.05, float(poll_seconds or 5.0))
+    poll = max(0.05, float(poll_seconds if poll_seconds is not None else 5.0))
     deadline = time.time() + int(timeout_seconds) + 120
     sysd = _resolve_exe(systemctl_bin)
     inactive_polls = 0
     final_doc = None
+    terminal_states = ("ok", "failed", "timeout", "error", "lock_busy")
     while time.time() < deadline:
         if os.path.isfile(status_file) and not os.path.islink(status_file):
             try:
                 with open(status_file, "r", encoding="utf-8") as fh:
                     doc = json.load(fh)
-                if doc.get("state") in ("ok", "failed", "timeout", "error"):
+                if doc.get("state") in terminal_states:
                     final_doc = doc
                     break
             except Exception:
@@ -1967,18 +2702,18 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
                 if st_txt in ("inactive", "failed"):
                     inactive_polls += 1
                     if inactive_polls >= 3:
-                        # Re-read status file one last time before giving up
                         if os.path.isfile(status_file) and not os.path.islink(status_file):
                             try:
                                 with open(status_file, "r", encoding="utf-8") as fh:
                                     doc = json.load(fh)
-                                if doc.get("state") in ("ok", "failed", "timeout", "error"):
+                                if doc.get("state") in terminal_states:
                                     final_doc = doc
                                     break
                             except Exception:
                                 pass
                         final_doc = {
                             "state": "error",
+                            "stop_code": "SA-AAPBK-07",
                             "rc": 1,
                             "error": "Detached unit %s became %s without writing final status." % (unit_name, st_txt),
                             "tail": [],
@@ -1992,7 +2727,8 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
 
     if final_doc is None:
         final_doc = {
-            "state": "timeout",
+            "state": "poll_timeout",
+            "stop_code": "SA-AAPBK-07",
             "rc": 124,
             "error": "Timed out polling detached backup unit %s status file %s." % (unit_name, status_file),
             "tail": [],
@@ -2002,10 +2738,11 @@ def _run_detached_via_systemd_run(cmd, cwd, timeout_seconds, pre_services, podma
     final_doc["status_file"] = status_file
     final_doc["log_file"] = log_file
     final_doc["detached"] = True
-    for p in (cfg_file, runner_script, status_file):
+    # Only remove status_file once a terminal state was read; leave untouched if unit may still be running.
+    if final_doc.get("state") in terminal_states:
         try:
-            if os.path.exists(p):
-                os.unlink(p)
+            if os.path.exists(status_file):
+                os.unlink(status_file)
         except OSError:
             pass
     return final_doc
@@ -2137,43 +2874,37 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
             podman_bin = params.get("podman_bin", "podman")
             systemctl_bin = params.get("systemctl_bin", "systemctl")
             systemd_run_bin = params.get("systemd_run_bin", "systemd-run")
+            backup_user = str(params.get("backup_user") or "").strip() or "ansible"
             pre_services = _snapshot_host_services(podman_bin, systemctl_bin)
 
             awx_job_id = str(params.get("awx_job_id") or "").strip()
             self_hosted = _is_self_hosted_aap_run(awx_job_id, params.get("controller_host", ""))
-            self_hosted_mode = str(params.get("self_hosted_mode") or "detach").strip().lower()
-            if self_hosted_mode not in ("detach", "refuse"):
-                raise StopError("SA-AAPBK-17", "Invalid aap_backup_self_hosted_mode (%r): must be 'detach' or 'refuse'." % self_hosted_mode)
-
-            if self_hosted:
-                if self_hosted_mode == "refuse":
-                    untouched = {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started)."}
-                    raise StopError(
-                        "SA-AAPBK-17",
-                        "Refusing to run AAP backup synchronously inside self-hosted AAP job (awx_job_id=%s): stopping controller/receptor "
-                        "would kill the job mid-backup and leave AAP down. Run directly on the AAP host as ansible: %s  %s" % (
-                            awx_job_id, CLI_BACKUP_CMD, untouched["summary"]
-                        ),
-                        details={"cli_command": CLI_BACKUP_CMD, "aap_service_state": untouched},
-                    )
-                if not _resolve_exe(systemd_run_bin):
-                    untouched = {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started)."}
-                    raise StopError(
-                        "SA-AAPBK-17",
-                        "Self-hosted AAP job (awx_job_id=%s) requires '%s --user' to detach the installer backup, but '%s' is not available. "
-                        "Run directly on the AAP host as ansible: %s  %s" % (
-                            awx_job_id, systemd_run_bin, systemd_run_bin, CLI_BACKUP_CMD, untouched["summary"]
-                        ),
-                        details={"cli_command": CLI_BACKUP_CMD, "aap_service_state": untouched},
-                    )
+            self_hosted_mode = str(params.get("self_hosted_mode") or "refuse").strip().lower()
+            if self_hosted_mode not in ("refuse", "detach"):
+                raise StopError("SA-AAPBK-17", "Invalid aap_backup_self_hosted_mode (%r): must be 'refuse' or 'detach'." % self_hosted_mode)
+            guidance = _build_manual_cli_guidance(backup_user, pre_services, pre)
 
             if check_mode:
                 chk_state = {"status": "untouched", "summary": "AAP state: untouched (check mode; backup not run)."}
-                mode_note = "would detach via systemd-run --user" if self_hosted else "direct host run"
+                if self_hosted and self_hosted_mode == "refuse":
+                    mode_note = (
+                        "self-hosted AAP job (self_hosted_mode=refuse: Run mode stops with SA-AAPBK-17 without stopping AAP; "
+                        "run on the AAP host as %s: %s)" % (guidance["cli_user"], guidance["cli_command"])
+                    )
+                elif self_hosted:
+                    mode_note = "would detach via systemd-run --user (opt-in detach; test before use)"
+                else:
+                    mode_note = "direct host run"
                 return {
                     "changed": False,
                     "check_mode": True,
-                    "detached_required": self_hosted,
+                    "self_hosted": self_hosted,
+                    "self_hosted_mode": self_hosted_mode,
+                    "detached_required": bool(self_hosted and self_hosted_mode == "detach"),
+                    "cli_user": guidance["cli_user"] if self_hosted else "",
+                    "cli_command": guidance["cli_command"] if self_hosted else "",
+                    "restart_commands": guidance["restart_commands"] if self_hosted else [],
+                    "verify_commands": guidance["verify_commands"] if self_hosted else [],
                     "preflight": pre,
                     "pre_services": pre_services,
                     "aap_service_state": chk_state,
@@ -2184,7 +2915,64 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                     ),
                 }
 
+            if self_hosted:
+                untouched = {"status": "untouched", "summary": "AAP state: untouched (installer backup was not started; no AAP services were stopped)."}
+                if self_hosted_mode == "refuse":
+                    raise StopError(
+                        "SA-AAPBK-17",
+                        "Preflight passed (AAP %s, mount %s, available %s >= required %s), but refusing to run AAP backup inside "
+                        "self-hosted AAP job (awx_job_id=%s, self_hosted_mode=refuse): stopping controller/receptor would kill the job "
+                        "mid-backup and leave AAP down. "
+                        "Run directly on the AAP host as %s (e.g. 'sudo -iu %s', then in ~/site-automation): %s  "
+                        "Verify AAP services after backup: %s  "
+                        "Restart if any service remains stopped: %s  "
+                        "%s" % (
+                            pre["version"]["exact_version"],
+                            pre["mount"]["mount_point"],
+                            fmt_bytes(pre["space"]["available_bytes"]),
+                            fmt_bytes(pre["space"]["required_bytes"]),
+                            awx_job_id,
+                            guidance["cli_user"],
+                            guidance["cli_user"],
+                            guidance["cli_command"],
+                            " && ".join(guidance["verify_commands"]),
+                            " ; ".join(guidance["restart_commands"]),
+                            untouched["summary"],
+                        ),
+                        details={
+                            "cli_user": guidance["cli_user"],
+                            "cli_command": guidance["cli_command"],
+                            "cli_full": guidance["cli_full"],
+                            "restart_commands": guidance["restart_commands"],
+                            "verify_commands": guidance["verify_commands"],
+                            "preflight": pre,
+                            "aap_service_state": untouched,
+                        },
+                    )
+                if not _resolve_exe(systemd_run_bin):
+                    raise StopError(
+                        "SA-AAPBK-17",
+                        "Self-hosted AAP job (awx_job_id=%s) requires '%s --user' to detach the installer backup, but '%s' is not available. "
+                        "Run directly on the AAP host as %s: %s  Verify: %s  Restart: %s  %s" % (
+                            awx_job_id, systemd_run_bin, systemd_run_bin,
+                            guidance["cli_user"], guidance["cli_command"],
+                            " && ".join(guidance["verify_commands"]),
+                            " ; ".join(guidance["restart_commands"]),
+                            untouched["summary"],
+                        ),
+                        details={
+                            "cli_user": guidance["cli_user"],
+                            "cli_command": guidance["cli_command"],
+                            "cli_full": guidance["cli_full"],
+                            "restart_commands": guidance["restart_commands"],
+                            "verify_commands": guidance["verify_commands"],
+                            "preflight": pre,
+                            "aap_service_state": untouched,
+                        },
+                    )
+
             started = utc_now()
+            started_epoch = time.time()
             backup_id = make_run_id("aap-backup", started)
             staging_root = os.path.join(pre["backup_path"], ".staging")
             backups_root = os.path.join(pre["backup_path"], "backups")
@@ -2208,53 +2996,130 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
             for extra in (params.get("installer_extra_args") or []):
                 cmd.append(str(extra))
 
+            installer_meta = {
+                "dir": pre["installer"]["installer_dir"],
+                "inventory": pre["installer"]["installer_inventory"],
+                "playbook": params.get("installer_playbook", "ansible.containerized_installer.backup"),
+                "extra_args": _sanitize_args(params.get("installer_extra_args") or []),
+            }
+
             timeout_s = int(params.get("timeout_seconds", 7200))
-            run_state = "error"
-            run_rc = 1
-            run_tail = []
-            run_error = ""
-            detached_used = False
-            detached_unit = ""
-            extra_log_file = ""
-            aap_service_state = None
-            post_services = None
 
             if self_hosted:
-                detached_used = True
+                # Hand off .aap-backup.lock to the detached systemd-run --user runner so lock, SIGHUP immunity,
+                # installer run, service restart, 0700/0600 hardening, manifest verification, and publish/quarantine
+                # all execute inside the detached runner even if the calling AAP job dies mid-backup.
+                release_lock(lock_fd)
+                lock_fd = None
                 try:
-                    dres = _run_detached_via_systemd_run(
-                        cmd=cmd,
-                        cwd=pre["installer"]["installer_dir"],
-                        timeout_seconds=timeout_s,
-                        pre_services=pre_services,
-                        podman_bin=podman_bin,
-                        systemctl_bin=systemctl_bin,
-                        systemd_run_bin=systemd_run_bin,
-                        poll_seconds=params.get("detach_poll_seconds", 5.0),
-                        staging_root=staging_root,
-                        backup_id=backup_id,
-                    )
-                    run_state = dres.get("state", "error")
-                    run_rc = int(dres.get("rc", 1))
-                    run_tail = list(dres.get("tail") or [])
-                    run_error = str(dres.get("error") or "")
-                    detached_unit = str(dres.get("unit") or "")
-                    extra_log_file = str(dres.get("log_file") or "")
-                    aap_service_state = dres.get("aap_service_state")
-                    post_services = dres.get("post_services")
-                except StopError as exc:
-                    # Detached launch failed before installer started: clean up empty staging dir and re-raise SA-AAPBK-17
+                    with _ignore_sighup():
+                        dres = _run_detached_via_systemd_run(
+                            cmd=cmd,
+                            cwd=pre["installer"]["installer_dir"],
+                            timeout_seconds=timeout_s,
+                            pre_services=pre_services,
+                            podman_bin=podman_bin,
+                            systemctl_bin=systemctl_bin,
+                            systemd_run_bin=systemd_run_bin,
+                            poll_seconds=params.get("detach_poll_seconds", 5.0),
+                            staging_root=staging_root,
+                            backup_id=backup_id,
+                            backup_path=pre["backup_path"],
+                            staging_dir=staging_dir,
+                            payload_dir=payload_dir,
+                            backups_root=backups_root,
+                            started_utc=iso_utc(started),
+                            started_epoch=started_epoch,
+                            pre=pre,
+                            installer_meta=installer_meta,
+                            pre_running_jobs=params.get("pre_running_jobs") or [],
+                            backup_user=backup_user,
+                        )
+                except StopError:
                     try:
                         if os.path.isdir(staging_dir):
                             shutil.rmtree(staging_dir)
                     except OSError:
                         pass
                     raise
-                finally:
-                    # Parent safety net: always verify/restart any stopped pre_services if runner didn't already confirm UP
-                    if not aap_service_state or aap_service_state.get("status") not in ("running", "recovered", "no_services_detected"):
-                        aap_service_state, post_services = _ensure_services_running(pre_services, podman_bin, systemctl_bin)
-            else:
+
+                dstate = dres.get("state", "error")
+                dunit = str(dres.get("unit") or "")
+                d_aap_state = dres.get("aap_service_state")
+                d_post_svcs = dres.get("post_services")
+
+                if dstate == "ok":
+                    if not d_aap_state:
+                        d_aap_state, d_post_svcs = _ensure_services_running(pre_services, podman_bin, systemctl_bin)
+                    return {
+                        "changed": True,
+                        "backup_id": dres.get("backup_id") or backup_id,
+                        "backup_dir": dres.get("backup_dir") or os.path.join(backups_root, backup_id),
+                        "manifest_path": dres.get("manifest_path") or os.path.join(backups_root, backup_id, "manifest.json"),
+                        "sha256sums_path": dres.get("sha256sums_path") or os.path.join(backups_root, backup_id, "SHA256SUMS"),
+                        "sha256sums_sha256": dres.get("sha256sums_sha256", ""),
+                        "file_count": int(dres.get("file_count") or 0),
+                        "payload_bytes": int(dres.get("payload_bytes") or 0),
+                        "payload_gib": dres.get("payload_gib", fmt_gib(dres.get("payload_bytes") or 0)),
+                        "detached": True,
+                        "detached_unit": dunit,
+                        "aap_service_state": d_aap_state,
+                        "post_services": d_post_svcs,
+                        "version": pre["version"],
+                        "preflight": pre,
+                        "msg": "AAP backup %s completed and verified (%d files, %s, AAP %s). %s" % (
+                            dres.get("backup_id") or backup_id,
+                            int(dres.get("file_count") or 0),
+                            fmt_bytes(dres.get("payload_bytes") or 0),
+                            pre["version"]["exact_version"],
+                            d_aap_state["summary"],
+                        ),
+                    }
+                if dstate == "lock_busy":
+                    raise StopError(
+                        dres.get("stop_code") or "SA-AAPBK-06",
+                        dres.get("error") or "Another AAP backup or bundle operation holds .aap-backup.lock.",
+                        details={"detached_unit": dunit, "aap_service_state": d_aap_state},
+                    )
+                if dstate == "poll_timeout":
+                    raise StopError(
+                        "SA-AAPBK-07",
+                        "Timed out polling detached backup unit %s (%s). Inspect %s and 'systemctl --user status %s'." % (
+                            dunit, dres.get("error", ""), dres.get("status_file", ""), dunit
+                        ),
+                        details={"detached_unit": dunit, "status_file": dres.get("status_file", "")},
+                    )
+
+                if not d_aap_state:
+                    d_aap_state, d_post_svcs = _ensure_services_running(pre_services, podman_bin, systemctl_bin)
+                qdir = str(dres.get("quarantine_dir") or "")
+                stop_code = str(dres.get("stop_code") or "SA-AAPBK-07")
+                if not qdir and os.path.isdir(staging_dir):
+                    qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, stop_code,
+                                              "%s; %s" % (dres.get("error") or dstate, d_aap_state["summary"]),
+                                              dres.get("log_file", ""))
+                raise StopError(
+                    stop_code,
+                    "Detached AAP backup failed (%s, rc=%s). Staging quarantined at %s; prior completed backup untouched. %s %s" % (
+                        dstate, dres.get("rc", 1), qdir or "(none)", dres.get("error") or "", d_aap_state["summary"]
+                    ),
+                    details={
+                        "rc": dres.get("rc", 1),
+                        "quarantine_dir": qdir,
+                        "tail": list(dres.get("tail") or []),
+                        "detached_unit": dunit,
+                        "aap_service_state": d_aap_state,
+                        "post_services": d_post_svcs,
+                    },
+                )
+
+            run_state = "error"
+            run_rc = 1
+            run_tail = []
+            run_error = ""
+            aap_service_state = None
+            post_services = None
+            with _ignore_sighup():
                 try:
                     proc = subprocess.run(
                         cmd,
@@ -2281,12 +3146,7 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
 
             if run_state == "timeout":
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "installer backup timed out; %s" % aap_service_state["summary"], extra_log_file)
-                if extra_log_file and os.path.exists(extra_log_file):
-                    try:
-                        os.unlink(extra_log_file)
-                    except OSError:
-                        pass
+                                          "installer backup timed out; %s" % aap_service_state["summary"])
                 raise StopError(
                     "SA-AAPBK-07",
                     "Containerized installer backup timed out after %ss. Staging quarantined at %s; prior completed backup untouched. %s" % (
@@ -2296,12 +3156,7 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 )
             if run_state == "error":
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "%s; %s" % (run_error, aap_service_state["summary"]), extra_log_file)
-                if extra_log_file and os.path.exists(extra_log_file):
-                    try:
-                        os.unlink(extra_log_file)
-                    except OSError:
-                        pass
+                                          "%s; %s" % (run_error, aap_service_state["summary"]))
                 raise StopError(
                     "SA-AAPBK-07",
                     "Failed to run containerized installer backup: %s. Staging quarantined at %s. %s" % (
@@ -2312,12 +3167,7 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
             if run_rc != 0:
                 reason = "installer exited rc=%d: %s" % (run_rc, " | ".join(run_tail[-5:]))
                 qdir = quarantine_staging(pre["backup_path"], staging_dir, backup_id, "SA-AAPBK-07",
-                                          "%s; %s" % (reason, aap_service_state["summary"]), extra_log_file)
-                if extra_log_file and os.path.exists(extra_log_file):
-                    try:
-                        os.unlink(extra_log_file)
-                    except OSError:
-                        pass
+                                          "%s; %s" % (reason, aap_service_state["summary"]))
                 raise StopError(
                     "SA-AAPBK-07",
                     "Containerized installer backup failed (rc=%d). Staging quarantined at %s; prior completed backup untouched. Tail: %s. %s" % (
@@ -2326,12 +3176,6 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                     details={"rc": run_rc, "quarantine_dir": qdir, "tail": run_tail,
                              "aap_service_state": aap_service_state, "post_services": post_services},
                 )
-
-            if extra_log_file and os.path.exists(extra_log_file):
-                try:
-                    os.unlink(extra_log_file)
-                except OSError:
-                    pass
 
             # Enforce 0700/0600 on all installer-written dirs/files before verification & publish
             _harden_tree_perms(staging_dir)
@@ -2398,15 +3242,10 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 "started_utc": iso_utc(started),
                 "finished_utc": iso_utc(finished),
                 "duration_seconds": int((finished - started).total_seconds()),
-                "detached": detached_used,
-                "detached_unit": detached_unit,
+                "detached": False,
+                "detached_unit": "",
                 "aap": pre["version"],
-                "installer": {
-                    "dir": pre["installer"]["installer_dir"],
-                    "inventory": pre["installer"]["installer_inventory"],
-                    "playbook": params.get("installer_playbook", "ansible.containerized_installer.backup"),
-                    "extra_args": _sanitize_args(params.get("installer_extra_args") or []),
-                },
+                "installer": installer_meta,
                 "mount": pre["mount"],
                 "payload_dir": "payload",
                 "file_count": len(file_entries),
@@ -2456,8 +3295,8 @@ def action_backup(params, check_mode=False, statvfs_fn=read_statvfs):
                 "file_count": len(file_entries),
                 "payload_bytes": payload_bytes,
                 "payload_gib": fmt_gib(payload_bytes),
-                "detached": detached_used,
-                "detached_unit": detached_unit,
+                "detached": False,
+                "detached_unit": "",
                 "aap_service_state": aap_service_state,
                 "post_services": post_services,
                 "version": pre["version"],
@@ -2711,17 +3550,32 @@ def _inspect_installer_tarball(tar_path):
         if v:
             dir_build = v
             break
-    build = tar_file_build or name_build or dir_build or tar_coll_ver
+    build = tar_file_build or name_build or dir_build
+    tar_rel = ""
+    for cand_v in (build, tar_coll_ver):
+        m_r = re.match(r"^([0-9]+\.[0-9]+)", cand_v or "")
+        if m_r:
+            tar_rel = m_r.group(1)
+            break
     return {
         "has_bundle_images": True,
         "build": build,
+        "release": tar_rel,
         "name_build": name_build,
         "dir_build": dir_build,
         "collection_version": tar_coll_ver,
     }
 
 
-def _find_installer_bundle_tarball(installer_bundle, search_dirs, installer_build):
+def _version_matches_release(ver, aap_release):
+    v = str(ver or "").strip()
+    rel = str(aap_release or "").strip()
+    if not v or not rel:
+        return False
+    return v == rel or v.startswith(rel + "-") or v.startswith(rel + ".")
+
+
+def _find_installer_bundle_tarball(installer_bundle, search_dirs, installer_build, aap_release="", collection_version=""):
     if installer_bundle and str(installer_bundle).strip():
         cand = os.path.expanduser(str(installer_bundle).strip())
         if not os.path.isfile(cand):
@@ -2735,34 +3589,74 @@ def _find_installer_bundle_tarball(installer_bundle, search_dirs, installer_buil
     home = os.path.expanduser("~")
     if not dirs and os.path.isdir(home):
         dirs = [home]
-    if not installer_build:
+
+    want_build = str(installer_build or "").strip()
+    want_rel = str(aap_release or "").strip()
+    want_coll = str(collection_version or "").strip()
+    if not want_build and not want_rel:
         return ""
+
     exact_matches = []
+    rel_candidates = []
     for d in dirs:
         if not os.path.isdir(d) or os.path.islink(d):
             continue
         for fn in sorted(os.listdir(d)):
             if not (fn.endswith(".tar.gz") or fn.endswith(".tgz")):
                 continue
-            if "containerized-setup-bundle" not in fn:
+            if "containerized-setup-bundle" not in fn and not re.search(r"-bundle-[0-9]+\.[0-9]+", fn):
                 continue
             full = os.path.join(d, fn)
             if not os.path.isfile(full):
                 continue
             ver = _extract_bundle_version_from_name(fn)
-            if ver and ver == installer_build:
-                exact_matches.append(os.path.realpath(full))
-    exact_matches = sorted(set(exact_matches))
-    if len(exact_matches) == 1:
-        return exact_matches[0]
-    if len(exact_matches) > 1:
+            if not ver:
+                continue
+            if want_build:
+                if ver == want_build:
+                    exact_matches.append(os.path.realpath(full))
+            elif want_rel and _version_matches_release(ver, want_rel):
+                rel_candidates.append(os.path.realpath(full))
+
+    if want_build:
+        exact_matches = sorted(set(exact_matches))
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            raise StopError(
+                "SA-AAPBK-13",
+                "Multiple setup bundle tarballs matched exact build %s (%s). Set aap_backup_installer_bundle explicitly." % (
+                    want_build, ", ".join(exact_matches)
+                ),
+            )
+        # Never fall back to a mismatched tarball (matches[-1]); caller packs installer_dir if it has bundle/ images & exact build.
+        return ""
+
+    # When backup_build was not known (e.g. default unversioned aap_installer_dir with MANIFEST.json only),
+    # find offline *-bundle-<aap_release>-*.tar.gz matching collection_version when known.
+    rel_candidates = sorted(set(rel_candidates))
+    matched = []
+    for cand in rel_candidates:
+        try:
+            info = _inspect_installer_tarball(cand)
+        except StopError:
+            continue
+        tar_coll = str(info.get("collection_version") or "").strip()
+        if want_coll:
+            if not tar_coll or tar_coll != want_coll:
+                continue
+        matched.append(cand)
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) > 1:
         raise StopError(
             "SA-AAPBK-13",
-            "Multiple setup bundle tarballs matched exact build %s (%s). Set aap_backup_installer_bundle explicitly." % (
-                installer_build, ", ".join(exact_matches)
+            "Multiple setup bundle tarballs matched AAP %s%s (%s). Set aap_backup_installer_bundle explicitly." % (
+                want_rel,
+                (" / collection %s" % want_coll) if want_coll else "",
+                ", ".join(matched),
             ),
         )
-    # Never fall back to a mismatched tarball (matches[-1]); caller packs installer_dir if it has bundle/ images & exact build.
     return ""
 
 
@@ -3035,16 +3929,18 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
             backup_build = str(backup_aap.get("installer_build") or "").strip()
             backup_rel = str(backup_aap.get("aap_release") or "").strip()
             backup_coll = str(backup_aap.get("installer_collection_version") or "").strip()
-            if not backup_build:
+            if not (backup_build or backup_coll or backup_rel):
                 raise StopError(
                     "SA-AAPBK-13",
-                    "Source backup %s manifest is missing exact installer_build; cannot verify installer parity." % want_id,
+                    "Source backup %s manifest is missing AAP version metadata; cannot verify installer parity." % want_id,
                 )
 
             bundle_tar_src = _find_installer_bundle_tarball(
                 params.get("installer_bundle", ""),
                 params.get("installer_bundle_search_dirs") or [],
                 backup_build,
+                aap_release=backup_rel,
+                collection_version=backup_coll,
             )
 
             # Detect installer_dir version independently of any tarball so neither can mask a mismatch in the other
@@ -3056,38 +3952,56 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                 podman_bin=params.get("podman_bin", "podman"),
             )
             live_build = str(live_ver.get("installer_build") or "").strip()
+            live_rel = str(live_ver.get("aap_release") or "").strip()
             live_coll = str(live_ver.get("installer_collection_version") or "").strip()
-            if (backup_rel and live_ver.get("aap_release") and backup_rel != live_ver["aap_release"]) or (backup_build != live_build):
+            if backup_rel and live_rel and backup_rel != live_rel:
+                raise StopError(
+                    "SA-AAPBK-13",
+                    "AAP release mismatch: backup %s was taken on AAP %s, but installer at %s reports AAP %s." % (
+                        want_id, backup_rel, inst_info["installer_dir"], live_rel,
+                    ),
+                )
+            if backup_build and (not live_build or backup_build != live_build):
                 raise StopError(
                     "SA-AAPBK-13",
                     "Exact build mismatch: backup %s was taken on AAP %s (build %s), but installer at %s reports AAP %s (build %s). "
                     "The air-gap bundle requires the EXACT same installer build." % (
                         want_id, backup_rel, backup_build, inst_info["installer_dir"],
-                        live_ver.get("aap_release", ""), live_build,
+                        live_rel, live_build,
                     ),
                 )
-            if backup_coll and live_coll and backup_coll != live_coll:
-                raise StopError(
-                    "SA-AAPBK-13",
-                    "Installer collection version mismatch: backup %s used ansible.containerized_installer %s, "
-                    "but installer at %s has %s." % (want_id, backup_coll, inst_info["installer_dir"], live_coll),
-                )
+            if backup_coll:
+                if (live_coll and backup_coll != live_coll) or (not backup_build and not live_coll):
+                    raise StopError(
+                        "SA-AAPBK-13",
+                        "Installer collection version mismatch: backup %s used ansible.containerized_installer %s, "
+                        "but installer at %s has %r." % (want_id, backup_coll, inst_info["installer_dir"], live_coll),
+                    )
 
+            tar_build = ""
             if bundle_tar_src:
                 tar_info = _inspect_installer_tarball(bundle_tar_src)
                 tar_build = str(tar_info.get("build") or "").strip()
+                tar_rel = str(tar_info.get("release") or "").strip()
                 tar_coll = str(tar_info.get("collection_version") or "").strip()
-                if not tar_build or tar_build != backup_build:
+                if backup_rel and tar_rel and tar_rel != backup_rel:
+                    raise StopError(
+                        "SA-AAPBK-13",
+                        "Installer bundle tarball %s (AAP %s) does not match backup %s (AAP %s)." % (
+                            bundle_tar_src, tar_rel, want_id, backup_rel,
+                        ),
+                    )
+                if backup_build and (not tar_build or tar_build != backup_build):
                     raise StopError(
                         "SA-AAPBK-13",
                         "Installer bundle tarball %s (build %r) does not match backup %s exact build %r." % (
                             bundle_tar_src, tar_build, want_id, backup_build
                         ),
                     )
-                if backup_coll and tar_coll and tar_coll != backup_coll:
+                if backup_coll and (not tar_coll or tar_coll != backup_coll):
                     raise StopError(
                         "SA-AAPBK-13",
-                        "Installer bundle tarball %s collection version %s does not match backup %s (%s)." % (
+                        "Installer bundle tarball %s collection version %r does not match backup %s (%s)." % (
                             bundle_tar_src, tar_coll, want_id, backup_coll
                         ),
                     )
@@ -3203,6 +4117,36 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                 _ensure_dir_0700(os.path.join(staging_dir, sub))
 
             warnings = []
+            staged_tar = os.path.join(staging_root, "%s.tar" % bundle_run_id)
+            staged_tar_sha = staged_tar + ".sha256"
+            staged_manifest_copy = os.path.join(staging_root, "%s-manifest.json" % bundle_run_id)
+            final_tar = os.path.join(bundles_root, "%s.tar" % bundle_run_id)
+            final_tar_sha = final_tar + ".sha256"
+            final_manifest_copy = os.path.join(bundles_root, "%s-manifest.json" % bundle_run_id)
+            final_dir_candidate = os.path.join(bundles_root, bundle_run_id)
+
+            def _cleanup_partial_bundle_artifacts():
+                for p in (staged_tar, staged_tar_sha, staged_manifest_copy, final_tar, final_tar_sha, final_manifest_copy):
+                    try:
+                        if os.path.lexists(p):
+                            os.unlink(p)
+                    except OSError:
+                        pass
+                for d in (staging_root, bundles_root):
+                    if not os.path.isdir(d):
+                        continue
+                    try:
+                        for fn in os.listdir(d):
+                            if fn.startswith("%s.tar" % bundle_run_id) or fn.startswith(".%s.tar" % bundle_run_id):
+                                fp = os.path.join(d, fn)
+                                if os.path.isfile(fp) or os.path.islink(fp):
+                                    try:
+                                        os.unlink(fp)
+                                    except OSError:
+                                        pass
+                    except OSError:
+                        pass
+
             try:
                 # 6a. Copy verified backup tree verbatim (0700/0600, reject symlinks)
                 _copy_tree(src_backup_dir, os.path.join(staging_dir, "backup"), reject_symlinks=True, stop_code="SA-AAPBK-12")
@@ -3241,7 +4185,8 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                     _copy_file_0600(bundle_tar_src, inst_pkg_dest)
                     installer_mode = "original_setup_bundle"
                 else:
-                    inst_pkg_name = "aap-containerized-setup-bundle-%s.tar.gz" % safe_filename(backup_build or live_ver["installer_build"])
+                    inst_ver_tag = backup_build or live_build or backup_coll or live_coll or backup_rel or "2.7"
+                    inst_pkg_name = "aap-containerized-setup-bundle-%s.tar.gz" % safe_filename(inst_ver_tag)
                     inst_pkg_dest = os.path.join(staging_dir, "installer", inst_pkg_name)
                     with _open_tar_0600(inst_pkg_dest, "w:gz") as tf:
                         _add_dir_contents_to_tar(
@@ -3423,40 +4368,65 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                 )
                 _harden_tree_perms(staging_dir)
 
-                # 6h. Publish directory and optional .tar + .tar.sha256 (opened directly with 0o600)
-                final_dir = os.path.join(bundles_root, bundle_run_id)
-                os.rename(staging_dir, final_dir)
-                os.chmod(final_dir, 0o700)
-
+                # 6h. Create & verify .tar + .tar.sha256 in staging BEFORE publishing anything to bundles/ (SA-AAPBK-15)
+                final_dir = ""
                 archive_path = ""
                 archive_sha256 = ""
                 archive_sha256_path = ""
                 archive_bytes = 0
                 if params.get("bundle_archive", True):
-                    tmp_tar = os.path.join(bundles_root, ".%s.tar.tmp" % bundle_run_id)
-                    final_tar = os.path.join(bundles_root, "%s.tar" % bundle_run_id)
-                    with _open_tar_0600(tmp_tar, "w") as tf:
-                        _add_dir_contents_to_tar(tf, final_dir, root_arc=bundle_run_id, reject_symlinks=True, stop_code="SA-AAPBK-15")
-                    os.replace(tmp_tar, final_tar)
-                    os.chmod(final_tar, 0o600)
-                    archive_sha256 = sha256_file(final_tar)
-                    archive_bytes = os.path.getsize(final_tar)
-                    archive_sha256_path = final_tar + ".sha256"
-                    atomic_write_text(archive_sha256_path, "%s  %s\n" % (archive_sha256, os.path.basename(final_tar)), mode=0o600)
-                    # Read-back verify archive checksum
-                    verify_sha256sums(bundles_root, os.path.basename(archive_sha256_path), stop_code="SA-AAPBK-15")
-                    archive_path = final_tar
+                    with _open_tar_0600(staged_tar, "w") as tf:
+                        _add_dir_contents_to_tar(tf, staging_dir, root_arc=bundle_run_id, reject_symlinks=True, stop_code="SA-AAPBK-15")
+                    os.chmod(staged_tar, 0o600)
+                    archive_sha256 = sha256_file(staged_tar)
+                    archive_bytes = os.path.getsize(staged_tar)
+                    atomic_write_text(staged_tar_sha, "%s  %s\n" % (archive_sha256, os.path.basename(staged_tar)), mode=0o600)
+                    # Read-back verify .tar.sha256 and .tar readability in staging BEFORE touching bundles/
+                    verify_sha256sums(staging_root, os.path.basename(staged_tar_sha), stop_code="SA-AAPBK-15")
+                    try:
+                        with tarfile.open(staged_tar, "r") as tf_chk:
+                            tar_names = set(tf_chk.getnames())
+                    except Exception as exc:
+                        raise StopError("SA-AAPBK-15", "Bundle archive %s failed readability check before publish: %s" % (staged_tar, exc))
+                    want_sums_member = "%s/SHA256SUMS" % bundle_run_id
+                    want_man_member = "%s/bundle-manifest.json" % bundle_run_id
+                    if want_sums_member not in tar_names or want_man_member not in tar_names:
+                        raise StopError(
+                            "SA-AAPBK-15",
+                            "Bundle archive %s is missing required manifest members (%s, %s)." % (
+                                staged_tar, want_sums_member, want_man_member
+                            ),
+                        )
+
                     bundle_manifest["archive_file"] = os.path.basename(final_tar)
                     bundle_manifest["archive_bytes"] = archive_bytes
                     bundle_manifest["archive_sha256"] = archive_sha256
                     atomic_write_text(
-                        os.path.join(bundles_root, "%s-manifest.json" % bundle_run_id),
+                        staged_manifest_copy,
                         json.dumps(bundle_manifest, indent=2, sort_keys=True) + "\n",
                         mode=0o600,
                     )
-                    if not params.get("bundle_keep_dir", False):
-                        shutil.rmtree(final_dir)
+
+                    # Publish verified artifacts atomically into bundles/
+                    os.replace(staged_tar, final_tar)
+                    os.chmod(final_tar, 0o600)
+                    os.replace(staged_tar_sha, final_tar_sha)
+                    os.chmod(final_tar_sha, 0o600)
+                    os.replace(staged_manifest_copy, final_manifest_copy)
+                    os.chmod(final_manifest_copy, 0o600)
+                    archive_path = final_tar
+                    archive_sha256_path = final_tar_sha
+                    if params.get("bundle_keep_dir", False):
+                        os.rename(staging_dir, final_dir_candidate)
+                        os.chmod(final_dir_candidate, 0o700)
+                        final_dir = final_dir_candidate
+                    else:
+                        shutil.rmtree(staging_dir)
                         final_dir = ""
+                else:
+                    os.rename(staging_dir, final_dir_candidate)
+                    os.chmod(final_dir_candidate, 0o700)
+                    final_dir = final_dir_candidate
 
                 summary_lines = [
                     "Air-gap bundle %s assembled and verified:" % bundle_run_id,
@@ -3501,11 +4471,19 @@ def action_bundle(params, check_mode=False, statvfs_fn=read_statvfs):
                     ),
                 }
             except StopError as exc:
-                qdir = quarantine_staging(norm_path, staging_dir, bundle_run_id, exc.code, exc.message)
+                _cleanup_partial_bundle_artifacts()
+                qsrc = staging_dir if os.path.isdir(staging_dir) else final_dir_candidate
+                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, exc.code, exc.message)
                 raise StopError(exc.code, "%s Staging quarantined at %s." % (exc.message, qdir), details={"quarantine_dir": qdir})
             except Exception as exc:
-                qdir = quarantine_staging(norm_path, staging_dir, bundle_run_id, "SA-AAPBK-15", str(exc))
-                raise StopError("SA-AAPBK-15", "Air-gap bundle assembly failed: %s. Staging quarantined at %s." % (exc, qdir))
+                _cleanup_partial_bundle_artifacts()
+                qsrc = staging_dir if os.path.isdir(staging_dir) else final_dir_candidate
+                qdir = quarantine_staging(norm_path, qsrc, bundle_run_id, "SA-AAPBK-15", str(exc))
+                raise StopError(
+                    "SA-AAPBK-15",
+                    "Air-gap bundle assembly failed: %s. Staging quarantined at %s." % (exc, qdir),
+                    details={"quarantine_dir": qdir},
+                )
         finally:
             release_lock(lock_fd)
 
@@ -3532,6 +4510,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(
             action=dict(type="str", required=True, choices=["preflight", "list_targets", "backup", "retention", "bundle"]),
+            backup_user=dict(type="str", default="ansible"),
             backup_path=dict(type="str", default="/mnt/ansible_backup"),
             expected_mount=dict(type="str", default=""),
             expected_source=dict(type="str", default=""),
@@ -3546,7 +4525,7 @@ def main():
             installer_extra_args=dict(type="list", elements="str", default=[], no_log=True),
             installer_become=dict(type="bool", default=False),
             timeout_seconds=dict(type="int", default=7200),
-            self_hosted_mode=dict(type="str", default="detach", choices=["detach", "refuse"]),
+            self_hosted_mode=dict(type="str", default="refuse", choices=["refuse", "detach"]),
             detach_poll_seconds=dict(type="float", default=5.0),
             awx_job_id=dict(type="str", default=""),
             controller_host=dict(type="str", default=""),

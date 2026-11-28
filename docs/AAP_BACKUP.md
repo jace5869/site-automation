@@ -27,7 +27,7 @@ Run), or create them by hand using the Variables files in `aap/extra_vars/`:
 | Job template | Playbook | Credentials | Concurrent jobs | Purpose |
 |---|---|---|---|---|
 | **AAP - list backup targets** | `playbooks/aap_backup_targets.yml` | Machine (with sudo) | Allowed | Read-only mount scan; marks mounts >= estimate; never picks |
-| **AAP - backup** | `playbooks/aap_backup.yml` | Machine (with sudo); AAP (optional) | **Off** | Preflight, AAP 2.7 installer backup, verified SHA-256 manifest, optional retention & weekly Berlin schedule |
+| **AAP - backup** | `playbooks/aap_backup.yml` | Machine (with sudo); AAP (optional) | **Off** | Preflight checks (default `refuse` stops self-hosted runs with `SA-AAPBK-17` and prints exact CLI + restart/verify commands); run directly via CLI on the AAP host for the backup itself |
 | **AAP - bundle for air-gap** | `playbooks/aap_backup_bundle.yml` | Machine (with sudo) | **Off** | Verifies backup manifest; packages backup + inventory + matching installer + custom EEs + collections + restore PDF |
 
 All three target the single AAP host (`aap_hosts` group, or a Limit) and run as the non-root
@@ -35,6 +35,11 @@ installation owner (`aap_backup_user`, default `ansible`), using `become` only w
 differs from `aap_backup_user` or when `aap_installer_become: true` is set. Set up backup before
 STIG hardening where practical (see [AAP_BACKUP_RESTORE_RUNBOOK.md](AAP_BACKUP_RESTORE_RUNBOOK.md)
 for `fapolicyd` and rootless podman notes).
+
+**Normal single-host workflow:** use the **AAP - backup** job to run preflight checks and print the
+exact command, run the printed CLI directly on the AAP host as `ansible` to take the backup safely
+without cutting off your own AAP job, and then run the **AAP - bundle for air-gap** job in AAP to
+assemble and verify the carry-over archive.
 
 ## Step 1. List backup targets
 
@@ -69,45 +74,81 @@ aap_installer_dir: /home/ansible/ansible-automation-platform-containerized-setup
 
 ## Step 3. Run AAP - backup
 
-1. **Dry run first (Check mode):** launch **AAP - backup** with Job type **Check**. It runs
-   preflight (mount check, capacity check, installer check, exact AAP version read) and previews
-   retention and optional schedule changes without writing any backup files.
-2. **Real backup (Run mode):** launch **AAP - backup** with Job type **Run** in the agreed backup
-   window. The job:
-   - Sets `umask 077` (`0700` dirs, `0600` files, `no_log: true` on `installer_extra_args`) so
-     inventory and backup artifacts are never world-readable.
-   - Acquires `<aap_backup_path>/.aap-backup.lock` (`SA-AAPBK-06` stops concurrent runs).
-   - Runs every preflight check (`SA-AAPBK-01` through `SA-AAPBK-05`), including `realpath` checks
-     against forbidden/system paths and system LV mounts, before invoking the installer.
-   - Records active AAP containers, systemd user units, and (when an AAP credential is attached)
-     other running/pending AAP jobs.
-   - **Never leaves AAP down:** when launched from an AAP job targeting the same AAP host, detaches
-     the installer backup into a transient `systemd-run --user` unit as `ansible` and polls a `0600`
-     status file (or refuses with `SA-AAPBK-17` and prints the exact CLI command when
-     `aap_backup_self_hosted_mode: refuse` or `systemd-run --user` is unavailable). In all modes,
-     a `finally` guard restarts any pre-backup services/containers that stopped and prints the
-     plain AAP service state on both success and failure/timeout.
-   - Runs `ansible.containerized_installer.backup` from `aap_installer_dir` with `backup_dir` set
-     to a unique staging folder `<aap_backup_path>/.staging/<backup_id>/payload` (`0700`).
-   - Checks exit status (`SA-AAPBK-07`) and non-empty payload files (`SA-AAPBK-08`).
-   - Writes relative-path `SHA256SUMS` and `manifest.json` (with exact AAP build/release, RHEL
-     release, architecture, host FQDN, sizes, and pre/post service state), then **reads back and
-     verifies every SHA-256 entry** (rejecting symlinks, `SA-AAPBK-09`).
-   - Atomically moves the verified staging folder to `backups/<backup_id>` and updates
-     `backups/latest.json` (which becomes the baseline size for future free-space checks).
-   - On any failure after staging begins, moves the partial staging folder into
-     `quarantine/<backup_id>` with `ERROR.txt` and leaves the previous completed backup untouched.
+On a single-host containerized AAP 2.7 deployment, `ansible.containerized_installer.backup` stops
+controller and receptor services while dumping PostgreSQL. Running that backup synchronously from an
+AAP job on the same host would kill the job mid-run and leave AAP down.
 
-### Running directly on the AAP host (CLI)
+Therefore **`aap_backup_self_hosted_mode` defaults to `"refuse"`**: when **AAP - backup** detects
+that it was launched from an AAP job targeting the same AAP host (matching all local NIC IPv4/IPv6
+addresses, hostnames, FQDNs, `/etc/hosts` aliases, and localhost aliases), it runs all preflight
+checks (`SA-AAPBK-01` through `SA-AAPBK-05`), **never stops any AAP service**, stops cleanly with
+coded **`SA-AAPBK-17`**, and prints the exact CLI command (as `ansible`) plus the service verify and
+restart commands.
 
-Because a single-host containerized AAP backup may quiesce or restart controller services while
-dumping PostgreSQL, you can also run the exact same playbook directly on the AAP host as `ansible`
-from a local checkout of `site-automation`:
+1. **Preflight check in AAP (Check mode — or Run mode in default `refuse`):**
+   - Launch **AAP - backup** with Job type **Check** (zero writes). It runs every preflight check
+     (mount verification, free space vs. baseline + margin, installer dir/inventory check, exact AAP
+     version read) and prints the manual CLI command.
+   - Launching with Job type **Run** under the default `aap_backup_self_hosted_mode: "refuse"` also
+     runs preflight, leaves every AAP service untouched, and stops with **`SA-AAPBK-17`** printing
+     the exact CLI, verify, and restart commands.
+2. **Normal way — run the printed CLI directly on the AAP host as `ansible`:**
+   Log in to the AAP host (e.g. `sudo -iu ansible`) during the agreed backup window and run the
+   printed command from your local checkout of `site-automation`:
 
 ```bash
 cd ~/site-automation
 ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_backup.yml
 ```
+
+   The playbook:
+   - Sets `umask 077` (`0700` dirs, `0600` files, `no_log: true` on `installer_extra_args`) and
+     ignores `SIGHUP` so a dropped terminal does not kill the backup mid-flight and inventory/backup
+     artifacts are never world-readable.
+   - Acquires `<aap_backup_path>/.aap-backup.lock` (`SA-AAPBK-06` stops concurrent runs).
+   - Runs every preflight check (`SA-AAPBK-01` through `SA-AAPBK-05`), including `realpath` checks
+     against forbidden/system paths and system LV mounts, before invoking the installer.
+   - Records active AAP containers and systemd user units before backup.
+   - Runs `ansible.containerized_installer.backup` from `aap_installer_dir` with `backup_dir` set
+     to a unique staging folder `<aap_backup_path>/.staging/<backup_id>/payload` (`0700`).
+   - Always restarts any pre-backup AAP services/containers that stopped in a `finally` guard and
+     prints the plain AAP service state on both success and failure/timeout.
+   - Checks exit status (`SA-AAPBK-07`) and non-empty payload files (`SA-AAPBK-08`), hardens
+     `0700`/`0600` permissions, writes relative-path `SHA256SUMS` and `manifest.json`, and **reads
+     back and verifies every SHA-256 entry** (rejecting symlinks, `SA-AAPBK-09`).
+   - Atomically moves the verified staging folder to `backups/<backup_id>` and updates
+     `backups/latest.json` (which becomes the baseline size for future free-space checks).
+   - On any failure after staging begins, moves the partial staging folder into
+     `quarantine/<backup_id>` with `ERROR.txt` and leaves the previous completed backup untouched.
+
+3. **Verify AAP services after the CLI backup (and restart if needed):**
+
+```bash
+systemctl --user list-units 'automation*' 'postgresql*' 'redis*' 'receptor*'
+podman ps -a --format 'table {{.Names}}\t{{.Status}}'
+curl -sk https://aap01.corp.example.mil/api/gateway/v1/ping/
+```
+
+   If any unit or container remains stopped, start it in dependency order with the exact
+   `systemctl --user start ...` / `podman start ...` command printed by `SA-AAPBK-17`.
+
+### Opt-in `detach` mode (test before use)
+
+If you want to experiment with running **AAP - backup** directly from a self-hosted AAP job without
+SSHing to the host, you can opt in by setting `aap_backup_self_hosted_mode: "detach"` (requires
+`loginctl enable-linger ansible` and a working `systemd-run --user` bus for `ansible`).
+
+- **Test before use** in a scheduled maintenance window before relying on it in production.
+- In `detach` mode, the module launches a self-contained runner in a transient `systemd-run --user`
+  unit that ignores `SIGHUP` and owns the entire lifecycle independently of the AAP job: acquiring
+  and releasing `.aap-backup.lock`, running `ansible.containerized_installer.backup`, restarting
+  stopped AAP services in `finally`, hardening `0700`/`0600` permissions, writing and verifying
+  `SHA256SUMS` + `manifest.json`, and atomically publishing `backups/<backup_id>` +
+  `backups/latest.json` (or moving staging to `quarantine/<backup_id>` on failure).
+- If controller restarts mid-run, the calling AAP UI job may still disconnect while the detached unit
+  finishes; check `backups/latest.json` and `systemctl --user list-units` once AAP is back up. If
+  `systemd-run --user` is unavailable or refuses launch, the job stops with `SA-AAPBK-17` and leaves
+  AAP untouched.
 
 ## Step 4. Assemble the air-gap bundle
 
@@ -132,11 +173,20 @@ classified side.
 | `SHA256SUMS` | Single relative-path SHA-256 manifest covering every file in the bundle (`sha256sum -c SHA256SUMS`) |
 | `bundle-manifest.json` | Machine-readable metadata: exact AAP build/release, digests, file count, and sizes |
 
-3. By default (`aap_backup_bundle_archive: true`), the job packs the verified bundle directory
-   into `<aap_backup_path>/bundles/<bundle_id>.tar`, writes `<bundle_id>.tar.sha256`, reads back
-   and verifies the archive checksum (`SA-AAPBK-15`), and prints the full size breakdown and final
-   SHA-256 checksum for your dispatch log.
-4. Transport the `.tar` and `.tar.sha256` on **approved protected media** only (the bundle carries
+3. By default (`aap_backup_bundle_archive: true`), the job packs the verified staging directory into
+   `.staging/<bundle_id>.tar`, writes `.staging/<bundle_id>.tar.sha256`, reads back and verifies
+   both the `.tar` archive and `.tar.sha256` checksum **before publishing** anything into
+   `bundles/` (`SA-AAPBK-15`), and only then atomically publishes
+   `<aap_backup_path>/bundles/<bundle_id>.tar` and `<bundle_id>.tar.sha256` (printing the full size
+   breakdown and final SHA-256 checksum for your dispatch log). On any error, partial `.tar*` files
+   are unlinked and the failed staging tree is moved to `quarantine/<bundle_id>` with `ERROR.txt`,
+   leaving `bundles/` clean.
+4. When `aap_installer_dir` uses the default unversioned directory name (so only `MANIFEST.json`
+   collection metadata is present), auto-search locates the matching offline
+   `*-bundle-2.7-*.tar.gz` archive (verifying `bundle/` images and `collection_version` parity);
+   when an explicit build string is known from the directory name or metadata, exact build parity
+   (`tar_build == backup_build`) is also enforced.
+5. Transport the `.tar` and `.tar.sha256` on **approved protected media** only (the bundle carries
    the installer inventory and AAP backup). Verify on dispatch and on receipt before starting the
    manual restore in [AAP_BACKUP_RESTORE_RUNBOOK.md](AAP_BACKUP_RESTORE_RUNBOOK.md).
 
@@ -165,7 +215,11 @@ are not available.
   ```
   Run **AAP - backup** in Check mode to preview the schedule (`DTSTART;TZID=Europe/Berlin:...`),
   then Run to create or update it. Leave `aap_backup_schedule_enabled: false` to manage schedules
-  by hand.
+  by hand. Note: on a single-host self-hosted AAP server, a scheduled **AAP - backup** job with the
+  default `aap_backup_self_hosted_mode: "refuse"` runs preflight and stops with `SA-AAPBK-17`; for
+  unattended single-host backups, either schedule the CLI command from a `systemd --user` timer /
+  cron job as `ansible`, run from a separate controller, or test opt-in
+  `aap_backup_self_hosted_mode: "detach"` in a maintenance window first.
 
 ## Coded stops (`SA-AAPBK-nn`)
 
@@ -188,9 +242,9 @@ action required:
 | `SA-AAPBK-12` | Bundle | Source backup `SHA256SUMS` verification failed (or symlink rejected) before bundling. Do not carry over a corrupt backup. |
 | `SA-AAPBK-13` | Bundle | Offline bundle installer (`bundle/` images), exact build parity, inventory, `group_vars`/`host_vars`, or extra file missing/mismatched. |
 | `SA-AAPBK-14` | Bundle | Explicit custom EE image missing locally, `podman save` failed, or 0 EEs found when `aap_backup_ee_require_at_least_one: true`. |
-| `SA-AAPBK-15` | Bundle | Bundle `SHA256SUMS` or `.tar.sha256` read-back verification failed (or symlink rejected). Staging quarantined; do not transfer. |
+| `SA-AAPBK-15` | Bundle | Bundle `SHA256SUMS`, `.tar`, or `.tar.sha256` read-back verification failed (or symlink rejected) before publishing. Partial `.tar*` unlinked, `bundles/` left clean, staging quarantined; do not transfer. |
 | `SA-AAPBK-16` | Schedule | Invalid weekly schedule string/timezone or AAP API error while reconciling the optional weekly Berlin schedule. |
-| `SA-AAPBK-17` | Self-hosted guard | Self-hosted in-AAP backup refused (`aap_backup_self_hosted_mode: refuse` or `systemd-run --user` unavailable). Prints the exact CLI command to run; AAP left untouched. |
+| `SA-AAPBK-17` | Self-hosted guard | Self-hosted in-AAP backup refused (default `aap_backup_self_hosted_mode: refuse`, or opt-in `detach` when `systemd-run --user` is unavailable). Runs preflight, prints exact CLI + verify/restart commands; never stops any AAP service. |
 
 ## Settings reference
 
