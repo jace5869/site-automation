@@ -2867,7 +2867,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                      else s for s in (extra or [])]
         elif sopts.get("stig_results"):
             # Step 9: STIG drift reports fold multiple checklists per host with per-rule expander cards
-            sv_sec = sv_mod.stig_server_view(sopts["stig_results"], missing=miss_map, texts=sopts.get("stig_texts"), opts=sopts)
+            sv_sec = sv_mod.stig_server_view(sopts["stig_results"], missing=miss_map, texts=sopts.get("stig_texts"),
+                                             opts=sopts, findings_by_host=by_host)
         else:
             # Merge optional fapolicyd_deny artifact entries with portal buttons into per-host findings (Step 10)
             sv_by = by_host
@@ -2934,8 +2935,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         sections.append({"title": "Result", "lines": ["No findings."]})
     # 1.82.0: the head - the counts by severity, the hosts as the scope
     # a host that did not report is a count of its own (review: never lost, and never "0 findings" over them)
+    # 1.139.0: Informational findings also contribute to the email headline.
     h_counts = [[n, w, st] for n, w, st in ((crit, "critical", "critical"), (warn, "warning" if warn == 1 else "warnings", "warning"),
-                                             (len(miss_names), "did not report", "warning"), (low, "low", "info")) if n] or [["no", "findings", "ok"]]
+                                             (len(miss_names), "did not report", "warning"), (low, "low", "info"), (info, "info", "info")) if n] or [["no", "findings", "ok"]]
     h_scope = [] if single else ["%d of %d hosts with findings" % (len(bad), len(hosts))]
     if head:                                  # a top section's headline is the title's own words (STIG recheck: 2 rules open): the head reads them from it
         h_counts = h_scope = None

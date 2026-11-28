@@ -145,7 +145,7 @@
 {%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
 {%- set tgd = tg.data | default({}) | safe_data %}
 {%- set rst = srv.status if srv.status in words else 'unknown' %}
-{%- set hide_nums = srv.missing or srv.unchecked | default(false) %}
+{%- set hide_nums = srv.missing or (srv.unchecked | default(false) and not srv.findings) %}
 <tr class="r-{{ rst }}"{% for k in tgd %} data-{{ k | e }}="{{ tgd[k] | e }}"{% endfor %}{% if tg.id | default('') %} id="{{ tg.id | e }}"{% endif %}>
 <td class="k-x"><button class="xb" type="button" aria-expanded="false" aria-label="Open {{ srv.host | e }}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
 <td class="k-wrap srv-name" data-l="Server" data-v="{{ srv.host | e }}"><span class="cv"><strong class="srv-host mono">{{ dw(srv.host, true) }}</strong>{% if srv.ip | default('') %}<span class="srv-ip mono">{{ nbw(srv.ip) }}</span>{% endif %}{% if not _list_only and srv.meta | default('') %}<span class="srv-ip">{{ srv.meta | e }}</span>{% endif %}{% if srv.checklists | default([]) %}<span class="cl-pills">{% for cl in srv.checklists %}<span class="cl-pill">{{ cl | e }}</span>{% endfor %}</span>{% endif %}</span></td>
@@ -166,14 +166,17 @@
 {%- if srv.checklist_breakdown | default([]) %}
 <div class="srv-cl-strip">{% for cb in srv.checklist_breakdown %}<span class="cl-box">{{ chip(cb.status if cb.status in words else 'ok', cb.name) }}<span>{% if not cb.scanned %}not scanned{% else %}{{ cb.drift }} drift · {{ cb.new }} new{% if cb.disagree %} · {{ cb.disagree }} disagree{% endif %}{% if cb.fixed_open %} · {{ cb.fixed_open }} fixed-open{% endif %}{% endif %}</span></span>{% endfor %}</div>
 {%- endif %}
+{# 1.139.0: Validate action destinations at render time, including stored reports. #}
+{%- set portal_base = report_portal_url | default(portal_path | default('/portal', true), true) %}
 {%- if srv.host_buttons | default([]) %}
-<div class="srv-host-acts">{% for b in srv.host_buttons %}<a class="btn pl" href="{{ b.url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endfor %}</div>
+<div class="srv-host-acts">{% for b in srv.host_buttons %}{% set url = b.url | default('') | safe_ref(portal_base) %}{% if url %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endif %}{% endfor %}</div>
 {%- endif %}
 {%- if srv.missing %}
 <article class="srv-finding sf-unknown"><div class="srv-fhead">{{ chip('unknown', srv.status_label) }}<h3>Host did not report</h3></div><p class="srv-ev">{{ (srv.reason or 'Unreachable, or the job failed on this host before the checks ran. Health is unknown.') | e }}</p></article>
 {%- elif srv.unchecked | default(false) and not srv.findings %}
 <article class="srv-finding sf-unknown"><div class="srv-fhead">{{ chip('unknown', srv.status_label) }}<h3>Host was not checked</h3></div><p class="srv-ev">{{ (srv.reason or 'No checks ran on this host.') | e }}</p></article>
 {%- elif srv.findings %}
+{%- if srv.unchecked | default(false) %}<p class="srv-ev">Host check: {{ srv.reason | e }}</p>{% endif %}
 {%- for f in srv.findings %}
 {%- set fst = f.severity if f.severity in words else 'warning' %}
 <article class="srv-finding sf-{{ fst }}"><div class="srv-fhead">{{ chip(fst, f.severity_label) }}<h3>{{ f.title | e }}</h3>{% if f.check_label %}<span class="srv-fmeta">{{ f.check_label | e }}</span>{% endif %}</div>
@@ -181,7 +184,7 @@
 {%- if f.since %}<div class="srv-since">Since {{ f.since | e }}</div>{% endif %}
 {%- if f.fix %}<p class="srv-fix"><b>What to do:</b> {{ f.fix | e }}</p>{% endif %}
 {%- if f.hint %}<div class="srv-hint-lbl">Check command (read-only hint)</div><div class="code"><pre><code>{{ f.hint | e }}</code></pre><button class="copy" type="button" hidden>Copy</button></div>{% endif %}
-{%- if f.buttons | default([]) %}<div class="srv-acts">{% for b in f.buttons %}<a class="btn pl" href="{{ b.url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endfor %}</div>{% endif %}
+{%- if f.buttons | default([]) %}<div class="srv-acts">{% for b in f.buttons %}{% set url = b.url | default('') | safe_ref(portal_base) %}{% if url %}<a class="btn pl" href="{{ url | e }}" target="_blank" rel="noopener" title="Opens the site portal: you check and press Run there"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ b.label | e }}</span></a>{% endif %}{% endfor %}</div>{% endif %}
 </article>
 {%- endfor %}
 {%- else %}

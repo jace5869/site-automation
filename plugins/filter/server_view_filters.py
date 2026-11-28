@@ -403,8 +403,11 @@ def _copyable_hint(text):
     """Offer Copy for recognized diagnostic commands. Keep other operator guidance as text."""
     if not text or any(c in text for c in "`$(){}\\"):
         return False
+    # 1.139.0: Copy hints may be pasted into cmd.exe, where single quotes do not protect redirection.
+    if any(c in text for c in "<>^%!"):
+        return False
     for command in re.split(r"\s*(?:&&|\||;|\n)\s*", text):
-        if re.search(r"""[&<>]""", re.sub(r"'[^']*'", "", command)):
+        if "&" in command:
             return False
         try:
             args = shlex.split(command)
@@ -504,11 +507,13 @@ def _regroup_by_finding_host(by_host, missing, opts):
     known = [str(x).strip() for x in (opts.get("known_hosts") or []) if str(x).strip()]
     want = bool(opts.get("group_by_finding_host"))
     if not want:
-        return by_host, missing
+        return by_host, missing, {}
 
     new_by = {}
     new_miss = missing_map(missing)
-    known_lower = set(k.lower() for k in known)
+    unread = {}
+    display_names = {k.lower(): k for k in known}
+    known_lower = set(display_names)
     for kh in known:
         if kh.lower() not in set(m.lower() for m in new_miss):
             new_by.setdefault(kh, [])
@@ -524,16 +529,22 @@ def _regroup_by_finding_host(by_host, missing, opts):
             if m_miss:
                 mh = fhost or m_miss.group(1).strip()
                 if mh:
+                    mh = display_names.setdefault(mh.lower(), mh)
                     new_miss[mh] = str(f.get("summary") or "host was not read").strip()
-                    new_by.pop(mh, None)
+                    unread[mh] = new_miss[mh]
                 continue
             if fhost:
+                fhost = display_names.setdefault(fhost.lower(), fhost)
                 new_by.setdefault(fhost, []).append(f)
             else:
                 leftover.append(f)
         if leftover or outer_host.lower() in known_lower:
-            new_by.setdefault(outer_host, []).extend(leftover)
-    return new_by, new_miss
+            new_by.setdefault(display_names.get(outer_host.lower(), outer_host), []).extend(leftover)
+    # 1.139.0: An unread host check can coexist with findings from the API.
+    for h in unread:
+        if not new_by.get(h):
+            new_by.pop(h, None)
+    return new_by, new_miss, unread
 
 
 def _cap_host_findings(norm_fs, raw_cap, max_per_kind, kind_caps, artifact_kinds):
@@ -592,7 +603,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
     o = opts if isinstance(opts, dict) else {}
 
     # 1.139.0 (vdi-design-check #5 / step 14): regroup single-play-host findings by finding['host']
-    by_host, missing = _regroup_by_finding_host(by_host, missing, o)
+    by_host, missing, unread = _regroup_by_finding_host(by_host, missing, o)
 
     tm = _site_time()
     tz, _ = tm.zone(o.get("zone") or "")
@@ -640,8 +651,13 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
         ip = str(ips.get(h) or hmeta.get("ip") or "").strip()
         raw_time = str(hmeta.get("time") or default_now).strip()
         checked = _fmt_checked(raw_time, tz)
-        has_checks_key = isinstance(hmeta, dict) and "checks" in hmeta
-        checks_run = list(dict.fromkeys(str(c) for c in (hmeta.get("checks") or cnt["checks"]) if str(c).strip()))
+        # 1.139.0: The attempted checks include failures. Only successful checks establish coverage.
+        failed = set(hmeta.get("checks_failed") or [])
+        checks_run = list(dict.fromkeys(str(c) for c in hmeta.get("checks", cnt["checks"]) or []
+                                        if c not in failed and str(c).strip()))
+        reason = unread.get(h, "")
+        if not reason and ("checks" in hmeta or failed) and not checks_run:
+            reason = "No checks completed successfully." if failed else "No checks ran on this host."
 
         raw_fs = [f for f in (by_host.get(h) or []) if isinstance(f, dict)]
         norm_fs = [_normalize_finding(h, f, ask=ask, tz=tz) for f in raw_fs]
@@ -656,21 +672,19 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
         # 1.139.0 (vdi-design-check #4 & #22): ignore site_health.status; empty site_checks_run -> Not checked (unknown)
         st = cnt["status"]
         st_label = STATUS_LABELS.get(st, st.capitalize())
-        unchecked = False
-        if has_checks_key and not (hmeta.get("checks") or []) and st == "ok" and cap_n == 0:
-            st = "unknown"
-            st_label = "Not checked"
-            unchecked = True
+        unchecked = bool(reason)
+        if unchecked:
             checked = "-"
             unchecked_hosts += 1
-            if totals["clear"] > 0:
+            if st == "ok":
+                st = "unknown"
+                st_label = "Not checked"
                 totals["clear"] -= 1
-            if totals["healthy"] > 0:
                 totals["healthy"] -= 1
-            totals["unknown_hosts"] = totals.get("unknown_hosts", 0) + 1
+                totals["unknown_hosts"] += 1
 
-        if unchecked:
-            worst = "No checks ran on this host"
+        if unchecked and not norm_fs and not cap_n:
+            worst = reason.rstrip(".")
         elif norm_fs:
             worst = norm_fs[0]["title"]
             if cap_n:
@@ -688,7 +702,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
             "status_label": st_label,
             "missing": False,
             "unchecked": unchecked,
-            "reason": "No checks ran on this host." if unchecked else "",
+            "reason": reason,
             "counts": {
                 "critical": cnt["critical"],
                 "warning": cnt["warning"],
@@ -756,7 +770,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
     for idx, s in enumerate(servers):
         rid = "srv-%d" % idx
         c = s["counts"]
-        hide_nums = s["missing"] or s["unchecked"]
+        hide_nums = s["missing"] or (s["unchecked"] and not s["findings"])
         rows.append([
             "",
             s["host"],
@@ -813,7 +827,7 @@ def server_view(by_host, health=None, missing=None, capped=None, opts=None):
     crit_mask = _meter_mask([s["status"] == "critical" for s in servers])
     clear_mask = _meter_mask([s["status"] == "ok" for s in servers])
 
-    if none_checked:
+    if none_checked and not totals["findings"]:
         # 1.139.0 (vdi-design-check #1): no host reported -> show "N not checked" tiles, NEVER zero green counts
         not_chk = totals["missing"] + unchecked_hosts
         tiles = [
@@ -1000,7 +1014,7 @@ def _stig_rule_text(rec, texts):
     return chk, fix
 
 
-def stig_server_view(results, missing=None, texts=None, opts=None):
+def stig_server_view(results, missing=None, texts=None, opts=None, findings_by_host=None):
     """1.139.0 (Step 9 + vdi-design-check #9, #10, #11, #12): Fold multi-checklist STIG drift results
     into one row per server with checklist pills, per-checklist breakdown, and per-rule expander cards
     (DISA check command -> read-only hint with Copy; DISA fix text -> plain 'What to do' prose, no Copy)."""
@@ -1138,6 +1152,12 @@ def stig_server_view(results, missing=None, texts=None, opts=None):
             if link:
                 host_buttons[h] = [{"label": "Recheck host", "url": link}]
 
+    # 1.139.0: Replace STIG aggregates only for hosts with checklist results.
+    for host, findings in (findings_by_host or {}).items():
+        hk = host.lower()
+        bucket = by_host.setdefault(display_name.get(hk, host), [])
+        bucket.extend(f for f in findings or [] if hk not in grouped or f.get("check") != "stig")
+
     sv_opts = dict(o)
     sv_opts.setdefault("title", "Servers")
     sv_opts["checklists"] = checklists_map
@@ -1224,7 +1244,8 @@ def fapolicyd_server_view(hostvars_list, names, opts=None):
                         fs.append({"check": "fapolicyd", "severity": "critical" if service == "active" else "warning",
                                    "summary": "%s is %s" % ("fapolicyd" if service == "active" else service, host[service])})
         # Service / health issues
-        st_ff = str(ff.get("active") or ff.get("state") or "").strip().lower()
+        # 1.139.0: The denial reader also reports service activity.
+        st_ff = str(ff.get("active") or fr.get("active") or ff.get("state") or "").strip().lower()
         if st_ff in ("down", "failed", "still down", "inactive"):
             fs.append({
                 "check": "fapolicyd",
@@ -1795,23 +1816,21 @@ def swr_server_view(read, findings_by_host=None, opts=None):
 
 def _cert_sev(days, raw_status, warn_days, notice_days, crit_days):
     """Map one certificate's days/status to canonical severity (expired -> critical)."""
-    if raw_status:
-        st = normalize_severity(raw_status, default="")
-        if st in ("critical", "warning", "low", "info", "ok", "unknown"):
-            return st
-    if days is None:
-        return "unknown"
+    # 1.139.0: Either the reported status or the expiry window can raise severity.
+    status = normalize_severity(raw_status, default="")
     try:
         d = int(days)
     except (TypeError, ValueError):
-        return "unknown"
+        return status or "unknown"
     if d < 0 or d <= crit_days:
-        return "critical"
-    if d <= warn_days:
-        return "warning"
-    if d <= notice_days:
-        return "info"
-    return "ok"
+        expiry = "critical"
+    elif d <= warn_days:
+        expiry = "warning"
+    elif d <= notice_days:
+        expiry = "info"
+    else:
+        expiry = "ok"
+    return min(status or expiry, expiry, key=SEV_ORDER.get)
 
 
 def cert_host_rollup(certs, opts=None):

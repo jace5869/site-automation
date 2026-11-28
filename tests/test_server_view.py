@@ -314,7 +314,7 @@ class TemplateRenderingTests(unittest.TestCase):
                     "severity": "critical",
                     "summary": "/var is 96% full <script>alert(1)</script>",
                     "fix": "Free disk space on /var <b>now</b>.",
-                    "hint": "df -h /var && echo '<safe>'",
+                    "hint": "df -h /var && echo 'safe'",
                 },
                 {
                     "check": "accounts",
@@ -363,7 +363,7 @@ class TemplateRenderingTests(unittest.TestCase):
             self.assertIn('<details class="srv-det">', html, look)
             self.assertIn("and 14 more of fapolicyd_deny, not listed", html, look)
             # hint gets Copy; fix-only finding gets prose "What to do:" and NO Copy button
-            self.assertIn('<div class="code"><pre><code>df -h /var &amp;&amp; echo &#39;&lt;safe&gt;&#39;</code></pre><button class="copy" type="button" hidden>Copy</button></div>', html, look)
+            self.assertIn('<div class="code"><pre><code>df -h /var &amp;&amp; echo &#39;safe&#39;</code></pre><button class="copy" type="button" hidden>Copy</button></div>', html, look)
             acct_block = html.split("Password policy note", 1)[1].split("</article>", 1)[0]
             self.assertIn("<b>What to do:</b> Document exception in ticket.", acct_block, look)
             self.assertNotIn('class="copy"', acct_block, look)
@@ -411,6 +411,72 @@ class TemplateRenderingTests(unittest.TestCase):
                 sizes = re.findall(r"font-size:clamp\([^;]*?,\s*([\d.]+)(rem|px)\)", style) + re.findall(r"font-size:([\d.]+)(rem|px)", style)
                 for v, unit in sizes:
                     self.assertLessEqual(float(v) * (16 if unit == "rem" else 1), 34, (v, unit))
+
+
+class GateReviewTests(unittest.TestCase):
+    """1.139.0 gate regressions for server reports and the email headline."""
+
+    def test_unread_marker_preserves_api_finding_in_either_order(self):
+        api = {"host": "SITEA", "id": "api", "summary": "API unavailable", "severity": "critical"}
+        marker = {"host": "SITEA", "id": "stigman:host:SITEA", "summary": "Host check unread"}
+        for findings in ([api, marker], [marker, api]):
+            sec = svf.server_view({"localhost": findings}, opts={"group_by_finding_host": True})
+            row, = sec["servers"]
+            self.assertEqual((row["status"], row["findings"][0]["id"]), ("critical", "api"))
+            self.assertEqual((row["reason"], sec["counts"]["unchecked"]), ("Host check unread", 1))
+            self.assertEqual(sec["tiles"][1]["value"], 1)
+
+    def test_stig_rules_and_other_checks_share_headline(self):
+        results = [{"host": "SITEA", "scanned": True, "drift": [{"key": "rule", "severity": "medium"}]}]
+        raw = {"sitea": [{"check": "stig", "id": "stig:drift", "severity": "warning"},
+                         {"check": "disk", "severity": "critical"}], "sitea-other": []}
+        rep = sf.findings_report(raw, "SITEA", servers={"stig_results": results})
+        rows = rep["sections"][0]["servers"]
+        self.assertEqual([r["host"] for r in rows], ["SITEA", "sitea-other"])
+        self.assertEqual({f["check"] for f in rows[0]["findings"]}, {"stig", "disk"})
+        self.assertEqual(rep["head_counts"], [[1, "critical", "critical"], [1, "warning", "warning"]])
+        self.assertEqual(rep["status"], "critical")
+
+    def test_only_portal_buttons_render(self):
+        for scheme in ("http", "https"):
+            base = scheme + "://portal.corp.example.mil/portal"
+            good = [base + "/actions/check", "/portal/actions/check"]
+            bad = ["javascript:void(0)", "data:text/plain,SITEA", "//other.corp.example.mil/portal",
+                   base.replace("portal.", "other."), base + "-other", "/portal/%2e%2e/other"]
+            buttons = [{"label": "button%d" % i, "url": url} for i, url in enumerate(good + bad)]
+            rep = sf.findings_report({"SITEA": [{"buttons": buttons}]}, "SITEA", servers={})
+            html = _render_look("atlas", rep, report_portal_url=base)
+            for url in good:
+                self.assertIn('href="%s"' % url, html)
+            for i in range(len(good), len(buttons)):
+                self.assertNotIn(">button%d<" % i, html)
+
+    def test_denial_reader_inactive_service(self):
+        sec = svf.fapolicyd_server_view([{"_fr": {"active": "inactive"}}], ["SITEA"])
+        self.assertEqual(sec["servers"][0]["status"], "critical")
+
+    def test_certificate_uses_worse_of_days_and_status(self):
+        for days, status in ((2, "expiring"), (90, "expired")):
+            sec = svf.cert_host_rollup([{"host": "SITEA", "days": days, "status": status}])
+            self.assertEqual(sec["rollup_hosts"][0]["status"], "critical")
+
+    def test_only_failed_check_is_not_clear(self):
+        health = {"SITEA": {"checks": ["disk"], "checks_failed": ["disk"]}}
+        sec = svf.server_view({"SITEA": []}, health)
+        self.assertEqual(sec["servers"][0]["checks"], [])
+        self.assertEqual(sec["status"], "unknown")
+        self.assertEqual((sec["counts"]["unchecked"], sec["counts"]["clear"]), (1, 0))
+
+    def test_cmd_single_quotes_do_not_protect_redirection(self):
+        for hint in ("reg query SITEA '>' result", "echo '>' result"):
+            sec = svf.server_view({"SITEA": [{"hint": hint}]})
+            f = sec["servers"][0]["findings"][0]
+            self.assertEqual(f["hint"], "")
+            self.assertIn(hint, f["evidence"])
+
+    def test_info_only_email_counts(self):
+        rep = sf.findings_report({"SITEA": [{"severity": "info"}]}, "SITEA")
+        self.assertEqual(rep["head_counts"], [[1, "info", "info"]])
 
 
 class ScriptMacrosAndDefaultsTests(unittest.TestCase):
