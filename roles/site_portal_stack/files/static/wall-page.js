@@ -763,20 +763,74 @@
       var m = p[2] || "hosts", hp = thr("high");
       var hs = W.vmware.hosts.filter(function (x) { return x.vc === cl.vc && (x.cluster || "(standalone)") === cl.n; });
       hs.sort(function (a, b) { return (m === "mem" ? (b.mem || 0) - (a.mem || 0) : m === "cpu" ? (b.cpu || 0) - (a.cpu || 0) : (a.st === "ok") - (b.st === "ok")); });
-      var tb = h("table", "dtab", [h("thead", "", [h("tr", "", [h("th", "", ["Host"]), h("th", "", ["State"]), h("th", "n", ["CPU %"]), h("th", "n", ["Memory %"]), h("th", "n", ["VMs"])])])]), body = h("tbody");
+      var pc = window.SAPortalCopy && typeof window.SAPortalCopy.createSplitControl === "function" ? window.SAPortalCopy : null;
+      var hostBar = pc ? pc.createFeedbackBar() : null;
+      var hostToSrv = function (x) {
+        var st = withFresh(x.st, x.feed);
+        var sev = st === "crit" ? "critical" : st === "warn" ? "warning" : st === "ok" ? "ok" : "unknown";
+        var cs = condsOn(function (c) { return c.vc === x.vc && (c.host === x.n || c.obj_name === x.n); });
+        var fs = cs.map(function (c) {
+          return {sev: condStale(c) ? "unknown" : (c.sev === "crit" ? "critical" : "warning"), sevLabel: wordWd(condStale(c) ? "stale" : c.sev),
+            title: c.t, evidence: "", whatToDo: "Check vSphere Client of " + x.vc + " > host " + x.n + " > Summary / Monitor"};
+        });
+        if (!fs.length && sev !== "ok") fs.push({sev: sev, sevLabel: wordWd(st), title: "Host " + wordWd(st) + " (CPU " + pct(x.cpu) + "%, Mem " + pct(x.mem) + "%)",
+          evidence: "", whatToDo: "Check vSphere Client of " + x.vc + " > host " + x.n});
+        return {host: x.n, ip: "", sev: sev, statusLabel: wordWd(st), worst: fs[0] ? fs[0].title : ("CPU " + pct(x.cpu) + "%, Mem " + pct(x.mem) + "%"),
+          summary: "CPU " + pct(x.cpu) + "%, Mem " + pct(x.mem) + "%, " + x.nvms + " VMs", findings: fs, totalFindings: fs.length, cappedCount: 0};
+      };
+      var hostCtx = {site: (W && W.enclave) || "", report: "ESXi hosts · " + cl.n, dateTime: hms(NOW()) + " " + zoneName(), url: typeof location !== "undefined" ? location.href : ""};
+      var ths = [h("th", "", ["Host"]), h("th", "", ["State"]), h("th", "n", ["CPU %"]), h("th", "n", ["Memory %"]), h("th", "n", ["VMs"])];
+      if (pc) ths.push(h("th", "", ["Copy"]));
+      var tb = h("table", "dtab", [h("thead", "", [h("tr", "", ths)])]), body = h("tbody");
       hs.forEach(function (x) {
         var st = withFresh(x.st, x.feed);
-        body.appendChild(h("tr", st, [h("td", "", [h("button", "lnk", [x.n], {type: "button", "data-d": "host:" + x.vc + "|" + x.n})]), h("td", "", [wordWd(st)]),
-          h("td", "n", [pct(x.cpu)]), h("td", "n", [pct(x.mem)]), h("td", "n", [String(x.nvms)])]));
+        var cells = [h("td", "", [h("button", "lnk", [x.n], {type: "button", "data-d": "host:" + x.vc + "|" + x.n})]), h("td", "", [wordWd(st)]),
+          h("td", "n", [pct(x.cpu)]), h("td", "n", [pct(x.mem)]), h("td", "n", [String(x.nvms)])];
+        if (pc) {
+          cells.push(h("td", "", [pc.createSplitControl({
+            cls: "sm", scope: "server", baseLabel: "Copy", title: "Copy " + x.n + " status and findings (text + picture)",
+            ariaLabel: "Copy " + x.n, toggleLabel: "Copy options for " + x.n,
+            menuTitle: String(x.n).split(".")[0], menuTag: "Server row",
+            subtitles: {both: "Text + inline PNG", text: "Status + findings", picture: "PNG server card"},
+            onCopy: function (mode, btn, finish) {
+              var srv = hostToSrv(x), fmt = pc.formatOneServer(srv, hostCtx);
+              var pic = mode === "text" ? {dataUrl: ""} : pc.drawOneServerCard(srv, hostCtx);
+              return pc.copyMode(mode, {
+                plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: srv.host + " status card", focusEl: btn,
+                onState: function (s2, lab, msg) { pc.setFeedback(btn, hostBar, s2, lab, msg); }, onDone: finish
+              });
+            }
+          })]));
+        }
+        body.appendChild(h("tr", st, cells));
       });
       tb.appendChild(body);
+      var hostsBox = tb;
+      if (pc && hs.length) {
+        var copyAllHosts = pc.createSplitControl({
+          cls: "pri", scope: "all", baseLabel: "Copy all shown", withCount: true, count: hs.length,
+          title: "Copy all shown ESXi hosts in " + cl.n + " (text + picture)", ariaLabel: "Copy all shown hosts",
+          toggleLabel: "Copy all shown options", menuTitle: "Copy all shown", menuTag: hs.length + " row" + (hs.length === 1 ? "" : "s"),
+          subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
+          isEmpty: function () { return !hs.length; },
+          onCopy: function (mode, btn, finish) {
+            var srvs = hs.map(hostToSrv), fmt = pc.formatAllShown(srvs, hostCtx);
+            var pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, hostCtx);
+            return pc.copyMode(mode, {
+              plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: cl.n + " hosts summary card", focusEl: btn,
+              onState: function (s2, lab, msg) { pc.setFeedback(btn, hostBar, s2, lab, msg); }, onDone: finish
+            });
+          }
+        });
+        hostsBox = h("div", "", [h("div", "evh", [copyAllHosts]), tb, hostBar]);
+      }
       var v = m === "cpu" ? cl.cpu : m === "mem" ? cl.mem : null;
       var st = m === "hosts" ? (cl.down.length ? withFresh("crit", cl.feed) : (cl.unknown || []).length ? "stale" : withFresh("ok", cl.feed)) : withFresh(level(v, 101, hp[0]), cl.feed);
       return {title: (m === "cpu" ? "CPU · " : m === "mem" ? "Memory · " : "Hosts · ") + cl.n, st: st, chips: ["Cluster", "vCenter " + cl.vc], fk: cl.feed, area: "vmware", rows: [
         m === "hosts" ? ["Hosts up", cl.up + " of " + cl.of + (cl.down.length ? " · not responding: " + cl.down.join(", ") : "") + (cl.maint.length ? " · maintenance: " + cl.maint.join(", ") : "")] :
           ["Now vs threshold", h("div", "", [h("b", "", [pct(v) + " %"]), " average of the connected hosts · the wall flags a host or VM at " + hp[0] + " % for " + hp[1] + " min", vsBar(v, null, hp[0], st)])],
         ["Wall conditions", condRows(condsOn(function (c) { return c.cluster === cl.n || (c.host && hs.some(function (x) { return x.n === c.host; })); }), cl.feed)],
-        ["Hosts", tb], srcRow(cl.feed),
+        ["Hosts", hostsBox], srcRow(cl.feed),
         ["Where to verify", "vSphere Client of " + cl.vc + " › cluster " + cl.n + " › Monitor › " + (m === "hosts" ? "Issues and Alarms" : "Performance")]]};
     },
     aggr: function (ref) {

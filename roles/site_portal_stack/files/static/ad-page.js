@@ -139,17 +139,39 @@
     panel.tabIndex = -1;
     return panel;
   }
+  // 1.140.0: per-DC Copy control (text / picture / both) and Copy all shown beside Expand all
+  let dcFilterSev = "all", dcQuery = "", dcAllExpanded = false;
+  function dcToServer(a, m, d, why) {
+    const sev = staleJob(a) ? "unknown" : d.now;
+    const stLab = staleJob(a) ? "Not current" : (d.worst === "not polled" ? "Not reached" : (WORD[d.now] || d.now));
+    const problems = [...new Set([d.worst, ...(d.problem_texts || []), why].filter(Boolean))];
+    const findings = sev === "ok" ? [] : (problems.length ? problems : [stLab]).map(p => ({
+      sev, sevLabel: stLab, title: p, evidence: d.site ? "AD site " + d.site : "",
+      whatToDo: "Run repadmin /showrepl " + d.dc + " and check DC services."
+    }));
+    return {host: nameOf(m, d), ip: "", sev: d.worst === "not polled" ? "unknown" : sev, statusLabel: stLab,
+      worst: why || d.worst || (sev === "ok" ? "All checks passed" : stLab), summary: why || d.worst || stLab,
+      findings, totalFindings: findings.length, cappedCount: 0};
+  }
+  function adCopyCtx(a, m) {
+    const dt = (m.run && (m.run.at_shown || m.run.read_at)) || "";
+    return {site: (m.run && m.run.domain) || "", report: "Active Directory health", dateTime: dt, url: typeof location !== "undefined" ? location.href : ""};
+  }
   function dcTable(a, m) {
     const sws = swOf(a.sw), n = m.times.length;
+    const pc = window.SAPortalCopy && typeof window.SAPortalCopy.createSplitControl === "function" ? window.SAPortalCopy : null;
     const swRank = d => { const s = swFor(sws, d, m); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
     const dcs = m.dcs.slice().sort((x, y) => (RANK[x.now] - RANK[y.now]) || (swRank(x) - swRank(y)) || x.dc.localeCompare(y.dc));
-    const rows = dcs.map(d => {
+    const copyBar = pc ? pc.createFeedbackBar() : null;
+    const entries = dcs.map(d => {
       const s = swFor(sws, d, m);
       const why = [d.worst, d.stale_dsa ? "Two NTDS objects for " + d.dc.toUpperCase() + " - stale DSA, metadata cleanup" : ""].filter((x, i, xs) => x && xs.indexOf(x) === i).join("; ") ||
                   (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
+      const srv = dcToServer(a, m, d, why);
       const sample = s && d.node_id != null && a.sw.age != null ? el("div", "muted", (a.sw.stale ? "last known · " : "") + ago(a.sw.age)) : null;
       const tr = el("tr", staleJob(a) ? "r-unknown" : d.now !== "ok" ? "r-" + d.now : "");
       tr.dataset.dc = idOf(d);
+      tr.dataset.sev = srv.sev;
       const strip = el("span", "adp-trend");
       strip.setAttribute("role", "img");
       strip.setAttribute("aria-label", d.dc + ": the last " + n + " runs, " + d.trend.filter(x => x && x !== "ok").length + " not OK");
@@ -162,11 +184,80 @@
                 el("td", "nw", staleJob(a) ? chip("unknown", "?") : chip(d.now, d.worst === "not polled" ? "not polled" : undefined)), el("td", "nw", since), el("td", "", strip),
                 el("td", "nw", [s ? ((a.sw.stale || a.down) && d.node_id != null ? chip("unknown", "? · " + s[0]) : chip(s[1] || "unknown", s[0])) : el("span", "muted", a.sw.on ? "not matched" : "not read"), sample]),
                 el("td", "adp-wide", why || el("span", "muted", "-")));
-      return tr;
+      if (pc) {
+        const sp = pc.createSplitControl({
+          cls: "sm", scope: "server", baseLabel: "Copy",
+          title: "Copy " + srv.host + " status and findings (text + picture)",
+          ariaLabel: "Copy " + srv.host, toggleLabel: "Copy options for " + srv.host,
+          menuTitle: String(srv.host).split(".")[0], menuTag: "Server row",
+          subtitles: {both: "Text + inline PNG", text: "Status + all findings", picture: "PNG server card"},
+          onCopy: (mode, btn, finish) => {
+            const cx = adCopyCtx(a, m), fmt = pc.formatOneServer(srv, cx);
+            const pic = mode === "text" ? {dataUrl: ""} : pc.drawOneServerCard(srv, cx);
+            return pc.copyMode(mode, {
+              plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: srv.host + " status card", focusEl: btn,
+              onState: (st, lab, msg) => pc.setFeedback(btn, copyBar, st, lab, msg), onDone: finish
+            });
+          }
+        });
+        tr.append(el("td", "nw adp-copy-td", sp));
+      }
+      const panel = dcPanel(a, d);
+      if (dcAllExpanded) panel.classList.add("open");
+      return {d, srv, tr, panel, hay: (srv.host + " " + (d.site || "") + " " + srv.statusLabel + " " + why).toLowerCase()};
     });
+    const shownEntries = () => {
+      const q = dcQuery.trim().toLowerCase();
+      return entries.filter(e => (dcFilterSev === "all" || e.srv.sev === dcFilterSev) && (!q || e.hay.includes(q)));
+    };
+    const tools = el("div", "adp-tools");
+    let copyAllSp = null;
+    const applyFilter = () => {
+      const vis = new Set(shownEntries());
+      entries.forEach(e => { e.tr.hidden = !vis.has(e); e.panel.classList.toggle("open", dcAllExpanded && vis.has(e)); });
+      if (copyAllSp && copyAllSp.setCount) copyAllSp.setCount(vis.size);
+    };
+    if (pc) {
+      const pills = el("div", "adp-pills"); pills.setAttribute("role", "group"); pills.setAttribute("aria-label", "Filter DCs by severity");
+      [["all", "All"], ["critical", "Critical"], ["warning", "Warning"], ["unknown", "Not reached"], ["ok", "OK"]].forEach(([k, lab]) => {
+        const b = el("button", "btn sm", lab); b.type = "button"; b.setAttribute("aria-pressed", String(dcFilterSev === k));
+        b.addEventListener("click", () => {
+          dcFilterSev = k;
+          pills.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+          applyFilter();
+        });
+        pills.append(b);
+      });
+      const qIn = el("input", "adp-q"); qIn.type = "search"; qIn.value = dcQuery; qIn.placeholder = "Filter DCs\u2026";
+      qIn.setAttribute("aria-label", "Filter domain controllers");
+      qIn.addEventListener("input", () => { dcQuery = qIn.value; applyFilter(); });
+      const expBtn = el("button", "btn sm", dcAllExpanded ? "Collapse all" : "Expand all"); expBtn.type = "button";
+      expBtn.addEventListener("click", () => { dcAllExpanded = !dcAllExpanded; expBtn.textContent = dcAllExpanded ? "Collapse all" : "Expand all"; applyFilter(); });
+      copyAllSp = pc.createSplitControl({
+        cls: "pri adp-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: entries.length,
+        title: "Copy every DC currently shown after filters (text + picture)",
+        ariaLabel: "Copy all shown DCs", toggleLabel: "Copy all shown options",
+        menuTitle: "Copy all shown", menuTag: entries.length + " row" + (entries.length === 1 ? "" : "s"),
+        subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
+        isEmpty: () => shownEntries().length === 0,
+        onCopy: (mode, btn, finish) => {
+          const srvs = shownEntries().map(e => e.srv); if (!srvs.length) { finish(); return Promise.resolve(); }
+          const cx = adCopyCtx(a, m), fmt = pc.formatAllShown(srvs, cx);
+          const pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, cx);
+          return pc.copyMode(mode, {
+            plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: "Active Directory DCs summary card", focusEl: btn,
+            onState: (st, lab, msg) => pc.setFeedback(btn, copyBar, st, lab, msg), onDone: finish
+          });
+        }
+      });
+      tools.append(pills, qIn, el("span", "adp-tools-r", [expBtn, copyAllSp]));
+      applyFilter();
+    }
+    const cols = [["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]];
+    if (pc) cols.push(["Copy"]);
     const leg = el("p", "adp-leg", [["ok", "OK"], ["warning", "Warning"], ["critical", "Critical"], ["none", "No run"]].map(([k, t]) => el("span", "", [el("i", "k-" + k), t])));
-    const section = sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
-               [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg, ...dcs.map(d => dcPanel(a, d))]);
+    const kids = [pc ? tools : null, table(cols, entries.map(e => e.tr), "adp-dcs"), copyBar, leg, ...entries.map(e => e.panel)].filter(Boolean);
+    const section = sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left", kids);
     section.id = "ad-dcs";
     return section;
   }

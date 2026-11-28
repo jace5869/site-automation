@@ -1227,6 +1227,8 @@ In Teams: click the chat box, then Ctrl+V. The clipboard needs the portal's HTTP
 Shared from a condition that has cleared, the text and picture say *CLEARED* and when it was open; shared from one that is
 no longer in the latest read, they say when it was last seen.
 
+Since 1.140.0, every portal server list (Ops monitor *Not up* and full list modal, Network & AD health wall, Active Directory domain controller status table, and VMware cluster ESXi hosts) also includes a per-server **Copy ▾** control (**Copy both** / **Copy text** / **Copy picture**) and a **Copy all shown** control beside **Expand all** that copies only the filtered/shown rows as rich HTML + plain text and a ~700 px Teams picture card (command copy blocks stay raw command text only).
+
 ### Ops monitor (1.136.0)
 
 **On by default since 1.140.0.** Run **Site portal - deploy** with the **SolarWinds (read-only)** credential attached (the same credential the live Network map uses). Set `portal_wall_monitor: false` to hide the Ops monitor area and deploy without the monitor files or SolarWinds requirement.

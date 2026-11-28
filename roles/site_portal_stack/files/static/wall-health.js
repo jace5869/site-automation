@@ -334,7 +334,28 @@
     back.appendChild(drw);
   }
 
-  function buildConditionRow(c, now) {
+  // 1.140.0: shared Copy controls (per server/condition row + Copy all shown) reusing window.SAPortalCopy
+  function portalCopy() {
+    var c = window.SAPortalCopy || (window.SAWallFleet && window.SAWallFleet.copy);
+    return c && typeof c.createSplitControl === "function" ? c : null;
+  }
+  function condToServer(c) {
+    var sev = c.last_known ? "unknown" : (c.sev === "crit" ? "critical" : c.sev === "warn" ? "warning" : (c.sev || "unknown"));
+    var stLab = c.last_known ? "Not reached" : sevWord(c.sev);
+    var ttl = (c.title || "Condition") + (c.val_text ? " (" + c.val_text + ")" : "");
+    var fix = c.check ? ("Check " + c.check) : "Inspect on Network & AD health wall";
+    return {
+      host: c.obj || "Host", ip: "", sev: sev, statusLabel: stLab, worst: ttl, summary: ttl,
+      findings: [{sev: sev, sevLabel: stLab, title: ttl, evidence: c.detail || "", whatToDo: fix}],
+      totalFindings: 1, cappedCount: 0
+    };
+  }
+  function healthCopyCtx(doc) {
+    var d = doc && doc.now ? new Date(doc.now * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "";
+    return {site: (doc && doc.enclave) || "", report: "Network & AD health", dateTime: d, url: typeof location !== "undefined" ? location.href : ""};
+  }
+
+  function buildConditionRow(c, now, doc, bar) {
     var cls = "wh-row " + (c.last_known ? "stale" : c.sev);
     var row = h("button", cls, [], {type: "button"});
     row.addEventListener("click", function () { openDrawer("cond", c); });
@@ -364,7 +385,25 @@
     olc.appendChild(tr);
     row.appendChild(olc);
     row.appendChild(h("span", "wh-age", [fmtDur(c.start, now)]));
-    return row;
+    var pc = portalCopy();
+    if (!pc) return row;
+    var sp = pc.createSplitControl({
+      cls: "sm wh-row-copy", scope: "server", baseLabel: "Copy",
+      title: "Copy " + (c.obj || "item") + " status and findings (text + picture)",
+      ariaLabel: "Copy " + (c.obj || "item"), toggleLabel: "Copy options for " + (c.obj || "item"),
+      menuTitle: String(c.obj || "Host").split(".")[0], menuTag: "Server row",
+      subtitles: {both: "Text + inline PNG", text: "Status + findings", picture: "PNG server card"},
+      onCopy: function (mode, btn, finish) {
+        var srv = condToServer(c), cx = healthCopyCtx(doc);
+        var fmt = pc.formatOneServer(srv, cx), pic = mode === "text" ? {dataUrl: ""} : pc.drawOneServerCard(srv, cx);
+        return pc.copyMode(mode, {
+          plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: srv.host + " status card", focusEl: btn,
+          onState: function (st, lab, msg) { pc.setFeedback(btn, bar, st, lab, msg); },
+          onDone: finish
+        });
+      }
+    });
+    return h("div", "wh-row-wrap", [row, sp]);
   }
 
   function draw() {
@@ -521,6 +560,30 @@
       return true;
     });
 
+    var pc = portalCopy();
+    var copyBar = pc ? pc.createFeedbackBar() : null;
+    if (pc) {
+      var copyAllBtn = pc.createSplitControl({
+        cls: "pri wh-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: shown.length,
+        title: "Copy every condition currently shown after filters (text + picture)",
+        ariaLabel: "Copy all shown conditions", toggleLabel: "Copy all shown options",
+        menuTitle: "Copy all shown", menuTag: shown.length + " row" + (shown.length === 1 ? "" : "s"),
+        subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
+        isEmpty: function () { return !shown.length; },
+        onCopy: function (mode, btn, finish) {
+          if (!shown.length) { finish(); return Promise.resolve(); }
+          var srvs = shown.map(condToServer), cx = healthCopyCtx(doc);
+          var fmt = pc.formatAllShown(srvs, cx), pic = mode === "text" ? {dataUrl: ""} : pc.drawAllShownCard(srvs, cx);
+          return pc.copyMode(mode, {
+            plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: "Network & AD health summary card", focusEl: btn,
+            onState: function (st, lab, msg) { pc.setFeedback(btn, copyBar, st, lab, msg); },
+            onDone: finish
+          });
+        }
+      });
+      flt.appendChild(copyAllBtn);
+    }
+
     if (!shown.length) {
       condCard.appendChild(h("div", "wh-empty", [
         conds.length ? "No open conditions match the active filter."
@@ -534,11 +597,12 @@
         var sec = h("div", "wh-bkt");
         sec.appendChild(h("div", "wh-bh", [h("b", "", [bucketTitle(bk)]), h("span", "", ["(" + grp.length + ")"])]));
         var lst = h("div", "wh-list");
-        grp.forEach(function (c) { lst.appendChild(buildConditionRow(c, now)); });
+        grp.forEach(function (c) { lst.appendChild(buildConditionRow(c, now, doc, copyBar)); });
         sec.appendChild(lst);
         condCard.appendChild(sec);
       });
     }
+    if (copyBar) condCard.appendChild(copyBar);
 
     var supCnt = (doc.counts && doc.counts.suppressed) || (doc.suppressed || []).length;
     var supBtn = h("button", "wh-btn", ["Inspect suppressed (" + supCnt + ")"], {type: "button"});

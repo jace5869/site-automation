@@ -66,10 +66,11 @@ class CopyPictureTemplates(unittest.TestCase):
             with self.subTest(template=tpl):
                 html = render_template(tpl)
                 self.assertEqual(html.count('<button class="copy scopy" type="button" hidden'), 2)
-                self.assertIn('<span class="t">Copy both</span>', html)
+                self.assertIn('<span class="t">Copy</span>', html)
                 self.assertIn('aria-label="Copy Latency snapshot"', html)
                 for cls in (".scopy.st-info", ".scopy.st-good", ".scopy.st-warn", ".scopy.st-bad",
                             ".scopy-bar", ".scopy-bar.st-info", ".scopy-bar.st-good", ".scopy-bar.st-warn", ".scopy-bar.st-bad",
+                            ".copy-split", ".copy-menu", ".copy-opt",
                             "@media print{.scopy-bar{display:none!important}}"):
                     self.assertIn(cls, html)
                 if tpl == "report_ops.html.j2":
@@ -142,6 +143,14 @@ class CopyPictureBehavior(unittest.TestCase):
             if (c.parentNode) c.parentNode.removeChild(c);
             c.parentNode = this;
             this.children.push(c);
+            return c;
+          }
+          insertBefore(c, ref) {
+            if (c.parentNode) c.parentNode.removeChild(c);
+            c.parentNode = this;
+            const idx = ref ? this.children.indexOf(ref) : -1;
+            if (idx >= 0) this.children.splice(idx, 0, c);
+            else this.children.push(c);
             return c;
           }
           removeChild(c) {
@@ -347,7 +356,11 @@ class CopyPictureBehavior(unittest.TestCase):
             });
             vm.runInNewContext(reportSrc, env.ctx);
             assert.strictEqual(env.btn.hidden, false);
-            assert.strictEqual(env.lbl.textContent, "Copy both");
+            assert.strictEqual(env.lbl.textContent, "Copy");
+            const sp = env.btn.closest(".copy-split");
+            assert(sp, "standard section button should be upgraded to .copy-split");
+            assert(sp.querySelector(".copy-toggle"), "should have dropdown toggle");
+            assert.strictEqual(sp.querySelectorAll(".copy-opt").length, 3);
             const ev = env.btn.dispatch("click");
             assert.strictEqual(ev.defaultPrevented, true);
             assert.strictEqual(ev.stopped, true);
@@ -477,7 +490,7 @@ class CopyPictureBehavior(unittest.TestCase):
             const env = makeEnv({ savedDirty: true, clipboard: { write: async items => writes.push(items[0].parts) } });
             vm.runInNewContext(reportSrc, env.ctx);
             assert.strictEqual(env.btn.disabled, false);
-            assert.strictEqual(env.lbl.textContent, "Copy both");
+            assert.strictEqual(env.lbl.textContent, "Copy");
             assert.strictEqual(env.btn.classList.contains("done"), false);
             assert.strictEqual(env.sbody.querySelectorAll(".scopy-bar").length, 1);
             assert.strictEqual(env.sbody.querySelector(".scopy-bar").hidden, true);

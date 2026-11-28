@@ -99,15 +99,11 @@ Since 0.53.0:
   without the chart. [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#review-an-outage-the-time-line)
 - **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
-- **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and **Copy both** (1.140.0) on every
-  section in the web looks (`atlas`, `brief`, `ops`): all of the section's visible content (lines as a list, table as
-  rows in the current filtered/sorted order, cards, or chart) together with an embedded PNG snapshot in the `text/html`
-  clipboard and plain text in `text/plain`.
-  - Over HTTPS, **Copy both** pastes both text/table and the inline picture into Word, Outlook, or Teams and shows four
-    states: **Copying…**, **Copied**, **Text only** (with why, e.g. unsupported browser, plain HTTP, or canvas blocked),
-    and **Copy failed** (with why, e.g. clipboard access denied).
-  - Over plain HTTP or from a saved `file://` copy, it falls back cleanly to plain text (columns separated by tabs) and
-    explains why in **Text only**. Email report templates are unchanged.
+- **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and a split **Copy ▾** control (1.140.0: **Copy both** default, **Copy text**, **Copy picture**) on every standard section, every server row in report-by-server lists, and **Copy all shown** beside **Expand all** across the web looks (`atlas`, `brief`, `ops`):
+  - **One server** copies its status, then all findings worst-first (each with its one-line *What to do*), then `Full report: <url>`.
+  - **Copy all shown** copies only the rows the current filter/search shows: summary counts line, all **Critical** and **Not reached** servers, up to 10 **Warning** servers (`• ... n more`), OK servers counted only (`n servers OK`, never listed), and `Full report: <url>`, plus a compact ~700 px Teams picture card that stays readable at 50 servers.
+  - **Standard sections** copy the section's visible content (lines, filtered/sorted table, cards, or chart) together with an embedded PNG snapshot in the `text/html` clipboard and plain text in `text/plain`.
+  - Over HTTPS, **Copy both** pastes both text and the inline picture into Word, Outlook, or Teams and shows four states: **Copying…**, **Copied**, **Text only** (with why, e.g. unsupported browser, plain HTTP, or canvas blocked), and **Copy failed** (with why, e.g. clipboard access denied). Over plain HTTP or from a saved `file://` copy, it falls back cleanly to plain text and explains why. Command/code copy blocks stay unchanged (raw command only), and email report templates are unchanged.
 - Sections that fold, tables that sort when a heading is clicked and, past 8 rows, a box to filter them. On a phone,
   a table's rows become small cards, each value under its column's name.
   - Sorting (1.20.0): numbers as numbers (`1,234`, `4.5 %`, `-7`); IP addresses by their four parts (`192.0.2.5`

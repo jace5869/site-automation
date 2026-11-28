@@ -307,6 +307,43 @@ ul.passed .ic{width:16px;height:16px}
 .scopy-bar.st-warn{color:var(--warning)}
 .scopy-bar.st-bad{color:var(--critical)}
 @media print{.scopy-bar{display:none!important}}
+/* 1.140.0: unified split Copy control (per server row, Copy all shown, standard section) */
+.copy-split{position:relative;display:inline-flex;align-items:stretch;border-radius:8px;flex:none;vertical-align:middle}
+.copy-split>button{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--edge);background:var(--card-solid,var(--card));color:var(--ink);font:650 12.5px/1.2 var(--sans);white-space:nowrap;cursor:pointer;margin:0;transition:background .12s,border-color .12s}
+.copy-split>.copy-main{border-radius:8px 0 0 8px;padding:4px 9px}
+.copy-split>.copy-toggle{border-radius:0 8px 8px 0;border-left:0;padding:4px 6px;font-size:11px;line-height:1;color:var(--muted)}
+.copy-split>button:hover:enabled{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.copy-split>.copy-toggle:hover:enabled{border-left:0}
+.copy-split>button:disabled{opacity:.55;cursor:default}
+.copy-split>button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.copy-split.sm>.copy-main{padding:3px 8px;font-size:12px;gap:4px}
+.copy-split.sm>.copy-toggle{padding:3px 5px;font-size:10.5px}
+.copy-split.pri>button{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.copy-split.pri>.copy-toggle{border-left:1px solid rgba(255,255,255,.28);color:var(--accent-ink)}
+.copy-split.pri>button:hover:enabled{filter:brightness(1.06);background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.copy-split .cnt{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:17px;padding:0 5px;border-radius:4px;font:700 11px/1 var(--mono);background:rgba(255,255,255,.22);color:inherit}
+.copy-split.st-info>button{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.copy-split.st-good>button{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)}
+.copy-split.st-warn>button{background:var(--warning-bg);border-color:var(--warning-bd);color:var(--warning)}
+.copy-split.st-bad>button{background:var(--critical-bg);border-color:var(--critical-bd);color:var(--critical)}
+.copy-split.st-info>.copy-toggle,.copy-split.st-good>.copy-toggle,.copy-split.st-warn>.copy-toggle,.copy-split.st-bad>.copy-toggle{border-left:1px solid currentColor}
+.copy-split.open{z-index:40}
+.copy-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:45;width:214px;background:var(--card-solid,var(--card));border:1px solid var(--edge);border-radius:8px;box-shadow:0 8px 24px rgba(16,24,40,.22),0 1px 3px rgba(16,24,40,.1);padding:5px;display:none;text-align:left}
+.copy-split.open .copy-menu{display:block}
+.copy-split.drop-up .copy-menu{top:auto;bottom:calc(100% + 5px)}
+.copy-menu-head{padding:4px 8px 6px;font:700 10.5px/1.3 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.copy-menu-head span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.copy-opt{width:100%;display:grid;grid-template-columns:16px 1fr auto;align-items:center;gap:6px;padding:6px 8px;border:0;border-radius:5px;background:transparent;color:var(--ink);text-align:left;font:500 12.5px/1.25 var(--sans);cursor:pointer}
+.copy-opt:hover,.copy-opt:focus-visible{background:var(--accent-soft);outline:none}
+.copy-opt .omark{font:700 11.5px var(--mono);color:var(--accent);text-align:center}
+.copy-opt strong{display:block;font-size:12.5px;line-height:1.25;color:var(--ink)}
+.copy-opt small{display:block;font-size:11px;color:var(--muted);line-height:1.25}
+.copy-opt .def-tag{font:700 9.5px var(--mono);text-transform:uppercase;color:var(--accent);background:var(--accent-soft);padding:2px 5px;border-radius:3px}
+.srv-copy-th,.srv-copy-td{width:1%;white-space:nowrap;text-align:right;overflow:visible}
+.tw:has(.copy-split.open){overflow:visible}
+.srv-rollup-row{display:flex;align-items:center;gap:8px;min-width:0}
+.srv-rollup-row>.srv-rollup-item{flex:1;min-width:0}
+@media print{.copy-split,.copy-menu,.srv-copy-th,.srv-copy-td{display:none!important}}
 .tcopy .i2,.scopy .i2,.ccopy .i2,.done .i1{display:none}.done .i2{display:block}
 .copy[hidden],.tcopy[hidden],.btn[hidden]{display:none}
 @media (hover:none){.tcopy{opacity:.8}}
@@ -793,7 +830,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}{% if s.select_export is defined %} data-sel-export="{{ s.select_export | tojson | forceescape }}"{% endif %}>
 <summary><h2>{{ s.title | e }}{% if s.issue_count is defined %}<span class="count">{{ s.issue_count | int }}</span>{% endif %}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
-<button class="copy scopy" type="button" hidden title="Copy this section as text and picture" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy both</span></button>
+<button class="copy scopy" type="button" hidden title="Copy this section as text and picture" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.passed | default([]) %}

@@ -1437,6 +1437,561 @@ function keyboard() {
   });
 }
 
+// ---- 1.140.0: shared Copy helper (text / picture / both) and server-list formatters/cards for portal pages
+// Pure DOM nodes and CSS classes only (strict CSP-safe).
+(function () {
+  if (window.SAPortalCopy) return;
+  const SEV_RANK = { critical: 0, unknown: 1, warning: 2, low: 3, info: 4, ok: 5 };
+  const SEV_LABEL = { critical: "Critical", unknown: "Not reached", warning: "Warning", low: "Low", info: "Info", ok: "OK" };
+  const SEV_GLYPH = { critical: "\u2715", unknown: "?", warning: "\u25b3", low: "-", info: "i", ok: "\u2713" };
+  const SEV_COL = { critical: "#f397a4", unknown: "#f397a4", warning: "#e8bb65", low: "#c9b3f5", info: "#85d8df", ok: "#72d4a2" };
+  const SEV_INK = { critical: "#3a0a13", unknown: "#3a0a13", warning: "#2d1a00", low: "#210c36", info: "#062630", ok: "#07281b" };
+  const STATE_GLYPH = { info: "\u25f7", good: "\u2713", warn: "T", bad: "!" };
+  const STATE_CLS = ["done", "st-info", "st-good", "st-warn", "st-bad"];
+  const WARN_CAP = 10, CRIT_PIC_MAX = 40, ONE_PIC_MAX = 14;
+
+  function escHtml(t) {
+    return String(t == null ? "" : t).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+  function safeUrl(u) { return /^https?:\/\//i.test(String(u || "")) ? String(u) : ""; }
+  function oneLine(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); }
+  function normSev(raw) {
+    const s = String(raw || "").toLowerCase().trim();
+    if (s === "crit" || s === "critical" || s === "down" || s === "failed" || s === "fail" || s === "error" || s === "breached" || s === "expired") return "critical";
+    if (s === "unknown" || s === "not reached" || s === "not checked" || s === "unreachable" || s === "stale" || s === "not read" || s === "missing" || s === "lastdown" || s === "unk") return "unknown";
+    if (s === "warn" || s === "warning" || s === "degraded" || s === "at risk" || s === "lastwarn" || s === "expiring") return "warning";
+    if (s === "low") return "low";
+    if (s === "info" || s === "off") return "info";
+    if (s === "ok" || s === "up" || s === "pass" || s === "passed" || s === "healthy" || s === "compliant" || s === "valid") return "ok";
+    return "unknown";
+  }
+  function sortFindings(list) {
+    return (list || []).map((f, i) => [f, i]).sort((a, b) => {
+      const ra = SEV_RANK[normSev(a[0].sev)] !== undefined ? SEV_RANK[normSev(a[0].sev)] : 3;
+      const rb = SEV_RANK[normSev(b[0].sev)] !== undefined ? SEV_RANK[normSev(b[0].sev)] : 3;
+      return ra - rb || a[1] - b[1];
+    }).map((p) => p[0]);
+  }
+  function linkHtml(u) {
+    const s = String(u || ""), su = safeUrl(s);
+    return su ? '<a href="' + escHtml(su) + '">' + escHtml(s) + "</a>" : escHtml(s);
+  }
+  function picFit(ctx, s, maxW) {
+    s = String(s || "");
+    if (!s || ctx.measureText(s).width <= maxW) return s;
+    let lo = 0, hi = s.length;
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1;
+      if (ctx.measureText(s.slice(0, m) + "\u2026").width <= maxW) lo = m; else hi = m - 1;
+    }
+    return lo > 0 ? s.slice(0, lo) + "\u2026" : "\u2026";
+  }
+  function dataUrlToBlob(dataUrl) {
+    if (!dataUrl || dataUrl.indexOf("data:image/png;base64,") !== 0) return null;
+    try {
+      const raw = atob(dataUrl.slice(22)), arr = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return new Blob([arr], { type: "image/png" });
+    } catch (e) { return null; }
+  }
+  function serverWorstLine(s) {
+    const fs = sortFindings(s.findings || []);
+    const worst = oneLine((fs[0] && (fs[0].title || fs[0].summary)) || s.worst || s.summary || s.statusLabel || "Issue");
+    const total = Math.max(fs.length, s.totalFindings || 0) + (s.cappedCount || 0);
+    const more = total > 1 ? total - 1 : 0;
+    return { worst, more, suffix: more > 0 ? " (+" + more + " more " + (more === 1 ? "finding" : "findings") + ")" : "" };
+  }
+
+  const copyHelp = {
+    normSev,
+    canRichHtml() {
+      return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext !== false
+        && (!window.ClipboardItem.supports || window.ClipboardItem.supports("text/html")));
+    },
+    canPicture() {
+      return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext !== false
+        && (!window.ClipboardItem.supports || window.ClipboardItem.supports("image/png")));
+    },
+    isBlocked(e) { return !!(e && (e.name === "NotAllowedError" || e.name === "SecurityError")); },
+    isUnsupported(e) { return !!(e && (e.name === "NotSupportedError" || e.name === "DataError" || e.name === "TypeError")); },
+    pngDataUrl(cv) {
+      if (!cv || typeof cv.toDataURL !== "function") return "";
+      try {
+        const u = cv.toDataURL("image/png");
+        return typeof u === "string" && u.indexOf("data:image/png;base64,") === 0 ? u : "";
+      } catch (e) { return ""; }
+    },
+    dataUrlToBlob,
+    embedPictureHtml(html, dataUrl, alt, width) {
+      const body = html || "", w = width || 640;
+      if (!dataUrl || dataUrl.indexOf("data:image/png;base64,") !== 0) return body;
+      return body + '<p><img width="' + w + '" style="max-width:100%;height:auto" alt="' + escHtml(alt || "Snapshot") + '" src="' + dataUrl + '"></p>';
+    },
+    _execCopy(text, focusEl) {
+      return new Promise((res, rej) => {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.className = "copy-sr";
+        area.setAttribute("readonly", "");
+        document.body.appendChild(area);
+        area.select();
+        try {
+          if (typeof document.execCommand === "function" && document.execCommand("copy")) res();
+          else rej(new Error("The browser blocked text copying."));
+        } catch (e) { rej(e); } finally {
+          if (area.parentNode) area.parentNode.removeChild(area);
+          if (focusEl && typeof focusEl.focus === "function") focusEl.focus();
+        }
+      });
+    },
+    copyTextFallback(plain, focusEl) {
+      const text = String(plain == null ? "" : plain);
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext !== false) {
+        return navigator.clipboard.writeText(text).catch((e) => {
+          if (copyHelp.isBlocked(e)) throw e;
+          return copyHelp._execCopy(text, focusEl);
+        });
+      }
+      return copyHelp._execCopy(text, focusEl);
+    },
+    copyBothRich(opts) {
+      const notify = opts.onState || (() => {}), done = opts.onDone || (() => {});
+      const plain = String(opts.plain == null ? "" : opts.plain);
+      const dataUrl = opts.dataUrl || "";
+      const html = copyHelp.embedPictureHtml(opts.html || "", dataUrl, opts.alt, opts.width);
+      const failMsg = (e) => copyHelp.isBlocked(e) ? "Clipboard access denied. Allow clipboard access and retry."
+        : (e && e.message) ? String(e.message) : "Clipboard write failed. Try copying again.";
+      const fallbackText = (why) => copyHelp.copyTextFallback(plain, opts.focusEl).then(
+        () => { notify("warn", "Text only", "Text copied. " + why); },
+        (e) => { notify("bad", "Copy failed", failMsg(e)); }
+      ).then(done, done);
+      notify("info", "Copying\u2026", "Writing text and picture\u2026");
+      const canRich = copyHelp.canRichHtml();
+      if (!canRich || !dataUrl) {
+        const why = window.isSecureContext === false ? "Rich HTML and picture copying needs HTTPS."
+          : !canRich ? "This browser does not support picture copying."
+          : "Picture could not be drawn here.";
+        return fallbackText(why);
+      }
+      const items = { "text/plain": new Blob([plain], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) };
+      if (opts.extraItems) {
+        for (const k of Object.keys(opts.extraItems)) items[k] = opts.extraItems[k];
+      }
+      try {
+        return navigator.clipboard.write([new ClipboardItem(items)]).then(() => {
+          notify("good", "Copied", "Copied text and picture. Ready to paste."); done();
+        }, (e) => {
+          if (copyHelp.isUnsupported(e)) return fallbackText("This browser does not support picture copying.");
+          notify("bad", "Copy failed", failMsg(e)); done();
+        });
+      } catch (e) {
+        if (copyHelp.isUnsupported(e)) return fallbackText("This browser does not support picture copying.");
+        notify("bad", "Copy failed", failMsg(e)); done();
+        return Promise.resolve();
+      }
+    },
+    copyMode(mode, opts) {
+      if (mode === "both" || !mode) return copyHelp.copyBothRich(opts);
+      const notify = opts.onState || (() => {}), done = opts.onDone || (() => {});
+      const plain = String(opts.plain == null ? "" : opts.plain), html = String(opts.html || "");
+      const failMsg = (e) => copyHelp.isBlocked(e) ? "Clipboard access denied. Allow clipboard access and retry."
+        : (e && e.message) ? String(e.message) : "Clipboard write failed. Try copying again.";
+      if (mode === "text") {
+        notify("info", "Copying\u2026", "Writing text\u2026");
+        const plainFallback = () => copyHelp.copyTextFallback(plain, opts.focusEl).then(
+          () => { notify("good", "Copied", "Copied text. Ready to paste."); },
+          (e) => { notify("bad", "Copy failed", failMsg(e)); }
+        ).then(done, done);
+        if (html && copyHelp.canRichHtml()) {
+          try {
+            return navigator.clipboard.write([new ClipboardItem({
+              "text/plain": new Blob([plain], { type: "text/plain" }),
+              "text/html": new Blob([html], { type: "text/html" })
+            })]).then(() => { notify("good", "Copied", "Copied text. Ready to paste."); done(); }, (e) => {
+              if (copyHelp.isUnsupported(e)) return plainFallback();
+              notify("bad", "Copy failed", failMsg(e)); done();
+            });
+          } catch (e) {
+            if (copyHelp.isUnsupported(e)) return plainFallback();
+            notify("bad", "Copy failed", failMsg(e)); done();
+            return Promise.resolve();
+          }
+        }
+        return plainFallback();
+      }
+      notify("info", "Copying\u2026", "Writing picture\u2026");
+      const picFallback = (why) => copyHelp.copyTextFallback(plain, opts.focusEl).then(
+        () => { notify("warn", "Text only", "Text copied. " + why); },
+        (e) => { notify("bad", "Copy failed", failMsg(e)); }
+      ).then(done, done);
+      const canPic = copyHelp.canPicture(), blob = dataUrlToBlob(opts.dataUrl || "");
+      if (!canPic || !blob) {
+        const why = window.isSecureContext === false ? "Picture copying needs HTTPS."
+          : !canPic ? "This browser does not support picture copying."
+          : "Picture could not be drawn here.";
+        return picFallback(why);
+      }
+      try {
+        return navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(() => {
+          notify("good", "Copied", "Copied picture. Ready to paste."); done();
+        }, (e) => {
+          if (copyHelp.isUnsupported(e)) return picFallback("This browser does not support picture copying.");
+          notify("bad", "Copy failed", failMsg(e)); done();
+        });
+      } catch (e) {
+        if (copyHelp.isUnsupported(e)) return picFallback("This browser does not support picture copying.");
+        notify("bad", "Copy failed", failMsg(e)); done();
+        return Promise.resolve();
+      }
+    },
+    formatOneServer(server, ctx) {
+      ctx = ctx || {};
+      const sev = normSev(server.sev), stWord = (server.statusLabel || SEV_LABEL[sev] || sev).toUpperCase();
+      const titlePart = [ctx.site, ctx.report].filter(Boolean).join(" ");
+      const headMeta = [titlePart, ctx.dateTime].filter(Boolean).join(" \u00b7 ");
+      const hostBit = server.host + (server.ip ? " (" + server.ip + ")" : "");
+      const plain = ["[" + stWord + "] " + hostBit + (headMeta ? " \u00b7 " + headMeta : "")];
+      const html = ["<p><strong>[" + escHtml(stWord) + "] " + escHtml(server.host) + "</strong>" + (server.ip ? " (" + escHtml(server.ip) + ")" : "") + (headMeta ? " &middot; " + escHtml(headMeta) : "") + "</p>"];
+      const findings = sortFindings(server.findings || []);
+      if (findings.length) {
+        const lis = [];
+        for (const f of findings) {
+          const fs = normSev(f.sev), fl = (f.sevLabel || SEV_LABEL[fs] || fs).toUpperCase();
+          const ttl = oneLine(f.title || f.summary || "Finding");
+          const fix = oneLine(f.whatToDo || f.fix || "").replace(/^What to do:\s*/i, "");
+          const ev = oneLine(f.evidence || "");
+          plain.push("\u2022 [" + fl + "] " + ttl + (fix ? " \u2014 What to do: " + fix : (ev ? " \u2014 " + ev : "")));
+          lis.push("<li><strong>[" + escHtml(fl) + "]</strong> " + escHtml(ttl) + (fix ? " &mdash; <strong>What to do:</strong> " + escHtml(fix) : (ev ? " &mdash; " + escHtml(ev) : "")) + "</li>");
+        }
+        if (server.cappedCount > 0) {
+          plain.push("\u2022 ... " + server.cappedCount + " more findings in full report");
+          lis.push("<li>... " + escHtml(server.cappedCount) + " more findings in full report</li>");
+        }
+        html.push("<ul>" + lis.join("") + "</ul>");
+      } else {
+        const msg = oneLine(server.summary || server.worst || (sev === "ok" ? "No findings recorded (all checks passed)" : "No detail recorded"));
+        plain.push("\u2022 [" + stWord + "] " + msg);
+        html.push("<ul><li><strong>[" + escHtml(stWord) + "]</strong> " + escHtml(msg) + "</li></ul>");
+      }
+      if (ctx.url) {
+        plain.push("Full report: " + ctx.url);
+        html.push("<p><strong>Full report:</strong> " + linkHtml(ctx.url) + "</p>");
+      }
+      return { plain: plain.join("\n"), html: html.join("") };
+    },
+    formatAllShown(servers, ctx) {
+      ctx = ctx || {};
+      const crit = [], unk = [], warn = [], low = [], info = [], ok = [];
+      for (const s of servers || []) {
+        const k = normSev(s.sev);
+        if (k === "critical") crit.push(s);
+        else if (k === "unknown") unk.push(s);
+        else if (k === "warning") warn.push(s);
+        else if (k === "low") low.push(s);
+        else if (k === "info") info.push(s);
+        else ok.push(s);
+      }
+      const titlePart = [ctx.site, ctx.report].filter(Boolean).join(" ") || "Operations report";
+      const counts = crit.length + " critical, " + warn.length + " warning, " + ok.length + " OK"
+        + (unk.length ? ", " + unk.length + " not reached" : "")
+        + (low.length ? ", " + low.length + " low" : "")
+        + (info.length ? ", " + info.length + " info" : "");
+      const plain = [titlePart + (ctx.dateTime ? " \u00b7 " + ctx.dateTime : "") + " \u00b7 " + counts];
+      const html = ["<p><strong>" + escHtml(titlePart) + "</strong>" + (ctx.dateTime ? " &middot; " + escHtml(ctx.dateTime) : "")
+        + " &middot; <strong>" + crit.length + " critical</strong>, <strong>" + warn.length + " warning</strong>, " + ok.length + " OK"
+        + (unk.length ? ", <strong>" + unk.length + " not reached</strong>" : "")
+        + (low.length ? ", " + low.length + " low" : "")
+        + (info.length ? ", " + info.length + " info" : "") + "</p>"];
+      const addGroup = (heading, list, cap) => {
+        if (!list.length) return;
+        plain.push("", heading + " (" + list.length + ")");
+        const shown = cap && list.length > cap ? list.slice(0, cap) : list;
+        const lis = [];
+        for (const s of shown) {
+          const w = serverWorstLine(s);
+          plain.push("\u2022 " + s.host + " - " + w.worst + w.suffix);
+          lis.push("<li><strong>" + escHtml(s.host) + "</strong> - " + escHtml(w.worst) + (w.suffix ? " " + escHtml(w.suffix) : "") + "</li>");
+        }
+        if (cap && list.length > cap) {
+          const extra = list.length - cap;
+          plain.push("\u2022 ... " + extra + " more");
+          lis.push("<li>... " + extra + " more</li>");
+        }
+        html.push("<p><strong>" + escHtml(heading + " (" + list.length + ")") + "</strong></p><ul>" + lis.join("") + "</ul>");
+      };
+      addGroup("Critical", crit, 0);
+      addGroup("Not reached", unk, 0);
+      addGroup("Warning", warn, WARN_CAP);
+      if (low.length) { const lt = low.length + " server" + (low.length === 1 ? "" : "s") + " low"; plain.push("", lt); html.push("<p>" + escHtml(lt) + "</p>"); }
+      if (info.length) { const it = info.length + " server" + (info.length === 1 ? "" : "s") + " info"; plain.push("", it); html.push("<p>" + escHtml(it) + "</p>"); }
+      if (ok.length) { const ot = ok.length + " server" + (ok.length === 1 ? "" : "s") + " OK"; plain.push("", ot); html.push("<p><strong>" + escHtml(ot) + "</strong></p>"); }
+      if (ctx.url) { plain.push("", "Full report: " + ctx.url); html.push("<p><strong>Full report:</strong> " + linkHtml(ctx.url) + "</p>"); }
+      return { plain: plain.join("\n"), html: html.join(""), counts: { critical: crit.length, unknown: unk.length, warning: warn.length, low: low.length, info: info.length, ok: ok.length, total: (servers || []).length } };
+    },
+    drawOneServerCard(server, ctx) {
+      ctx = ctx || {};
+      try {
+        const cv = document.createElement("canvas"), g = cv && cv.getContext ? cv.getContext("2d") : null;
+        if (!g) return { dataUrl: "", width: 0, height: 0 };
+        const sev = normSev(server.sev), findings = sortFindings(server.findings || []);
+        const shown = findings.slice(0, ONE_PIC_MAX), extra = (findings.length - shown.length) + (server.cappedCount || 0);
+        const W = 700, H = 134 + Math.max(1, shown.length) * 48 + (extra > 0 ? 24 : 0) + 26;
+        cv.width = W * 2; cv.height = H * 2; g.scale(2, 2);
+        const grad = g.createLinearGradient(0, 0, W, H); grad.addColorStop(0, "#14283e"); grad.addColorStop(1, "#1b3950");
+        g.fillStyle = grad; g.fillRect(0, 0, W, H);
+        const sc = SEV_COL[sev] || "#85d8df";
+        g.fillStyle = sc; g.fillRect(0, 0, 7, H);
+        const sans = 'Manrope,"Segoe UI",system-ui,Arial,sans-serif', mono = '"IBM Plex Mono",Consolas,monospace';
+        const topL = [ctx.site, ctx.report].filter(Boolean).join(" / ").toUpperCase() || "SERVER REPORT";
+        g.fillStyle = "#b3cce1"; g.font = "600 10.5px " + mono; g.fillText(picFit(g, topL, 430), 22, 24);
+        if (ctx.dateTime) { g.textAlign = "right"; g.fillStyle = "#aec6d8"; g.fillText(picFit(g, ctx.dateTime, 220), W - 20, 24); g.textAlign = "left"; }
+        g.fillStyle = "#ffffff"; g.font = "700 20px " + sans; g.fillText(picFit(g, server.host || "Server", 470), 22, 54);
+        g.fillStyle = "#bad4e6"; g.font = "400 12px " + mono;
+        const sub = (server.ip ? server.ip + "  \u00b7  " : "") + (findings.length ? findings.length + " finding" + (findings.length === 1 ? "" : "s") : (sev === "ok" ? "All checks passed" : (server.statusLabel || "Status")));
+        g.fillText(picFit(g, sub, 470), 22, 74);
+        const badge = (SEV_GLYPH[sev] || "?") + "  " + (server.statusLabel || SEV_LABEL[sev] || sev).toUpperCase();
+        g.font = "700 11.5px " + mono;
+        const bw = Math.min(176, g.measureText(badge).width + 18);
+        g.fillStyle = sc; g.fillRect(W - 20 - bw, 34, bw, 26);
+        g.fillStyle = SEV_INK[sev] || "#111827"; g.fillText(picFit(g, badge, bw - 12), W - 12 - bw, 51);
+        g.fillStyle = "#3c5669"; g.fillRect(22, 88, W - 44, 1);
+        let y = 100;
+        if (shown.length) {
+          for (const f of shown) {
+            const fs = normSev(f.sev), fc = SEV_COL[fs] || "#85d8df";
+            g.fillStyle = "rgba(255,255,255,0.06)"; g.fillRect(22, y, W - 44, 42);
+            g.fillStyle = fc; g.fillRect(22, y, 4, 42);
+            g.fillStyle = "#ffffff"; g.font = "700 12.5px " + sans;
+            g.fillText(picFit(g, "[" + (f.sevLabel || SEV_LABEL[fs] || fs).toUpperCase() + "] " + oneLine(f.title || "Finding"), W - 70), 34, y + 17);
+            const fix = oneLine(f.whatToDo || f.fix || "").replace(/^What to do:\s*/i, "");
+            g.fillStyle = "#c4d4e0"; g.font = "400 11px " + mono;
+            g.fillText(picFit(g, fix ? "What to do: " + fix : oneLine(f.evidence || ""), W - 70), 34, y + 34);
+            y += 48;
+          }
+        } else {
+          g.fillStyle = "rgba(255,255,255,0.06)"; g.fillRect(22, y, W - 44, 40);
+          g.fillStyle = sc; g.fillRect(22, y, 4, 40);
+          g.fillStyle = "#e5eff7"; g.font = "600 13px " + sans;
+          g.fillText(picFit(g, oneLine(server.summary || server.worst || "No findings recorded"), W - 70), 34, y + 25);
+          y += 48;
+        }
+        if (extra > 0) { g.fillStyle = "#e8bb65"; g.font = "600 11.5px " + mono; g.fillText("+" + extra + " more findings in full report", 22, y + 14); }
+        g.fillStyle = "#3c5669"; g.fillRect(22, H - 34, W - 44, 1);
+        g.fillStyle = "#aec6d8"; g.font = "400 10.5px " + mono;
+        g.fillText(picFit(g, "Full report: " + (ctx.url || topL), W - 44), 22, H - 14);
+        return { dataUrl: copyHelp.pngDataUrl(cv), width: W, height: H };
+      } catch (e) { return { dataUrl: "", width: 0, height: 0 }; }
+    },
+    drawAllShownCard(servers, ctx) {
+      ctx = ctx || {};
+      try {
+        const cv = document.createElement("canvas"), g = cv && cv.getContext ? cv.getContext("2d") : null;
+        if (!g) return { dataUrl: "", width: 0, height: 0 };
+        const crit = [], unk = [], warn = [], low = [], info = [], ok = [];
+        for (const s of servers || []) {
+          const k = normSev(s.sev);
+          if (k === "critical") crit.push(s); else if (k === "unknown") unk.push(s); else if (k === "warning") warn.push(s);
+          else if (k === "low") low.push(s); else if (k === "info") info.push(s); else ok.push(s);
+        }
+        const critDraw = crit.slice(0, CRIT_PIC_MAX), critMore = crit.length - critDraw.length;
+        const unkDraw = unk.slice(0, CRIT_PIC_MAX), unkMore = unk.length - unkDraw.length;
+        const warnDraw = warn.slice(0, WARN_CAP), warnMore = warn.length - warnDraw.length;
+        const total = (servers || []).length;
+        let W = 700, H = 124;
+        if (critDraw.length) H += 22 + critDraw.length * 28 + (critMore > 0 ? 22 : 0) + 6;
+        if (unkDraw.length) H += 22 + unkDraw.length * 26 + (unkMore > 0 ? 22 : 0) + 6;
+        if (warnDraw.length) H += 22 + warnDraw.length * 26 + (warnMore > 0 ? 22 : 0) + 6;
+        if (low.length || info.length) H += 22;
+        if (ok.length) H += 26;
+        if (!critDraw.length && !unkDraw.length && !warnDraw.length && !ok.length) H += 36;
+        H += 38;
+        cv.width = W * 2; cv.height = H * 2; g.scale(2, 2);
+        const grad = g.createLinearGradient(0, 0, W, H); grad.addColorStop(0, "#14283e"); grad.addColorStop(1, "#1b3950");
+        g.fillStyle = grad; g.fillRect(0, 0, W, H);
+        const worstSev = crit.length ? "critical" : unk.length ? "unknown" : warn.length ? "warning" : ok.length ? "ok" : "info";
+        g.fillStyle = SEV_COL[worstSev] || "#85d8df"; g.fillRect(0, 0, 7, H);
+        const sans = 'Manrope,"Segoe UI",system-ui,Arial,sans-serif', mono = '"IBM Plex Mono",Consolas,monospace';
+        const topL = [ctx.site, ctx.report].filter(Boolean).join(" / ").toUpperCase() || "SERVERS";
+        g.fillStyle = "#b3cce1"; g.font = "600 10.5px " + mono; g.fillText(picFit(g, topL, 430), 22, 24);
+        if (ctx.dateTime) { g.textAlign = "right"; g.fillStyle = "#aec6d8"; g.fillText(picFit(g, ctx.dateTime, 220), W - 20, 24); g.textAlign = "left"; }
+        g.fillStyle = "#ffffff"; g.font = "700 19px " + sans;
+        g.fillText(picFit(g, (ctx.report || "Servers") + " \u00b7 " + total + " server" + (total === 1 ? "" : "s"), W - 44), 22, 51);
+        let px = 22, py = 62;
+        const pills = [
+          [crit.length + " critical", "#f397a4", "rgba(243,151,164,0.18)", true],
+          [unk.length + " not reached", "#f397a4", "rgba(243,151,164,0.12)", unk.length > 0],
+          [warn.length + " warning", "#e8bb65", "rgba(232,187,101,0.18)", true],
+          [ok.length + " OK", "#72d4a2", "rgba(114,212,162,0.16)", true]
+        ];
+        g.font = "700 11px " + mono;
+        for (const p of pills) {
+          if (!p[3]) continue;
+          const tw = g.measureText(p[0]).width + 16;
+          g.fillStyle = p[2]; g.fillRect(px, py, tw, 22);
+          g.strokeStyle = p[1]; g.lineWidth = 1; g.strokeRect(px + 0.5, py + 0.5, tw - 1, 21);
+          g.fillStyle = p[1]; g.fillText(p[0], px + 8, py + 15);
+          px += tw + 8;
+        }
+        const barW = W - 44, barY = 92; let bx = 22;
+        g.fillStyle = "rgba(255,255,255,0.08)"; g.fillRect(bx, barY, barW, 6);
+        if (total > 0) {
+          for (const seg of [[crit.length, "#f397a4"], [unk.length, "#d19aa6"], [warn.length, "#e8bb65"], [low.length + info.length, "#85d8df"], [ok.length, "#72d4a2"]]) {
+            if (!seg[0]) continue;
+            let sw = Math.max(3, Math.round(barW * seg[0] / total));
+            if (bx + sw > 22 + barW) sw = 22 + barW - bx;
+            if (sw > 0) { g.fillStyle = seg[1]; g.fillRect(bx, barY, sw, 6); bx += sw; }
+          }
+        }
+        g.fillStyle = "#3c5669"; g.fillRect(22, 108, W - 44, 1);
+        let y = 120;
+        const drawGroup = (label, color, rowFill, list, rowH, moreCount, moreWord) => {
+          if (!list.length) return;
+          g.fillStyle = color; g.font = "700 11px " + mono; g.fillText(label, 22, y + 12); y += 20;
+          for (const s of list) {
+            const w = serverWorstLine(s);
+            g.fillStyle = rowFill; g.fillRect(22, y, W - 44, rowH - 4);
+            g.fillStyle = color; g.fillRect(22, y, 3, rowH - 4);
+            g.fillStyle = "#ffffff"; g.font = "700 12px " + mono; g.fillText(picFit(g, s.host, 215), 32, y + 16);
+            let tagW = 0;
+            if (w.more > 0) {
+              const tg = "+" + w.more + " more";
+              g.font = "700 10.5px " + mono; tagW = g.measureText(tg).width + 12;
+              g.fillStyle = "rgba(255,255,255,0.09)"; g.fillRect(W - 26 - tagW, y + 3, tagW, rowH - 10);
+              g.fillStyle = color; g.fillText(tg, W - 20 - tagW, y + 15);
+            }
+            g.fillStyle = "#dce8f2"; g.font = "400 12px " + sans; g.fillText(picFit(g, w.worst, W - 286 - tagW), 254, y + 16);
+            y += rowH;
+          }
+          if (moreCount > 0) { g.fillStyle = color; g.font = "700 11.5px " + mono; g.fillText("+" + moreCount + " more " + (moreWord || "servers") + " in full report", 32, y + 14); y += 22; }
+          y += 6;
+        };
+        drawGroup("CRITICAL (" + crit.length + ")", "#f397a4", "rgba(243,151,164,0.11)", critDraw, 28, critMore, "critical servers");
+        drawGroup("NOT REACHED (" + unk.length + ")", "#f397a4", "rgba(243,151,164,0.08)", unkDraw, 26, unkMore, "not-reached servers");
+        drawGroup("WARNING (" + warn.length + ")", "#e8bb65", "rgba(232,187,101,0.09)", warnDraw, 26, warnMore, "warning servers");
+        if (low.length || info.length) {
+          const lp = []; if (low.length) lp.push(low.length + " low"); if (info.length) lp.push(info.length + " info");
+          g.fillStyle = "#b3cce1"; g.font = "600 11.5px " + mono; g.fillText(lp.join(" \u00b7 "), 22, y + 13); y += 22;
+        }
+        if (ok.length) { g.fillStyle = "#72d4a2"; g.font = "700 12px " + mono; g.fillText("\u2713  " + ok.length + " server" + (ok.length === 1 ? "" : "s") + " OK", 22, y + 15); y += 26; }
+        g.fillStyle = "#3c5669"; g.fillRect(22, H - 34, W - 44, 1);
+        g.fillStyle = "#aec6d8"; g.font = "400 10.5px " + mono; g.fillText(picFit(g, "Full report: " + (ctx.url || topL), W - 44), 22, H - 14);
+        return { dataUrl: copyHelp.pngDataUrl(cv), width: W, height: H };
+      } catch (e) { return { dataUrl: "", width: 0, height: 0 }; }
+    },
+    createFeedbackBar() {
+      const bar = el("div", "copy-bar");
+      bar.setAttribute("role", "status"); bar.setAttribute("aria-live", "polite"); bar.hidden = true;
+      const sg = el("span", "sg"); sg.setAttribute("aria-hidden", "true");
+      bar.append(sg, el("span", "st"));
+      return bar;
+    },
+    setFeedback(btn, bar, state, label, msg) {
+      const sp = btn && btn.closest ? btn.closest(".copy-split") : null;
+      for (const k of STATE_CLS) { if (btn) btn.classList.remove(k); if (sp) sp.classList.remove(k); }
+      if (state) { if (btn) btn.classList.add("st-" + state); if (sp) sp.classList.add("st-" + state); }
+      if (state === "good") { if (btn) btn.classList.add("done"); if (sp) sp.classList.add("done"); }
+      const t = btn && btn.querySelector(".t,.lbl");
+      if (t && label !== undefined) t.textContent = label;
+      if (btn && msg) btn.title = msg;
+      if (bar) {
+        for (const k of ["st-info", "st-good", "st-warn", "st-bad"]) bar.classList.remove(k);
+        if (state) bar.classList.add("st-" + state);
+        const g = bar.querySelector(".sg"), tx = bar.querySelector(".st");
+        if (g) g.textContent = STATE_GLYPH[state] || "";
+        if (tx) tx.textContent = msg || "";
+        bar.hidden = !msg;
+      }
+    },
+    closeMenus(except) {
+      document.querySelectorAll(".copy-split.open").forEach((sp) => {
+        if (sp === except) return;
+        sp.classList.remove("open", "drop-up");
+        const tg = sp.querySelector(".copy-toggle");
+        if (tg) tg.setAttribute("aria-expanded", "false");
+      });
+    },
+    createSplitControl(opts) {
+      const baseLabel = opts.baseLabel || "Copy", baseTitle = opts.title || "Copy as text and picture";
+      const sp = el("div", "copy-split" + (opts.cls ? " " + opts.cls : ""));
+      if (opts.scope) sp.setAttribute("data-scope", opts.scope);
+      const mainBtn = el("button", "copy-main");
+      mainBtn.type = "button"; mainBtn.title = baseTitle;
+      if (opts.ariaLabel) mainBtn.setAttribute("aria-label", opts.ariaLabel);
+      const lbl = el("span", "t", baseLabel);
+      mainBtn.append(lbl);
+      let cntEl = null;
+      if (opts.withCount) { cntEl = el("span", "cnt", String(opts.count || 0)); mainBtn.append(cntEl); }
+      const tog = el("button", "copy-toggle", "\u25be");
+      tog.type = "button"; tog.setAttribute("aria-haspopup", "menu"); tog.setAttribute("aria-expanded", "false");
+      tog.setAttribute("aria-label", opts.toggleLabel || (baseLabel + " options"));
+      const menu = el("div", "copy-menu"); menu.setAttribute("role", "menu");
+      const tagEl = el("span", "copy-menu-tag", opts.menuTag || "");
+      menu.append(el("div", "copy-menu-head", null));
+      menu.firstChild.append(el("span", "", opts.menuTitle || baseLabel), tagEl);
+      const subs = opts.subtitles || {};
+      const entries = [
+        ["both", "\u25cf", "Copy both", subs.both || "Text + inline PNG", true],
+        ["text", "T", "Copy text", subs.text || "Plain + HTML", false],
+        ["picture", "\u25a3", "Copy picture", subs.picture || "PNG card", false]
+      ];
+      for (const e of entries) {
+        const b = el("button", "copy-opt"); b.type = "button"; b.setAttribute("role", "menuitem"); b.setAttribute("data-mode", e[0]);
+        const mid = el("span"); mid.append(el("strong", "", e[2]), el("small", "", e[3]));
+        const tag = el("span", e[4] ? "def-tag" : "", e[4] ? "Default" : "");
+        b.append(el("span", "omark", e[1]), mid, tag);
+        menu.append(b);
+      }
+      sp.append(mainBtn, tog, menu);
+      let resetTimer = null;
+      const run = (mode) => {
+        copyHelp.closeMenus();
+        if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+        mainBtn.disabled = true; tog.disabled = true;
+        const finish = () => {
+          const empty = !!(opts.isEmpty && opts.isEmpty());
+          mainBtn.disabled = empty; tog.disabled = empty;
+          if (sp.classList.contains("st-good")) {
+            resetTimer = setTimeout(() => {
+              if (sp.classList.contains("st-good")) {
+                for (const k of STATE_CLS) { mainBtn.classList.remove(k); sp.classList.remove(k); }
+                lbl.textContent = baseLabel; mainBtn.title = baseTitle;
+              }
+            }, 2200);
+          }
+        };
+        return opts.onCopy(mode, mainBtn, finish);
+      };
+      mainBtn.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); run("both"); });
+      tog.addEventListener("click", (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const was = sp.classList.contains("open");
+        copyHelp.closeMenus(sp);
+        if (was) { sp.classList.remove("open", "drop-up"); tog.setAttribute("aria-expanded", "false"); }
+        else {
+          sp.classList.add("open"); tog.setAttribute("aria-expanded", "true");
+          if (typeof sp.getBoundingClientRect === "function" && window.innerHeight) {
+            const r = sp.getBoundingClientRect();
+            if (r && r.bottom && window.innerHeight - r.bottom < 190) sp.classList.add("drop-up");
+          }
+        }
+      });
+      menu.querySelectorAll(".copy-opt").forEach((opt) => {
+        opt.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); run(opt.getAttribute("data-mode") || "both"); });
+      });
+      sp.setCount = (n) => {
+        if (cntEl) cntEl.textContent = String(n);
+        tagEl.textContent = n + " row" + (n === 1 ? "" : "s");
+        if (!sp.classList.contains("st-info")) { mainBtn.disabled = n === 0; tog.disabled = n === 0; }
+      };
+      if (opts.withCount) sp.setCount(opts.count || 0);
+      return sp;
+    }
+  };
+  document.addEventListener("click", (ev) => { if (!ev.target || !ev.target.closest || !ev.target.closest(".copy-split")) copyHelp.closeMenus(); });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") copyHelp.closeMenus(); });
+  window.SAPortalCopy = copyHelp;
+})();
+
 document.addEventListener("DOMContentLoaded", () => {
   const p = document.body.dataset.page;
   document.documentElement.classList.add("js-on");

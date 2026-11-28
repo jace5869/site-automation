@@ -243,10 +243,23 @@
     P.shsel = h("button", "btn pri", ["Share selected to Teams"], {type: "button", title: "The ticked nodes (none ticked: every node down) as one message and one picture"});
     P.selc = h("span", "selc", ["0 selected"]);
     P.clr = h("button", "btn lnk", ["Clear"], {type: "button", title: "Untick every node", hidden: true});
+    P.copyBar = copyHelp.createFeedbackBar ? copyHelp.createFeedbackBar() : h("div", "copy-bar", null, {hidden: true});
+    P.copyAll = copyHelp.createSplitControl ? copyHelp.createSplitControl({
+      cls: "pri fl-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: 0,
+      title: "Copy every node currently shown in Not up (text + picture)",
+      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown options",
+      menuTitle: "Copy all shown", menuTag: "0 rows",
+      subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
+      isEmpty: function () { return !notUpList().length; },
+      onCopy: function (mode, btn, finish) {
+        var L = notUpList(); if (!L.length) { finish(); return Promise.resolve(); }
+        return copyNodesList(L, mode, btn, P.copyBar, finish);
+      }
+    }) : null;
     P.evs = h("div", "fl-evs");
     P.more = h("button", "fl-more", [""], {type: "button", hidden: true, title: "Every node not up, with checkboxes"});
     var list = h("section", "fl-panel fl-list", [h("div", "ph", [h("h3", "", ["Not up · worst first"]), P.ncount]),
-      h("div", "evh", [P.selall, P.shsel, P.selc, P.clr]), P.evs, P.more]);
+      h("div", "evh", [P.selall, P.shsel, P.copyAll, P.selc, P.clr]), P.evs, P.more, P.copyBar]);
     P.cmp = h("div", "fl-cmp");
     P.cmpcue = h("span", "cue", [""]);
     var cmp = h("section", "fl-panel fl-cov", [h("div", "ph", [h("h3", "", ["SolarWinds vs vCenter"]), P.cmpcue]), P.cmp]);
@@ -377,10 +390,56 @@
     return F.nodes.filter(function (n) { var s = shown(n); return s === "down" || s === "warn" || s === "lastdown" || s === "lastwarn"; })
       .sort(function (a, b) { return RANK[shown(a)] - RANK[shown(b)] || (a.since || 9e15) - (b.since || 9e15) || (a.name < b.name ? -1 : 1); });
   }
-  function row(n, cls) {
+  function nodeToServer(n) {
+    var s = shown(n), st = statusWord(n, s), sev = s === "down" ? "critical" : s === "warn" ? "warning" : (s === "lastdown" || s === "lastwarn" || s === "unk") ? "unknown" : s === "up" ? "ok" : "info";
+    var checkHint = n.vconly ? "vSphere Client of " + n.vc + " > VM " + n.name + " > Summary"
+      : "SolarWinds > Node Details of " + n.name + (n.vm ? "; vSphere Client > VM > Summary" : "");
+    var findings = [];
+    if (sev !== "ok") {
+      findings.push({sev: sev, sevLabel: st, title: [svcOf(n), phrase(n)].filter(Boolean).join(" - ") || st,
+        evidence: n.said || "", whatToDo: "Check " + checkHint});
+      if (n.vm) findings.push({sev: "info", sevLabel: "Info", title: "vCenter: " + vmText(n), evidence: "", whatToDo: "Verify VM state in vSphere Client."});
+    }
+    return {host: n.name, ip: n.ip || "", sev: sev, statusLabel: st, worst: phrase(n) || st, summary: [svcOf(n), phrase(n)].filter(Boolean).join(" - "),
+      findings: findings, totalFindings: findings.length, cappedCount: 0};
+  }
+  function fleetCopyCtx(L) {
+    var c = ctx(L);
+    return {site: c.site || "", report: "Ops monitor", dateTime: [c.day, c.stamp, c.zone].filter(Boolean).join(" "), url: c.link || (typeof location !== "undefined" ? location.href : "")};
+  }
+  function copyOneNode(n, mode, btn, bar, finish) {
+    var srv = nodeToServer(n), c = fleetCopyCtx([n]);
+    var fmt = copyHelp.formatOneServer(srv, c);
+    var pic = mode === "text" ? {dataUrl: ""} : copyHelp.drawOneServerCard(srv, c);
+    return copyHelp.copyMode(mode, {
+      plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: srv.host + " status card", focusEl: btn,
+      onState: function (st, lab, msg) { copyHelp.setFeedback(btn, bar, st, lab, msg); },
+      onDone: finish
+    });
+  }
+  function copyNodesList(L, mode, btn, bar, finish) {
+    var servers = L.map(nodeToServer), c = fleetCopyCtx(L);
+    var fmt = copyHelp.formatAllShown(servers, c);
+    var pic = mode === "text" ? {dataUrl: ""} : copyHelp.drawAllShownCard(servers, c);
+    return copyHelp.copyMode(mode, {
+      plain: fmt.plain, html: fmt.html, dataUrl: pic.dataUrl, width: 700, alt: "Ops monitor summary card", focusEl: btn,
+      onState: function (st, lab, msg) { copyHelp.setFeedback(btn, bar, st, lab, msg); },
+      onDone: finish
+    });
+  }
+  function row(n, cls, barEl) {
     var s = shown(n), cb = h("input", "", null, {type: "checkbox", "data-k": n.key, "aria-label": "select " + n.name, checked: !!SEL[n.key]});
+    var cp = copyHelp.createSplitControl ? copyHelp.createSplitControl({
+      cls: "sm fl-row-copy", scope: "server", baseLabel: "Copy",
+      title: "Copy " + n.name + " status and findings (text + picture)",
+      ariaLabel: "Copy " + n.name, toggleLabel: "Copy options for " + n.name,
+      menuTitle: String(n.name || "Node").split(".")[0], menuTag: "Server row",
+      subtitles: {both: "Text + inline PNG", text: "Status + all findings", picture: "PNG server card"},
+      onCopy: function (mode, btn, finish) { return copyOneNode(n, mode, btn, barEl || P.copyBar, finish); }
+    }) : null;
     return h("div", "ev " + sevOf(s) + (cls ? " " + cls : ""), [
       h("span", "s", [statusWord(n, s)]), h("span", "n", [cb, h("b", "", [n.name])]), h("span", "a", [n.since ? A.dur(NOW() - n.since) + (n.exact ? "" : "+") : ""]),
+      cp,
       h("span", "d", [[svcOf(n), n.ip || "no IP", phrase(n)].filter(Boolean).join(" · ")])],
       {"data-k": n.key, tabindex: "0", role: "button", title: n.name + ": click for its card"});
   }
@@ -389,6 +448,7 @@
     P.ncount.textContent = L.length ? L.length + " node" + (L.length === 1 ? "" : "s") : "";
     P.selc.textContent = nsel + " selected";
     P.clr.hidden = !nsel;
+    if (P.copyAll && P.copyAll.setCount) P.copyAll.setCount(L.length);
     clear(P.evs);
     if (!L.length) {
       var cn = counts();
@@ -399,7 +459,7 @@
       P.evs.__n = 0;
       return;
     }
-    L.slice(0, 40).forEach(function (n) { P.evs.appendChild(row(n)); });
+    L.slice(0, 40).forEach(function (n) { P.evs.appendChild(row(n, "", P.copyBar)); });
     P.evs.__n = L.length;
     soon(fitList);
   }
@@ -689,10 +749,24 @@
     x.addEventListener("click", closeOv);
     var shareB = h("button", "btn pri", ["Share these to Teams"], {type: "button"});
     var selB = h("button", "btn", ["Tick all of these"], {type: "button"});
+    var modalBar = copyHelp.createFeedbackBar ? copyHelp.createFeedbackBar() : h("div", "copy-bar", null, {hidden: true});
+    var copyAllModal = copyHelp.createSplitControl ? copyHelp.createSplitControl({
+      cls: "pri fl-copy-all", scope: "all", baseLabel: "Copy all shown", withCount: true, count: L.length,
+      title: "Copy every node in this list (text + picture)",
+      ariaLabel: "Copy all shown nodes", toggleLabel: "Copy all shown options",
+      menuTitle: "Copy all shown", menuTag: L.length + " row" + (L.length === 1 ? "" : "s"),
+      subtitles: {both: "Text summary + PNG", text: "Plain + HTML summary", picture: "PNG summary card"},
+      isEmpty: function () { return !L.length; },
+      onCopy: function (mode, btn, finish) {
+        var now = L.map(function (n) { return F.by[n.key]; }).filter(Boolean);
+        if (!now.length) { finish(); return Promise.resolve(); }
+        return copyNodesList(now, mode, btn, modalBar, finish);
+      }
+    }) : null;
     var box = h("div", "fl-evs all");
     var shownRows = 0, more = h("button", "btn", [""], {type: "button"});
     var page = function () {                                           // 200 rows at a time: every one reachable, none built ahead
-      L.slice(shownRows, shownRows + 200).forEach(function (n) { box.insertBefore(row(n), more); });
+      L.slice(shownRows, shownRows + 200).forEach(function (n) { box.insertBefore(row(n, "", modalBar), more); });
       shownRows = Math.min(L.length, shownRows + 200);
       OV.limit = shownRows;
       more.hidden = shownRows >= L.length;
@@ -708,7 +782,7 @@
     });
     selB.addEventListener("click", function () { L.forEach(function (n) { if (F.by[n.key]) SEL[n.key] = 1; }); box.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = true; }); notUp(); drawGrid(); });
     P.ov.appendChild(h("div", "fl-card list", [h("h2", "", [h("span", "nm", [title]), h("small", "", [filter === "v" && !coverageCurrent() ? "–" : L.length + " node" + (L.length === 1 ? "" : "s")]), x]),
-      note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, h("span", "fl-click", ["click a row for its card · tick to share several"])]), box], {role: "dialog", "aria-modal": "true", "aria-label": title}));
+      note ? h("p", "fl-note", [note]) : null, h("div", "evh", [selB, shareB, copyAllModal, h("span", "fl-click", ["click a row for its card · tick to share several"])]), box, modalBar], {role: "dialog", "aria-modal": "true", "aria-label": title}));
     P.ov.classList.add("on");
     if (!limit) x.focus();
     spotlight();
@@ -720,6 +794,7 @@
     B.addEventListener("click", function (e) {
       if (!F) return;
       var t = e.target;
+      if (t.closest && t.closest(".copy-split")) return;
       if (t.closest(".fl-card") && t.closest("button") && !t.closest(".fl-evs")) return;    // the card's own buttons
       var cb = t.closest("input[type=checkbox][data-k]");
       if (cb) {
@@ -827,11 +902,15 @@
     (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
-  // 1.140.0: shared clipboard helpers (reused by wall actions and report pages' Copy both)
-  var copyHelp = {
+  // 1.140.0: shared clipboard helpers (reuses window.SAPortalCopy when loaded in portal shell; keeps full fallback standalone)
+  var copyHelp = window.SAPortalCopy || {
     canRichHtml: function () {
       return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext
         && (!window.ClipboardItem.supports || window.ClipboardItem.supports("text/html")));
+    },
+    canPicture: function () {
+      return !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext
+        && (!window.ClipboardItem.supports || window.ClipboardItem.supports("image/png")));
     },
     isBlocked: function (e) {
       return !!(e && (e.name === "NotAllowedError" || e.name === "SecurityError"));
@@ -846,10 +925,18 @@
         return typeof u === "string" && u.indexOf("data:image/png;base64,") === 0 ? u : "";
       } catch (e) { return ""; }
     },
-    embedPictureHtml: function (html, dataUrl, alt) {
-      var body = html || "";
+    dataUrlToBlob: function (dataUrl) {
+      if (!dataUrl || dataUrl.indexOf("data:image/png;base64,") !== 0) return null;
+      try {
+        var raw = atob(dataUrl.slice(22)), arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        return new Blob([arr], {type: "image/png"});
+      } catch (e) { return null; }
+    },
+    embedPictureHtml: function (html, dataUrl, alt, width) {
+      var body = html || "", w = width || 640;
       if (!dataUrl || dataUrl.indexOf("data:image/png;base64,") !== 0) return body;
-      return body + '<p><img width="640" style="max-width:100%;height:auto" alt="' + esc(alt || "Snapshot") + '" src="' + dataUrl + '"></p>';
+      return body + '<p><img width="' + w + '" style="max-width:100%;height:auto" alt="' + esc(alt || "Snapshot") + '" src="' + dataUrl + '"></p>';
     },
     copyTextFallback: function (plain, focusEl) {
       var text = String(plain == null ? "" : plain);
@@ -886,7 +973,7 @@
       var done = opts.onDone || function () {};
       var plain = String(opts.plain == null ? "" : opts.plain);
       var dataUrl = opts.dataUrl || "";
-      var html = copyHelp.embedPictureHtml(opts.html || "", dataUrl, opts.alt);
+      var html = copyHelp.embedPictureHtml(opts.html || "", dataUrl, opts.alt, opts.width);
       var failMsg = function (e) {
         if (copyHelp.isBlocked(e)) return "Clipboard access denied. Allow clipboard access and retry.";
         return (e && e.message) ? String(e.message) : "Clipboard write failed. Try copying again.";
@@ -926,6 +1013,60 @@
         notify("bad", "Copy failed", failMsg(e));
         done();
         return Promise.resolve();
+      }
+    },
+    copyMode: function (mode, opts) {
+      if (mode === "both" || !mode) return copyHelp.copyBothRich(opts);
+      var notify = opts.onState || function () {}, done = opts.onDone || function () {};
+      var plain = String(opts.plain == null ? "" : opts.plain), html = String(opts.html || "");
+      var failMsg = function (e) {
+        if (copyHelp.isBlocked(e)) return "Clipboard access denied. Allow clipboard access and retry.";
+        return (e && e.message) ? String(e.message) : "Clipboard write failed. Try copying again.";
+      };
+      if (mode === "text") {
+        notify("info", "Copying\u2026", "Writing text\u2026");
+        var plainFallback = function () {
+          return copyHelp.copyTextFallback(plain, opts.focusEl).then(function () {
+            notify("good", "Copied", "Copied text. Ready to paste.");
+          }, function (e) { notify("bad", "Copy failed", failMsg(e)); }).then(done, done);
+        };
+        if (html && copyHelp.canRichHtml()) {
+          try {
+            return navigator.clipboard.write([new ClipboardItem({
+              "text/plain": new Blob([plain], {type: "text/plain"}), "text/html": new Blob([html], {type: "text/html"})
+            })]).then(function () { notify("good", "Copied", "Copied text. Ready to paste."); done(); }, function (e) {
+              if (copyHelp.isUnsupported(e)) return plainFallback();
+              notify("bad", "Copy failed", failMsg(e)); done();
+            });
+          } catch (e) {
+            if (copyHelp.isUnsupported(e)) return plainFallback();
+            notify("bad", "Copy failed", failMsg(e)); done(); return Promise.resolve();
+          }
+        }
+        return plainFallback();
+      }
+      notify("info", "Copying\u2026", "Writing picture\u2026");
+      var picFallback = function (why) {
+        return copyHelp.copyTextFallback(plain, opts.focusEl).then(function () {
+          notify("warn", "Text only", "Text copied. " + why);
+        }, function (e) { notify("bad", "Copy failed", failMsg(e)); }).then(done, done);
+      };
+      var canPic = copyHelp.canPicture(), blob = copyHelp.dataUrlToBlob(opts.dataUrl || "");
+      if (!canPic || !blob) {
+        var why = window.isSecureContext === false ? "Picture copying needs HTTPS."
+          : !canPic ? "This browser does not support picture copying." : "Picture could not be drawn here.";
+        return picFallback(why);
+      }
+      try {
+        return navigator.clipboard.write([new ClipboardItem({"image/png": blob})]).then(function () {
+          notify("good", "Copied", "Copied picture. Ready to paste."); done();
+        }, function (e) {
+          if (copyHelp.isUnsupported(e)) return picFallback("This browser does not support picture copying.");
+          notify("bad", "Copy failed", failMsg(e)); done();
+        });
+      } catch (e) {
+        if (copyHelp.isUnsupported(e)) return picFallback("This browser does not support picture copying.");
+        notify("bad", "Copy failed", failMsg(e)); done(); return Promise.resolve();
       }
     }
   };

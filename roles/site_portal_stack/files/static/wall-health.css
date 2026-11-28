@@ -119,6 +119,9 @@ html.wh-board .wh-row{padding:11px 14px}
 .wh-bh{display:flex;align-items:center;gap:8px;margin:0 0 6px;font:700 11px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .wh-bh b{color:var(--ink)}
 .wh-list{display:flex;flex-direction:column;gap:6px}
+.wh-row-wrap{display:flex;align-items:center;gap:8px;min-width:0}
+.wh-row-wrap>.wh-row{flex:1;min-width:0}
+.wh-copy-all{margin-left:auto}
 .wh-row{
   display:grid;grid-template-columns:auto minmax(0,1fr) minmax(110px,170px) auto;
   gap:4px 10px;align-items:center;padding:8px 10px;

@@ -69,7 +69,14 @@ html.moves tr.adp-flash>td{animation:adpflash 1.6s ease-out 1}
 .adp-state.s-unknown,.adp-none{color:var(--muted);background:var(--bg2)}
 .adp-self{background:repeating-linear-gradient(135deg,transparent 0 4px,var(--line) 4px 5px)}
 .adp-panel{display:none;position:relative;padding:16px;margin:12px 0;overflow-wrap:anywhere;scroll-margin-top:5rem}
-.adp-panel:target{display:block}
+.adp-panel:target,.adp-panel.open{display:block}
+.adp-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px}
+.adp-pills{display:inline-flex;flex-wrap:wrap;gap:4px}
+.adp-pills button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.adp-q{padding:4px 9px;border:1px solid var(--edge);border-radius:7px;background:var(--card);color:var(--ink);font-size:13px;min-width:150px}
+.adp-tools-r{margin-left:auto;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.adp-copy-td{width:1%;text-align:right;overflow:visible}
+@media print{.adp-tools,.adp-copy-td{display:none!important}}
 .adp-panel h3{margin:0 2em 12px 0}
 .adp-panel .adp-close{position:absolute;top:10px;right:14px;font-size:22px}
 .adp-panel .adp-command{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
