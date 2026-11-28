@@ -40,6 +40,21 @@
     _ak_doc: "{{ _ak_doc | stig_answer_cross_into(_akx_doc) }}"
   when: _akx_doc is defined
 
+# 1.137.0: with model tiers (site_act_worker_model), which model drafted and which checked - the report's last lines
+- name: Answer keys | which model answered (site_act_worker_model)
+  ansible.builtin.set_fact:
+    _ak_doc: >-
+      {%- set sec = {'title': 'ACT models', 'lines': _ak_tier_lines} -%}
+      {{ _ak_doc | combine({'report': _ak_doc.report | combine({'sections': _ak_doc.report.sections | default([]) + [sec]}),
+                            'web': (_ak_doc.web | combine({'sections': _ak_doc.web.sections + [sec]}))
+                                   if (_ak_doc.web | default({})).sections is defined else _ak_doc.web | default({}),
+                            'lines': _ak_doc.lines | default([]) + _ak_tier_lines}) }}
+  vars:
+    _ak_tier_lines: >-
+      {{ [('Drafts: ' ~ _ak_tiers_note) if _ak_tiers_note | default('') | length > 0 else '',
+          ('Cross-check: ' ~ _akx_tiers_note) if _akx_tiers_note | default('') | length > 0 else ''] | select | list }}
+  when: _ak_tier_lines | length > 0
+
 - name: Answer keys | what was made
   ansible.builtin.debug:
     msg: "{{ _ak_doc.lines }}"

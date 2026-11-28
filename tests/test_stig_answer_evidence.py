@@ -226,8 +226,8 @@ class CallSites(unittest.TestCase):
         self.assertEqual(R.engine_of({"product": "Evaluate-STIG", "type": "script"}), {"product": "Evaluate-STIG", "type": "script"})
 
     def test_acts_reason(self):
-        t = self.read("roles", "check_stig", "tasks", "answer_keys_cross_act_one.yml")
-        self.assertIn("(_ea_reason | default('') | string | site_redact | truncate(200))", t)
+        t = self.read("roles", "check_stig", "tasks", "answer_keys_cross_act.yml")
+        self.assertIn("(a.reason | default('') | string | site_redact | truncate(200))", t)
 
     def test_redact_all(self):
         self.assertEqual(X.redact_all({"password": 1, "https://u:%s@host" % SECRET: "failed", "token": None, "cache_credentials": False}),
@@ -349,8 +349,8 @@ class ThirdPass(unittest.TestCase):
             self.assertIn("no_log: true", t[i:i + 400])
 
     def test_acts_reply_and_the_probe(self):
-        t = self.read("roles", "check_stig", "tasks", "answer_keys_cross_act_one.yml")
-        self.assertIn("(_ea_raw | default('') | string | site_redact) if _ea_ran", t)
+        t = self.read("roles", "check_stig", "tasks", "answer_keys_cross_act.yml")
+        self.assertIn("(a.raw | default('') | string | site_redact) if a.ran", t)
         self.assertIn("    apply:\n      no_log: true", t)
         src = self.read("roles", "check_stig", "library", "site_stig_answer_host.py")
         self.assertIn('redact("; ".join(str(x) for x in said), backstop=False)[:160]', src)

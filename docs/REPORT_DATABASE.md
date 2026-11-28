@@ -7,7 +7,8 @@ It is MySQL 8.4 LTS in its own podman container, `report-db`, on the STIG Manage
 database.
 Ticket insights is its first user (1.13.0). *NetApp ONTAP - capacity trends* is the second (1.52.0, optional:
 *The capacity trends' points*). Since 1.17.0 it also keeps each ticket's fields, so a run reads only what
-changed (*The ticket store and the ACT cache*).
+changed (*The ticket store and the ACT cache*). Since 1.136.0 the jobs that ask ACT in batches can keep ACT's analyses
+here (*ACT's answer cache*).
 Since 1.96.0 it also keeps a copy of SolarWinds, so the reports need not ask SolarWinds each time (*The SolarWinds
 snapshot*).
 
@@ -2085,6 +2086,87 @@ Until then the snapshot is written without it and says so. The VMware alarms rep
 | `solarwinds_db_event_days` | `400` | Days events are kept. `0`: always |
 | `solarwinds_db_link_days` | `400` | Days daily topology is kept. `0`: always |
 | `solarwinds_db_max_age` | `20` | Minutes a snapshot may be old for a report. In all.yml: every report reads it. `0`: never the snapshot |
+
+## ACT's answer cache (1.136.0)
+
+The jobs that ask ACT in batches on the AAP side keep each answer here: the log analysis, the VMware alarms ACT
+analysis, and the capacity and right-sizing analyses. A later run that asks the same question takes the kept answer.
+ACT is not asked, and the model is not reached at all when every answer is kept.
+
+1. Add the **Report database** credential (the writer's) to the template.
+2. Launch it. The first run makes the table `act_answer_cache` and keeps its answers.
+3. The job output says `ACT answer cache: N answer(s) from it, N kept for the next runs, N expired deleted.`
+
+The same question means the same evidence, the same prompt, the same provider, model and model URL, and the same job
+kind. They are the ones ACT uses: a provider, model or URL in `site_act_env` or the execution environment counts. The evidence counts as ACT read it: after it
+was cut to its size.
+
+With model tiers (1.137.0, `site_act_worker_model`; [ADDING_ACT.md](ADDING_ACT.md), *Model tiers*), each answer is kept
+under the model that gave it: the worker's and the smart model's are two questions, and the smart model's verdict a
+third. A worker's answer that was unsure is kept too, and the next run still asks the smart model about it (or takes
+the smart model's kept answer).
+
+The log analysis compares its patterns instead: each pattern's level, source, signature and hosts, and its count as
+a band (1, 2-9, 10-99 ...), and its example lines without their times and dates. Also the team's question and the
+site's instructions. So the same log set a day later finds its answer, but `HTTP 401` and `HTTP 503` are two questions. For the VMware analyses, other times or counts in the evidence make
+a new question.
+
+| | |
+|---|---|
+| What a run keeps | per question, ACT's analysis only: its JSON between the markers, with any password, key or URL query it quotes removed. Not ACT's other words |
+| What is not kept | an answer the job cannot read, or one that leaves an item out or says nothing about it |
+| The key | a sha256 of the provider, model, model URL, prompt version, job kind, task and evidence. No text of the evidence |
+| How long | `site_act_cache_ttl_days` (7), or per job kind in `site_act_cache_ttl_days_by`. A shorter setting holds for answers kept under a longer one |
+| What a run deletes | the answers that expired |
+| On the report | *N of M answer(s) from an earlier run (the date UTC; site_act_cache).* |
+| When the database is down | one line in the job output. ACT is asked, as without the cache. The job stays green |
+| A dry run (Check) | reads, writes nothing |
+| Turning it off | `site_act_cache: false`, or take the credential off the template |
+| Removing it | `DROP TABLE act_answer_cache;` and `DELETE FROM schema_version WHERE component = 'act_cache';` |
+
+The kept analysis can quote the evidence ACT read: host and service names, messages from the logs and alarms. It is
+the same text the report shows. The ticket insights' own cache (*The ACT cache*, above) is apart from this one.
+
+**By hand.** If the writer may not create tables, set `site_act_cache_create: false` and make the table once as root,
+in `site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of
+*Making the tables by hand*; it may run again.
+
+<!-- the statements: site_act_cache.ddl(), word for word (tests/test_site_act_ask.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS act_answer_cache (
+  cache_key CHAR(64) NOT NULL,
+  job_kind VARCHAR(64) NOT NULL,
+  prompt_version VARCHAR(32) NOT NULL,
+  model VARCHAR(128) NOT NULL,
+  created DATETIME NOT NULL,
+  expires DATETIME NOT NULL,
+  answer MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (cache_key),
+  KEY act_answer_cache_expires (expires)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('act_cache', 1, UTC_TIMESTAMP());
+```
+<!-- end of the answer cache statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `site_act_cache` | `true` | Use the cache when the template has the credential |
+| `site_act_cache_ttl_days` | `7` | Days an answer is kept. `0`: no cache |
+| `site_act_cache_ttl_days_by` | `{}` | Days per job kind: `log_analysis`, `vm_alarm_act`, `vm_capacity`, `vm_rightsize` |
+| `site_act_cache_clear` | `false` | Ask everything again this run, and keep the new answers |
+| `site_act_cache_create` | `true` | Make the table on the first run |
+| `site_act_cache_timeout` | `10` | Seconds to connect |
 
 ## TLS (optional)
 

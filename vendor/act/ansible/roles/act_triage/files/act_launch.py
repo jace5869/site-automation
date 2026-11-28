@@ -43,7 +43,8 @@ def refuse(args, error=None):
                            "user": "", "cwd": os.getcwd(), "task": "", "provider": "", "model": "", "started_at": stamp,
                            "finished_at": stamp, "duration_s": 0, "exit_code": 2, "status": "error", "summary": "",
                            "stop_reason": message, "changed": False, "commands": [], "denied": [], "files_changed": [],
-                           "pre_approved_patterns": [], "race": None, "tokens": None, "model_retries": 0}, f)
+                           "pre_approved_patterns": [], "race": None, "tokens": None, "model_retries": 0,
+                           "delegations": []}, f)
         except OSError as write_error:
             print("act_launch: could not write the result (%s)" % type(write_error).__name__, file=sys.stderr)
     return 2
@@ -65,6 +66,9 @@ def main():
     env = {name: value for name, value in os.environ.items() if name != "ACT_ENV_KEEP" and setting(name)}
     if host_keys == "1":
         env.update((name, os.environ[name]) for name in ACT_KEYS if name in os.environ)
+    # site-automation 1.137.0: a job's ACT does not hand work to ACT 0.6.28's sub-agents (delegate) - the jobs pick their
+    # own models (site_act_worker_model). The settings below (site_act_env, act_triage_env) may turn it on again.
+    env["ACT_DELEGATE"] = "0"
 
     # 1.104.0 (Codex): one framed JSON object, read whole: a payload cut short never starts ACT with part of it
     data = sys.stdin.buffer.read(MAX_INPUT + 1)

@@ -89,6 +89,13 @@ class Launch(unittest.TestCase):
         for field in ("argv", "self", "parent"):
             self.assertFalse(any(proxy in arg for arg in got[field]), field)
 
+    def test_delegate_off_unless_the_settings_say(self):
+        # 1.137.0: ACT 0.6.28's sub-agents (delegate) are off for every job's ACT; the settings may turn them on
+        for data, want in ((payload(ACT_PROVIDER="genai"), "0"), (payload(ACT_DELEGATE="1"), "1")):
+            run = self.launch(data)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(json.loads(self.dump.read_text())["env"]["ACT_DELEGATE"], want)
+
     def test_rootless_podman_callers(self):
         # 1.104.0 (Codex P1): podman_app_health.yml and act_apply_approved.yml give ACT XDG_RUNTIME_DIR (podman_user);
         # their own act_triage_env, rendered, starts ACT (before: refused, the rootless jobs broke)
@@ -170,7 +177,7 @@ class Launch(unittest.TestCase):
                                   "model": "", "started_at": stamp, "finished_at": stamp, "duration_s": 0, "exit_code": 2,
                                   "status": "error", "summary": "", "stop_reason": REFUSAL, "changed": False, "commands": [],
                                   "denied": [], "files_changed": [], "pre_approved_patterns": [], "race": None,
-                                  "tokens": None, "model_retries": 0})
+                                  "tokens": None, "model_retries": 0, "delegations": []})      # 0.6.28: delegations
 
     def test_exec_failure(self):
         self.assert_refused(self.launch(payload(GENAI_KEY="private"), python=str(self.dump)), REFUSAL + " (FileNotFoundError)")

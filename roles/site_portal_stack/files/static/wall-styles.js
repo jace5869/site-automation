@@ -96,6 +96,7 @@
   }
   // 1.136.0: Ops monitor (static/wall-fleet.js draws the area itself): its tile - nodes up of all, the worst group
   function fleetOn() { return (W().areas || []).some(function (a) { return a.id === "monitor" && a.built; }); }
+  function healthOn() { return (W().areas || []).some(function (a) { return a.id === "health" && a.built; }); }
   function areas() {
     var out = [];
     if ((W().areas || []).some(function (a) { return a.id === "storage" && a.built; })) out.push(storageInfo());
@@ -106,6 +107,7 @@
       out.push({id: o[0], st: "off", name: a ? a.name : o[1], sub: (a && a.sub) || o[2], n: {crit: 0, warn: 0}, m: null, big: "", unit: "", off: true});
     });
     if (fleetOn() && window.SAWallFleet) out.push(window.SAWallFleet.tile(A, sevWord));
+    if (healthOn() && window.SAWallHealth) out.push(window.SAWallHealth.tile(A, sevWord));
     out = out.map(function (x) {
       if (x.off || A.areaOn(x.id)) return x;
       var a = A.areaOf(x.id) || {};                 // built but no source set (no vCenter / ONTAP here): grey, "Not on the wall yet"

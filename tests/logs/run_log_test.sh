@@ -99,6 +99,7 @@ base="{\"log_analysis_become\": false, \"log_analysis_profiles\": [\"sssd\", \"m
 
 run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
     local tname="$1" want="$2"; shift 2
+    rm -rf "$work/act/fake-act-stdin.d"     # what each ACT call of this run was given (several at once: site_act_ask)
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
     (cd "$repo" && PATH="$work/bin:$PATH" FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json" \
@@ -143,8 +144,17 @@ grep -q "Connection reset by .* port" "$work/act/fake-act-stdin.txt" && [ "$(gre
 run "ACT asked 2 patterns at a time (log_analysis_act_batch): one report, each question with its own evidence" ok \
     -e "$actvars" -e log_analysis_act_batch=2 -- "pattern(s), 2 at a time" "P1, P2: Give the JVM more memory first." "90% high" \
        "Not explained: "
-grep -q "^P1 " "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...the last question had P1's evidence"; fails=$((fails + 1)); } \
-    || echo "ok   -   ...the last question had only its own patterns' evidence"
+# the questions run at the same time (site_act_concurrency): each call's own evidence, from fake-act-stdin.d
+if "$py" - "$work/act/fake-act-stdin.d" > "$work/batches.txt" <<'EOPY'
+import os, re, sys
+d = sys.argv[1]
+seen = [set(re.findall(r"^(P\d+) ", open(os.path.join(d, f)).read(), re.M)) for f in sorted(os.listdir(d))] if os.path.isdir(d) else []
+every = set().union(*seen) if seen else set()
+print("questions: %s" % "; ".join(",".join(sorted(s)) for s in seen))
+sys.exit(0 if len(seen) >= 2 and all(0 < len(s) <= 2 for s in seen) and sum(len(s) for s in seen) == len(every) else 1)
+EOPY
+then echo "ok   -   ...each question had only its own patterns' evidence"
+else echo "FAIL -   ...batch evidence: $(cat "$work/batches.txt")"; fails=$((fails + 1)); fi
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | sort -V | tail -1)"
 if [ -n "$eml" ] && grep -q "Likely causes and fixes" "$eml" && grep -q "First seen" "$eml" && grep -q "What was read" "$eml" \
    && ls "$work/site"/*/latest.html >/dev/null 2>&1; then
@@ -184,6 +194,53 @@ items = [{"id": "P1", "cause": "The JVM ran out of memory.", "evidence": "Out of
 json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Give the JVM more memory first.", "items": items}) + "\nEND_ACT_ANALYSIS"},
           open(sys.argv[1], "w"))
 EOPY
+
+# 1.137.0, model tiers: a stand-in of two models (fake_act.py's by_model). The worker reads each batch; the batch with the
+# critical pattern (P1) goes to the smart model at once; the worker's unsure answer (P3, confidence 30) is asked of the
+# smart model once; the smart model writes the verdict from the answers, never the evidence. Then the job's switch off.
+cp "$work/act/act.json" "$work/act/act-items.json"
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+def ans(model, conf, low=None):
+    items = [{"id": "P%d" % i, "cause": "%s cause %d" % (model, i), "evidence": "a line", "fix": "a fix",
+              "confidence": (30 if low == "P%d" % i else conf)} for i in range(1, 10)]
+    return "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "%s overall" % model, "items": items}) + "\nEND_ACT_ANALYSIS"
+json.dump({"summary": "no model set",
+           "by_model": {"worker-e2e": {"summary": ans("worker", 85), "summaries_by": {"\nP3 [": ans("worker", 85, "P3")}},
+                        "smart-e2e": {"summary": ans("smart", 92), "summaries_by": {"Short analyses of": "BEGIN_ACT_ANALYSIS\n"
+                                      + json.dumps({"overall": "SMART VERDICT: restart the JVM first."}) + "\nEND_ACT_ANALYSIS"}}}},
+          open(sys.argv[1], "w"))
+EOPY
+rm -f "$work/act/fake-act-models.log"
+run "model tiers: the worker reads the batches, the smart model the critical and unsure ones, and writes the verdict" ok \
+    -e "$mail" -e "$actvars" -e log_analysis_act_batch=2 \
+    -e '{"site_act_models": {"genai": "smart-e2e"}, "site_act_worker_models": {"genai": "worker-e2e"}}' \
+    -- "answered by the worker model (worker-e2e)" "by the smart model (smart-e2e)" "; 2 re-asked after the worker (2 unsure)." \
+       "The overall verdict: the smart model, from the answers." "SMART VERDICT: restart the JVM first." "smart cause 1" "smart cause 3"
+if "$py" - "$work/act/fake-act-models.log" > "$work/tiers.txt" <<'EOPY'
+import json, re, sys
+calls = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+print("; ".join("%s %s%s" % (c["model"], ",".join(c["ids"]), " (verdict)" if "Short analyses of" in c["head"] else "") for c in calls))
+worker = [c for c in calls if c["model"] == "worker-e2e"]
+smart = [c for c in calls if c["model"] == "smart-e2e"]
+verdict = [c for c in smart if "Short analyses of" in c["head"]]
+ok = (worker and not any("P1" in c["ids"] for c in worker)                            # the critical batch: never the worker
+      and any("P1" in c["ids"] for c in smart) and any("P3" in c["ids"] for c in smart)  # critical at once, unsure re-asked
+      and len(verdict) == 1 and not re.search(r"^P\d+ \[", verdict[0]["head"], re.M)     # the verdict reads no evidence line
+      and {c["model"] for c in calls} == {"worker-e2e", "smart-e2e"})
+sys.exit(0 if ok else 1)
+EOPY
+then echo "ok   -   ...the calls by model: $(cat "$work/tiers.txt")"
+else echo "FAIL -   ...the calls by model: $(cat "$work/tiers.txt")"; fails=$((fails + 1)); fi
+rm -f "$work/act/fake-act-models.log"
+run "model tiers off for the job (log_analysis_act_tiers false): the smart model only, no models line" ok \
+    -e "$actvars" -e log_analysis_act_batch=2 -e log_analysis_act_tiers=false \
+    -e '{"site_act_models": {"genai": "smart-e2e"}, "site_act_worker_models": {"genai": "worker-e2e"}}' \
+    -- "smart cause 1" "smart overall"
+if grep -q '"worker-e2e"' "$work/act/fake-act-models.log" || grep -q "ACT models (site_act_worker_model)" "$work/out.txt"; then
+    echo "FAIL -   ...the worker was asked with the job's tiers off"; fails=$((fails + 1))
+else echo "ok   -   ...only the smart model asked, and no models line"; fi
+cp "$work/act/act-items.json" "$work/act/act.json"
 
 : > "$work/journalctl.args"; : > "$work/podman.args"
 since="$(date -u -d '-2 hours' '+%Y-%m-%d %H:%M')"; until="$(date -u -d '-1 hour' '+%Y-%m-%d %H:%M')"

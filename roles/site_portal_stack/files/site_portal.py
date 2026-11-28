@@ -87,6 +87,14 @@ try:
 except ImportError:                     # an older deploy's files: no Ops monitor area
     wall_fleet = None
 try:
+    import wall_health  # noqa: E402  1.138.0: Network & AD health wall area + Site map (SolarWinds SWQL + AD report DB)
+except ImportError:
+    wall_health = None
+try:
+    import my_access  # noqa: E402  1.138.0: read-only My access page model
+except ImportError:
+    my_access = None
+try:
     import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
 except ImportError:                     # an older deploy's files: the named lists only
     site_ad_groups = None
@@ -777,6 +785,22 @@ class Config(object):
                 self.wall_fleet_notes.append("Ops monitor off: " + clean(str(err), 120))
         self.ad_seconds = max(120, min(3600, int(g("PORTAL_AD_SECONDS", "600"))))
         self.ad_old_minutes = max(10, min(10080, int(g("PORTAL_AD_OLD_MINUTES", "90"))))
+        # 1.138.0: Network & AD health wall area, Site map (SolarWinds lat/lon), and read-only My access page
+        self.wall_health = self.wall and flag(g("PORTAL_WALL_HEALTH", "1")) and (wall_health is not None)
+        self.site_map = flag(g("PORTAL_SITE_MAP", "1")) and (wall_health is not None)
+        self.my_access = flag(g("PORTAL_MY_ACCESS", "1")) and (my_access is not None)
+        self.health_swis_url = g("PORTAL_HEALTH_SWIS_URL", self.swis_url).strip()
+        self.swis_ca = g("PORTAL_SWIS_CA", "") or None
+        try:
+            ho = g("PORTAL_WALL_HEALTH_OPTS", "{}")
+            ho = json.loads(ho) if isinstance(ho, str) else ho
+        except ValueError:
+            ho = {}
+        merged_ho = dict(self.wall_opts)
+        merged_ho.setdefault("ad_old_minutes", self.ad_old_minutes)
+        if isinstance(ho, dict):
+            merged_ho.update(ho)
+        self.wall_health_opts = wall_health.health_opts(merged_ho) if wall_health is not None else {}
         tid = str(g("PORTAL_AD_TEMPLATE", "") or "").strip()                    # one AD template's runs (two forests); "" = the newest run's
         self.ad_template = int(tid) if tid.isdigit() else 0
         self.ad_swis_why = ("" if self.swis_url and self.swis_user and self.swis_password and site_swis and site_ad_swis and ad_swis_filters else
@@ -2983,7 +3007,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
         # general run lists (portal_runners, portal_run_groups)
         if cn in action["who"] and cfg.viewer_133(cn):          # Codex 1340 r2 #10: as 1.133.0, only behind its portal entry
             return True
-        return bool(not error and row.get("run_groups") and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row["run_groups"]))
+        return bool(not error and row.get("run_groups") and cfg.ad_groups and any(cfg.ad_groups.group_matches("templates", cn, row["run_groups"])))
     else:
         default = cn in cfg.requesters
         field = "run_groups"
@@ -2993,7 +3017,7 @@ def _template_allowed(cfg, cn, action, permission="run", key=None, entry=None):
         # empty (People), so an AD outage never opens it.
         if not error:
             default = default or (rules.may_run(action, cn, cfg.requesters) and cfg.viewer_133(cn))
-    return default or bool(row.get(field) and cfg.ad_groups and cfg.ad_groups.has("templates", cn, row[field]))
+    return default or bool(row.get(field) and cfg.ad_groups and any(cfg.ad_groups.group_matches("templates", cn, row[field])))
 
 
 RUN_REFUSAL = "You are not on the list of people who may run actions here (portal_run_groups)."
@@ -3033,7 +3057,7 @@ class Portal(object):
             cfg.ldap_opts["suggest_groups"] = True
 
         def groups_changed(entries):
-            if cfg.ad_groups:
+            if hasattr(cfg.ad_groups, "want"):
                 groups = sorted({g for row in entries.values() for field in portal_access.GROUP_FIELDS for g in row[field]})
                 with cfg.ad_groups.lock:
                     cfg.ad_groups.want = dict(cfg.ad_groups.want, templates=groups)
@@ -4775,9 +4799,11 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
                                            (("approvals",), "approvals", "Approvals"))
                   + (((("wall",), "wall", getattr(cfg, "wall_title", "Ops center")),) if getattr(cfg, "wall", False) else ())
+                  + (((("sitemap",), "sitemap", "Site map"),) if getattr(cfg, "site_map", False) else ())
                   + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ())
                   + (((("ad",), "ad", "Active Directory"),) if cfg.ad else ())
-                  + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ()))
+                  + (((("netapp",), "netapp", "NetApp"),) if getattr(cfg, "netapp", False) and (getattr(cfg, "netapp_tab", False) or page == "netapp") else ())
+                  + (((("access",), "access", "My access"),) if user and getattr(cfg, "my_access", False) else ()))
     if user and getattr(cfg, "admin_allowed", lambda _: False)(user):
         nav += '<a href="%sadmin"%s>Admin</a>' % (cfg.path, ' aria-current="page"' if page == "admin" else "")
     if getattr(cfg, "access", None):
@@ -6662,6 +6688,60 @@ class AdDb(object):
         d = self._dt(v)
         return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else ""
 
+    def read_wall(self, template_id=None):
+        """1.138.0: Read newest AD health run (+ previous run's unread DCs for 2-check confirmation) in one read-only
+        transaction for the Network & AD health wall (reusing old-wallad.diff). Returns (run_dict or None, why)."""
+        conn = None
+        try:
+            conn = self.connect()
+            if self.mark == "%s":
+                try:
+                    conn.rollback()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                conn.cursor().execute("START TRANSACTION READ ONLY")
+            cur = conn.cursor()
+            tid = int(template_id) if str(template_id or "").isdigit() else 0
+            if not tid:
+                top = self._q(cur, "SELECT template_id FROM ad_run ORDER BY read_at DESC, run_id DESC LIMIT 1")
+                if not top:
+                    return None, "no AD health run in the report database yet"
+                tid = int(top[0][0] or 0)
+            runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, why, repl_dcs, repl_read "
+                                "FROM ad_run WHERE template_id = %s ORDER BY read_at DESC, run_id DESC LIMIT 2", [tid])
+            if not runs:
+                return None, "no AD health run in the report database yet"
+            top = runs[0]
+            rid = int(top[0])
+            dcrows = self._q(cur, "SELECT dc, domain, site, is_read, status, problems, worst, repl_read FROM ad_dc WHERE run_id = %s", [rid])
+            lrows = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status FROM ad_link WHERE run_id = %s", [rid])
+            prev_unread = []
+            if len(runs) > 1:
+                pr = self._q(cur, "SELECT dc FROM ad_dc WHERE run_id = %s AND (is_read = 0 OR is_read IS NULL)", [int(runs[1][0])])
+                prev_unread = [str(r[0]).lower() for r in pr if r and r[0]]
+            dcs = [{"dc": str(r[0] or ""), "domain": str(r[1] or ""), "site": str(r[2] or ""), "read": bool(r[3]),
+                    "status": str(r[4] or ""), "problems": int(r[5] or 0), "worst": str(r[6] or ""), "repl_read": bool(r[7])}
+                   for r in dcrows]
+            links = [{"frm": str(r[0] or ""), "to": str(r[1] or ""), "nc": str(r[2] or ""), "last_success": self._iso(r[3]),
+                      "failures": int(r[4] or 0), "error": str(r[5] or ""), "last_failure": self._iso(r[6]), "status": str(r[7] or "")}
+                     for r in lrows]
+            return {"run_id": rid, "read_at": self._iso(top[1]), "job": int(top[2] or 0), "template_id": tid,
+                    "status": str(top[4] or ""), "critical": int(top[5] or 0), "warning": int(top[6] or 0),
+                    "dcs_total": int(top[7] or 0), "dcs_read": int(top[8] or 0), "why": str(top[9] or ""),
+                    "repl_dcs": int(top[10] or 0), "repl_read": int(top[11] or 0),
+                    "dcs": dcs, "links": links, "prev_unread": prev_unread}, ""
+        except Exception as e:  # pylint: disable=broad-except
+            if missing_table(e):
+                return None, "no AD health run in the report database yet"
+            return None, "the report database's AD run could not be read (check the portal log)"
+        finally:
+            try:
+                if conn is not None:
+                    conn.rollback()
+                    conn.close()
+            except Exception:  # pylint: disable=broad-except
+                pass
+
 class ReportIndex:
     live_kind = None
 
@@ -7217,6 +7297,9 @@ def netapp_page(cfg, cn, statics, token=""):
 # ---- 1.130.0: the ops-center wall (/portal/wall): the live collector's reads + the NetApp page's run, one model, three styles --------
 WALL_STATIC = ("wall-page.js", "wall-page.css", "wall-land.js", "wall-styles.js", "wall-styles.css", "wall-share.js")
 FLEET_STATIC = ("wall-fleet.js", "wall-fleet.css")
+HEALTH_STATIC = ("wall-health.js", "wall-health.css")           # 1.138.0: Network & AD health wall area
+SITEMAP_STATIC = ("site-map.js", "site-map.css")                # 1.138.0: Site map (SolarWinds lat/lon, offline wall-land.js)
+ACCESS_STATIC = ("my-access.js", "my-access.css")               # 1.138.0: read-only My access page
 # 1.135.0: the looks' files - the Actions page's Ops center section, and the fonts (woff2, SIL Open Font License, licence beside each)
 LOOKS_STATIC = ("portal-looks.js", "portal-ops.js")
 FONT_NAME = re.compile(r"^fonts/[a-z0-9-]{1,60}-latin-[0-9]{3}-normal\.woff2$")
@@ -7293,17 +7376,20 @@ class WallLive(object):
     anyone looks - "sustained for 15 min" needs its own history) and the NetApp page's newest run (NetappLive: read while
     someone looks), made into one model by wall_model.build. One answer every viewer shares, with an ETag."""
 
-    def __init__(self, cfg, log, nal=None, collector=None, fleet=None):
+    def __init__(self, cfg, log, nal=None, collector=None, fleet=None, health=None):
         self.cfg, self.log, self.nal = cfg, log, nal
         self.tracker = wall_model.Tracker()
         self.lock = threading.Lock()
         self.collector = collector
         self.fleet = None
+        self.health = health
         notes = getattr(cfg, "wall_fleet_notes", [])
         for note in notes if isinstance(notes, list) else []:
             _safe_add(log, {"event": "wall", "fleet": "setting", "why": note})
         if getattr(cfg, "wall_fleet", False) is True:
             self.fleet = wall_fleet.Board(cfg, lambda d: _safe_add(log, d), reader=fleet)
+        if self.health is None and wall_health is not None and (getattr(cfg, "wall_health", False) is True or getattr(cfg, "site_map", False) is True):
+            self.health = wall_health.HealthBoard(cfg, lambda d: _safe_add(log, d), ad_db=AdDb(cfg) if getattr(cfg, "report_db", None) else None)
         self.no_source = {}                 # 1.131.0: {"vmware" | "storage": why} - a login there, no source from it
         bad = getattr(cfg, "wall_bad_logins", [])
         for k in (bad if isinstance(bad, list) else []):
@@ -7339,6 +7425,8 @@ class WallLive(object):
     def viewed(self):
         if self.nal is not None:
             self.nal.viewed()
+        if getattr(self, "health", None) is not None and getattr(self.cfg, "wall_health", False):
+            self.health.viewed()
 
     def follow(self):
         """with a collector: the model every read, whether or not anyone looks (the NetApp run too, as a viewer would)"""
@@ -7370,13 +7458,14 @@ class WallLive(object):
         with self.lock:                        # Codex r5 #12: the collector's view taken inside the lock - an older read never
             now = time.time() if now is None else now      # enters the tracker after a newer one
             view = self.collector.view() if self.collector is not None else None
+            hm = self.health.health_model(now) if (getattr(self, "health", None) is not None and getattr(self.cfg, "wall_health", False)) else None
             if monitor and getattr(self, "fleet", None) is not None:
                 fm = self.fleet.model(view, now)
                 return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
                                         title=self.cfg.wall_title, nm_why=why, off_why=self.no_source,
-                                        fleet=fm, fleet_why=self.cfg.wall_fleet_why)
+                                        fleet=fm, fleet_why=self.cfg.wall_fleet_why, health=hm)
             return wall_model.build(view, nm, at, self.cfg.wall_opts, self.tracker, now, enclave=self.cfg.wall_enclave,
-                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None))
+                                    title=self.cfg.wall_title, nm_why=why, off_why=getattr(self, "no_source", None), health=hm)
 
     def summary(self, now=None):
         """1.135.0: the areas in short (wall_model.summary) - the same rule as the wall: stale is never green"""
@@ -7522,22 +7611,52 @@ WALL_PREVIEW = ('<p class="wall-preview" role="note" id="wall-preview"><b>Previe
 def wall_page(cfg, cn, statics, token=""):
     """/portal/wall: the frame - static/wall-page.js draws the three styles from /api/wall (no inline script or style)"""
     v = lambda n: statics.get(n, "")
+    health_on = bool(getattr(cfg, "wall_health", False))
     body = ((WALL_PREVIEW if getattr(cfg, "wall_preview", True) else "") +
-            '<div id="wall" class="wall" data-src="%sapi/wall" data-title="%s" data-enclave="%s" data-style="%s"%s%s>'
+            '<div id="wall" class="wall" data-src="%sapi/wall" data-health-src="%sapi/wall/health" data-title="%s" data-enclave="%s" data-style="%s"%s%s>'
             '<p class="note" id="wall-wait">Reading the wall\u2026</p></div>'
             '<noscript><p class="note warn">The wall draws with a script: turn scripts on for this site.</p></noscript>'
             '<script src="%sstatic/wall-land.js?v=%s" defer></script><script src="%sstatic/wall-share.js?v=%s" defer></script>'
-            '<script src="%sstatic/wall-styles.js?v=%s" defer></script>%s<script src="%sstatic/wall-page.js?v=%s" defer></script>'
-            % (cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
+            '<script src="%sstatic/wall-styles.js?v=%s" defer></script>%s%s<script src="%sstatic/wall-page.js?v=%s" defer></script>'
+            % (cfg.path, cfg.path, esc(cfg.wall_title), esc(cfg.wall_enclave), esc(getattr(cfg, "wall_style", "cockpit")),
                (' data-logo="%sstatic/logo?v=%d"' % (cfg.path, cfg.logo_v)) if getattr(cfg, "logo", "") else "",
                ' data-test="1"' if getattr(cfg, "wall_test", False) else "",
                cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("wall-styles.js"),
                ('<script src="%sstatic/wall-fleet.js?v=%s" defer></script>' % (cfg.path, v("wall-fleet.js"))) if cfg.wall_fleet else "",
+               ('<script src="%sstatic/wall-health.js?v=%s" defer></script>' % (cfg.path, v("wall-health.js"))) if health_on else "",
                cfg.path, v("wall-page.js")))
     return shell(cfg, cfg.wall_title, body, cn, token=token, page="wall",
                  head='<link rel="stylesheet" href="%sstatic/wall-page.css?v=%s"><link rel="stylesheet" href="%sstatic/wall-styles.css?v=%s">'
                  % (cfg.path, v("wall-page.css"), cfg.path, v("wall-styles.css")) +
-                 (('<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">' % (cfg.path, v("wall-fleet.css"))) if cfg.wall_fleet else ""))
+                 (('<link rel="stylesheet" href="%sstatic/wall-fleet.css?v=%s">' % (cfg.path, v("wall-fleet.css"))) if cfg.wall_fleet else "") +
+                 (('<link rel="stylesheet" href="%sstatic/wall-health.css?v=%s">' % (cfg.path, v("wall-health.css"))) if health_on else ""))
+
+
+def sitemap_page(cfg, cn, statics, token=""):
+    """1.138.0: /portal/sitemap (alias /portal/wall/map) - offline wall map of sites by SolarWinds lat/lon."""
+    v = lambda n: statics.get(n, "")
+    body = ('<div id="site-map" class="sm-root" data-src="%sapi/sitemap" data-wall="%swall" data-enclave="%s">'
+            '<p class="note" id="sm-wait">Reading live site locations from SolarWinds\u2026</p></div>'
+            '<noscript><p class="note warn">Site map draws with a script: turn scripts on for this site.</p></noscript>'
+            '<script src="%sstatic/wall-land.js?v=%s" defer></script>'
+            '<script src="%sstatic/wall-share.js?v=%s" defer></script>'
+            '<script src="%sstatic/site-map.js?v=%s" defer></script>'
+            % (cfg.path, cfg.path, esc(getattr(cfg, "wall_enclave", "")),
+               cfg.path, v("wall-land.js"), cfg.path, v("wall-share.js"), cfg.path, v("site-map.js")))
+    return shell(cfg, "Site map", body, cn, token=token, page="sitemap",
+                 head='<link rel="stylesheet" href="%sstatic/site-map.css?v=%s">' % (cfg.path, v("site-map.css")))
+
+
+def my_access_page(cfg, cn, statics):
+    """1.138.0: /portal/access (alias /portal/my-access) - strictly read-only personal access summary."""
+    v = lambda n: statics.get(n, "")
+    body = ('<div id="my-access" class="ma-root" data-src="%sapi/access">'
+            '<p class="note" id="ma-wait">Reading your portal access\u2026</p></div>'
+            '<noscript><p class="note warn">My access draws with a script: turn scripts on for this site.</p></noscript>'
+            '<script src="%sstatic/my-access.js?v=%s" defer></script>'
+            % (cfg.path, cfg.path, v("my-access.js")))
+    return shell(cfg, "My access", body, cn, page="access",
+                 head='<link rel="stylesheet" href="%sstatic/my-access.css?v=%s">' % (cfg.path, v("my-access.css")))
 
 
 def make_handler(cfg, portal, static_dir, wall=None):
@@ -7551,8 +7670,19 @@ def make_handler(cfg, portal, static_dir, wall=None):
     feedback = WallFeedback(os.path.join(cfg.data, "wall-feedback.jsonl"))       # 1.130.0: the wall's feedback (the portal's own volume)
     if cfg.wall and wall is None:                                                         # 1.130.0: the ops-center wall (a test hands its own)
         wall = WallLive(cfg, portal.log, nal if nal is not None else (NetappLive(cfg, portal.log, portal) if cfg.report_db else None))
+    # 1.138.0: share one HealthBoard across /api/wall/health and /api/sitemap (also works when wall is off and site_map is on)
+    health_board = getattr(wall, "health", None)
+    if health_board is None and wall_health is not None and (getattr(cfg, "wall_health", False) is True or getattr(cfg, "site_map", False) is True):
+        health_board = wall_health.HealthBoard(cfg, lambda d: _safe_add(portal.log, d),
+                                               ad_db=AdDb(cfg) if getattr(cfg, "report_db", None) else None, netlive=live)
+    elif health_board is not None and health_board.netlive is None and live is not None:
+        health_board.netlive = live
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
-    for n in NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + (FLEET_STATIC if cfg.wall_fleet else ()) + LOOKS_STATIC + ("admin.css", "admin.js"):
+    for n in (NETMAP_STATIC + AD_STATIC + NETAPP_STATIC + WALL_STATIC + (FLEET_STATIC if cfg.wall_fleet else ())
+              + (HEALTH_STATIC if getattr(cfg, "wall_health", False) else ())
+              + (SITEMAP_STATIC if getattr(cfg, "site_map", False) else ())
+              + (ACCESS_STATIC if getattr(cfg, "my_access", False) else ())
+              + LOOKS_STATIC + ("admin.css", "admin.js")):
         try:
             with open(os.path.join(static_dir, n), "rb") as fh:
                 statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
@@ -7612,7 +7742,11 @@ def make_handler(cfg, portal, static_dir, wall=None):
                     self._send(403, message_page(cfg, "Portal access", reason, user, kind="bad"), "text/html; charset=utf-8")
                 return None
             if not may:
-                portal.log_reader_refusal(user, self._ip(), urllib.parse.urlsplit(self.path).path)
+                path = urllib.parse.urlsplit(self.path).path
+                portal.log_reader_refusal(user, self._ip(), path)
+                if path in ("/access", "/my-access", "/api/access"):
+                    return self._deny("You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
+                                      api or path.startswith("/api/"))
                 if api or urllib.parse.urlsplit(self.path).path.startswith("/api/"):
                     self._send(403, {"error": "You are not on the list of people who may view the portal. Ask %s to add you." % cfg.access_contact,
                                      "ad": ad_diag(cfg, user)})
@@ -7625,6 +7759,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
             """Neon 1340 r2: the pages someone in only as an admin (the Admin page) or by a template's saved group (that
             template's form and launch, its jobs and approvals) may open"""
             path = urllib.parse.urlsplit(self.path).path
+            if path in ("/access", "/my-access", "/api/access") and getattr(cfg, "my_access", False):
+                return True                              # 1.138.0: any authenticated user may inspect their own access (read-only)
             if path == "/admin":
                 return cfg.admin_allowed(cn)
             if not cfg.template_member(cn):
@@ -7815,6 +7951,42 @@ def make_handler(cfg, portal, static_dir, wall=None):
                 with wall.lock:
                     code, body = wall.fleet.answer(wall.collector)
                 return self._send(code, body, "application/json")
+            # 1.138.0: Network & AD health wall API
+            if path == "/api/wall/health":
+                if not getattr(cfg, "wall_health", False) or health_board is None:
+                    return self._send(404, {"error": "Network & AD health wall is off here (portal_wall_health: false)."})
+                q = urllib.parse.parse_qs(u.query)
+                force = (q.get("poll") or [""])[-1] == "now" and portal.poll_ok(cn)
+                health_board.viewed(force=force)
+                code, body, etag = health_board.answer_health((self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            # 1.138.0: Site map (offline coastline, SolarWinds WorldMapPoint lat/lon)
+            if path in ("/sitemap", "/wall/map", "/api/sitemap"):
+                if not getattr(cfg, "site_map", False) or health_board is None:
+                    msg = "Site map is off here (portal_site_map: false)."
+                    return self._send(404, {"error": msg}) if path == "/api/sitemap" else self._send(
+                        404, message_page(cfg, "Site map off", msg, cn), "text/html; charset=utf-8")
+                q = urllib.parse.parse_qs(u.query)
+                force = path == "/api/sitemap" and (q.get("poll") or [""])[-1] == "now" and portal.poll_ok(cn)
+                health_board.viewed(force=force)
+                if path != "/api/sitemap":
+                    return self._send(200, sitemap_page(cfg, cn, statics, portal.token(cn)), "text/html; charset=utf-8")
+                code, body, etag = health_board.answer_sitemap((self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
+            # 1.138.0: Read-only My access page & JSON API (shows nothing the user may not see)
+            if path in ("/access", "/my-access", "/api/access"):
+                if not getattr(cfg, "my_access", False) or my_access is None:
+                    msg = "My access is off here (portal_my_access: false)."
+                    return self._send(404, {"error": msg}) if path == "/api/access" else self._send(
+                        404, message_page(cfg, "My access off", msg, cn), "text/html; charset=utf-8")
+                if path != "/api/access":
+                    return self._send(200, my_access_page(cfg, cn, statics), "text/html; charset=utf-8")
+                with access_pinned(cfg):
+                    doc = my_access.build_my_access(
+                        cfg, portal, cn, access_rows, template_allowed, run_refusal, approve_refusal, ad_diag,
+                        wall_fb_fn=wall_may_feedback, wall_fb_read_fn=wall_may_read_feedback,
+                    )
+                return self._send(200, doc, "application/json", cache="no-store")
             if path in ("/wall", "/api/wall"):
                 if not wall:
                     return self._send(404, message_page(cfg, "Wall off", "The wall is off here (portal_wall: false).", cn),
@@ -8097,6 +8269,8 @@ def make_handler(cfg, portal, static_dir, wall=None):
             cn = self._who(api=path.startswith("/api/"))
             if not cn:
                 return
+            if path in ("/access", "/my-access", "/api/access"):          # 1.138.0: strictly read-only
+                return self._send(405, {"error": "My access is read-only."}, headers=[("Allow", "GET, HEAD")])
             if path == "/admin":
                 return self._admin_post(cn)
             m_form = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)

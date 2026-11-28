@@ -78,6 +78,8 @@
                'task': {'extra': site_act_extra_instructions | default(''),
                         'tone': servicenow_war_act_tone | default('positive')} | servicenow_war_act_task}] }}
         _eb_check_url: "{{ servicenow_war_act_check_url | bool }}"
+        # its own reader (servicenow_war_act_parse, prose too): an answer the items' reader cannot read is no reason to ask again
+        _eb_retry_unreadable: false
         _ea_names: "{{ _war | servicenow_war_names }}"
         _ea_model_timeout: "{{ servicenow_war_act_model_timeout }}"
 

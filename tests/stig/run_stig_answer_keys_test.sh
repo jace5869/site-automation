@@ -59,7 +59,7 @@ EOF
 printf 'PermitRootLogin no\n' > "$fx/sshd_config"
 "$py" "$repo/tests/email/fake_smtp.py" "$port_smtp" "$work/mail" >/dev/null 2>&1 & smtp_pid=$!
 "$py" "$here/stigman_mock.py" "$port_sm" "$work/sm.json" "$work/sm.log" >/dev/null 2>&1 & sm_pid=$!
-# ACT's model URL: any HTTP answer shows the way is open (roles/site_act evidence_ask.yml); the fake ACT answers itself
+# ACT's model URL: any HTTP answer shows the way is open (plugins/action/site_act_ask.py); the fake ACT answers itself
 mkdir -p "$work/actweb"
 "$py" -m http.server "$port_act" --bind 127.0.0.1 --directory "$work/actweb" >/dev/null 2>&1 & act_pid=$!
 sleep 1
@@ -160,7 +160,8 @@ writes() {  # any request to STIG Manager but a GET (and the token's POST) fails
     else echo "ok   - $1: only GET requests reached STIG Manager ($(wc -l < "$work/sm.log") requests)"; fi
 }
 
-act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+# the rules are asked at the same time (site_act_concurrency): each answer goes to its rule by its V- number
+act "{\"summaries_by\": {\"V-257985\": $(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), \"V-257883\": $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')}}"
 run "six rules: a pattern's block, ACT's block, one needs a value, ACT's refused, one Not a Finding, one Evaluate-STIG passes" ok -e "$all6" -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" \
     "V-258999 ready: A manual check: a document." "V-257985 ACT draft: RHEL 9 must not permit direct logons to the root account using remote access through SSH." \
@@ -201,6 +202,22 @@ sys.exit(0 if ok else 1)
 PY
 then echo "ok   - the email: the two tables, the blocks only in the workbook (and on the website)"
 else echo "FAIL - the email"; fails=$((fails + 1)); fi
+
+# 1.137.0, model tiers (fake_act.py's by_model): the worker drafts each rule; its draft with no code (V-257985) is asked of the
+# smart model once, whose block is offered; the worker's other draft (V-257883) stays the worker's. The report's last lines.
+J() { printf '%s' "$1" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'; }
+act "{\"summary\": \"no model set\", \"by_model\": {\"worker-ak\": {\"summaries_by\": {\"V-257985\": \"I cannot write that.\", \"V-257883\": $(J "$ACT_BAD")}},
+      \"smart-ak\": {\"summaries_by\": {\"V-257985\": $(J "$ACT_OK")}}}}"
+rm -f "$work/act/fake-act-models.log"
+run "model tiers: the worker drafts, a draft with no code goes to the smart model once" ok -e "$all6" \
+    -e '{"site_act_models": {"genai": "smart-ak"}, "site_act_worker_models": {"genai": "worker-ak"}}' -- \
+    "STIG answer keys: 2 ready to copy, 4 not drafted" "V-257985 ACT draft: RHEL 9 must not permit direct logons" \
+    "Drafts: ACT models (site_act_worker_model): 1 item(s) answered by the worker model (worker-ak), 1 by the smart model (smart-ak); 1 re-asked after the worker (1 unreadable)." \
+    "the read-only check refused the draft ACT wrote: it runs iex"
+w="$(grep -c '"worker-ak"' "$work/act/fake-act-models.log" 2>/dev/null)"; s="$(grep -c '"smart-ak"' "$work/act/fake-act-models.log" 2>/dev/null)"
+[ "$w" = 2 ] && [ "$s" = 1 ] && echo "ok   - ...the worker drafted 2 rules, the smart model 1 (the one with no code)" \
+    || { echo "FAIL - ...calls by model: worker $w, smart $s"; fails=$((fails + 1)); }
+untouched "model tiers"
 
 act '{"summary": "no code"}'
 # as a survey gives them: texts - the rules with commas and spaces, the values as a name: value line, ACT off as "false"
@@ -268,7 +285,8 @@ untouched "every run"
 mkdir -p "$work/sdoff"
 printf '#!/bin/sh\ntouch "%s/sdoff/ran"\nexit 1\n' "$work" > "$work/sdoff/systemd-run"
 chmod 755 "$work/sdoff/systemd-run"
-act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+# the rules are asked at the same time (site_act_concurrency): each answer goes to its rule by its V- number
+act "{\"summaries_by\": {\"V-257985\": $(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), \"V-257883\": $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')}}"
 run "the trial off (the default): the check only, the block offered marked not tried, no systemd-run" ok \
     -e "$all6" -e answer_keys_trial=false -e _ak_sandbox="$work/sdoff/systemd-run" -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" "V-258999 ready (not tried): A manual check: a document." \

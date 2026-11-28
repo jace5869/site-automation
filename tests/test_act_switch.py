@@ -2,8 +2,10 @@
 """site_act_enabled (1.3.0): false = no job asks ACT - no request, no endpoint, no error. Every place that calls ACT,
 walked here, so that a role added later cannot miss the switch:
 
-- the ways into roles/site_act: main.yml (site_act_result), evidence_analysis.yml and evidence_batches.yml (_ea_*) check
-  the switch themselves before anything is asked; run.yml and evidence_ask.yml (what asks) are only theirs;
+- the ways into roles/site_act: main.yml (site_act_result), evidence_analysis.yml, evidence_batches.yml (_ea_*) and
+  evidence_many.yml (_em_answers) check the switch themselves before anything is asked; run.yml and act_ask.yml (what
+  asks) are only theirs;
+- the ask-ACT action (site_act_ask, plugins/action) only in act_ask.yml;
 - env.yml only resolves the settings (and _site_act_off): a file that includes it and then runs ACT itself must check
   _site_act_off (or site_act_enabled) before it does;
 - ACT's own role (act_triage) and ACT's playbooks (vendor/act) are run only from roles/site_act, or from a file that checks
@@ -20,8 +22,8 @@ import yaml
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SITE_ACT = os.path.join("roles", "site_act", "tasks")
-GUARDED = {"main.yml", "evidence_analysis.yml", "evidence_batches.yml"}     # check the switch themselves
-INTERNAL = {"run.yml", "evidence_ask.yml", "evidence_one_batch.yml"}       # only from the guarded ones
+GUARDED = {"main.yml", "evidence_analysis.yml", "evidence_batches.yml", "evidence_many.yml"}   # check the switch themselves
+INTERNAL = {"run.yml", "act_ask.yml"}                                         # only from the guarded ones
 SWITCH = re.compile(r"\b(_site_act_off|site_act_enabled)\b")
 # files that name ACT but ask it nothing (each with the reason)
 NOT_A_CALL = {
@@ -129,6 +131,14 @@ class TheSiteActWaysIn(unittest.TestCase):
             s = text(os.path.join(SITE_ACT, f))
             self.assertIn("_ea_reason: ACT is off (site_act_enabled false).", s)
             self.assertIn("_ea_ran: false", s)
+        many = text(os.path.join(SITE_ACT, "evidence_many.yml"))
+        self.assertIn("'reason': 'ACT is off (site_act_enabled false).'", many)
+        self.assertIn("'ran': false", many)
+
+    def test_the_ask_action_only_in_ask_yml(self):
+        """The action that asks ACT (plugins/action/site_act_ask.py) is used in roles/site_act/tasks/act_ask.yml only."""
+        users = sorted(rel(f) for f in yaml_files() for t, _ in walk(load(f)) if "site_act_ask" in t)
+        self.assertEqual(users, ["roles/site_act/tasks/act_ask.yml"])
 
     def test_env_yml_says_off(self):
         self.assertRegex(text(os.path.join(SITE_ACT, "env.yml")), r"_site_act_off: \"\{\{ not site_act_enabled \| bool \}\}\"")
@@ -136,8 +146,8 @@ class TheSiteActWaysIn(unittest.TestCase):
     def test_the_inner_files_are_only_the_guarded_ones(self):
         for f, t, conds, kind, detail in act_uses():
             if kind == "site_act":
-                self.assertNotIn(detail, INTERNAL, "%s includes site_act's %s - use main.yml, evidence_analysis.yml or "
-                                 "evidence_batches.yml (they check site_act_enabled)" % (f, detail))
+                self.assertNotIn(detail, INTERNAL, "%s includes site_act's %s - use main.yml, evidence_analysis.yml, "
+                                 "evidence_batches.yml or evidence_many.yml (they check site_act_enabled)" % (f, detail))
         for f in yaml_files():
             if rel(f).startswith(SITE_ACT.replace(os.sep, "/")):
                 continue

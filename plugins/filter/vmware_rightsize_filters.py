@@ -580,7 +580,8 @@ def vm_rightsize_act_section(items, sized, parsed=None, opts=None):
     out = [{"title": "ACT's review of each suggestion",
             "text": "ACT (an AI assistant) read the same numbers and reviewed the job's suggestion: %d of %d agreed. Where it "
                     "adjusts one, read its reasoning; the job's own math is in the tables above. Confidence is ACT's own (green "
-                    "80+, amber 50-79, red under 50)." % (agree, len(items or [])),
+                    "80+, amber 50-79, red under 50)." % (agree, len(items or []))
+                    + ((" " + str(o["cache_note"])) if o.get("cache_note") else ""),
             "columns": ["#", "VM", "Job says", "Job's size (its confidence)", "ACT's recommendation", "Reasoning", "Confidence"],
             "rows": rows, "cell_status": cells}]
     # asked in batches: a line per batch, each its own sentences on a line - not one paragraph
